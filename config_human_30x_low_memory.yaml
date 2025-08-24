@@ -1,0 +1,82 @@
+# config_human_30x.yaml  (versão low-mem p/ human_genes_pipeline_yaml_lowmem.py)
+project:
+  name: human_30x_trio_demo
+  organism: homo_sapiens
+  reference:
+    # use o nome que preferir; este é o do pacote do GDC
+    name: GRCh38.d1.vd1
+    # FASTA em tar.gz do GDC (o script extrai e cria refs/reference.fa)
+    fasta_url: "https://api.gdc.cancer.gov/data/GRCh38.d1.vd1.fa.tar.gz"
+    # índice BWA pré-construído (evita indexar localmente → baixa RAM)
+    bwa_index_url: "https://api.gdc.cancer.gov/data/GRCh38.d1.vd1_BWA.tar.gz"
+    # (opcional) se quiser fixar um GTF específico, adicione:
+    # gtf_url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/gencode.v46.primary_assembly.annotation.gtf.gz"
+
+storage:
+  base_dir: "/dados/GENOMICS_DATA/low_memory"
+  work_dir: "/dados/GENOMICS_DATA/low_memory/work"
+  temp_dir: "/dados/GENOMICS_DATA/low_memory/tmp"
+  keep_intermediates: true   # útil para retomar e inspecionar
+
+download:
+  tool: sra_toolkit            # prefetch + fasterq-dump
+  use_ascp: false              # mude para true se tiver Aspera configurado
+  threads: 8
+  # Se preferir baixar direto os FASTQs via FTP, seu script pode respeitar 'direct_fastq_urls' (opcional)
+
+execution:
+  verbose: true
+  resume: true                 # não reprocessa o que já existe
+  skip_existing: true          # idem para baixados/gerados
+  progress_interval_sec: 60    # estimativas periódicas
+
+size_control:
+  downsample:
+    enabled: true
+    fraction: 0.25             # 25% (~7.5×); aumente para 1.0 quando quiser o 30× completo
+  # Ou, alternativamente, limite de disco:
+  # disk_budget_gb: 650        # o pipeline pode pausar/adiar amostras para não estourar
+
+# Amostras 30× (NYGC 1000G GRCh38); cada 'runs' aceita SRR/ERR/DRR
+
+# <<< NÃO ative limit_to_canonical quando usar o índice pré-pronto do GDC >>>
+# (se você ativar, o FASTA canônico deixará de corresponder ao índice baixado)
+limit_to_canonical: false
+
+samples:
+  - sample_id: NA12878        # filha (HG001 / GM12878)
+    study: PRJEB31736         # 1000G 30× (lote principal)
+    runs:
+      - ERR3239334            # FASTQs gerados pelo ENA: ERR3239334_1.fastq.gz / _2.fastq.gz
+    notes: "CRAM 'final' disponível: ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR323/ERR3239334/NA12878.final.cram"
+
+  - sample_id: NA12891        # pai
+    study: PRJEB36890         # 1000G 30× (trios adicionais)
+    runs:
+      - ERR3989341            # ENA fornece FASTQ gerado para este run
+    notes: "CRAM 'final': ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR398/ERR3989341/NA12891.final.cram"
+
+  - sample_id: NA12892        # mãe
+    study: PRJEB36890
+    runs:
+      - ERR3989342            # ENA fornece FASTQ gerado para este run
+    notes: "CRAM 'final': ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR398/ERR3989342/NA12892.final.cram"
+
+# Etapas do pipeline (ajuste conforme seu script)
+steps:
+  - fetch_fastqs          # prefetch/fasterq-dump; respeita skip_existing/resume
+  - qc_reads              # FastQC/MultiQC (se configurados)
+  - align_and_sort        # BWA-MEM/BWA-MEM2 + samtools
+  - mark_duplicates       # GATK MarkDuplicatesSpark/picard
+  - bqsr                  # GATK BaseRecalibrator/applyBQSR (opcional)
+  - call_genes            # sua extração/varredura de genes (exons/introns) e comparação
+  - summarize             # relatórios e métricas
+
+# Parâmetros de alinhamento/chamada (exemplo; alinhe com o que seu script usa)
+params:
+  # forçar o alinhador a 'bwa' (índice do GDC é do BWA clássico)
+  aligner: bwa
+  bwa_mem2_threads: 16
+  gatk_threads: 8
+  target_gene_list: null   # ou caminho para um painel BED/genes de interesse
+

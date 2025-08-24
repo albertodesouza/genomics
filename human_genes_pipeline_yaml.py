@@ -13,6 +13,9 @@ from rich.text import Text
 
 console = Console(highlight=False)
 
+# cfg global para funções auxiliares
+cfg_global = None
+
 # ====================== Utilidades ======================
 
 def sizeof_fmt(num, suffix="B"):
@@ -49,7 +52,7 @@ def run(cmd: List[str], cwd: Optional[str]=None, env=None, check=True):
 
 def run_long_stream_pipeline(cmd_list: List[List[str]], label: str, heartbeat_sec: int = 60):
     """
-    Executa pipeline de processos encadeados (Popen) com heartbeats.
+    Executa pipeline encadeado (Popen) com heartbeats.
     Ex.: [["bwa-mem2","mem",...], ["samtools","view","-bS","-"], ["samtools","sort","-o","..."]]
     """
     console.print(Panel.fit(Text(label, style="bold yellow"), border_style="yellow"))
@@ -58,7 +61,6 @@ def run_long_stream_pipeline(cmd_list: List[List[str]], label: str, heartbeat_se
     procs = []
     start = time.time()
 
-    # encadeia stdout->stdin
     for i, cmd in enumerate(cmd_list):
         if i == 0:
             p = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.STDOUT, text=True, bufsize=1, universal_newlines=True)
@@ -67,7 +69,6 @@ def run_long_stream_pipeline(cmd_list: List[List[str]], label: str, heartbeat_se
         procs.append(p)
 
     last = start
-    # Lê a saída do primeiro processo (que costuma imprimir progresso)
     if procs and procs[0].stdout:
         for line in procs[0].stdout:
             if line.strip() and any(k in line for k in ["WARNING","ERROR","ERR","progress","reads","mapped","trimmed","Time","ETA","%","Mbp","Gbp"]):
@@ -78,7 +79,6 @@ def run_long_stream_pipeline(cmd_list: List[List[str]], label: str, heartbeat_se
                 console.print(f"[heartbeat] {label}... {elapsed//60}m{elapsed%60:02d}s", style="magenta")
                 last = now
 
-    # aguarda todos
     rc = 0
     for p in procs[::-1]:
         p.wait()
@@ -100,18 +100,15 @@ def disk_space_report(base_dir: Path):
     ))
     return total, used, free
 
-def bytes_free(p: Path) -> int:
-    return shutil.disk_usage(p).free
-
 # ================== Normalização do YAML ==================
 
 def normalize_config_schema(cfg_in: dict) -> dict:
     """
     Aceita:
       (A) antigo: {'general': {...}, 'dna_samples': [...], 'rna_samples': [...]}
-      (B) novo  : {'project': {...}, 'storage': {...}, 'download': {...},
-                   'execution': {...}, 'size_control': {...}, 'samples': [...], 'params': {...}}
-      No (B), a referência pode aparecer como 'reference' no topo OU dentro de 'project.reference'.
+      (B) novo  : {'project': {...}, 'storage': {...}, 'reference': {...},
+                   'download': {...}, 'execution': {...}, 'size_control': {...},
+                   'samples': [...], 'params': {...}}
     Retorna esquema (A).
     """
     if "general" in cfg_in:
@@ -121,7 +118,7 @@ def normalize_config_schema(cfg_in: dict) -> dict:
     storage   = cfg_in.get("storage", {})
     ref_top   = cfg_in.get("reference", {})
     ref_proj  = project.get("reference", {}) if isinstance(project, dict) else {}
-    ref       = {**ref_proj, **ref_top}  # proj > topo
+    ref       = {**ref_proj, **ref_top}
     download  = cfg_in.get("download", {})
     execv     = cfg_in.get("execution", {})
     sizec     = cfg_in.get("size_control", {})
@@ -151,6 +148,10 @@ def normalize_config_schema(cfg_in: dict) -> dict:
 
     adapters = {"fwd": "AGATCGGAAGAGC", "rev": "AGATCGGAAGAGC"}
 
+    aligner = (params.get("aligner") or execv.get("aligner") or "bwa-mem2").lower()
+    bwa_prebuilt = ref.get("bwa_index_url") or cfg_in.get("bwa_prebuilt_url") or ""
+    limit_to_canonical = bool(cfg_in.get("limit_to_canonical", False))
+
     tool = (download.get("tool") or "sra_toolkit").lower()
     if tool != "sra_toolkit":
         console.print(f"[orange3]Aviso:[/orange3] download.tool='{tool}' ainda não é suportado; usando sra-tools.", style="italic")
@@ -158,7 +159,7 @@ def normalize_config_schema(cfg_in: dict) -> dict:
     dna_samples = []
     for s in samples:
         runs = s.get("runs", [])
-        if not runs: 
+        if not runs:
             continue
         dna_samples.append({
             "id": s.get("sample_id") or s.get("id") or runs[0],
@@ -187,6 +188,9 @@ def normalize_config_schema(cfg_in: dict) -> dict:
         "cleanup": cleanup,
         "downsample_frac": downsample_frac,
         "downsample_seed": downsample_seed,
+        "aligner": aligner,
+        "bwa_prebuilt_url": bwa_prebuilt,
+        "limit_to_canonical": limit_to_canonical,
     }
 
     return {"general": general, "dna_samples": dna_samples, "rna_samples": []}
@@ -194,11 +198,11 @@ def normalize_config_schema(cfg_in: dict) -> dict:
 # ================ Estimativa de espaço =================
 
 def estimate_outputs_and_warn(fastqs: List[Path], base_dir: Path, guard_gb: int):
-    free_b = bytes_free(base_dir)
+    free_b = shutil.disk_usage(base_dir).free
     in_bytes = sum((file_meta(f)["size_bytes"] for f in fastqs if f.exists()))
     trimmed_est = int(in_bytes * 0.8)
     bam_est     = int(in_bytes * 1.2)
-    vcf_est     = int(2e9)  # ~2 GB por amostra (chute)
+    vcf_est     = int(2e9)
     needed_bam_path = bam_est + trimmed_est + vcf_est
     msg = (f"Entrada FASTQ (comprimido): ~{sizeof_fmt(in_bytes)}\n"
            f"Pós-trimming: ~{sizeof_fmt(trimmed_est)}; BAM: ~{sizeof_fmt(bam_est)}; VCF: ~{sizeof_fmt(vcf_est)}\n"
@@ -213,14 +217,22 @@ def estimate_outputs_and_warn(fastqs: List[Path], base_dir: Path, guard_gb: int)
 def _download_and_place(url: str, dst_plain: Path):
     tmp = dst_plain.with_suffix(dst_plain.suffix + ".tmp")
     run(["wget", "-O", str(tmp), url])
-    # Se URL termina com .gz, descompacta; senão, tenta detectar gzip via `file`
-    if str(url).endswith(".gz"):
+    u = str(url)
+    if u.endswith(".tar.gz") or u.endswith(".tgz"):
+        run(["bash","-lc", f"mkdir -p refs/_extracted && tar -xzf {tmp} -C refs/_extracted"])
+        fa_candidates = list(Path("refs/_extracted").rglob("*.fa")) + list(Path("refs/_extracted").rglob("*.fasta"))
+        if not fa_candidates:
+            raise RuntimeError("Nenhum FASTA encontrado no tar.")
+        fa = max(fa_candidates, key=lambda p: p.stat().st_size)
+        if dst_plain.exists(): dst_plain.unlink()
+        dst_plain.symlink_to(fa.resolve())
+    elif u.endswith(".gz"):
         gz = tmp if tmp.suffix == ".gz" else Path(str(tmp) + ".gz")
         if gz != tmp: tmp.rename(gz)
-        run(["gunzip", "-f", str(gz)])
+        run(["gunzip","-f",str(gz)])
     else:
         try:
-            run(["bash", "-lc", f"file -b {tmp} | grep -qi gzip && gunzip -f {tmp} || mv {tmp} {dst_plain}"])
+            run(["bash","-lc", f"file -b {tmp} | grep -qi gzip && gunzip -f {tmp} || mv {tmp} {dst_plain}"])
         except sp.CalledProcessError:
             tmp.rename(dst_plain)
 
@@ -240,17 +252,74 @@ def download_refs(ref_fa_url, gtf_url, force=False):
         _download_and_place(gtf_url, gtf)
 
     if not Path("refs/reference.fa.fai").exists() or force:
-        run(["samtools","faidx","refs/reference.fa"])
+        run(["samtools","faidx","refs/reference.fa"]) 
     if not Path("refs/reference.dict").exists() or force:
         run(["gatk","CreateSequenceDictionary","-R","refs/reference.fa","-O","refs/reference.dict"])
 
     print_meta("Referências", [fa, gtf])
 
+def install_prebuilt_bwa_index(bwa_tar_url: str):
+    if not bwa_tar_url:
+        return
+    run(["bash","-lc", f"mkdir -p refs/_bwa && wget -O refs/_bwa/index.tar.gz {bwa_tar_url}"])
+    run(["bash","-lc", "tar -xzf refs/_bwa/index.tar.gz -C refs/_bwa"])
+    # Tenta detectar prefixo (arquivo .amb, .ann, .bwt, .pac, .sa)
+    ambs = list(Path("refs/_bwa").rglob("*.amb"))
+    if not ambs:
+        raise RuntimeError("Índice BWA não encontrado na extração.")
+    pref = ambs[0].with_suffix("")
+    for ext in [".amb",".ann",".bwt",".pac",".sa"]:
+        src = pref.with_suffix(ext)
+        if src.exists():
+            dst = Path(str(Path("refs/reference.fa")) + ext)
+            if dst.exists():
+                dst.unlink()
+            dst.symlink_to(src.resolve())
+
+
+def limit_reference_to_canonical_if_enabled():
+    g = cfg_global["general"]
+    if not g.get("limit_to_canonical", False):
+        return
+    if not Path("refs/reference.fa.fai").exists():
+        run(["samtools","faidx","refs/reference.fa"])
+    names = [l.split("\t")[0] for l in open("refs/reference.fa.fai")]
+    if not names:
+        console.print("[orange3]Aviso:[/orange3] .fai vazio, mantendo referência completa.")
+        return
+    chr_prefix = names[0].startswith("chr")
+    canon = [f"{'chr' if chr_prefix else ''}{i}" for i in list(range(1,23))+["X","Y"]]
+    canon += [f"{'chr' if chr_prefix else ''}M", f"{'chr' if chr_prefix else ''}MT"]
+    canon = [c for c in canon if c in names]
+    if not canon:
+        console.print("[orange3]Aviso:[/orange3] Não foi possível detectar contigs canônicos.")
+        return
+    run(["bash","-lc", f"samtools faidx refs/reference.fa {' '.join(canon)} > refs/reference.canonical.fa"])
+    Path("refs/reference.fa").unlink(missing_ok=True)
+    Path("refs/reference.fa").symlink_to(Path("refs/reference.canonical.fa").resolve())
+    run(["samtools","faidx","refs/reference.fa"]) 
+    run(["gatk","CreateSequenceDictionary","-R","refs/reference.fa","-O","refs/reference.dict"])
+    console.print("[green]Referência reduzida aos cromossomos canônicos.[/green]")
+
+
 def build_indexes(default_read_type, assembly_name, need_rna_index, threads, force=False):
-    if default_read_type=="short" and (force or not Path("refs/reference.fa.bwt.2bit.64").exists()):
-        run(["bwa-mem2","index","refs/reference.fa"])
+    g = cfg_global["general"]
+    if g.get("bwa_prebuilt_url"):
+        install_prebuilt_bwa_index(g["bwa_prebuilt_url"])
+        console.print("Índice BWA pré-instalado → [bold]SKIP build[/bold]")
+    elif default_read_type=="short" and g.get("aligner","bwa-mem2")=="bwa-mem2":
+        try:
+            if force or not Path("refs/reference.fa.bwt.2bit.64").exists():
+                run(["bwa-mem2","index","refs/reference.fa"]) 
+            else:
+                console.print("Índice BWA-MEM2 → [bold]SKIP[/bold]", style="dim")
+        except sp.CalledProcessError:
+            console.print("[red]Falha ao indexar com bwa-mem2 (provável falta de RAM).[/red]")
+            console.print("Sugestão: defina [bold]aligner: bwa[/bold] + [bold]bwa_prebuilt_url[/bold] no YAML ou ative [bold]limit_to_canonical: true[/bold].")
+            raise
     else:
-        console.print("Índice BWA → [bold]SKIP[/bold]", style="dim")
+        console.print("Sem necessidade de indexar (usar BWA com índice pré-instalado ou long reads).", style="dim")
+
     if need_rna_index and (force or not Path(f"refs/{assembly_name}.1.ht2").exists()):
         run(["hisat2-build","-p",str(threads),"refs/reference.fa",f"refs/{assembly_name}"])
     elif need_rna_index:
@@ -271,10 +340,9 @@ def stage_fastqs_from_sra(sra_ids: List[str]):
         if r1.exists() or r2.exists():
             console.print(f"{acc}: FASTQ → [bold]SKIP (cache)[/bold]")
         else:
-            # conversão pode ser lenta; usa heartbeat interno
-            console.print(Panel.fit(Text(f"Convertendo {acc} (fasterq-dump)", style="bold yellow"), border_style="yellow"))
             run(["fasterq-dump","--split-files","--gzip",acc,"-O",str(Path("fastq").resolve())])
         print_meta(f"FASTQs ({acc})", [r1, r2])
+
 
 def stage_fastqs_from_local(fq1, fq2=None):
     Path("fastq").mkdir(exist_ok=True)
@@ -345,15 +413,7 @@ def qc_and_trim(threads, adapters, read_type, use_ds: bool):
             continue
 
         if r2.exists():
-            run_long_stream_pipeline(
-                [
-                    ["cutadapt","-j",str(threads),"-q","20,20","-m","30","-a",fwd,"-A",rev,str(r1),str(r2)],
-                    ["tee","/dev/stderr"],  # para ver logs de progresso do cutadapt
-                    ["bash","-lc", f"cat > /dev/null"]  # placeholder para manter pipeline visível
-                ],
-                label=f"Cutadapt (paired) {base}"
-            )
-            # salvamos via parâmetros -o/-p; então só exibimos metadados:
+            run(["cutadapt","-j",str(threads),"-q","20,20","-m","30","-a",fwd,"-A",rev,"-o",str(out1),"-p",str(out2),str(r1),str(r2)])
             print_meta(f"FASTQs pós-trimming ({base})", [out1, out2])
         else:
             run(["cutadapt","-j",str(threads),"-q","20","-m","30","-a",fwd,"-o",str(out1),str(r1)])
@@ -371,7 +431,6 @@ def align_dna_for_all(dna_samples, threads, default_read_type, cleanup, use_ds):
         rtype = s.get("read_type", default_read_type)
         if s["source"] == "sra":
             for sra in s["sra_ids"]:
-                # preferir trimmed; senão usar fastq_ds (se houver) ou fastq
                 candidates = list(Path("trimmed").glob(f"{sra}*_1.trim.fq.gz"))
                 if not candidates:
                     src_dir = Path("fastq_ds") if use_ds else Path("fastq")
@@ -383,8 +442,9 @@ def align_dna_for_all(dna_samples, threads, default_read_type, cleanup, use_ds):
             if not r1.exists():
                 src_dir = Path("fastq_ds") if use_ds else Path("fastq")
                 r1 = src_dir/Path(s["fastq1"]).name
-            expected_r2 = Path(s.get("fastq2","")).name if s.get("fastq2") else None
-            align_one_sample(r1, threads, rtype, cleanup, expected_r2_name=expected_r2)
+            expected_r2 = Path(s.get("fastq2",""))
+            align_one_sample(r1, threads, rtype, cleanup, expected_r2_name=expected_r2.name if expected_r2 else None)
+
 
 def align_one_sample(r1: Path, threads: int, read_type: str, cleanup, expected_r2_name: Optional[str]=None):
     sample = r1.name.split("_")[0]
@@ -413,31 +473,20 @@ def align_one_sample(r1: Path, threads: int, read_type: str, cleanup, expected_r
             cand = Path("fastq_ds")/expected_r2_name.replace(".fastq.gz",".ds.fastq.gz")
             if cand.exists(): r2 = cand
 
+    aligner = cfg_global["general"].get("aligner","bwa-mem2")
     if read_type == "short":
-        if r2 and r2.exists():
-            cmd_list = [
-                ["bwa-mem2","mem","-t",str(threads),"refs/reference.fa",str(r1),str(r2)],
-                ["samtools","view","-bS","-"],
-                ["samtools","sort","-@",str(threads),"-o",str(out_sorted)]
-            ]
-            run_long_stream_pipeline(cmd_list, label=f"[{sample}] BWA-MEM2 (paired) → sort")
-        else:
-            cmd_list = [
-                ["bwa-mem2","mem","-t",str(threads),"refs/reference.fa",str(r1)],
-                ["samtools","view","-bS","-"],
-                ["samtools","sort","-@",str(threads),"-o",str(out_sorted)]
-            ]
-            run_long_stream_pipeline(cmd_list, label=f"[{sample}] BWA-MEM2 (single) → sort")
-
+        base_cmd = ["bwa","mem","-t",str(threads),"refs/reference.fa"] if aligner=="bwa" else ["bwa-mem2","mem","-t",str(threads),"refs/reference.fa"]
+        cmd_list = [ base_cmd + [str(r1)] + ([str(r2)] if r2 and r2.exists() else []),
+                     ["samtools","view","-bS","-"],
+                     ["samtools","sort","-@",str(threads),"-o",str(out_sorted)] ]
+        run_long_stream_pipeline(cmd_list, label=f"[{sample}] {aligner.upper()} → sort")
         run(["samtools","index",str(out_sorted)])
         run(["picard","MarkDuplicates","-I",str(out_sorted),"-O",str(out_mkdup),
              "-M",str(out_sorted).replace(".sorted.bam",".mkdup.metrics"),"--VALIDATION_STRINGENCY","LENIENT"])
         run(["samtools","index",str(out_mkdup)])
         if cleanup.get("remove_sorted_bam", True) and out_sorted.exists():
             out_sorted.unlink(missing_ok=True)
-
     else:
-        # long reads (ONT/PacBio) → minimap2 | sort
         cmd_list = [
             ["minimap2","-ax","map-ont","-t",str(threads),"refs/reference.fa",str(r1)],
             ["samtools","sort","-@",str(threads),"-o",str(out_sorted)]
@@ -472,7 +521,7 @@ def call_variants(samples, threads, mem_gb):
     aln = sorted(Path("bam").glob("*.mkdup.bam")) + sorted(Path("bam").glob("*.mkdup.cram"))
     for f in aln:
         sample = f.name.replace(".mkdup.bam","").replace(".mkdup.cram","")
-        if declared_ids and sample not in declared_ids: 
+        if declared_ids and sample not in declared_ids:
             continue
         gvcf = Path("vcf")/f"{sample}.g.vcf.gz"
         vcf  = Path("vcf")/f"{sample}.vcf.gz"
@@ -486,6 +535,7 @@ def call_variants(samples, threads, mem_gb):
              "-R","refs/reference.fa","-V",str(gvcf),"-O",str(vcf)])
         run(["bcftools","index","-t",str(vcf)])
         print_meta(f"VCF ({sample})", [vcf])
+
 
 def annotate_variants(assembly_name, threads, vep_cache_dir=""):
     Path("vep").mkdir(exist_ok=True)
@@ -534,15 +584,11 @@ def rnaseq_pipeline(rna_samples, threads, assembly_name):
             console.print(f"[RNA-seq:{base}] GTF → [bold]SKIP[/bold]"); continue
         r2 = Path(str(r1).replace("_1.fastq.gz","_2.fastq.gz"))
         if r2.exists():
-            cmd_list = [
-                ["hisat2","-p",str(threads),"-x",f"refs/{assembly_name}","-1",str(r1),"-2",str(r2)],
-                ["samtools","sort","-@",str(threads),"-o",f"rnaseq/{base}.rnaseq.bam"]
-            ]
+            cmd_list = [["hisat2","-p",str(threads),"-x",f"refs/{assembly_name}","-1",str(r1),"-2",str(r2)],
+                        ["samtools","sort","-@",str(threads),"-o",f"rnaseq/{base}.rnaseq.bam"]]
         else:
-            cmd_list = [
-                ["hisat2","-p",str(threads),"-x",f"refs/{assembly_name}","-U",str(r1)],
-                ["samtools","sort","-@",str(threads),"-o",f"rnaseq/{base}.rnaseq.bam"]
-            ]
+            cmd_list = [["hisat2","-p",str(threads),"-x",f"refs/{assembly_name}","-U",str(r1)],
+                        ["samtools","sort","-@",str(threads),"-o",f"rnaseq/{base}.rnaseq.bam"]]
         run_long_stream_pipeline(cmd_list, label=f"[RNA-seq:{base}] HISAT2 → sort")
         run(["samtools","index",f"rnaseq/{base}.rnaseq.bam"])
         run(["stringtie",f"rnaseq/{base}.rnaseq.bam","-G","refs/genes.gtf","-o",str(gtf_out),"-p",str(threads)])
@@ -565,6 +611,7 @@ def main(cfg):
 
     # Referências e índices
     download_refs(g["ref_fa_url"], g["gtf_url"], force=g.get("force_refs", False))
+    limit_reference_to_canonical_if_enabled()
     build_indexes(g.get("default_read_type","short"), g["assembly_name"],
                   g.get("rnaseq",False) or bool(cfg.get("rna_samples",[])),
                   g["threads"], force=g.get("force_indexes", False))
@@ -575,7 +622,7 @@ def main(cfg):
         if s["source"]=="sra": stage_fastqs_from_sra(s["sra_ids"])
         else: stage_fastqs_from_local(s["fastq1"], s.get("fastq2"))
 
-    # Estimativa de espaço (com base no que já baixou)
+    # Estimativa de espaço
     fq_list = list(Path("fastq").glob("*.fastq.gz"))
     estimate_outputs_and_warn(fq_list, base_dir, g.get("space_guard_gb_min", 100))
 
@@ -594,7 +641,7 @@ def main(cfg):
     # CRAM + Cobertura
     to_cram_and_coverage(g.get("use_cram", True), g["threads"])
 
-    # Remover BAM após CRAM (economia de espaço)
+    # Remover BAM após CRAM
     if g.get("use_cram", True) and g.get("cleanup", {}).get("remove_bam_after_cram", True):
         for bam in Path("bam").glob("*.mkdup.bam"):
             console.print(f"Removendo {bam.name} (CRAM mantido)", style="dim")
@@ -617,12 +664,14 @@ def main(cfg):
     console.rule("[bold green]Pipeline concluído ✅[/bold green]")
 
 if __name__=="__main__":
-    ap = argparse.ArgumentParser(description="Pipeline humano (YAML) — Verbose, cores, cache, CRAM, cobertura e downsample")
+    ap = argparse.ArgumentParser(description="Pipeline humano — Low-Memory: índice BWA pré-pronto, verbose, cache, CRAM, cobertura e downsample")
     ap.add_argument("-c","--config",required=True,help="Arquivo YAML de configuração")
     args = ap.parse_args()
     with open(args.config, "r") as f:
         cfg_raw = yaml.safe_load(f)
     cfg = normalize_config_schema(cfg_raw)
-    console.print(Panel.fit(f"[bold]YAML normalizado[/bold]\nChaves topo: {list(cfg.keys())}\nGeneral → {', '.join(sorted(list(cfg['general'].keys()))[:10])}...", border_style="cyan"))
+    global cfg_global
+    cfg_global = cfg
+    console.print(Panel.fit(f"[bold]YAML normalizado[/bold]\nChaves topo: {list(cfg.keys())}\nGeneral → {', '.join(sorted(list(cfg['general'].keys()))[:12])}...", border_style="cyan"))
     main(cfg)
 
