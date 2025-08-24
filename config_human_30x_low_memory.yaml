@@ -6,9 +6,9 @@ project:
     # use o nome que preferir; este é o do pacote do GDC
     name: GRCh38.d1.vd1
     # FASTA em tar.gz do GDC (o script extrai e cria refs/reference.fa)
-    fasta_url: "https://api.gdc.cancer.gov/data/GRCh38.d1.vd1.fa.tar.gz"
+    fasta_url: "https://api.gdc.cancer.gov/data/254f697d-310d-4d7d-a27b-27fbf767a834"
     # índice BWA pré-construído (evita indexar localmente → baixa RAM)
-    bwa_index_url: "https://api.gdc.cancer.gov/data/GRCh38.d1.vd1_BWA.tar.gz"
+    bwa_index_url: "https://api.gdc.cancer.gov/data/25217ec9-af07-4a17-8db9-101271ee7225"
     # (opcional) se quiser fixar um GTF específico, adicione:
     # gtf_url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/gencode.v46.primary_assembly.annotation.gtf.gz"
 

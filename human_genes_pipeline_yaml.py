@@ -215,26 +215,45 @@ def estimate_outputs_and_warn(fastqs: List[Path], base_dir: Path, guard_gb: int)
 # ================== Referências / índices ==================
 
 def _download_and_place(url: str, dst_plain: Path):
+    """
+    Baixa e coloca o arquivo de referência.
+    - Se for tar.gz (mesmo sem extensão): extrai e aponta dst_plain -> maior .fa/.fasta encontrado.
+    - Se for gz simples (fa.gz): descompacta com gzip -dc.
+    - Caso contrário: move para dst_plain.
+    """
     tmp = dst_plain.with_suffix(dst_plain.suffix + ".tmp")
     run(["wget", "-O", str(tmp), url])
-    u = str(url)
-    if u.endswith(".tar.gz") or u.endswith(".tgz"):
+
+    # 1) Se for tar.gz (mesmo sem extensão), 'tar -tzf' retorna 0
+    is_targz = sp.run(
+        ["bash", "-lc", f"tar -tzf {tmp} >/dev/null 2>&1"],
+        stdout=sp.DEVNULL, stderr=sp.DEVNULL
+    ).returncode == 0
+
+    if is_targz:
         run(["bash","-lc", f"mkdir -p refs/_extracted && tar -xzf {tmp} -C refs/_extracted"])
         fa_candidates = list(Path("refs/_extracted").rglob("*.fa")) + list(Path("refs/_extracted").rglob("*.fasta"))
         if not fa_candidates:
-            raise RuntimeError("Nenhum FASTA encontrado no tar.")
+            raise RuntimeError("Nenhum FASTA (.fa/.fasta) encontrado dentro do tar.")
         fa = max(fa_candidates, key=lambda p: p.stat().st_size)
-        if dst_plain.exists(): dst_plain.unlink()
+        if dst_plain.exists():
+            dst_plain.unlink()
         dst_plain.symlink_to(fa.resolve())
-    elif u.endswith(".gz"):
-        gz = tmp if tmp.suffix == ".gz" else Path(str(tmp) + ".gz")
-        if gz != tmp: tmp.rename(gz)
-        run(["gunzip","-f",str(gz)])
-    else:
-        try:
-            run(["bash","-lc", f"file -b {tmp} | grep -qi gzip && gunzip -f {tmp} || mv {tmp} {dst_plain}"])
-        except sp.CalledProcessError:
-            tmp.rename(dst_plain)
+        tmp.unlink(missing_ok=True)
+        return
+
+    # 2) Se for gzip simples (fa.gz), descompacta ignorando sufixo
+    is_gzip = sp.run(
+        ["bash", "-lc", f"file -b --mime-type {tmp} | grep -qi 'gzip'"],
+        stdout=sp.DEVNULL, stderr=sp.DEVNULL
+    ).returncode == 0
+    if is_gzip:
+        run(["bash","-lc", f"gzip -dc {tmp} > {dst_plain}"])
+        tmp.unlink(missing_ok=True)
+        return
+
+    # 3) Caso contrário, mover como está (já é .fa descompactado)
+    run(["bash","-lc", f"mv {tmp} {dst_plain}"])
 
 def download_refs(ref_fa_url, gtf_url, force=False):
     Path("refs").mkdir(exist_ok=True)
