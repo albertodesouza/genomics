@@ -670,7 +670,6 @@ if __name__=="__main__":
     with open(args.config, "r") as f:
         cfg_raw = yaml.safe_load(f)
     cfg = normalize_config_schema(cfg_raw)
-    global cfg_global
     cfg_global = cfg
     console.print(Panel.fit(f"[bold]YAML normalizado[/bold]\nChaves topo: {list(cfg.keys())}\nGeneral → {', '.join(sorted(list(cfg['general'].keys()))[:12])}...", border_style="cyan"))
     main(cfg)
