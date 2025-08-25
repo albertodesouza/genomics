@@ -11,6 +11,9 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.text import Text
 
+import re, shlex
+from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn, TimeElapsedColumn, TransferSpeedColumn
+
 console = Console(highlight=False)
 
 # cfg global para funções auxiliares
@@ -100,6 +103,455 @@ def disk_space_report(base_dir: Path):
     ))
     return total, used, free
 
+def _du_bytes(path: Path) -> int:
+    """Tamanho total em bytes (recursivo) de 'path' usando du -sb (rápido e robusto)."""
+    try:
+        out = sp.run(
+            ["bash","-lc", f"du -sb {shlex.quote(str(path))} 2>/dev/null | cut -f1"],
+            capture_output=True, text=True, check=True
+        ).stdout.strip()
+        return int(out) if out else 0
+    except Exception:
+        return 0
+
+def _sra_expected_size_bytes(acc: str) -> Optional[int]:
+    """Obtém o tamanho esperado do run via 'vdb-dump <acc> --info' (campo 'size : ...')."""
+    try:
+        p = sp.run(["vdb-dump", acc, "--info"], capture_output=True, text=True, check=True)
+        m = re.search(r"size\s*:\s*([0-9,]+)", p.stdout, re.IGNORECASE)
+        if m:
+            return int(m.group(1).replace(",", ""))
+    except Exception:
+        pass
+    return None
+
+def prefetch_with_progress(acc: str, outdir: Path, interval_sec: float = 2.0, stall_warn_min: int = 10):
+    """
+    Baixa um accession SRA com 'prefetch' mostrando progresso.
+    Evita PIPE (que pode bloquear) e grava logs em logs/prefetch_<acc>.log.
+    """
+    outdir = Path(outdir); outdir.mkdir(parents=True, exist_ok=True)
+    Path("logs").mkdir(exist_ok=True)
+
+    # Onde o prefetch pode escrever:
+    #  - outdir/<acc>/... (padrão)
+    #  - ou outdir/<acc>.sra diretamente (depende da config)
+    acc_dir = outdir / acc
+    acc_file = outdir / f"{acc}.sra"
+
+    def measure_bytes() -> int:
+        if acc_dir.exists() and acc_dir.is_dir():
+            return _du_bytes(acc_dir)
+        if acc_file.exists() and acc_file.is_file():
+            return acc_file.stat().st_size
+        # fallback: mede o que houver com prefixo do acc
+        matches = list(outdir.glob(f"{acc}*"))
+        if matches:
+            return sum(_du_bytes(m) if m.is_dir() else m.stat().st_size for m in matches)
+        return 0
+
+    expected = _sra_expected_size_bytes(acc)  # pode ser None
+    expected_str = f"{expected:,} B" if expected else "desconhecido"
+    console.print(f"[bold]prefetch[/bold] {acc} → {outdir}  (tamanho esperado: {expected_str})")
+
+    cmd = ["prefetch", "--output-directory", str(outdir), "--max-size", "u", acc]
+    console.print(f"[bold]>[/bold] {' '.join(cmd)}", style="dim")
+
+    # Redireciona stdout/err para arquivo (evita bloquear PIPE)
+    log_path = Path("logs")/f"prefetch_{acc}.log"
+    with open(log_path, "w") as log_fh:
+        proc = sp.Popen(cmd, stdout=log_fh, stderr=sp.STDOUT, text=True)
+
+        from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn, TimeElapsedColumn, TransferSpeedColumn
+        with Progress(
+            TextColumn("[bold blue]{task.fields[acc]}[/]"),
+            BarColumn(),
+            TextColumn("{task.percentage:>5.1f}%"),
+            TextColumn("• {task.description}"),
+            TransferSpeedColumn(),
+            TextColumn("• {task.completed:,.0f}/{task.total:,.0f} B"),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            console=console,
+            transient=False,
+        ) as progress:
+            total = expected if expected else 1
+            task = progress.add_task("conectando...", total=total, acc=acc)
+            last_bytes = 0
+            last_change = time.time()
+
+            while True:
+                rc = proc.poll()
+                bytes_now = measure_bytes()
+
+                # barra "elástica" quando não se sabe o total
+                if not expected and bytes_now > total:
+                    total = max(bytes_now * 2, total * 2)
+                    progress.update(task, total=total)
+
+                # atualização
+                progress.update(task, completed=bytes_now, description="baixando")
+
+                # detector de estagnação (sem crescimento por X minutos)
+                if bytes_now > last_bytes:
+                    last_bytes = bytes_now
+                    last_change = time.time()
+                elif (time.time() - last_change) > stall_warn_min * 60 and rc is None:
+                    console.print(f"[yellow]Aviso:[/yellow] prefetch {acc} sem progresso por ~{stall_warn_min} min. "
+                                  f"Veja logs em {log_path}", style="italic")
+                    last_change = time.time()  # evita spam do aviso
+
+                if rc is not None:
+                    # atualização final
+                    bytes_now = measure_bytes()
+                    progress.update(task, completed=min(bytes_now, total), description="finalizando")
+                    if rc != 0:
+                        # Mostra o fim do log pra ajudar no debug
+                        try:
+                            tail = sp.run(["bash","-lc", f"tail -n 50 {shlex.quote(str(log_path))}"],
+                                          capture_output=True, text=True, check=True).stdout
+                        except Exception:
+                            tail = ""
+                        raise sp.CalledProcessError(rc, cmd, output=f"(veja {log_path})\n{tail}")
+                    break
+
+                time.sleep(interval_sec)
+
+    # Meta dos artefatos baixados
+    sra = None
+    if acc_dir.exists():
+        sra = next(acc_dir.glob(f"{acc}.sra"), None) or next(acc_dir.rglob("*.sra"), None)
+    if not sra and acc_file.exists():
+        sra = acc_file
+    vdb = None
+    if acc_dir.exists():
+        vdb = next(acc_dir.glob(f"{acc}.vdbcache"), None) or next(acc_dir.rglob("*.vdbcache"), None)
+
+    print_meta(f"Prefetch concluído ({acc})", [p for p in [sra, vdb] if p])
+    console.rule(f"[green]Prefetch {acc} concluído[/green]")
+
+def _find_local_sra(acc: str, raw_dir: Path) -> Optional[Path]:
+    raw_dir = Path(raw_dir)
+    candidates = [
+        raw_dir / acc / f"{acc}.sra",
+        raw_dir / f"{acc}.sra",
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    # fallback: procura em subpastas
+    hits = list(raw_dir.rglob(f"{acc}.sra"))
+    return hits[0] if hits else None
+
+def ena_get_fastq_urls(acc: str):
+    """
+    Consulta a API do ENA e retorna (urls, md5s).
+    Tenta fastq_http; se vazio, usa fastq_ftp (convertendo ftp:// -> https://).
+    Filtra apenas *_1.fastq.gz e *_2.fastq.gz.
+    """
+    fields = "fastq_http,fastq_ftp,fastq_md5"
+    cmd = ["bash","-lc",
+           f"curl -fsSL 'https://www.ebi.ac.uk/ena/portal/api/filereport?accession={acc}&result=read_run&fields={fields}&format=tsv&download=false' | tail -n +2"]
+    r = sp.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
+        return [], []
+    cols = r.stdout.strip().split("\t")
+    # colunas esperadas: 0=http, 1=ftp, 2=md5
+    http_s = cols[0] if len(cols) > 0 else ""
+    ftp_s  = cols[1] if len(cols) > 1 else ""
+    md5_s  = cols[2] if len(cols) > 2 else ""
+
+    urls = []
+    if http_s:
+        urls.extend([u.strip() for u in http_s.split(";") if u.strip()])
+    if not urls and ftp_s:
+        for u in ftp_s.split(";"):
+            u = u.strip()
+            if not u:
+                continue
+            # usa HTTPS em vez de FTP (o host do ENA aceita)
+            if u.startswith("ftp://"):
+                u = "https://" + u[len("ftp://"):]
+            urls.append(u)
+
+    # só *_1.fastq.gz / *_2.fastq.gz
+    urls = [u for u in urls if u.endswith("_1.fastq.gz") or u.endswith("_2.fastq.gz")]
+
+    md5s = [m.strip() for m in md5_s.split(";")] if md5_s else []
+    return urls, md5s
+
+def ena_fetch_fastqs(acc: str, outdir: Path, threads: int = 8) -> bool:
+    """
+    Baixa *_1.fastq.gz e *_2.fastq.gz do ENA com resume (-c), valida gzip e MD5 (quando fornecido).
+    Retorna True se ambos os arquivos válidos estiverem presentes ao final.
+    """
+    outdir = Path(outdir); outdir.mkdir(parents=True, exist_ok=True)
+    urls, md5s = ena_get_fastq_urls(acc)
+    if not urls:
+        console.print(f"[yellow]ENA não retornou URLs de FASTQ para {acc}.[/yellow]")
+        return False
+
+    ok_any = False
+    for i, url in enumerate(urls):
+        fname = url.strip().split("/")[-1]
+        dst = outdir / fname
+
+        # Se já existe, valide antes de pular
+        if dst.exists():
+            gz_ok = sp.run(["bash","-lc", f"gzip -t {shlex.quote(str(dst))} >/dev/null 2>&1"]).returncode == 0
+            if gz_ok:
+                console.print(f"{fname}: → [bold]SKIP (cache OK)[/bold]")
+                ok_any = True
+                continue
+            else:
+                console.print(f"{fname}: corrompido, refazendo…", style="yellow")
+                dst.unlink(missing_ok=True)
+
+        run(["bash","-lc", f"wget -c -O {shlex.quote(str(dst))} {shlex.quote(url)}"])
+
+        # Valida gzip
+        if sp.run(["bash","-lc", f"gzip -t {shlex.quote(str(dst))} >/dev/null 2>&1"]).returncode != 0:
+            console.print(f"[red]{fname}: gzip inválido[/red]")
+            continue
+
+        # Valida MD5 se fornecido pela API
+        if i < len(md5s) and md5s[i]:
+            md5 = sp.run(["bash","-lc", f"md5sum {shlex.quote(str(dst))} | cut -d' ' -f1"],
+                         capture_output=True, text=True, check=True).stdout.strip()
+            if md5 != md5s[i]:
+                console.print(f"[red]{fname}: MD5 não confere ({md5} != {md5s[i]})[/red]")
+                continue
+
+        ok_any = True
+
+    # imprime meta do que foi baixado
+    outs = sorted(outdir.glob(f"{acc}_*.fastq.gz"))
+    if outs:
+        print_meta(f"FASTQs baixados do ENA ({acc})", outs)
+    # Retorna True se temos pelo menos um par válido
+    have_pair = any((outdir/f"{acc}_1.fastq.gz").exists() and (outdir/f"{acc}_2.fastq.gz").exists())
+    return ok_any or have_pair
+
+def _proc_io(pid: int):
+    """Retorna (read_bytes, write_bytes) do /proc/<pid>/io (Linux)."""
+    try:
+        with open(f"/proc/{pid}/io") as fh:
+            m = {}
+            for line in fh:
+                k, v = line.split(":")
+                m[k.strip()] = int(v.strip())
+        return m.get("read_bytes", 0), m.get("write_bytes", 0)
+    except Exception:
+        return None
+
+def fasterq_with_progress(source: str, acc: str, outdir: Path, threads: int = 8, tmp_dir: Path = Path("tmp"),
+                          interval_sec: float = 2.0, stall_warn_min: int = 10, stall_fail_min: int = 45) -> bool:
+    """
+    Executa fasterq-dump (source = accession ou caminho .sra) com barra em 2 fases.
+    Retorna True se converteu; False se falhou/estagnou tempo demais (para permitir fallback).
+    Detecção de progresso considera crescimento dos FASTQs e do tmp_dir.
+    """
+    outdir = Path(outdir).resolve()
+    tmp_dir = Path(tmp_dir); tmp_dir.mkdir(parents=True, exist_ok=True)
+    outdir.mkdir(parents=True, exist_ok=True)
+    Path("logs").mkdir(exist_ok=True)
+
+    r1 = outdir / f"{acc}_1.fastq"
+    r2 = outdir / f"{acc}_2.fastq"
+    log_path = Path("logs")/f"fasterq_{acc}.log"
+
+    cmd = ["fasterq-dump", "--split-files", "-e", str(threads), "-t", str(tmp_dir), str(source), "-O", str(outdir)]
+    console.print(f"[bold]>[/bold] {' '.join(cmd)}", style="dim")
+
+    cancel_on_convert_stall = bool(cfg_global["general"].get("cancel_on_convert_stall", False))
+    min_delta = 32 * 1024 * 1024  # 32MB: variação mínima para considerar "progresso"
+
+    with open(log_path, "w") as log_fh:
+        proc = sp.Popen(cmd, stdout=log_fh, stderr=sp.STDOUT, text=True)
+        io_last = _proc_io(proc.pid)
+        io_last_ts = time.time()
+
+        with Progress(
+            TextColumn("[bold blue]fasterq[/] "+acc),
+            BarColumn(),
+            TextColumn("{task.percentage:>5.1f}%"),
+            TextColumn("• {task.description}"),
+            TransferSpeedColumn(),
+            TextColumn("• {task.completed:,.0f}/{task.total:,.0f} B"),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            console=console,
+            transient=False,
+        ) as progress:
+            total = 1
+            phase = "preparando"
+            task = progress.add_task(phase, total=total)
+
+            last_done = 0
+            last_tmp  = 0
+            last_change = time.time()
+            next_warn_at = stall_warn_min  # minutos
+
+            while True:
+                rc = proc.poll()
+
+                # bytes atuais dos FASTQs (se já existirem)
+                have_r1 = r1.exists(); b1 = r1.stat().st_size if have_r1 else 0
+                have_r2 = r2.exists(); b2 = r2.stat().st_size if have_r2 else 0
+                done = b1 + b2
+
+                # bytes atuais no tmp_dir
+                tmp_bytes = _du_bytes(tmp_dir)
+
+                # Seleciona descrição e barra
+                if have_r1 or have_r2:
+                    if phase != "convertendo":
+                        phase = "convertendo"
+                        progress.update(task, description=phase)
+                    if done > total:
+                        total = int(done * 1.10)  # elástico com +10%
+                        progress.update(task, total=total)
+                    progress.update(task, completed=done)
+                else:
+                    if tmp_bytes > total:
+                        total = int(tmp_bytes * 1.10)
+                        progress.update(task, total=total)
+                    progress.update(task, completed=tmp_bytes, description="preparando (lendo .sra)")
+
+                # Houve progresso real?
+                grew = False
+                if done > last_done + min_delta:
+                    last_done = done; grew = True
+                if tmp_bytes > last_tmp + min_delta:
+                    last_tmp = tmp_bytes; grew = True
+                if grew:
+                    last_change = time.time()
+
+                # Estagnação: sem crescimento de FASTQ nem tmp_dir
+                # Heartbeat de I/O do processo: mesmo sem crescer arquivos, conta como progresso
+                io_now = _proc_io(proc.pid)
+                if io_now and io_last:
+                    d_read  = io_now[0] - io_last[0]
+                    d_write = io_now[1] - io_last[1]
+                    if d_read > 0 or d_write > 0:
+                        grew = True
+                        last_change = time.time()
+                if io_now:
+                    # imprime um pulso de vida a cada ~60s
+                    if time.time() - io_last_ts >= 60:
+                        console.print(
+                            f"[dim]fasterq {acc} I/O heartbeat: +{sizeof_fmt(max(0,io_now[0] - (io_last[0] if io_last else 0)))} lidos, "
+                            f"+{sizeof_fmt(max(0,io_now[1] - (io_last[1] if io_last else 0)))} escritos[/dim]"
+                        )
+                        io_last_ts = time.time()
+                    io_last = io_now
+
+                idle_min = (time.time() - last_change)/60.0
+                if idle_min >= next_warn_at and rc is None:
+                    console.print(
+                        f"[yellow]Aviso:[/yellow] fasterq {acc} sem progresso há ~{int(idle_min)} min. Log: {log_path}",
+                        style="italic"
+                    )
+                    next_warn_at += 5  # evita spam
+
+                if idle_min >= stall_fail_min and rc is None:
+                    # Cancelar apenas se ainda estiver "preparando" OU se o usuário permitir cancelar na conversão
+                    if phase == "preparando" or cancel_on_convert_stall:
+                        console.print(f"[orange3]Sem progresso há ≥{stall_fail_min} min — cancelando fasterq ({acc}).[/orange3]")
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=30)
+                        except sp.TimeoutExpired:
+                            proc.kill()
+                        return False
+                    else:
+                        # Na fase convertendo, não cancelar: só estender o próximo aviso
+                        next_warn_at += 5
+
+                if rc is not None:
+                    # fim do processo
+                    if (r1.exists() or r2.exists()) and rc == 0:
+                        print_meta(f"FASTQs gerados ({acc})", [p for p in [r1, r2] if p.exists()])
+                        console.rule(f"[green]fasterq-dump {acc} concluído[/green]")
+                        return True
+                    if rc != 0:
+                        try:
+                            tail = sp.run(["bash","-lc", f"tail -n 50 {shlex.quote(str(log_path))}"],
+                                          capture_output=True, text=True, check=True).stdout
+                        except Exception:
+                            tail = ""
+                        console.print(f"[red]fasterq falhou ({acc})[/red]\n{tail}")
+                        return False
+
+                time.sleep(interval_sec)
+
+def compress_fastqs_with_progress(acc: str, outdir: Path, threads: int = 8):
+    """
+    Comprime ERRxxxx_1.fastq/_2.fastq em .gz mostrando progresso (tamanho do .gz
+    em relação ao .fastq original; não é exato, mas dá boa noção).
+    Usa pigz se disponível, senão gzip.
+    """
+    outdir = Path(outdir).resolve()
+    r1 = outdir / f"{acc}_1.fastq"
+    r2 = outdir / f"{acc}_2.fastq"
+    to_do = [p for p in [r1, r2] if p.exists() and not (Path(str(p) + ".gz").exists())]
+    if not to_do:
+        console.print(f"{acc}: compressão → [bold]SKIP (cache)[/bold]")
+        return
+
+    use_pigz = shutil.which("pigz") is not None
+    comp = ["pigz", "-p", str(threads)] if use_pigz else ["gzip", "-9"]
+
+    with Progress(
+        TextColumn("[bold blue]compressão[/]"),
+        BarColumn(),
+        TextColumn("{task.percentage:>5.1f}%"),
+        TextColumn("• {task.description}"),
+        TransferSpeedColumn(),
+        TextColumn("• {task.completed:,.0f}/{task.total:,.0f} B"),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+        transient=False,
+    ) as progress:
+        tasks = {}
+        totals = {}
+        for fq in to_do:
+            totals[fq] = fq.stat().st_size
+            tasks[fq] = progress.add_task(fq.name, total=max(1, totals[fq]), start=False)
+
+        procs = {}
+        for fq in to_do:
+            gz = Path(str(fq) + ".gz")
+            # inicia processo
+            procs[fq] = sp.Popen(comp + [str(fq)], stdout=sp.DEVNULL, stderr=sp.DEVNULL, text=False)
+            progress.start_task(tasks[fq])
+
+        # monitora até todos acabarem
+        while procs:
+            finished = []
+            for fq, p in procs.items():
+                gz = Path(str(fq) + ".gz")
+                gz_bytes = gz.stat().st_size if gz.exists() else 0
+                # limita a barra ao tamanho do input (estimativa conservadora)
+                progress.update(tasks[fq], completed=min(gz_bytes, totals[fq]))
+                if p.poll() is not None:
+                    finished.append(fq)
+                    progress.update(tasks[fq], completed=totals[fq], description="ok")
+            for fq in finished:
+                procs.pop(fq, None)
+            time.sleep(0.5)
+
+    # imprime metadados finais
+    outs = []
+    for fq in [r1, r2]:
+        gz = Path(str(fq) + ".gz")
+        if gz.exists():
+            outs.append(gz)
+    if outs:
+        print_meta(f"FASTQs comprimidos ({acc})", outs)
+
+
 # ================== Normalização do YAML ==================
 
 def normalize_config_schema(cfg_in: dict) -> dict:
@@ -119,11 +571,16 @@ def normalize_config_schema(cfg_in: dict) -> dict:
     ref_top   = cfg_in.get("reference", {})
     ref_proj  = project.get("reference", {}) if isinstance(project, dict) else {}
     ref       = {**ref_proj, **ref_top}
-    download  = cfg_in.get("download", {})
     execv     = cfg_in.get("execution", {})
+    download  = cfg_in.get("download", {})
+    download_tool = (download.get("tool") or "sra_toolkit").lower()
+    stall_warn_min = int(execv.get("stall_warn_min", 10))
+    stall_fail_min = int(execv.get("stall_fail_min", 45))
+    ena_fallback   = bool(execv.get("ena_fallback", False))
     sizec     = cfg_in.get("size_control", {})
     samples   = cfg_in.get("samples", [])
     params    = cfg_in.get("params", {})
+    temp_dir = storage.get("temp_dir", "tmp")  # padrão: subpasta 'tmp' no projeto
 
     base_dir = storage.get("base_dir", ".")
     assembly = ref.get("name", "GRCh38")
@@ -191,6 +648,11 @@ def normalize_config_schema(cfg_in: dict) -> dict:
         "aligner": aligner,
         "bwa_prebuilt_url": bwa_prebuilt,
         "limit_to_canonical": limit_to_canonical,
+        "download_tool": download_tool,
+        "stall_warn_min": stall_warn_min,
+        "stall_fail_min": stall_fail_min,
+        "ena_fallback": ena_fallback,
+        "temp_dir": temp_dir,
     }
 
     return {"general": general, "dna_samples": dna_samples, "rna_samples": []}
@@ -277,24 +739,76 @@ def download_refs(ref_fa_url, gtf_url, force=False):
 
     print_meta("Referências", [fa, gtf])
 
-def install_prebuilt_bwa_index(bwa_tar_url: str):
+def _bwa_index_ready(prefix: Path) -> bool:
+    """Verifica se os 5 arquivos do índice BWA existem (e se symlinks apontam para arquivos reais)."""
+    exts = [".amb",".ann",".bwt",".pac",".sa"]
+    for ext in exts:
+        p = Path(str(prefix) + ext)
+        if not p.exists():
+            return False
+        if p.is_symlink() and not p.resolve().exists():
+            return False
+    return True
+
+def _uuid_basename_from_url(url: str, default: str) -> str:
+    """Se a URL terminar com um UUID do GDC, usa-o como nome de arquivo; senão usa 'default'."""
+    m = re.search(r'([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$', url, re.I)
+    return (m.group(1) + ".tar.gz") if m else default
+
+def install_prebuilt_bwa_index(bwa_tar_url: str, expect_md5: str = "", force: bool = False):
+    """
+    Instala o índice BWA pré-construído do GDC com cache:
+      - Se os symlinks refs/reference.fa.{amb,ann,bwt,pac,sa} já existirem → SKIP
+      - Se o tar.gz já existir → SKIP download, apenas extrai (se necessário)
+      - Caso contrário → baixa com 'wget -c' (resume), extrai e cria symlinks
+    """
     if not bwa_tar_url:
         return
-    run(["bash","-lc", f"mkdir -p refs/_bwa && wget -O refs/_bwa/index.tar.gz {bwa_tar_url}"])
-    run(["bash","-lc", "tar -xzf refs/_bwa/index.tar.gz -C refs/_bwa"])
-    # Tenta detectar prefixo (arquivo .amb, .ann, .bwt, .pac, .sa)
-    ambs = list(Path("refs/_bwa").rglob("*.amb"))
+
+    prefix = Path("refs/reference.fa")
+    if _bwa_index_ready(prefix) and not force:
+        console.print("Índice BWA já presente → [bold]SKIP download[/bold]")
+        return
+
+    index_dir = Path("refs/_bwa"); index_dir.mkdir(parents=True, exist_ok=True)
+    tar_name = _uuid_basename_from_url(bwa_tar_url, "index.tar.gz")
+    tar_path = index_dir / tar_name
+
+    # Se já temos o tar, não baixa de novo
+    if tar_path.exists() and not force:
+        console.print(f"{tar_path.name} já presente → [bold]SKIP download[/bold]")
+    else:
+        # -c = resume; -O define nome estável no cache
+        run(["bash","-lc", f"wget -c -O {shlex.quote(str(tar_path))} {shlex.quote(bwa_tar_url)}"])
+
+    # (Opcional) checagem de MD5 se você passar expect_md5
+    if expect_md5:
+        md5 = sp.run(["bash","-lc", f"md5sum {shlex.quote(str(tar_path))} | cut -d' ' -f1"],
+                     capture_output=True, text=True, check=True).stdout.strip()
+        if md5 != expect_md5:
+            raise RuntimeError(f"MD5 não confere para {tar_path.name}: {md5} (esp. {expect_md5})")
+
+    # Extrai apenas se ainda não houver arquivos de índice extraídos
+    have_any = list(index_dir.rglob("*.amb")) or list(index_dir.rglob("*.bwt"))
+    if not have_any or force:
+        run(["bash","-lc", f"tar -xzf {shlex.quote(str(tar_path))} -C {shlex.quote(str(index_dir))}"])
+
+    ambs = list(index_dir.rglob("*.amb"))
     if not ambs:
-        raise RuntimeError("Índice BWA não encontrado na extração.")
-    pref = ambs[0].with_suffix("")
+        raise RuntimeError("Índice BWA não encontrado após extração.")
+    pref = ambs[0].with_suffix("")  # prefixo real do índice
+
+    # Cria/atualiza symlinks com o prefixo padrão refs/reference.fa.*
     for ext in [".amb",".ann",".bwt",".pac",".sa"]:
         src = pref.with_suffix(ext)
         if src.exists():
-            dst = Path(str(Path("refs/reference.fa")) + ext)
+            dst = Path(str(prefix) + ext)
             if dst.exists():
                 dst.unlink()
             dst.symlink_to(src.resolve())
 
+    if _bwa_index_ready(prefix):
+        console.print("Índice BWA instalado e linkado em [bold]refs/reference.fa.*[/bold]")
 
 def limit_reference_to_canonical_if_enabled():
     g = cfg_global["general"]
@@ -347,21 +861,63 @@ def build_indexes(default_read_type, assembly_name, need_rna_index, threads, for
 # ================== Entrada SRA / FASTQ ===================
 
 def stage_fastqs_from_sra(sra_ids: List[str]):
-    Path("raw").mkdir(exist_ok=True); Path("fastq").mkdir(exist_ok=True)
+    Path("raw").mkdir(exist_ok=True)
+    Path("fastq").mkdir(exist_ok=True)
+
+    # threads e pastas de temporários (em disco rápido, vindo do YAML)
+    threads = int(cfg_global.get("general", {}).get("threads", 8))
+    tmp_root = Path(cfg_global.get("general", {}).get("temp_dir", "tmp")).expanduser().resolve()
+    tmp_root.mkdir(parents=True, exist_ok=True)
+
     for acc in sra_ids:
+        # temporários dedicados a este accession (evita misturar runs)
+        tmp_dir = tmp_root / "sra" / acc
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+
+        # Se já houver FASTQs comprimidos, não refaz
+        r1_gz = Path("fastq")/f"{acc}_1.fastq.gz"
+        r2_gz = Path("fastq")/f"{acc}_2.fastq.gz"
+        if r1_gz.exists() or r2_gz.exists():
+            console.print(f"{acc}: FASTQ(.gz) → [bold]SKIP (cache)[/bold]")
+            print_meta(f"FASTQs ({acc})", [r1_gz, r2_gz])
+            continue
+
+        # Baixa o .sra (se ainda não existir)
         sra_target = next(Path("raw").glob(f"**/{acc}.sra"), None)
         if sra_target and sra_target.exists():
             console.print(f"{acc}: .sra → [bold]SKIP (cache)[/bold]")
         else:
-            run(["prefetch","--output-directory",str(Path("raw").resolve()), acc])
-        r1 = Path("fastq")/f"{acc}_1.fastq.gz"
-        r2 = Path("fastq")/f"{acc}_2.fastq.gz"
-        if r1.exists() or r2.exists():
-            console.print(f"{acc}: FASTQ → [bold]SKIP (cache)[/bold]")
-        else:
-            run(["fasterq-dump","--split-files","--gzip",acc,"-O",str(Path("fastq").resolve())])
-        print_meta(f"FASTQs ({acc})", [r1, r2])
+            prefetch_with_progress(acc, Path("raw").resolve())
+            # run(["prefetch", "--output-directory", str(Path("raw").resolve()), "--max-size", "u", acc])
 
+        # CONVERSÃO com barra de progresso (já passa tmp_dir)
+        sra_path = _find_local_sra(acc, Path("raw"))
+        source = str(sra_path) if sra_path else acc
+        ok = fasterq_with_progress(
+            source, acc=acc, outdir=Path("fastq").resolve(),
+            threads=threads, tmp_dir=tmp_dir,
+            stall_warn_min=cfg_global["general"].get("stall_warn_min", 10),
+            stall_fail_min=cfg_global["general"].get("stall_fail_min", 45),
+        )
+
+        # Se não converteu, decidir fallback ENA
+        if not ok:
+            if cfg_global["general"].get("ena_fallback", False):
+                if ena_fetch_fastqs(acc, outdir=Path("fastq").resolve(), threads=threads):
+                    console.rule(f"[green]ENA HTTP ({acc}) concluído[/green]")
+                else:
+                    raise RuntimeError(f"Não foi possível obter FASTQs para {acc} via fasterq nem via ENA.")
+            else:
+                raise RuntimeError(
+                    f"fasterq {acc} não avançou e ena_fallback:false. "
+                    f"Veja logs em logs/fasterq_{acc}.log e tente novamente."
+                )
+
+        # COMPACTAÇÃO com barra de progresso
+        # (Se vier do ENA, já é .fastq.gz, então esta rotina apenas fará SKIP)
+        compress_fastqs_with_progress(acc, outdir=Path("fastq").resolve(), threads=threads)
+
+        print_meta(f"FASTQs ({acc})", [r1_gz, r2_gz])
 
 def stage_fastqs_from_local(fq1, fq2=None):
     Path("fastq").mkdir(exist_ok=True)
@@ -497,7 +1053,7 @@ def align_one_sample(r1: Path, threads: int, read_type: str, cleanup, expected_r
         base_cmd = ["bwa","mem","-t",str(threads),"refs/reference.fa"] if aligner=="bwa" else ["bwa-mem2","mem","-t",str(threads),"refs/reference.fa"]
         cmd_list = [ base_cmd + [str(r1)] + ([str(r2)] if r2 and r2.exists() else []),
                      ["samtools","view","-bS","-"],
-                     ["samtools","sort","-@",str(threads),"-o",str(out_sorted)] ]
+                     ["samtools","sort","-@",str(threads),"-T", str(Path(cfg_global["general"].get("temp_dir","tmp")).expanduser().resolve() / f"{sample}.sorttmp"), "-o", str(out_sorted)] ]
         run_long_stream_pipeline(cmd_list, label=f"[{sample}] {aligner.upper()} → sort")
         run(["samtools","index",str(out_sorted)])
         run(["picard","MarkDuplicates","-I",str(out_sorted),"-O",str(out_mkdup),
@@ -508,7 +1064,7 @@ def align_one_sample(r1: Path, threads: int, read_type: str, cleanup, expected_r
     else:
         cmd_list = [
             ["minimap2","-ax","map-ont","-t",str(threads),"refs/reference.fa",str(r1)],
-            ["samtools","sort","-@",str(threads),"-o",str(out_sorted)]
+            ["samtools","sort","-@",str(threads),"-T", str(Path(cfg_global["general"].get("temp_dir","tmp")).expanduser().resolve() / f"{sample}.sorttmp"), "-o", str(out_sorted)]
         ]
         run_long_stream_pipeline(cmd_list, label=f"[{sample}] minimap2 → sort")
         run(["samtools","index",str(out_sorted)])
@@ -622,6 +1178,11 @@ def main(cfg):
     base_dir = Path(g.get("base_dir",".")).expanduser().resolve()
     base_dir.mkdir(parents=True, exist_ok=True)
     os.chdir(base_dir)
+    # Configura TMPDIR global para todos os subprocessos (samtools, gatk, etc.)
+    tmpdir = Path(g.get("temp_dir","tmp")).expanduser().resolve()
+    tmpdir.mkdir(parents=True, exist_ok=True)
+    os.environ["TMPDIR"] = str(tmpdir)
+    console.print(f"Usando TMPDIR={tmpdir} (do YAML)", style="dim")
 
     console.rule(f"[bold]Pipeline Humano[/bold]  →  [cyan]{base_dir}[/cyan]")
     disk_space_report(base_dir)

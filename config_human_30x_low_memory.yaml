@@ -17,6 +17,8 @@ storage:
   work_dir: "/dados/GENOMICS_DATA/low_memory/work"
   temp_dir: "/dados/GENOMICS_DATA/low_memory/tmp"
   keep_intermediates: true   # útil para retomar e inspecionar
+  temp_dir: "/dados/tmp"   # ← seu disco rápido
+
 
 download:
   tool: sra_toolkit            # prefetch + fasterq-dump
@@ -29,6 +31,10 @@ execution:
   resume: true                 # não reprocessa o que já existe
   skip_existing: true          # idem para baixados/gerados
   progress_interval_sec: 60    # estimativas periódicas
+  stall_warn_min: 5
+  stall_fail_min: 50
+  ena_fallback: true     # cai para ENA HTTP quando o fasterq ficar parado além do limite
+  cancel_on_convert_stall: false  # não cancelar na fase "convertendo"
 
 size_control:
   downsample:
