@@ -2,7 +2,7 @@
 # Ativa o conda de forma local e entra no env "genomics"
 # Uso recomendado:  source ~/bin/start_genomics.sh
 
-set -euo pipefail
+# set -euo pipefail
 
 CONDA_BASE="/home/lume2/miniforge3"
 

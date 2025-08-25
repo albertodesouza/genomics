@@ -12,18 +12,34 @@ project:
     # (opcional) se quiser fixar um GTF específico, adicione:
     # gtf_url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/gencode.v46.primary_assembly.annotation.gtf.gz"
 
+general:
+  gene_presence_min_mean_cov: 5.0
+  gene_presence_min_breadth_1x: 0.8
+
+  trio_child_id: NA12878
+  trio_parent_ids: [NA12891, NA12892]
+
+  # filtros simples para os de novo (padrões robustos p/ ~7–10×)
+  trio_min_dp_child: 8
+  trio_min_dp_parents: 8
+  trio_min_gq: 20
+  trio_min_ab_het: 0.25
+  trio_max_ab_het: 0.75
+  trio_min_ab_hom: 0.90
+  trio_max_parent_alt_frac: 0.02
+
 storage:
   base_dir: "/dados/GENOMICS_DATA/low_memory"
   work_dir: "/dados/GENOMICS_DATA/low_memory/work"
-  temp_dir: "/dados/GENOMICS_DATA/low_memory/tmp"
+  # temp_dir: "/dados/GENOMICS_DATA/low_memory/tmp"
   keep_intermediates: true   # útil para retomar e inspecionar
   temp_dir: "/dados/tmp"   # ← seu disco rápido
-
 
 download:
   tool: sra_toolkit            # prefetch + fasterq-dump
   use_ascp: false              # mude para true se tiver Aspera configurado
   threads: 8
+  prefetch_retries: 3          # tenta de novo (com backoff) se prefetch falhar
   # Se preferir baixar direto os FASTQs via FTP, seu script pode respeitar 'direct_fastq_urls' (opcional)
 
 execution:
@@ -33,9 +49,10 @@ execution:
   progress_interval_sec: 60    # estimativas periódicas
   stall_warn_min: 5
   stall_fail_min: 50
-  ena_fallback: true     # cai para ENA HTTP quando o fasterq ficar parado além do limite
+  ena_fallback: true           # cai para ENA HTTP quando o fasterq ficar parado além do limite
   cancel_on_convert_stall: false  # não cancelar na fase "convertendo"
-
+  prefer_ena_fastq: false      # tenta baixar FASTQs prontos do ENA antes de prefetch/fasterq
+  
 size_control:
   downsample:
     enabled: true
