@@ -13,7 +13,7 @@ if ! conda env list | grep -q "^${ENV_NAME}\b"; then
   mamba create -y -n "${ENV_NAME}" -c bioconda -c conda-forge \
     python=3.11 pyyaml rich tqdm humanfriendly psutil \
     sra-tools fastqc multiqc cutadapt \
-    bwa-mem2 minimap2 samtools picard gatk4 bedtools \
+    bwa bwa-mem2 minimap2 samtools picard gatk4 bedtools \
     gffread ensembl-vep bcftools \
     hisat2 stringtie gffcompare wget \
     mosdepth seqtk
@@ -23,7 +23,7 @@ else
   mamba install -y -c bioconda -c conda-forge \
     pyyaml rich tqdm humanfriendly psutil \
     sra-tools fastqc multiqc cutadapt \
-    bwa-mem2 minimap2 samtools picard gatk4 bedtools \
+    bwa bwa-mem2 minimap2 samtools picard gatk4 bedtools \
     gffread ensembl-vep bcftools \
     hisat2 stringtie gffcompare wget \
     mosdepth seqtk

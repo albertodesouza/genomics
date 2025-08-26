@@ -7,12 +7,17 @@ project:
     name: GRCh38.d1.vd1
     # FASTA em tar.gz do GDC (o script extrai e cria refs/reference.fa)
     fasta_url: "https://api.gdc.cancer.gov/data/254f697d-310d-4d7d-a27b-27fbf767a834"
-    # índice BWA pré-construído (evita indexar localmente → baixa RAM)
+    # índice BWA pré-construído (evita indexar localmente → baixa RAM) --> so usar com bwa classico; com bwa-mem2, comentar
     bwa_index_url: "https://api.gdc.cancer.gov/data/25217ec9-af07-4a17-8db9-101271ee7225"
     # (opcional) se quiser fixar um GTF específico, adicione:
     # gtf_url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/gencode.v46.primary_assembly.annotation.gtf.gz"
 
 general:
+  # So precisa force_indexes: true quando rodar a primeira vez o bwa-mem2 com os mesmos dados
+  force_indexes: true
+  sort_mem_mb: 384      # memória por thread do 'samtools sort' (ex.: 384, 512, 768)
+  bwa_batch_k: 20000000 # tamanho de lote do (bwa|bwa-mem2) mem; menor = menos RAM
+
   gene_presence_min_mean_cov: 5.0
   gene_presence_min_breadth_1x: 0.8
 
@@ -27,6 +32,13 @@ general:
   trio_max_ab_het: 0.75
   trio_min_ab_hom: 0.90
   trio_max_parent_alt_frac: 0.02
+
+# Parâmetros de alinhamento/chamada (exemplo; alinhe com o que seu script usa)
+params:
+  aligner: bwa # bwa-mem2
+  bwa_mem2_threads: 1
+  gatk_threads: 8
+  target_gene_list: null   # ou caminho para um painel BED/genes de interesse
 
 storage:
   base_dir: "/dados/GENOMICS_DATA/low_memory"
@@ -94,12 +106,4 @@ steps:
   - bqsr                  # GATK BaseRecalibrator/applyBQSR (opcional)
   - call_genes            # sua extração/varredura de genes (exons/introns) e comparação
   - summarize             # relatórios e métricas
-
-# Parâmetros de alinhamento/chamada (exemplo; alinhe com o que seu script usa)
-params:
-  # forçar o alinhador a 'bwa' (índice do GDC é do BWA clássico)
-  aligner: bwa
-  bwa_mem2_threads: 16
-  gatk_threads: 8
-  target_gene_list: null   # ou caminho para um painel BED/genes de interesse
 
