@@ -14,9 +14,10 @@ project:
 
 general:
   # So precisa force_indexes: true quando rodar a primeira vez o bwa-mem2 com os mesmos dados
-  force_indexes: true
-  sort_mem_mb: 384      # memória por thread do 'samtools sort' (ex.: 384, 512, 768)
+  force_indexes: false
+  sort_mem_mb: 512      # memória por thread do 'samtools sort' (ex.: 384, 512, 768)
   bwa_batch_k: 20000000 # tamanho de lote do (bwa|bwa-mem2) mem; menor = menos RAM
+  aln_threads: 16       # usado por bwa
 
   gene_presence_min_mean_cov: 5.0
   gene_presence_min_breadth_1x: 0.8
@@ -36,7 +37,7 @@ general:
 # Parâmetros de alinhamento/chamada (exemplo; alinhe com o que seu script usa)
 params:
   aligner: bwa # bwa-mem2
-  bwa_mem2_threads: 1
+  bwa_mem2_threads: 2
   gatk_threads: 8
   target_gene_list: null   # ou caminho para um painel BED/genes de interesse
 

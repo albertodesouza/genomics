@@ -53,57 +53,157 @@ def run(cmd: List[str], cwd: Optional[str]=None, env=None, check=True):
     console.print(f"[bold]>[/bold] {' '.join(cmd)}", style="dim")
     sp.run(cmd, cwd=cwd, env=env, check=check)
 
-def run_long_stream_pipeline(cmd_list: List[List[str]], label: str, heartbeat_sec: int = 60):
+def run_long_stream_pipeline(
+    cmd_list: List[List[str]],
+    label: str,
+    heartbeat_sec: int = 60,
+    progress_spec: Optional[dict] = None,  # {"total_reads": int|None, "print_every": int}
+):
     """
-    Executa um pipeline encadeado sem tocar no stdout do primeiro comando.
-    Captura stderr de cada etapa em logs/ <label>.log para debug.
+    Executa o pipeline com Popen, sem tocar no stdout do 1º comando (SAM),
+    e monitora o *stderr* do 1º comando para inferir progresso (BWA/BWA-MEM2).
+
+    progress_spec:
+      - total_reads: total esperado de reads (int) ou None se desconhecido
+      - print_every: segundos entre prints de progresso (padrão 15)
     """
-    from pathlib import Path
-    import re, time, subprocess as sp
-    from rich.panel import Panel
-    from rich.text import Text
+    import threading, queue, re
 
     console.print(Panel.fit(Text(label, style="bold yellow"), border_style="yellow"))
-    console.print("[bold]>[/bold] " + "  |  ".join(" ".join(c) for c in cmd_list), style="dim")
-
-    Path("logs").mkdir(exist_ok=True)
-    log_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", label).strip("_") or "pipeline"
-    log_path = Path("logs") / f"{log_name}.log"
-    log_fh = open(log_path, "wb")
+    console.print("[bold]>[/bold] " + "  |  ".join(" ".join(map(str, c)) for c in cmd_list), style="dim")
 
     procs = []
-    # monta a cadeia sem mexer no stdout do primeiro processo
-    for i, cmd in enumerate(cmd_list):
-        if i == 0:
-            p = sp.Popen(cmd, stdout=sp.PIPE, stderr=log_fh)                 # bwa → stdout (SAM), stderr vai pro log
-        elif i < len(cmd_list) - 1:
-            p = sp.Popen(cmd, stdin=procs[-1].stdout, stdout=sp.PIPE, stderr=log_fh)
-            procs[-1].stdout.close()  # libera o pipe anterior
-        else:
-            p = sp.Popen(cmd, stdin=procs[-1].stdout, stderr=log_fh)         # último não precisa de stdout
-            procs[-1].stdout.close()
+    start = time.time()
+
+    # 1) primeiro comando: stderr=PIPE (para monitor) / stdout=PIPE (vai para o próximo)
+    p0 = sp.Popen(
+        cmd_list[0],
+        stdout=sp.PIPE,
+        stderr=sp.PIPE,            # <— monitoramos só o stderr
+        text=True,
+        bufsize=1,
+        universal_newlines=True,
+    )
+    procs.append(p0)
+
+    # 2) demais comandos encadeados
+    for i, cmd in enumerate(cmd_list[1:], start=1):
+        p = sp.Popen(
+            cmd,
+            stdin=procs[-1].stdout,
+            stdout=sp.PIPE if i < len(cmd_list)-1 else None,
+            stderr=sp.STDOUT if i < len(cmd_list)-1 else None,
+            text=False  # binário nos estágios seguintes
+        )
         procs.append(p)
 
-    start = time.time()
-    # heartbeat simples
-    while any(p.poll() is None for p in procs):
-        elapsed = int(time.time() - start)
-        if elapsed and elapsed % heartbeat_sec == 0:
-            console.print(f"[heartbeat] {label}... {elapsed//60}m{elapsed%60:02d}s", style="magenta")
-        time.sleep(1)
+    # monitor de progresso (apenas se progress_spec for passado)
+    stop_flag = {"stop": False}
+    def _stderr_monitor():
+        if not p0.stderr:
+            return
+        import math, time, re
+        total = None
+        done = 0
+        last_print = time.time()
+        last_done  = 0
+        last_time  = last_print
+        print_every = int(progress_spec.get("print_every", 15)) if progress_spec else 15
+        if progress_spec and isinstance(progress_spec.get("total_reads", None), int):
+            total = int(progress_spec["total_reads"])
 
-    log_fh.flush(); log_fh.close()
+        # BWA/BWA-MEM2 imprime lotes como: "[M::process] read 537168 sequences (80000209 bp)..."
+        rx_batch = re.compile(r"\[M::process\]\s+read\s+(\d+)\s+sequences")
+
+        while True:
+            line = p0.stderr.readline()
+            if not line:
+                if p0.poll() is not None:
+                    break
+                time.sleep(0.05)
+                continue
+
+            m = rx_batch.search(line)
+            if m:
+                done += int(m.group(1))
+
+            now = time.time()
+            if now - last_print >= print_every:
+                dt = max(1e-3, (now - last_time))
+                delta = max(0, done - last_done)
+                rate = delta / dt  # reads/s
+                last_time = now
+                last_done = done
+
+                if total and total > 0:
+                    # evita % > 100 e negativos
+                    pct = min(100.0, max(0.0, 100.0 * min(done, total) / total))
+                    rem = max(0, total - done)
+
+                    # ETA só quando taxa é finita e > 0
+                    if rate > 1e-6 and math.isfinite(rate):
+                        eta_s = rem / rate
+                        if math.isfinite(eta_s) and eta_s < 9e6:  # ~104 dias como limite de sanidade
+                            eta_txt = f"{int(eta_s // 60)}m{int(eta_s % 60):02d}s"
+                        else:
+                            eta_txt = "--:--"
+                    else:
+                        eta_txt = "--:--"
+
+                    console.print(
+                        f"[magenta]{label}[/magenta] — {done:,}/{total:,} reads ({pct:4.1f}%) • "
+                        f"{rate/1000:.1f} kreads/s • ETA {eta_txt}",
+                        highlight=False
+                    )
+                else:
+                    console.print(
+                        f"[magenta]{label}[/magenta] — {done:,} reads • "
+                        f"{rate/1000:.1f} kreads/s",
+                        highlight=False
+                    )
+                last_print = now
+
+    t_mon = None
+    if progress_spec is not None:
+        t_mon = threading.Thread(target=_stderr_monitor, daemon=True)
+        t_mon.start()
+
+    # heartbeats enquanto a *última* etapa roda
+    last_hb = start
+    while True:
+        rc_last = procs[-1].poll()
+        if rc_last is not None:
+            break
+        now = time.time()
+        if now - last_hb >= heartbeat_sec:
+            elapsed = int(now - start)
+            console.print(f" {label}... {elapsed//60}m{elapsed%60:02d}s")
+            last_hb = now
+        time.sleep(0.5)
+
+    # finalize/cheque return codes
     rc = 0
-    for p in procs:
-        rc = rc or (p.returncode or 0)
+    for p in procs[::-1]:
+        p.wait()
+        rc = rc or p.returncode
+
+    # encerra monitor
+    if t_mon:
+        try:
+            t_mon.join(timeout=2)
+        except Exception:
+            pass
 
     if rc != 0:
+        # opcional: coletar um tail do stderr do p0 para debug
+        tail = ""
         try:
-            tail = sp.run(["bash","-lc", f"tail -n 80 {shlex.quote(str(log_path))}"],
-                          capture_output=True, text=True, check=True).stdout
+            if p0.stderr:
+                # não dá para "tail" aqui, mas podemos informar que falhou
+                tail = "BWA/BWA-MEM2 retornou erro — veja logs/ ou reexecute com '-v 3'."
         except Exception:
-            tail = ""
-        raise sp.CalledProcessError(rc, cmd_list[0], output=f"Veja log: {log_path}\n{tail}")
+            pass
+        raise sp.CalledProcessError(rc, cmd_list[0], output=tail)
 
     elapsed = int(time.time() - start)
     console.print(f"✅ [bold green]{label} concluído[/bold green] em {elapsed//60}m{elapsed%60:02d}s.")
@@ -652,14 +752,24 @@ def normalize_config_schema(cfg_in: dict) -> dict:
 
     # alinhador + threads específicas p/ alinhamento
     aligner = (params.get("aligner") or execv.get("aligner") or "bwa-mem2").lower()
-    # Importante: 'aln_threads' NÃO herda de download.threads (evita o bug de usar 8 por engano)
-    if aligner in ("bwa-mem2", "bwa_mem2", "mem2"):
-        aln_threads = int(params.get("bwa_mem2_threads") or execv.get("aln_threads") or execv.get("threads") or 1)
-        aligner = "bwa-mem2"  # normaliza nome
-    else:
-        aln_threads = int(params.get("bwa_threads") or execv.get("aln_threads") or execv.get("threads") or 1)
-        aligner = "bwa"       # normaliza nome
+    aligner = "bwa-mem2" if aligner in ("bwa-mem2", "bwa_mem2", "mem2") else "bwa"
+
+    # >>>>> ÚNICA PARTE ALTERADA: precedência do aln_threads <<<<<
+    # Prioridade: general.aln_threads > params.aln_threads >
+    #             (params.bwa_mem2_threads|params.bwa_threads) >
+    #             execution.aln_threads > execution.threads > download.threads > 16
+    cand_aln_threads = [
+        (cfg_in.get("general") or {}).get("aln_threads"),
+        params.get("aln_threads"),
+        params.get("bwa_mem2_threads") if aligner == "bwa-mem2" else params.get("bwa_threads"),
+        execv.get("aln_threads"),
+        execv.get("threads"),
+        download.get("threads"),
+        16,
+    ]
+    aln_threads = next(int(v) for v in cand_aln_threads if v is not None)
     aln_threads = max(1, aln_threads)
+    # <<<<< FIM DA ALTERAÇÃO >>>>>
 
     # knobs de RAM do alinhamento / sort
     sort_mem_mb  = int(cfg_in.get("general", {}).get("sort_mem_mb", 384))
@@ -855,25 +965,47 @@ def _uuid_basename_from_url(url: str, default: str) -> str:
 
 def install_prebuilt_bwa_index(bwa_tar_url: str, expect_md5: str = "", force: bool = False):
     """
-    Instala o índice BWA pré-construído (GDC) de forma robusta:
-      - Baixa com cache (wget -c).
-      - Identifica dentro do tar os 5 arquivos *.fa.{amb,ann,bwt,pac,sa}.
-      - Extrai somente esses arquivos para refs/_bwa (overwrite seguro).
-      - Cria symlinks refs/reference.fa.{amb,ann,bwt,pac,sa} apontando para ABSOLUTE paths.
-      - Valida que todos os 5 existem ao final.
+    Instala o índice BWA pré-construído (GDC) de forma robusta e idempotente:
+      - Fast-path: se os 5 links refs/reference.fa.{amb,ann,bwt,pac,sa} já existem
+        e apontam para alvos válidos → SKIP imediato.
+      - Baixa com cache (wget -c) só se precisar.
+      - Extrai do tar SOMENTE se faltar arquivo (ou force=True).
+      - Cria/reusa symlinks apontando para caminhos absolutos.
+      - Só roda chmod -R quando houve extração.
     """
-    import re, shlex
+    import os, re, shlex
     from pathlib import Path
     import subprocess as sp
 
-    def _bwa_index_ready(prefix: Path) -> bool:
-        exts = (".amb", ".ann", ".bwt", ".pac", ".sa")
+    exts = [".amb", ".ann", ".bwt", ".pac", ".sa"]
+    ref_prefix = Path("refs/reference.fa")
+    index_dir = Path("refs/_bwa")
+    index_dir.mkdir(parents=True, exist_ok=True)
+
+    def _links_ok() -> bool:
         for e in exts:
-            p = Path(str(prefix) + e)
-            if not p.exists():
+            p = Path(str(ref_prefix) + e)
+            if not p.exists(): 
                 return False
-            # se for symlink, precisa resolver
-            if p.is_symlink() and not p.resolve().exists():
+            if p.is_symlink():
+                try:
+                    _ = p.resolve(strict=True)
+                except FileNotFoundError:
+                    return False
+            else:
+                # preferimos que sejam symlinks, mas se for arquivo regular válido, aceite
+                if not p.is_file():
+                    return False
+        return True
+
+    def _any_prefix_in_dir() -> Path | None:
+        """Tenta achar rapidamente um prefixo *.fa sob refs/_bwa (usa só o .amb)."""
+        amb = next(index_dir.rglob("*.fa.amb"), None)
+        return amb.with_suffix("") if amb else None
+
+    def _prefix_has_all(prefix: Path) -> bool:
+        for e in exts:
+            if not Path(str(prefix) + e).exists():
                 return False
         return True
 
@@ -881,99 +1013,119 @@ def install_prebuilt_bwa_index(bwa_tar_url: str, expect_md5: str = "", force: bo
         m = re.search(r'([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$', url, re.I)
         return (m.group(1) + ".tar.gz") if m else default
 
-    if not bwa_tar_url:
+    # ---------- Fast path: tudo pronto? ----------
+    if not force and _links_ok():
+        console.print("Índice BWA já presente e válido → [bold]SKIP[/bold]")
+        print_meta("Índice BWA linkado", [Path(str(ref_prefix)+e) for e in exts])
         return
 
-    index_dir = Path("refs/_bwa")
-    index_dir.mkdir(parents=True, exist_ok=True)
+    if not bwa_tar_url:
+        # Sem URL e sem links prontos → erro claro
+        if not _links_ok():
+            raise RuntimeError("Sem bwa_tar_url e índice BWA ausente/incompleto.")
+        return
+
     tar_name = _uuid_basename_from_url(bwa_tar_url, "index.tar.gz")
     tar_path = index_dir / tar_name
 
-    # 1) download (com cache)
-    if not tar_path.exists() or force:
+    # ---------- Download (cache) ----------
+    if force or not tar_path.exists():
         run(["bash","-lc", f"wget -c -O {shlex.quote(str(tar_path))} {shlex.quote(bwa_tar_url)}"])
     else:
         console.print(f"{tar_name} já presente → [bold]SKIP download[/bold]")
 
-    # 2) (opcional) checagem de md5
+    # ---------- MD5 opcional ----------
     if expect_md5:
-        md5 = sp.run(["bash","-lc", f"md5sum {shlex.quote(str(tar_path))} | cut -d' ' -f1"],
-                     capture_output=True, text=True, check=True).stdout.strip()
+        md5 = sp.run(
+            ["bash","-lc", f"md5sum {shlex.quote(str(tar_path))} | cut -d' ' -f1"],
+            capture_output=True, text=True, check=True
+        ).stdout.strip()
         if md5 != expect_md5:
             raise RuntimeError(f"MD5 não confere para {tar_name}: {md5} (esp. {expect_md5})")
 
-    # 3) liste o tar e pegue apenas os 5 arquivos desejados
-    lst = sp.run(["bash","-lc", f"tar -tzf {shlex.quote(str(tar_path))}"],
-                 capture_output=True, text=True, check=True).stdout.splitlines()
-    wanted_re = re.compile(r"\.fa\.(amb|ann|bwt|pac|sa)$")
-    entries = [x for x in lst if wanted_re.search(x)]
-    if not entries:
-        raise RuntimeError("Tar não contém *.fa.{amb,ann,bwt,pac,sa}.")
-    # normaliza nomes (remove ./ prefixos etc.)
-    entries = [re.sub(r"^\./", "", x) for x in entries]
+    # ---------- Precisamos extrair? ----------
+    # Se já houver um prefixo completo em refs/_bwa e não for force, reaproveite.
+    best_prefix: Path | None = None
+    if not force:
+        p = _any_prefix_in_dir()
+        if p and _prefix_has_all(p):
+            best_prefix = p
 
-    # 4) extraia SOMENTE os 5 arquivos (overwrite)
-    #    (em alguns tars já existirem arquivos → sobrescrever)
-    names_quoted = " ".join(shlex.quote(x) for x in entries)
-    # tenta com --overwrite (GNU tar); se falhar, tenta sem
-    rc = sp.run(["bash","-lc", f"tar -xzf {shlex.quote(str(tar_path))} -C {shlex.quote(str(index_dir))} --overwrite {names_quoted}"],
-                stdout=sp.DEVNULL, stderr=sp.DEVNULL).returncode
-    if rc != 0:
-        run(["bash","-lc", f"tar -xzf {shlex.quote(str(tar_path))} -C {shlex.quote(str(index_dir))} {names_quoted}"])
+    extracted = False
+    if best_prefix is None:
+        # (1) listar rapidamente os caminhos que queremos (uma vez só)
+        lst = sp.run(
+            ["bash","-lc", f"tar -tzf {shlex.quote(str(tar_path))}"],
+            capture_output=True, text=True, check=True
+        ).stdout.splitlines()
+        wanted = [x for x in lst if re.search(r"\.fa\.(amb|ann|bwt|pac|sa)$", x)]
+        if not wanted:
+            # diagnóstico amigável
+            head = "\n".join(lst[:10])
+            console.print(Panel.fit(
+                "Tar não contém *.fa.{amb,ann,bwt,pac,sa}.\n"
+                "Pré-visualização (head):\n" + head,
+                border_style="red"
+            ))
+            raise RuntimeError("Tar sem arquivos de índice do BWA.")
 
-    # 5) descubra o *prefixo comum* dos 5 arquivos extraídos
-    exts = [".amb",".ann",".bwt",".pac",".sa"]
-    # mapa prefixo->quantos arquivos achados
-    counts = {}
-    files_by_ext = {e: None for e in exts}
+        wanted = [re.sub(r"^\./", "", x) for x in wanted]
+        names_quoted = " ".join(shlex.quote(x) for x in wanted)
+
+        # (2) extração só dos 5 arquivos (overwrite se preciso)
+        rc = sp.run(
+            ["bash","-lc",
+             f"tar -xzf {shlex.quote(str(tar_path))} -C {shlex.quote(str(index_dir))} --overwrite {names_quoted}"],
+            stdout=sp.DEVNULL, stderr=sp.DEVNULL
+        ).returncode
+        if rc != 0:
+            run(["bash","-lc",
+                 f"tar -xzf {shlex.quote(str(tar_path))} -C {shlex.quote(str(index_dir))} {names_quoted}"])
+        extracted = True
+
+        # (3) deduz prefixo agora existente
+        amb = next(index_dir.rglob("*.fa.amb"), None)
+        if not amb:
+            raise RuntimeError("Falha ao localizar *.fa.amb após extração.")
+        best_prefix = amb.with_suffix("")
+        if not _prefix_has_all(best_prefix):
+            raise RuntimeError("Índice BWA incompleto após extração.")
+
+    # ---------- (Re)link inteligente ----------
+    from os.path import samefile
     for e in exts:
-        hit = None
-        # procure exatamente *.fa.<ext> em qualquer subdir de index_dir
-        for p in index_dir.rglob(f"*.fa{e}"):
-            hit = p
-            break
-        files_by_ext[e] = hit
-        if hit:
-            pref = str(hit)[:-len(e)]
-            counts[pref] = counts.get(pref, 0) + 1
-
-    if not any(files_by_ext.values()):
-        # debug: mostre um head do tar
-        head = "\n".join(lst[:10])
-        console.print(Panel.fit(
-            "Falha ao localizar *.amb/*.ann/*.bwt/*.pac/*.sa após extração.\n"
-            "Pré-visualização do tar (head):\n" + head,
-            border_style="red"
-        ))
-        raise RuntimeError("Índice BWA não encontrado ou incompleto após extração do tar.")
-
-    # escolha o prefixo com mais correspondências
-    best_prefix = max(counts.items(), key=lambda kv: kv[1])[0]
-
-    # 6) crie/recrie os symlinks refs/reference.fa.{ext} → alvo absoluto
-    ref_prefix = Path("refs/reference.fa")
-    for e in exts:
-        # re-resolve a partir do prefixo escolhido
-        target = Path(best_prefix + e)
+        target = Path(str(best_prefix) + e).resolve()
         if not target.exists():
-            # fallback: tente achar qualquer *.fa<ext> sob index_dir
-            target = files_by_ext[e]
-        if not (target and target.exists()):
-            raise RuntimeError(f"Arquivo do índice ausente: {best_prefix+e}")
+            raise RuntimeError(f"Arquivo do índice ausente: {target}")
         dst = Path(str(ref_prefix) + e)
-        if dst.exists() or dst.is_symlink():
+        if dst.is_symlink():
+            try:
+                if samefile(dst, target):
+                    # link já correto → não mexe
+                    pass
+                else:
+                    dst.unlink(missing_ok=True)
+                    dst.symlink_to(target)
+            except FileNotFoundError:
+                # alvo sumiu → recria
+                dst.unlink(missing_ok=True)
+                dst.symlink_to(target)
+        elif dst.exists():
+            # arquivo regular (raro) → substitui por symlink
             dst.unlink(missing_ok=True)
-        # garanta caminho absoluto e permissões legíveis
-        abs_target = target.resolve()
-        dst.symlink_to(abs_target)
-    run(["bash","-lc", f"chmod -R a+r {shlex.quote(str(index_dir))} || true"])
+            dst.symlink_to(target)
+        else:
+            dst.symlink_to(target)
 
-    # 7) validação final + sumário
-    if not _bwa_index_ready(ref_prefix):
-        raise RuntimeError("Após relink, o índice BWA continua incompleto/inválido.")
-    # imprime um mini sumário do que foi linkado
-    linked = [Path(str(ref_prefix)+e) for e in exts]
-    print_meta("Índice BWA linkado", linked)
+    # permissões só quando houve extração (evita custo em cada run)
+    if extracted:
+        run(["bash","-lc", f"chmod -R a+r {shlex.quote(str(index_dir))} || true"])
+
+    # ---------- Validação final + sumário ----------
+    if not all(Path(str(ref_prefix)+e).exists() for e in exts):
+        raise RuntimeError("Após relink, o índice BWA continua incompleto.")
+    console.print("Índice BWA linkado → [bold]pronto[/bold]")
+    print_meta("Índice BWA linkado", [Path(str(ref_prefix)+e) for e in exts])
 
 def limit_reference_to_canonical_if_enabled():
     g = cfg_global["general"]
@@ -1396,16 +1548,87 @@ def align_one_sample(
     sample_id: Optional[str] = None,
 ):
     """
-    Alinha uma amostra short/long read com uso de RAM controlado.
-    - Respeita 'general.aln_threads' (se existir) em vez do 'threads' passado.
-    - Usa -K (bwa/bwa-mem2) e sort -m / -@ ajustáveis.
-    - Detecta ausência de índice do bwa-mem2 e cai para 'bwa mem' automaticamente.
+    Alinha uma amostra short/long read com uso de RAM controlado e progresso (ETA) no BWA/BWA-MEM2.
+    - Usa -K (bwa/bwa-mem2) e sort -m/-@ ajustáveis (general.sort_mem_mb, general.bwa_batch_k).
+    - Respeita 'general.aln_threads' (se existir).
+    - Detecta ausência de índice do bwa-mem2 e faz fallback para 'bwa mem'.
+    - Mostra progresso/ETA lendo o stderr do BWA e, se possível, o Total Sequences do FastQC.
     """
 
-    import re
-    import subprocess as sp
+    import re, shutil, subprocess as sp, zipfile
 
-    # ---------------- nome canônico ----------------
+    # ---------- helpers internos ----------
+    def _bwa_index_ready(prefix: Path) -> bool:
+        for ext in (".amb", ".ann", ".bwt", ".pac", ".sa"):
+            if not Path(str(prefix) + ext).exists():
+                return False
+        return True
+
+    def _mem2_index_present(prefix: Path) -> bool:
+        # sinais do índice do bwa-mem2
+        return Path(str(prefix) + ".bwt.2bit.64").exists() or any(Path("refs").glob("reference.fa.*.0123"))
+
+    def _fastqc_total_for_filename(target_name: str) -> Optional[int]:
+        """
+        Percorre qc/*.zip, abre *fastqc_data.txt* e procura por:
+          Filename\t<target_name>
+          Total Sequences\tN
+        Retorna N se encontrar; caso contrário None.
+        """
+        qc_dir = Path("qc")
+        if not qc_dir.exists():
+            return None
+        for z in qc_dir.glob("*.zip"):
+            try:
+                with zipfile.ZipFile(z) as zf:
+                    # acha o arquivo fastqc_data.txt
+                    member = None
+                    for n in zf.namelist():
+                        if n.endswith("/fastqc_data.txt"):
+                            member = n
+                            break
+                    if member is None:
+                        continue
+                    with zf.open(member) as fh:
+                        fname_ok = False
+                        total = None
+                        for raw in fh:
+                            line = raw.decode("utf-8", "ignore").rstrip("\n")
+                            if line.startswith("Filename"):
+                                # "Filename\tERR3239334_1.trim.fq.gz" (ou nome original)
+                                parts = line.split("\t", 1)
+                                if len(parts) == 2 and parts[1].strip() == target_name:
+                                    fname_ok = True
+                            elif line.startswith("Total Sequences"):
+                                parts = line.split("\t", 1)
+                                if len(parts) == 2:
+                                    try:
+                                        total = int(parts[1].replace(",", "").strip())
+                                    except Exception:
+                                        total = None
+                            if fname_ok and total is not None:
+                                return total
+            except Exception:
+                continue
+        return None
+
+    def _estimate_total_reads_for_alignment(r1_path: Path, r2_path: Optional[Path]) -> Optional[int]:
+        """
+        Tenta obter o total de reads via FastQC. Se existir R2, total = n1 + n2.
+        Se não conseguir, retorna None (sem ETA, mas com taxa e contagem).
+        """
+        n1 = _fastqc_total_for_filename(r1_path.name)
+        n2 = _fastqc_total_for_filename(r2_path.name) if r2_path is not None else None
+        if n1 is None and r2_path is not None:
+            # alguns setups só têm FastQC do R1; nesse caso, aproxima 2×
+            n1 = _fastqc_total_for_filename(r1_path.name)
+            if n1 is not None:
+                return n1 * 2
+        if n1 is None:
+            return None
+        return n1 + (n2 or 0)
+
+    # ---------- nome canônico ----------
     sample = sample_id if sample_id else re.sub(
         r'(_R?1|\.1)(\.trim)?\.(fastq|fq)\.gz$', '', r1.name
     )
@@ -1418,14 +1641,13 @@ def align_one_sample(
         console.print(f"[{sample}] alinhado → [bold]SKIP (cache)[/bold]")
         return
 
-    # ---------------- localizar R2 -----------------
+    # ---------- localizar R2 ----------
     r2 = None
-    candidates = []
+    cand = []
     if expected_r2_name:
-        candidates.append(r1.parent / expected_r2_name)
-
+        cand.append(r1.parent / expected_r2_name)
     name = r1.name
-    patterns = [
+    for pat, rep in (
         (r"_1\.trim\.fq\.gz$", "_2.trim.fq.gz"),
         (r"_1\.fastq\.gz$",    "_2.fastq.gz"),
         (r"_1\.fq\.gz$",       "_2.fq.gz"),
@@ -1433,61 +1655,40 @@ def align_one_sample(
         (r"R1\.fq\.gz$",       "R2.fq.gz"),
         (r"\.1\.fastq\.gz$",   ".2.fastq.gz"),
         (r"\.1\.fq\.gz$",      ".2.fq.gz"),
-    ]
-    for pat, rep in patterns:
+    ):
         if re.search(pat, name):
-            candidates.append(r1.parent / re.sub(pat, rep, name))
-    for c in candidates:
+            cand.append(r1.parent / re.sub(pat, rep, name))
+    for c in cand:
         if c.exists():
             r2 = c
             break
-
-    # guarda defensiva: nunca deixar R1==R2
     if r2 and r2.resolve() == r1.resolve():
         console.print(f"[yellow][{sample}] Atenção:[/yellow] R2==R1 detectado; prosseguindo como single-end.", style="italic")
         r2 = None
 
-    # ---------------- parâmetros RAM-friendly ---------------
+    # ---------- parâmetros ----------
     g = cfg_global.get("general", {})
-    # Preferir threads específicas do alinhamento, se definidas (normalize_config_schema já cria 'aln_threads')
-    aln_threads  = int(g.get("aln_threads", threads))
-    aln_threads  = max(1, aln_threads)
+    aln_threads = int(g.get("aln_threads", threads))
+    aln_threads = max(1, aln_threads)
 
-    # sort: por padrão metade das threads do alinhamento (mín. 1)
+    # samtools sort: por padrão metade das threads do alinhamento (mín. 1)
     sort_threads = int(g.get("sort_threads", max(1, aln_threads // 2)))
     sort_threads = max(1, min(sort_threads, aln_threads))
-    sort_mem_mb  = int(g.get("sort_mem_mb", 512))              # MB por thread do sort
-    bwa_batch_k  = str(int(g.get("bwa_batch_k", 20_000_000)))  # -K lote (menor = menos RAM)
+    sort_mem_mb  = int(g.get("sort_mem_mb", 512))
+    bwa_batch_k  = str(int(g.get("bwa_batch_k", 20_000_000)))
 
     aligner_cfg  = g.get("aligner", "bwa-mem2").lower()
-    # campo RG com \t ESCAPADO (NÃO use tabs literais)
-    rg_field = f"@RG\\tID:{sample}\\tSM:{sample}\\tPL:ILLUMINA"
+    rg_field     = f"@RG\\tID:{sample}\\tSM:{sample}\\tPL:ILLUMINA"
+    ref_prefix   = Path("refs/reference.fa")
 
-    # Checagem de índices:
-    def _bwa_index_ready(prefix: Path) -> bool:
-        for ext in (".amb",".ann",".bwt",".pac",".sa"):
-            p = Path(str(prefix) + ext)
-            if not p.exists():
-                return False
-        return True
-
-    def _mem2_index_present(prefix: Path) -> bool:
-        # sinais fortes do índice do bwa-mem2
-        return Path(str(prefix) + ".bwt.2bit.64").exists() or any(Path("refs").glob("reference.fa.*.0123"))
-
-    ref_prefix = Path("refs/reference.fa")
-
-    # escolher alinhador efetivo (com fallback)
+    # escolher alinhador efetivo
     aligner_effective = aligner_cfg
     if read_type == "short":
         if aligner_cfg in ("bwa-mem2", "bwa_mem2", "mem2"):
-            # precisamos do índice do mem2; se não houver, cai para 'bwa'
             if not _mem2_index_present(ref_prefix):
                 console.print(
-                    "[orange3]"
-                    f"[{sample}] Índice do bwa-mem2 ausente → caindo para 'bwa mem' automaticamente. "
-                    "Use aligner: bwa + bwa_prebuilt_url no YAML OU rode 'bwa-mem2 index' se tiver RAM."
-                    "[/orange3]"
+                    f"[orange3][{sample}] Índice do bwa-mem2 ausente → fallback automático para 'bwa mem'. "
+                    "Use aligner: bwa + bwa_prebuilt_url no YAML OU gere o índice do mem2 se tiver RAM.[/orange3]"
                 )
                 aligner_effective = "bwa"
             else:
@@ -1495,7 +1696,7 @@ def align_one_sample(
         else:
             aligner_effective = "bwa"
 
-    # imprime um sumário útil
+    # sumário
     console.print(
         f"[bold cyan][{sample}] Alinhador:[/bold cyan] {('BWA' if aligner_effective=='bwa' else 'BWA-MEM2')}  "
         f"[bold cyan]aln_threads:[/bold cyan] {aln_threads}  "
@@ -1505,15 +1706,16 @@ def align_one_sample(
         f"[bold cyan]R2:[/bold cyan] {('OK' if r2 else 'single-end')}"
     )
 
-    # ---------------- execução ----------------
+    # ---------- execução ----------
     if read_type == "short":
-        # Verifica índice mínimo do BWA se for o caminho efetivo
+        # pré-cheque de índice BWA se for o caminho efetivo
         if aligner_effective == "bwa" and not _bwa_index_ready(ref_prefix):
             raise RuntimeError(
                 "Índice BWA ausente/incompleto em refs/reference.fa.{amb,ann,bwt,pac,sa}. "
                 "Se estiver usando o pacote do GDC, garanta que os symlinks apontem para os arquivos extraídos."
             )
 
+        # comando base do alinhador
         if aligner_effective == "bwa":
             base_cmd = [
                 "bwa", "mem",
@@ -1528,14 +1730,20 @@ def align_one_sample(
                 "-R", rg_field,
                 "-t", str(aln_threads),
                 "-K", bwa_batch_k,
-                "-Y",  # CIGAR compatível com Picard (soft-clip em suplementares)
+                "-Y",  # CIGAR compatível com Picard (soft-clip em reads suplementares)
                 "refs/reference.fa",
             ]
 
+        # stdbuf para flush de stderr/stdout (progresso em tempo real)
+        if shutil.which("stdbuf"):
+            base_cmd = ["stdbuf", "-oL", "-eL"] + base_cmd
+
         reads = [str(r1)] + ([str(r2)] if r2 else [])
+        total_reads = _estimate_total_reads_for_alignment(r1, r2)
+
         cmd_list = [
             base_cmd + reads,
-            ["samtools", "view", "-u", "-"],                                # BAM não comprimido (pipe)
+            ["samtools", "view", "-u", "-"],  # BAM não comprimido no pipe → menos CPU/RAM
             ["samtools", "sort", "-@", str(sort_threads), "-m", f"{sort_mem_mb}M",
              "-o", str(out_sorted)],
         ]
@@ -1543,58 +1751,69 @@ def align_one_sample(
         try:
             run_long_stream_pipeline(
                 cmd_list,
-                label=f"[{sample}] {('BWA' if aligner_effective=='bwa' else 'BWA-MEM2')} → sort"
+                label=f"[{sample}] {('BWA' if aligner_effective=='bwa' else 'BWA-MEM2')} → sort",
+                heartbeat_sec=60,
+                progress_spec={"total_reads": total_reads, "print_every": 15},
             )
         except sp.CalledProcessError as e:
-            # fallback extra: se mem2 falhar em runtime, tentar 'bwa' com -K menor
+            # fallback extra se bwa-mem2 falhar em runtime
             if aligner_effective == "bwa-mem2":
                 console.print(
                     f"[orange3][{sample}] bwa-mem2 falhou (status {e.returncode}). "
                     "Tentando fallback com 'bwa mem' e -K menor…[/orange3]"
                 )
                 small_k = str(max(5_000_000, int(bwa_batch_k) // 2))
-                base_cmd_fallback = [
+                base_cmd_fb = [
                     "bwa", "mem",
                     "-R", rg_field,
                     "-t", str(aln_threads),
                     "-K", small_k,
                     "refs/reference.fa",
                 ]
+                if shutil.which("stdbuf"):
+                    base_cmd_fb = ["stdbuf", "-oL", "-eL"] + base_cmd_fb
                 cmd_list_fb = [
-                    base_cmd_fallback + reads,
+                    base_cmd_fb + reads,
                     ["samtools", "view", "-u", "-"],
                     ["samtools", "sort", "-@", str(sort_threads), "-m", f"{sort_mem_mb}M",
                      "-o", str(out_sorted)],
                 ]
                 run_long_stream_pipeline(
                     cmd_list_fb,
-                    label=f"[{sample}] BWA (fallback) → sort"
+                    label=f"[{sample}] BWA (fallback) → sort",
+                    heartbeat_sec=60,
+                    progress_spec={"total_reads": total_reads, "print_every": 15},
                 )
             else:
                 raise
 
-        run(["samtools","index", str(out_sorted)])
+        run(["samtools", "index", str(out_sorted)])
 
         run([
-            "picard","MarkDuplicates",
+            "picard", "MarkDuplicates",
             "-I", str(out_sorted),
             "-O", str(out_mkdup),
-            "-M", str(out_sorted).replace(".sorted.bam",".mkdup.metrics"),
-            "--VALIDATION_STRINGENCY","LENIENT"
+            "-M", str(out_sorted).replace(".sorted.bam", ".mkdup.metrics"),
+            "--VALIDATION_STRINGENCY", "LENIENT",
         ])
-        run(["samtools","index", str(out_mkdup)])
+        run(["samtools", "index", str(out_mkdup)])
 
         if cleanup.get("remove_sorted_bam", True) and out_sorted.exists():
             out_sorted.unlink(missing_ok=True)
 
     else:
-        # long reads (ONT, por ex.)
+        # long reads (ONT, por ex.) — sem monitor específico
         cmd_list = [
-            ["minimap2","-ax","map-ont","-t",str(aln_threads),"refs/reference.fa",str(r1)],
-            ["samtools","sort","-@",str(sort_threads),"-m",f"{sort_mem_mb}M","-o",str(out_sorted)]
+            ["minimap2", "-ax", "map-ont", "-t", str(aln_threads), "refs/reference.fa", str(r1)],
+            ["samtools", "sort", "-@", str(sort_threads), "-m", f"{sort_mem_mb}M", "-o", str(out_sorted)],
         ]
-        run_long_stream_pipeline(cmd_list, label=f"[{sample}] minimap2 → sort")
-        run(["samtools","index", str(out_sorted)])
+        run_long_stream_pipeline(
+            cmd_list,
+            label=f"[{sample}] minimap2 → sort",
+            heartbeat_sec=60,
+            progress_spec=None,  # (não extraímos ETA do minimap2 aqui)
+        )
+        run(["samtools", "index", str(out_sorted)])
 
 def align_dna_for_all(dna_samples, threads, default_read_type, cleanup, use_ds):
     # mapa run → sample_id (assumindo 1 run por sample neste YAML)
