@@ -14,6 +14,7 @@ from rich.text import Text
 import re, shlex
 from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn, TimeElapsedColumn, TransferSpeedColumn
 
+
 console = Console(highlight=False, emoji=True)  # emoji=True por clareza
 
 # cfg global para funções auxiliares
@@ -679,6 +680,73 @@ def stage_banner(title: str, sub: str = ""):
 def step_done(msg: str):
     console.print(f"✅ [bold green]{msg}[/bold green]")
 
+def _is_newer(target: Path, *sources: Path) -> bool:
+    "True se target existe e é mais novo que TODAS as sources."
+    if not target.exists(): return False
+    t = target.stat().st_mtime
+    return all((not s.exists()) or t >= s.stat().st_mtime for s in sources)
+
+def _atomic_rename(tmp: Path, final: Path):
+    tmp.replace(final)
+
+def _ensure_tabix(vcf_gz: Path):
+    tbi = Path(str(vcf_gz)+".tbi")
+    if not tbi.exists():
+        run(["tabix","-p","vcf",str(vcf_gz)])
+    return tbi
+
+def _read_fai(fai: Path):
+    "Retorna lista de tuplas (contig, length). Gera .fai se faltar."
+    if not fai.exists():
+        run(["samtools","faidx","refs/reference.fa"])
+    rows = []
+    with fai.open() as fh:
+        for line in fh:
+            ctg, ln, *_ = line.strip().split("\t")
+            rows.append((ctg, int(ln)))
+    return rows
+
+def _canonical_subset(contigs):
+    "Seleciona apenas chr1-22,X,Y,M/MT ou sem 'chr' (1-22,X,Y,M/MT)."
+    keep = []
+    valid = {str(i) for i in range(1,23)} | {"X","Y","M","MT"}
+    for ctg,_ in contigs:
+        base = ctg[3:] if ctg.lower().startswith("chr") else ctg
+        if base.upper() in valid:
+            keep.append((ctg,_))
+    return keep
+
+def _write_intervals_file(contigs, dest: Path):
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    # Escreve BED: chrom  start(0)  end(len)
+    with dest.open("w") as fo:
+        for ctg, ln in contigs:
+            fo.write(f"{ctg}\t0\t{ln}\n")
+    return dest
+
+def _split_balanced(contigs, parts: int):
+    "Greedy balance por tamanho; retorna lista de listas de (ctg,len)."
+    parts = max(1, int(parts))
+    bins = [([], 0)] * parts
+    bins = [ ([],0) for _ in range(parts) ]
+    for ctg, ln in sorted(contigs, key=lambda x: x[1], reverse=True):
+        i = min(range(parts), key=lambda k: bins[k][1])
+        bins[i][0].append((ctg,ln))
+        bins[i] = (bins[i][0], bins[i][1] + ln)
+    return [b[0] for b in bins]
+
+def _tmp_vcfgz_path(final: Path) -> Path:
+    # garante que o sufixo final permaneça .vcf.gz (para GATK entender BGZF)
+    suf2 = ''.join(final.suffixes[-2:])  # normalmente ".vcf.gz"
+    if suf2 != ".vcf.gz":
+        # fallback defensivo: ainda tenta manter .gz no fim
+        if final.suffix == ".gz":
+            base = final.name[:-len(".gz")]
+            return final.with_name(base + ".tmp" + ".gz")
+        # pior caso, sem .gz → semear .tmp.vcf.gz
+        return final.with_name(final.name + ".tmp.vcf.gz")
+    base = final.name[:-len(suf2)]
+    return final.with_name(base + ".tmp" + suf2)
 
 # ================== Normalização do YAML ==================
 
@@ -863,7 +931,12 @@ def normalize_config_schema(cfg_in: dict) -> dict:
                 if k in src:
                     general[k] = src[k]
 
-    return {"general": general, "dna_samples": dna_samples, "rna_samples": []}
+    return {
+        "general": general,
+        "dna_samples": dna_samples,
+        "rna_samples": [],
+        "params": dict(params)  # <-- preserva o bloco params
+    }
 
 # ================ Estimativa de espaço =================
 
@@ -1816,35 +1889,79 @@ def align_one_sample(
         run(["samtools", "index", str(out_sorted)])
 
 def align_dna_for_all(dna_samples, threads, default_read_type, cleanup, use_ds):
-    # mapa run → sample_id (assumindo 1 run por sample neste YAML)
-    run2sample = {}
-    for s in dna_samples:
-        sid = s["id"]
-        for acc in s.get("sra_ids", []):
-            run2sample[acc] = sid
+    """
+    Alinha todas as amostras DNA de forma idempotente:
+      - Pula a etapa inteira se todas as saídas mkdup já existem.
+      - Pula cada amostra individualmente se mkdup já existe.
+      - Escolhe um único R1 por run (trimmed > fastq_ds > fastq).
+    """
+    from pathlib import Path
 
+    def _has_mkdup(sid: str) -> bool:
+        b = Path("bam")
+        return (b / f"{sid}.mkdup.bam").exists() or (b / f"{sid}.mkdup.cram").exists()
+
+    # --- fast-exit da etapa 6: tudo pronto? ---
+    sample_ids = [s["id"] for s in dna_samples if "id" in s]
+    unique_ids = sorted(set(sample_ids))
+    if unique_ids and all(_has_mkdup(sid) for sid in unique_ids):
+        console.print("Etapa 6 (alinhamento) → [bold]SKIP[/bold] (todas as amostras já têm mkdup)", style="dim")
+        outs = sorted(Path("bam").glob("*.mkdup.bam")) + sorted(Path("bam").glob("*.mkdup.cram"))
+        if outs:
+            print_meta("Alinhados (mkdup)", outs)
+        return
+
+    # --- helper para escolher UM R1 por run ---
+    def _pick_r1_for_run(acc: str) -> Optional[Path]:
+        # 1) trimmed
+        trimmed = sorted(Path("trimmed").glob(f"{acc}*_1.trim.fq.gz"))
+        if trimmed:
+            return trimmed[0]
+        # 2) fastq_ds (se habilitado)
+        if use_ds:
+            ds = sorted(Path("fastq_ds").glob(f"{acc}*_1.fastq.gz")) + \
+                 sorted(Path("fastq_ds").glob(f"{acc}*_1.fq.gz"))
+            if ds:
+                return ds[0]
+        # 3) fastq
+        fq = sorted(Path("fastq").glob(f"{acc}*_1.fastq.gz")) + \
+             sorted(Path("fastq").glob(f"{acc}*_1.fq.gz"))
+        return fq[0] if fq else None
+
+    # --- loop por amostra ---
     for s in dna_samples:
         rtype = s.get("read_type", default_read_type)
         sid = s["id"]
-        if s["source"] == "sra":
-            for acc in s["sra_ids"]:
-                # procure trimmed primeiro; se não, fastq/_ds
-                candidates = list(Path("trimmed").glob(f"{acc}*_1.trim.fq.gz"))
-                if not candidates:
-                    src_dir = Path("fastq_ds") if use_ds else Path("fastq")
-                    candidates = list(src_dir.glob(f"{acc}*_1.fastq.gz")) + list(src_dir.glob(f"{acc}*_1.fq.gz"))
-                for r1 in candidates:
-                    align_one_sample(r1, threads, rtype, cleanup, expected_r2_name=None, sample_id=sid)
-        else:
-            r1 = Path("trimmed")/Path(s["fastq1"]).name.replace(".fastq.gz",".trim.fq.gz")
-            if not r1.exists():
-                src_dir = Path("fastq_ds") if use_ds else Path("fastq")
-                r1 = src_dir/Path(s["fastq1"]).name
-            expected_r2 = Path(s.get("fastq2",""))
-            align_one_sample(r1, threads, rtype, cleanup,
-                             expected_r2_name=expected_r2.name if expected_r2 else None,
-                             sample_id=sid)
 
+        # skip por amostra se mkdup já existe
+        if _has_mkdup(sid):
+            console.print(f"[{sid}] alinhado → [bold]SKIP (cache mkdup)[/bold]")
+            continue
+
+        if s.get("source") == "sra":
+            for acc in s.get("sra_ids", []):
+                r1 = _pick_r1_for_run(acc)
+                if not r1:
+                    console.print(f"[yellow][{sid}] Nenhum R1 encontrado para {acc} (trimmed/fastq_ds/fastq).[/yellow]")
+                    continue
+                # processa só UM R1 por run
+                align_one_sample(r1, threads, rtype, cleanup, expected_r2_name=None, sample_id=sid)
+        else:
+            # modo "direto": tenta usar trimmed, senão o original
+            fastq1 = Path(s.get("fastq1", ""))
+            if fastq1:
+                r1_trim = Path("trimmed") / fastq1.name.replace(".fastq.gz", ".trim.fq.gz")
+                r1 = r1_trim if r1_trim.exists() else (Path("fastq_ds") / fastq1.name if use_ds else Path("fastq") / fastq1.name)
+                expected_r2 = Path(s.get("fastq2", ""))
+                align_one_sample(
+                    r1, threads, rtype, cleanup,
+                    expected_r2_name=(expected_r2.name if expected_r2 else None),
+                    sample_id=sid
+                )
+            else:
+                console.print(f"[yellow][{sid}] Sem 'fastq1' e sem 'sra_ids'; amostra ignorada.[/yellow]")
+
+    # --- resumo final da etapa ---
     outs = sorted(Path("bam").glob("*.mkdup.bam")) + sorted(Path("bam").glob("*.mkdup.cram"))
     if outs:
         print_meta("Alinhados (mkdup)", outs)
@@ -1852,123 +1969,335 @@ def align_dna_for_all(dna_samples, threads, default_read_type, cleanup, use_ds):
 # ============== CRAM + Cobertura (mosdepth) ==============
 
 def to_cram_and_coverage(use_cram: bool, threads: int):
-    for bam in sorted(Path("bam").glob("*.mkdup.bam")):
-        sample = bam.name.replace(".mkdup.bam","")
-        cram = Path("bam")/f"{sample}.mkdup.cram"
-        if use_cram and not cram.exists():
-            run(["samtools","view","-T","refs/reference.fa","-@",str(threads),"-C","-o",str(cram),str(bam)])
-            run(["samtools","index",str(cram)])
-        cov_prefix = Path("bam")/sample
-        if not Path(str(cov_prefix)+".mosdepth.summary.txt").exists():
-            run(["mosdepth","-t",str(threads),str(cov_prefix), str(cram if use_cram else bam)])
-        summ = Path(str(cov_prefix)+".mosdepth.summary.txt")
-        if summ.exists():
-            with open(summ) as fh:
-                lines = [l.strip().split("\t") for l in fh if l.strip() and not l.startswith("chrom")]
-            mean_cov = [l for l in lines if l[0]=="total"]
-            if mean_cov:
-                console.print(f"[bold cyan][{sample}][/bold cyan] Cobertura média (mosdepth): [bold]{float(mean_cov[0][3]):.2f}×[/bold]")
+    """
+    Converte BAM→CRAM (se configurado), garante índices e roda mosdepth.
+    - Se a entrada do mosdepth for CRAM, passa --fasta refs/reference.fa.
+    - Cria .crai/.bai se estiverem faltando.
+    - Pula mosdepth se outputs já existem (cache).
+    """
+    from pathlib import Path
 
-    outs = sorted(Path("bam").glob("*.mkdup.cram")) + sorted(Path("bam").glob("*.mkdup.bam"))
-    idxs = [Path(str(p)+(".crai" if p.suffix==".cram" else ".bai")) for p in outs]
+    bdir = Path("bam")
+    ref_fa = Path("refs/reference.fa")
+    if not bdir.exists():
+        console.print("[yellow]Diretório 'bam' não existe — nada a fazer na etapa 7.[/yellow]")
+        return
+
+    # detecta amostras a partir dos mkdup
+    mkdups = sorted(bdir.glob("*.mkdup.bam")) + sorted(bdir.glob("*.mkdup.cram"))
+    if not mkdups:
+        console.print("[yellow]Nenhum *.mkdup.(bam|cram) encontrado — nada a fazer.[/yellow]")
+        return
+
+    # helper: checa se mosdepth já foi feito
+    def _mosdepth_done(prefix: Path) -> bool:
+        # arquivos característicos do mosdepth
+        gdist = prefix.with_suffix(".mosdepth.global.dist.txt")
+        summ  = prefix.with_suffix(".mosdepth.summary.txt")
+        # se você usa -n, não há per-base; estes 2 bastam p/ verificar cache
+        return gdist.exists() and summ.exists()
+
+    for mk in mkdups:
+        sid = mk.name.split(".")[0]  # antes de .mkdup.*
+        bam  = bdir / f"{sid}.mkdup.bam"
+        cram = bdir / f"{sid}.mkdup.cram"
+        cov_prefix = bdir / sid
+
+        # escolhe entrada
+        inp = None
+        if use_cram:
+            # se ainda não há CRAM mas há BAM, converte
+            if not cram.exists() and bam.exists():
+                if not ref_fa.exists():
+                    raise RuntimeError("refs/reference.fa ausente — necessário para converter BAM→CRAM.")
+                console.print(f"[{sid}] Convertendo BAM→CRAM…")
+                run(["samtools","view","-C","-T",str(ref_fa),"-@",str(max(1, threads//2)),
+                     "-o",str(cram), str(bam)])
+            inp = cram if cram.exists() else (bam if bam.exists() else None)
+        else:
+            inp = bam if bam.exists() else (cram if cram.exists() else None)
+
+        if not inp:
+            console.print(f"[yellow][{sid}] Nenhum mkdup BAM/CRAM encontrado. Pulando.[/yellow]")
+            continue
+
+        # garante índice do arquivo de entrada
+        if inp.suffix == ".cram":
+            crai = Path(str(inp) + ".crai")
+            if not crai.exists():
+                run(["samtools","index","-@",str(max(1, threads//2)), str(inp)])
+        else:
+            bai = Path(str(inp) + ".bai")
+            if not bai.exists():
+                run(["samtools","index","-@",str(max(1, threads//2)), str(inp)])
+
+        # mosdepth: usa --fasta apenas para CRAM
+        if _mosdepth_done(cov_prefix):
+            console.print(f"[{sid}] mosdepth → [bold]SKIP[/bold] (cache)")
+            continue
+
+        cmd = ["mosdepth","-t",str(threads)]
+        if inp.suffix == ".cram":
+            if not ref_fa.exists():
+                raise RuntimeError("refs/reference.fa ausente — necessário para mosdepth com CRAM.")
+            cmd += ["--fasta", str(ref_fa)]
+        cmd += [str(cov_prefix), str(inp)]
+
+        console.print(f"[{sid}] mosdepth em {inp.name}…")
+        run(cmd)
+
+    # (opcional) resumo do que foi gerado
+    outs = sorted(Path("bam").glob("*.mosdepth.summary.txt"))
     if outs:
-        print_meta("CRAM/BAM + índices", outs + [i for i in idxs if i.exists()])
-    else:
-        console.print("[yellow]Aviso:[/yellow] nenhum BAM/CRAM encontrado — verifique o passo 6.", style="italic")
+        print_meta("Cobertura (mosdepth)", outs)
 
 # =================== Variantes / VEP ===================
 
+def _haplotypecaller_one(
+    bam_or_cram: Path, sample: str, out_gvcf: Path, intervals_file: Path|None,
+    java_mem_gb: int, nat_threads: int, pcr_free: bool, extra_args: list[str]|None=None
+):
+    out_gvcf.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _tmp_vcfgz_path(out_gvcf)
+    if tmp.exists(): tmp.unlink()
+
+    java_opts = f"-Xmx{int(java_mem_gb)}g -Dsamjdk.compression_level=2"
+    cmd = [
+        "gatk","--java-options",java_opts,"HaplotypeCaller",
+        "-R","refs/reference.fa","-I",str(bam_or_cram),
+        "-O",str(tmp), "-ERC","GVCF",
+        "--native-pair-hmm-threads",str(max(1,int(nat_threads)))
+    ]
+    if pcr_free:
+        cmd += ["--pcr-indel-model","NONE"]
+    if intervals_file:
+        cmd += ["-L", str(intervals_file)]
+    if extra_args:
+        cmd += list(map(str, extra_args))
+
+    console.print(f"[{sample}] HC → mem={java_mem_gb}g, pair-hmm={nat_threads}, "
+                  f"{'PCR-free' if pcr_free else 'PCR-default'} "
+                  f"{'(intervals)' if intervals_file else '(genome inteiro)'}")
+
+    env = os.environ.copy()
+    env["OMP_NUM_THREADS"] = str(max(1, int(nat_threads)))
+
+    console.print(f"[{sample}] HC → mem={java_mem_gb}g, pair-hmm={nat_threads}, "
+                f"{'PCR-free' if pcr_free else 'PCR-default'} "
+                f"{'(intervals)' if intervals_file else '(genome inteiro)'}")
+
+    run(cmd)
+    _atomic_rename(tmp, out_gvcf)
+    _ensure_tabix(out_gvcf)
+
+def _gather_vcfs(inputs: list[Path], out: Path):
+    # Gathers só se necessário
+    if out.exists() and _is_newer(out, *inputs):
+        return out
+    tmp = _tmp_vcfgz_path(out)
+    if tmp.exists(): tmp.unlink()
+    args = []
+    for f in sorted(inputs):
+        args += ["-I", str(f)]
+    run(["gatk","GatherVcfs", *args, "-O", str(tmp)])
+    _atomic_rename(tmp, out)
+    _ensure_tabix(out)
+    return out
+
 def call_variants(samples, threads, mem_gb):
     """
-    Chama variantes por amostra:
-      - Entrada: bam/*.mkdup.bam ou bam/*.mkdup.cram
-      - Saída:   vcf/<SAMPLE>.g.vcf.gz  e  vcf/<SAMPLE>.vcf.gz (+ .tbi)
-    Não refaz o que já existe. Imprime metadados ao final.
+    Gera por amostra: gVCF (g.vcf.gz) e VCF final (vcf.gz) de forma idempotente.
+    - Usa ALT/decoys por padrão; pode excluir canônicos via params.keep_alt_decoy=false.
+    - Scatter opcional via params.hc_scatter_parts (default 1).
+    - Controla RAM/threads via params.hc_java_mem_gb, params.hc_threads_native.
+    - GenotypeGVCFs também idempotente com heap separado (params.gg_java_mem_gb).
     """
     Path("vcf").mkdir(exist_ok=True)
+    Path("vcf/shards").mkdir(parents=True, exist_ok=True)
 
-    # ids declarados no YAML — usado para filtrar, se quiser
-    declared_ids = {s["id"] for s in samples} if samples else set()
+    p = cfg_global.get("params", {})
+    g = cfg_global.get("general", {})
 
-    # BAM/CRAM prontos para chamada
-    aln = sorted(Path("bam").glob("*.mkdup.bam")) + sorted(Path("bam").glob("*.mkdup.cram"))
+    # === Parâmetros (com defaults sensatos) ===
+    # manter ALT/decoys por padrão; desativar com keep_alt_decoy: false OU limit_to_canonical: true
+    keep_alt_decoy = bool(p.get("keep_alt_decoy", True))
+    if g.get("limit_to_canonical", False):
+        keep_alt_decoy = False
+
+    scatter_parts   = max(1, int(p.get("hc_scatter_parts", 1)))
+    max_parallel    = max(1, int(p.get("hc_max_parallel", 1)))  # (simples: serial padrão)
+
+    hc_mem_gb       = int(p.get("hc_java_mem_gb", 24))
+
+    import os as _os
+    _hc_threads_cfg = p.get("hc_threads_native",
+                            cfg_global.get("general", {}).get("hc_threads_native", None))
+    try:
+        hc_nat_threads = int(_hc_threads_cfg) if _hc_threads_cfg is not None else 4
+    except Exception:
+        hc_nat_threads = 4
+
+    # limite superior: CPUs físicas (evita pedir mais threads do que existe)
+    try:
+        if _os.cpu_count():
+            hc_nat_threads = max(1, min(hc_nat_threads, _os.cpu_count()))
+        else:
+            hc_nat_threads = max(1, hc_nat_threads)
+    except Exception:
+        hc_nat_threads = max(1, hc_nat_threads)    
+
+    hc_pcr_free     = bool(p.get("hc_pcr_free", True))
+    hc_extra        = list(p.get("hc_extra_args", [])) if isinstance(p.get("hc_extra_args", []), list) else []
+
+    gg_mem_gb       = int(p.get("gg_java_mem_gb", 12))
+    gg_extra        = list(p.get("gg_extra_args", [])) if isinstance(p.get("gg_extra_args", []), list) else []
+
+    force_recall    = bool(p.get("force_recall", False))  # se True, refaz gVCF/VCF
+
+    # entradas (mkdup preferindo CRAM)
+    prefer_bam_for_calling = bool(cfg_global.get("params", {}).get("prefer_bam_for_calling", True))
+
+    if prefer_bam_for_calling:
+        aln = sorted(Path("bam").glob("*.mkdup.bam")) + sorted(Path("bam").glob("*.mkdup.cram"))
+    else:
+        aln = sorted(Path("bam").glob("*.mkdup.cram")) + sorted(Path("bam").glob("*.mkdup.bam"))
+
     if not aln:
         console.print("[yellow]Aviso:[/yellow] nenhum BAM/CRAM encontrado para chamar variantes.", style="italic")
         return []
 
-    generated_vcfs = []
+    # contigs / intervals (único preparo por execução)
+    contigs = _read_fai(Path("refs/reference.fa.fai"))
+    contigs_used = contigs if keep_alt_decoy else _canonical_subset(contigs)
+    intervals_dir = Path("intervals"); intervals_dir.mkdir(exist_ok=True)
 
-    for f in aln:
-        # nome da amostra = nome base do arquivo (ex.: NA12878.mkdup.bam → NA12878)
-        sample = f.name.replace(".mkdup.bam","").replace(".mkdup.cram","")
-        if declared_ids and sample not in declared_ids:
-            console.print(f"[dim]Pulo {f.name} (não está em samples do YAML).[/dim]")
-            continue
+    shards_generated = []
+    vcfs_final = []
 
+    for bam in aln:
+        sample = bam.name.replace(".mkdup.cram","").replace(".mkdup.bam","")
         gvcf = Path("vcf")/f"{sample}.g.vcf.gz"
         vcf  = Path("vcf")/f"{sample}.vcf.gz"
 
-        # Se VCF final já existe, só garante o índice e mostra metadados
-        if vcf.exists():
-            console.print(f"[{sample}] VCF → [bold]SKIP[/bold]")
+        # -------- gVCF (com scatter opcional) --------
+        need_gvcf = force_recall or (not gvcf.exists()) or (not _is_newer(gvcf, bam))
+        if not need_gvcf:
+            # também exija .tbi
+            if not Path(str(gvcf)+".tbi").exists():
+                need_gvcf = True
+
+        if not need_gvcf and scatter_parts == 1:
+            console.print(f"[{sample}] HaplotypeCaller → [bold]SKIP (cache ok)[/bold]")
+        else:
+            if scatter_parts == 1:
+                # um único arquivo de intervals opcional (quando removendo decoys)
+                intervals_file = None
+                if not keep_alt_decoy:
+                    intervals_file = intervals_dir / "canonical.bed"
+                    if not intervals_file.exists():
+                        _write_intervals_file(contigs_used, intervals_file)
+                _haplotypecaller_one(
+                    bam, sample, gvcf, intervals_file,
+                    java_mem_gb=hc_mem_gb, nat_threads=hc_nat_threads,
+                    pcr_free=hc_pcr_free, extra_args=hc_extra
+                )
+            else:
+                # scatter: construir shards balanceados
+                parts = _split_balanced(contigs_used, scatter_parts)
+                shard_dir = Path(f"vcf/shards/{sample}")
+                shard_dir.mkdir(parents=True, exist_ok=True)
+                shard_gvcfs = []
+
+                for i, part in enumerate(parts, start=1):
+                    intr = shard_dir / f"part_{i:02d}.bed"
+                    _write_intervals_file(part, intr)
+                    out_shard = shard_dir / f"{sample}.part_{i:02d}.g.vcf.gz"
+                    # idempotência por shard
+                    if not (out_shard.exists() and _is_newer(out_shard, bam)):
+                        _haplotypecaller_one(
+                            bam, sample, out_shard, intr,
+                            java_mem_gb=max(24, hc_mem_gb//max(1,scatter_parts//2)),
+                            nat_threads=max(1, min(16, hc_nat_threads)),  # shards menores → menos threads
+                            pcr_free=hc_pcr_free, extra_args=hc_extra
+                        )
+                    else:
+                        _ensure_tabix(out_shard)
+                    shard_gvcfs.append(out_shard)
+
+                # Gather shards → gVCF final
+                _gather_vcfs(shard_gvcfs, gvcf)
+                shards_generated.extend(shard_gvcfs)
+
+        # -------- GenotypeGVCFs (→ VCF final) --------
+        need_vcf = force_recall or (not vcf.exists()) or (not _is_newer(vcf, gvcf))
+        if not need_vcf:
+            # exija índice do VCF final (tabix)
             if not Path(str(vcf)+".tbi").exists():
-                run(["bcftools","index","-t",str(vcf)])
-            print_meta(f"VCF ({sample})", [vcf])
-            generated_vcfs.append(vcf)
-            continue
+                need_vcf = True
 
-        # 1) HaplotypeCaller (gVCF) — só se faltar
-        if not gvcf.exists():
-            run([
-                "gatk", "--java-options", f"-Xmx{mem_gb}g", "HaplotypeCaller",
-                "-R", "refs/reference.fa",
-                "-I", str(f),
-                "-O", str(gvcf),
-                "-ERC", "GVCF",
-                "--native-pair-hmm-threads", str(threads)
-            ])
-        # garante índice do gVCF (tbi)
-        if gvcf.exists() and not Path(str(gvcf)+".tbi").exists():
-            run(["bcftools","index","-t", str(gvcf)])
+        if need_vcf:
+            tmp = _tmp_vcfgz_path(vcf)
+            if tmp.exists(): tmp.unlink()
+            java_opts = f"-Xmx{gg_mem_gb}g -Dsamjdk.compression_level=2"
+            cmd = [
+                "gatk","--java-options",java_opts,"GenotypeGVCFs",
+                "-R","refs/reference.fa","-V",str(gvcf),"-O",str(tmp)
+            ] + gg_extra
+            console.print(f"[{sample}] GenotypeGVCFs → mem={gg_mem_gb}g")
+            run(cmd)
+            _atomic_rename(tmp, vcf)
+            _ensure_tabix(vcf)
+        else:
+            console.print(f"[{sample}] GenotypeGVCFs → [bold]SKIP (cache ok)[/bold]")
 
-        # 2) GenotypeGVCFs → VCF final
-        run([
-            "gatk", "--java-options", f"-Xmx{mem_gb}g", "GenotypeGVCFs",
-            "-R", "refs/reference.fa",
-            "-V", str(gvcf),
-            "-O", str(vcf)
-        ])
-        run(["bcftools","index","-t", str(vcf)])
+        vcfs_final.append(vcf)
+        print_meta(f"VCFs ({sample})", [gvcf, vcf])
 
-        print_meta(f"VCF ({sample})", [vcf])
-        generated_vcfs.append(vcf)
-
-    # Sumário final
-    if generated_vcfs:
-        print_meta("VCFs gerados (por amostra)", generated_vcfs)
+    if vcfs_final:
+        print_meta("VCFs gerados (por amostra)", vcfs_final)
     else:
         console.print("[yellow]Aviso:[/yellow] Nenhum VCF novo foi gerado (talvez já existissem).", style="italic")
 
-    return generated_vcfs
+    return vcfs_final
 
 def annotate_variants(assembly_name, threads, vep_cache_dir=""):
     Path("vep").mkdir(exist_ok=True)
+
+    p = cfg_global.get("params", {})
+    vep_fork   = int(p.get("vep_fork", max(1, threads//2 or 1)))
+    vep_every  = bool(p.get("vep_everything", True))
+    vep_extra  = list(p.get("vep_extra_args", [])) if isinstance(p.get("vep_extra_args", []), list) else []
+
     env = os.environ.copy()
     if vep_cache_dir: env["VEP_CACHE_DIR"] = vep_cache_dir
+
     for vcf in sorted(Path("vcf").glob("*.vcf.gz")):
         sample = vcf.name.replace(".vcf.gz","")
         out = Path("vep")/f"{sample}.vep.vcf.gz"
-        if out.exists():
-            console.print(f"[{sample}] VEP → [bold]SKIP[/bold]")
+        idx = Path(str(vcf)+".tbi")  # exige que input tenha índice
+
+        if out.exists() and _is_newer(out, vcf):
+            console.print(f"[{sample}] VEP → [bold]SKIP (cache ok)[/bold]")
             print_meta(f"VEP ({sample})", [out])
             continue
-        cmd = ["vep","-i",str(vcf),"--cache","--offline","--assembly",assembly_name,
-               "--format","vcf","--vcf","-o",str(out),
-               "--fork",str(threads),"--everything","--no_stats"]
+
+        tmp = out.with_suffix(out.suffix + ".tmp")
+        if tmp.exists(): tmp.unlink()
+
+        cmd = [
+            "vep","-i",str(vcf),"--cache","--offline","--assembly",assembly_name,
+            "--format","vcf","--vcf","-o",str(tmp),
+            "--fork",str(vep_fork),"--no_stats"
+        ]
+        if vep_every: cmd.append("--everything")
+        cmd += vep_extra
+
         try:
             run(cmd, env=env)
+            _atomic_rename(tmp, out)
         except sp.CalledProcessError:
-            console.print("[orange3]Aviso:[/orange3] VEP falhou (verifique cache).", style="bold")
+            console.print("[orange3]Aviso:[/orange3] VEP falhou (verifique cache/espécie).", style="bold")
+            if tmp.exists(): tmp.unlink()
         print_meta(f"VEP ({sample})", [out])
 
     veps = sorted(Path("vep").glob("*.vep.vcf.gz"))

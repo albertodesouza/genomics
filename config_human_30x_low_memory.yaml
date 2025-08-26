@@ -41,6 +41,25 @@ params:
   gatk_threads: 8
   target_gene_list: null   # ou caminho para um painel BED/genes de interesse
 
+  # HaplotypeCaller
+  hc_java_mem_gb: 24
+  hc_threads_native: 4 # mais que 4 thread ficou ruim na minha maquina
+  hc_pcr_free: true         # PCR-free (1000G) → mais rápido/leve
+  keep_alt_decoy: true      # padrão: manter ALT/decoys; ponha false p/ canônicos
+  hc_scatter_parts: 8       # aumente p/ acelerar (ex.: 8)
+  hc_max_parallel: 8        # paralelo entre shards (mantido serial aqui)
+  hc_extra_args: []         # lista extra opcional p/ GATK HC
+
+  # GenotypeGVCFs
+  gg_java_mem_gb: 12
+  gg_extra_args: []
+
+  # VEP
+  vep_fork: 16
+  vep_everything: true
+  vep_extra_args: []
+  # force_recall: false     # defina true para refazer gVCF/VCF mesmo se existirem
+  
 storage:
   base_dir: "/dados/GENOMICS_DATA/low_memory"
   work_dir: "/dados/GENOMICS_DATA/low_memory/work"
