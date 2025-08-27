@@ -215,18 +215,39 @@ If RNA-seq samples are defined in the YAML, a lightweight expression pipeline (H
 
 ## How to Use the Genomes Analyzer
 
+### Uninstallation (se necessário)
+
+```bash
+CONDA_BASE="/home/lume2/miniforge3"
+if ! command -v mamba >/dev/null 2>&1; then
+  conda install -n base -c conda-forge -y mamba
+fi
+
+conda activate
+conda env remove --name genomics
+conda deactivate
+```
+
 ### Installation
 
-1. Ensure a Unix-like system with [conda](https://docs.conda.io/) or [mamba](https://mamba.readthedocs.io/) available.
-2. Run the installer to create/update the `genomics` environment and optionally fetch the Ensembl VEP cache:
-   ```bash
-   bash install_genomics_env.sh --install-vep-cache
-   conda activate genomics   # use --help to see options
-   ```
-3. Configure shell variables and paths for the session:
-   ```bash
-   source start_genomics.sh
-   ```
+```bash
+CONDA_BASE="/home/lume2/miniforge3"
+if ! command -v mamba >/dev/null 2>&1; then
+  conda install -n base -c conda-forge -y mamba
+fi
+
+conda activate
+./install_genomics_env.sh
+```
+
+### Starting the environment
+
+Leave any active conda environment and initialize the session:
+
+```bash
+conda deactivate
+source start_genomics.sh
+```
 
 ### YAML Configuration: `config_human_30x_low_memory.yaml`
 
@@ -320,6 +341,7 @@ Ordered list of pipeline actions. Typical values include `fetch_fastqs`, `qc_rea
 Execute the workflow by pointing the script to your YAML file:
 
 ```bash
+conda deactivate
 source start_genomics.sh
 ./genomes_analyzer.py --config config_human_30x_low_memory.yaml
 ```
