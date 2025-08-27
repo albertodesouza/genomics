@@ -2783,49 +2783,139 @@ def call_variants(samples, threads, mem_gb):
         console.print("[yellow]Aviso:[/yellow] Nenhum VCF novo foi gerado (talvez já existissem).", style="italic")
     return vcfs_final
 
-def annotate_variants(assembly_name, threads, vep_cache_dir=""):
-    Path("vep").mkdir(exist_ok=True)
+def annotate_with_vep(samples, threads: int):
+    """
+    Passo 9 — Anotação de variantes com Ensembl VEP (usa o VCF final de cada amostra).
+    - Lê parâmetros de cfg_global["params"]:
+        vep_species (str)       : espécie, ex. "homo_sapiens" (default)
+        vep_assembly (str)      : "GRCh38" (default) ou "GRCh37"/"hg19" (normalizado)
+        vep_dir_cache (str)     : diretório do cache do VEP (default: ~/.vep)
+        vep_fork (int)          : processos internos do VEP (default: max(1, threads//2))
+        vep_extra (list[str])   : flags extra para o VEP (opcional)
+    - Idempotente: se o .vep.vcf.gz existir e estiver mais novo que o VCF de entrada, faz SKIP.
+    - Valida presença do cache (estrutura nova do VEP: ~/.vep/<species>/<version>_<assembly>/).
+    """
+    from pathlib import Path
+    import os as _os
+    import subprocess as sp
 
     p = cfg_global.get("params", {})
-    vep_fork   = int(p.get("vep_fork", max(1, threads//2 or 1)))
-    vep_every  = bool(p.get("vep_everything", True))
-    vep_extra  = list(p.get("vep_extra_args", [])) if isinstance(p.get("vep_extra_args", []), list) else []
 
-    env = os.environ.copy()
-    if vep_cache_dir: env["VEP_CACHE_DIR"] = vep_cache_dir
+    # ---------------- Helpers ----------------
+    def _vep_norm_assembly(a: str) -> str:
+        a = (a or "").upper()
+        if "GRCH38" in a: return "GRCh38"
+        if "GRCH37" in a or "HG19" in a: return "GRCh37"
+        return a or "GRCh38"
 
-    for vcf in sorted(Path("vcf").glob("*.vcf.gz")):
-        sample = vcf.name.replace(".vcf.gz","")
-        out = Path("vep")/f"{sample}.vep.vcf.gz"
-        idx = Path(str(vcf)+".tbi")  # exige que input tenha índice
+    def _mk_panel(msg, style="bright_cyan"):
+        return Panel.fit(msg, border_style=style)
 
-        if out.exists() and _is_newer(out, vcf):
-            console.print(f"[{sample}] VEP → [bold]SKIP (cache ok)[/bold]")
-            print_meta(f"VEP ({sample})", [out])
+    # --------------- Parâmetros ---------------
+    vep_species   = (p.get("vep_species") or "homo_sapiens").lower()
+    vep_assembly  = _vep_norm_assembly(p.get("vep_assembly") or "GRCh38")
+    vep_dir_cache = p.get("vep_dir_cache") or str(Path.home()/".vep")
+    vep_fork      = int(p.get("vep_fork", max(1, threads//2)))
+    vep_extra     = list(p.get("vep_extra", []))
+
+    Path("vep").mkdir(exist_ok=True)
+
+    # --------------- VEP disponível? ---------------
+    try:
+        rc = sp.run(["vep", "--version"], stdout=sp.PIPE, stderr=sp.STDOUT, text=True, check=False)
+        vep_ver = (rc.stdout or "").strip()
+        if rc.returncode != 0:
+            console.print("[red]VEP não encontrado no PATH do ambiente atual.[/red] "
+                          "Ative o env correto (ex.: 'conda activate genomics') ou reinstale.")
+            raise SystemExit(1)
+        else:
+            console.print(_mk_panel(f"Ensembl VEP detectado — versão: {vep_ver}", "green"))
+    except FileNotFoundError:
+        console.print("[red]VEP não encontrado (binário 'vep').[/red]")
+        raise SystemExit(1)
+
+    # --------------- Checagem de cache ---------------
+    cache_root = Path(vep_dir_cache)
+    species_dir = cache_root / vep_species
+
+    # Estrutura típica nova: ~/.vep/homo_sapiens/110_GRCh38
+    cache_ok = False
+    missing_msg = ""
+    if species_dir.exists():
+        # Procura subpastas que contenham o assembly no nome (ex.: "110_GRCh38")
+        try:
+            for child in species_dir.iterdir():
+                if not child.is_dir():
+                    continue
+                name = child.name.upper()
+                if vep_assembly.upper() in name:
+                    cache_ok = True
+                    break
+            if not cache_ok:
+                missing_msg = f"Cache de {vep_species} não tem subpasta para {vep_assembly} em {species_dir}"
+        except Exception as _:
+            pass
+    else:
+        missing_msg = f"Diretório da espécie não encontrado: {species_dir}"
+
+    if not cache_ok:
+        console.print(
+            f"[red]VEP cache não encontrado para {vep_species} / {vep_assembly}.[/red]\n"
+            f"{missing_msg}\n"
+            f"Sugestão: instalar com [bold]vep_install[/bold], ex.:\n"
+            f"  vep_install -a cf -s {vep_species} -y {vep_assembly} -c {vep_dir_cache} --NO_BIOPERL"
+        )
+        raise SystemExit(1)
+
+    # --------------- Execução por amostra ---------------
+    annotated = []
+    for sample in samples:
+        vcf_in  = Path("vcf")/f"{sample}.vcf.gz"
+        vcf_tbi = Path(str(vcf_in)+".tbi")
+        if not vcf_in.exists():
+            console.print(f"[yellow][{sample}] VCF de entrada não encontrado:[/yellow] {vcf_in}")
             continue
 
-        tmp = out.with_suffix(out.suffix + ".tmp")
-        if tmp.exists(): tmp.unlink()
+        out_vep = Path("vep")/f"{sample}.vep.vcf.gz"
+        tmp_vep = Path("vep")/f"{sample}.vep.vcf.gz.tmp"
 
+        # Skip se já está atualizado
+        if out_vep.exists() and _is_newer(out_vep, vcf_in):
+            console.print(f"[{sample}] VEP → [bold]SKIP[/bold] (cache ok)")
+            annotated.append(out_vep)
+            continue
+
+        # Constrói comando
         cmd = [
-            "vep","-i",str(vcf),"--cache","--offline","--assembly",assembly_name,
-            "--format","vcf","--vcf","-o",str(tmp),
-            "--fork",str(vep_fork),"--no_stats"
-        ]
-        if vep_every: cmd.append("--everything")
-        cmd += vep_extra
+            "vep",
+            "--cache", "--offline",
+            "--species", vep_species,
+            "--assembly", vep_assembly,
+            "--dir_cache", vep_dir_cache,
+            "--fork", str(vep_fork),
+            "--format", "vcf", "--vcf",
+            "-i", str(vcf_in),
+            "-o", str(tmp_vep),
+            # Defaults razoáveis (pode suprimir via vep_extra se desejar):
+            "--no_stats", "--everything"
+        ] + vep_extra
 
-        try:
-            run(cmd, env=env)
-            _atomic_rename(tmp, out)
-        except sp.CalledProcessError:
-            console.print("[orange3]Aviso:[/orange3] VEP falhou (verifique cache/espécie).", style="bold")
-            if tmp.exists(): tmp.unlink()
-        print_meta(f"VEP ({sample})", [out])
+        console.print(_mk_panel(f"[{sample}] VEP → {vep_species} {vep_assembly} (fork={vep_fork})", "cyan"))
+        # Executa
+        run(cmd)
 
-    veps = sorted(Path("vep").glob("*.vep.vcf.gz"))
-    if veps:
-        print_meta("VEP anotados", veps)
+        # Atomic rename
+        _atomic_rename(tmp_vep, out_vep)
+        annotated.append(out_vep)
+
+        # Mostra meta
+        print_meta(f"VEP ({sample})", [out_vep])
+
+    if annotated:
+        print_meta("VCFs anotados (VEP) — por amostra", annotated)
+    else:
+        console.print("[yellow]Aviso:[/yellow] Nenhum VCF anotado (verifique entradas/erros).", style="italic")
+    return annotated
 
 # =================== Comparações par-a-par ===================
 
@@ -3384,7 +3474,7 @@ def main(cfg):
     if g.get("call_variants", True):
         call_variants(dna_samples, g["threads"], g["mem_gb"])
     if g.get("annotate_vars", True):
-        annotate_variants(g["assembly_name"], g["threads"], g.get("vep_cache_dir",""))
+        annotate_with_vep(dna_samples, g["threads"])
     step_done("VCF e VEP-VCF gerados")
 
     # Lista de genes (da referência)

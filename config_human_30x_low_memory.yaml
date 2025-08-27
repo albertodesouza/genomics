@@ -80,7 +80,17 @@ params:
   vep_everything: true
   vep_extra_args: []
   # force_recall: false     # defina true para refazer gVCF/VCF mesmo se existirem
-  
+  annotate_with_vep: true
+  vep_species: "homo_sapiens"
+  vep_assembly: "GRCh38"        # (não use GRCh38.d1.vd1 aqui)
+  vep_dir_cache: "/dados/vep_cache"
+  vep_fork: 16
+  vep_extra:
+    - "--everything"
+    - "--no_stats"
+    - "--buffer_size"
+    - "5000"
+      
 storage:
   base_dir: "/dados/GENOMICS_DATA/low_memory"
   work_dir: "/dados/GENOMICS_DATA/low_memory/work"
