@@ -32,7 +32,7 @@ This document introduces the pipeline to readers **without assuming prior genomi
 
 ## Genomes Analyzer Pipeline
 
-Before running the workflow, make sure the environment is prepared as described in [How to Use the Genomes Analyzer](#how-to-use-the-genomes-analyzer). The workflow transforms raw [sequencing reads](https://en.wikipedia.org/wiki/Read_(biology))—unaltered sequences produced by high-throughput instruments—into variant calls, records describing differences from a reference genome in [Variant Call Format](https://en.wikipedia.org/wiki/Variant_call_format#Variant_call_records), through a series of well-defined stages. Each acronym is introduced before use so that readers new to genomics can follow along.
+Before running the workflow, make sure the environment is prepared as described in [How to Use the Genomes Analyzer](#how-to-use-the-genomes-analyzer). The workflow transforms raw [sequencing reads](https://en.wikipedia.org/wiki/Read_(biology))—unaltered sequences produced by high-throughput instruments—into *variant calls*: structured records that capture single‑nucleotide changes, small insertions/deletions, and other deviations from a reference genome, typically stored in the text-based [Variant Call Format (VCF)](https://en.wikipedia.org/wiki/Variant_Call_Format). These stages are well-defined, and each acronym is introduced before use so that readers new to genomics can follow along.
 
 ```
 FASTQ
