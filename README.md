@@ -32,7 +32,7 @@ This document introduces the pipeline to readers **without assuming prior genomi
 
 ## Genomes Analyzer Pipeline
 
-Before running the workflow, make sure the environment is prepared as described in [How to Use the Genomes Analyzer](#how-to-use-the-genomes-analyzer). The workflow transforms raw reads into variant calls through a series of well-defined stages. Each acronym is introduced before use so that readers new to genomics can follow along.
+Before running the workflow, make sure the environment is prepared as described in [How to Use the Genomes Analyzer](#how-to-use-the-genomes-analyzer). The workflow transforms raw [sequencing reads](https://en.wikipedia.org/wiki/Read_(biology))—unaltered sequences produced by high-throughput instruments—into variant calls, records describing differences from a reference genome in [Variant Call Format](https://en.wikipedia.org/wiki/Variant_call_format#Variant_call_records), through a series of well-defined stages. Each acronym is introduced before use so that readers new to genomics can follow along.
 
 ```
 FASTQ
@@ -52,7 +52,7 @@ FASTQ
 
 ### 1. Read Quality Control — [FastQC](https://www.bioinformatics.babraham.ac.uk/projects/fastqc/)
 
-**FASTQ** files store sequencing reads and their per-base quality scores. `FastQC` scans these files and produces HTML reports summarizing quality metrics such as Phred scores, nucleotide composition, and overrepresented sequences.
+**FASTQ** files store sequencing reads and their per-base quality scores. `FastQC` scans these files and produces HTML reports summarizing quality metrics such as [Phred scores](https://en.wikipedia.org/wiki/Phred_quality_score), nucleotide composition, and overrepresented sequences.
 
 *Why it matters*: Early detection of poor-quality cycles or adapter contamination prevents misleading alignments and spares compute time.
 
@@ -112,7 +112,7 @@ Quality-trimmed:                1.6 Gbp (1.4%)
 
 ### 5. Duplicate Marking — [samtools markdup](http://www.htslib.org/)
 
-PCR amplification and optical artifacts can yield **duplicate reads**—multiple observations of the same DNA fragment. `samtools markdup` flags these duplicates so that callers can ignore them.
+PCR amplification ([PCR](https://en.wikipedia.org/wiki/Polymerase_chain_reaction)) and optical artifacts can yield **duplicate reads**—multiple observations of the same DNA fragment captured more than once. `samtools markdup` flags these duplicates so that callers can ignore them.
 
 *Why it matters*: Treating duplicates as independent evidence biases allele counts and may cause false positives.
 
