@@ -41,7 +41,28 @@ params:
   gatk_threads: 8
   target_gene_list: null   # ou caminho para um painel BED/genes de interesse
 
-  # HaplotypeCaller
+  variant_caller: bcftools    # opções - "gatk" (padrão) ou "bcftools"
+
+  # (opcionais – só quando usar bcftools)
+  bcf_verbose: true          # liga banners e heartbeats
+  bcf_show_intervals: true          # <- mostra tabelas dos .bed
+  bcf_show_intervals_rows: 12       # <- quantas linhas por shard (resumo)
+  bcf_heartbeat_sec: 30      # 0 desativa o heartbeat
+  bcf_progress_sec: 30       # intervalo do heartbeat
+  bcf_mapq: 20
+  bcf_baseq: 20
+  bcf_max_depth: 250
+  bcf_scatter_parts: 16      # opcional: “quebra” em shards BED
+  bcf_max_parallel: 8        # para usar mais cores (SSD: 6–8; HDD: 2–3)
+  bcf_threads_io: 2          # threads de I/O do htslib por processo
+  bcf_io_threads: 16         # acelera compressão/IO (não o compute)
+  bcf_emit_variants_only: true   # bcftools call -v (apenas variantes)
+  bcf_min_baseq: 20           # -Q em mpileup (qualidade de base)
+  bcf_min_mapq: 20            # -q em mpileup (qualidade de mapeamento)
+  bcf_emit_all_sites: false   # true => -A em 'bcftools call' (raramente necessário)
+  bcf_split_multiallelic: true  # normaliza com 'bcftools norm -m +any'
+
+  # gatk HaplotypeCaller
   hc_java_mem_gb: 24
   hc_threads_native: 4 # mais que 4 thread ficou ruim na minha maquina
   hc_pcr_free: true         # PCR-free (1000G) → mais rápido/leve

@@ -209,6 +209,82 @@ def run_long_stream_pipeline(
     elapsed = int(time.time() - start)
     console.print(f"✅ [bold green]{label} concluído[/bold green] em {elapsed//60}m{elapsed%60:02d}s.")
 
+# === Heartbeat p/ pipelines bcftools (Linux) =============================
+
+def _descendant_pids(root_pid: int) -> set[int]:
+    """Lista recursiva de PIDs descendentes via /proc/*/children (Linux)."""
+    seen = set()
+    stack = [root_pid]
+    while stack:
+        pid = stack.pop()
+        try:
+            with open(f"/proc/{pid}/task/{pid}/children") as fh:
+                for tok in fh.read().strip().split():
+                    try:
+                        c = int(tok)
+                    except Exception:
+                        continue
+                    if c not in seen:
+                        seen.add(c)
+                        stack.append(c)
+        except Exception:
+            pass
+    return seen
+
+def _sum_proc_io_tree(pid: int) -> tuple[int,int]:
+    """Soma read_bytes/write_bytes do processo e seus descendentes."""
+    total_r = total_w = 0
+    for p in [pid, *list(_descendant_pids(pid))]:
+        io = _proc_io(p)  # já existe no seu código
+        if io:
+            total_r += max(0, io[0])
+            total_w += max(0, io[1])
+    return total_r, total_w
+
+def run_bcf_pipeline_with_heartbeat(cmd_str: str, label: str, out_watch: Path,
+                                    heartbeat_sec: int = 30):
+    """
+    Executa 'bash -lc <cmd_str>' e, a cada heartbeat_sec, imprime:
+      - tempo decorrido
+      - tamanho atual de 'out_watch' (arquivo BGZF sendo escrito)
+      - delta de I/O agregado (leituras/escritas) dos processos do pipeline
+    """
+    console.print(Panel.fit(Text(label, style="bold yellow"), border_style="yellow"))
+    console.print("[bold]>[/bold] bash -lc " + cmd_str, style="dim")
+
+    proc = sp.Popen(["bash","-lc", cmd_str], text=False)
+    start = time.time()
+    last = start
+    last_r = last_w = 0
+
+    while True:
+        rc = proc.poll()
+        now = time.time()
+
+        if now - last >= heartbeat_sec:
+            # tamanho atual do arquivo de saída (se já existir)
+            out_bytes = out_watch.stat().st_size if Path(out_watch).exists() else 0
+            # I/O agregado da árvore de processos
+            r_tot, w_tot = _sum_proc_io_tree(proc.pid)
+            d_r = max(0, r_tot - last_r); d_w = max(0, w_tot - last_w)
+            last_r, last_w = r_tot, w_tot
+
+            elapsed = int(now - start)
+            console.print(
+                f"{label}… {elapsed//60}m{elapsed%60:02d}s • "
+                f"out {sizeof_fmt(out_bytes)} • "
+                f"I/O +{sizeof_fmt(d_r)} read, +{sizeof_fmt(d_w)} write",
+                highlight=False
+            )
+            last = now
+
+        if rc is not None:
+            break
+        time.sleep(0.5)
+
+    if proc.returncode != 0:
+        raise sp.CalledProcessError(proc.returncode, ["bash","-lc", cmd_str])
+
 def ensure_dirs():
     for d in ["refs","raw","fastq","fastq_ds","qc","trimmed","bam","vcf","vep","genes","rnaseq","logs"]:
         Path(d).mkdir(parents=True, exist_ok=True)
@@ -723,6 +799,23 @@ def _write_intervals_file(contigs, dest: Path):
         for ctg, ln in contigs:
             fo.write(f"{ctg}\t0\t{ln}\n")
     return dest
+
+def _human_bp(n: int) -> str:
+    units = ["bp","kb","Mb","Gb","Tb"]; i = 0; x = float(n)
+    while x >= 1000 and i < len(units)-1:
+        x /= 1000.0; i += 1
+    return f"{x:.1f} {units[i]}"
+
+def _bp_in_bed(bed: Path) -> int:
+    total = 0
+    with open(bed) as fh:
+        for line in fh:
+            if not line.strip() or line.startswith("#"): continue
+            a = line.split("\t")
+            if len(a) >= 3:
+                try: total += max(0, int(a[2]) - int(a[1]))
+                except Exception: pass
+    return total
 
 def _split_balanced(contigs, parts: int):
     "Greedy balance por tamanho; retorna lista de listas de (ctg,len)."
@@ -2104,160 +2197,590 @@ def _gather_vcfs(inputs: list[Path], out: Path):
     _ensure_tabix(out)
     return out
 
+def _concat_vcfs(inputs: list[Path], out: Path):
+    """
+    Concatena shards VCF (ordenados por cromossomo/pos) com bcftools concat.
+    Idempotente: só refaz se 'out' estiver faltando ou mais velho que os inputs.
+    """
+    if out.exists() and _is_newer(out, *inputs):
+        _ensure_tabix(out)
+        return out
+    tmp = _tmp_vcfgz_path(out)
+    if tmp.exists(): tmp.unlink()
+    run(["bcftools", "concat", "-Oz", "-o", str(tmp), *map(str, inputs)])
+    _atomic_rename(tmp, out)
+    _ensure_tabix(out)
+    return out
+
+
+def _bcftools_call_one(
+    bam_or_cram: Path, sample: str, out_vcf: Path, intervals_file: Path | None,
+    min_baseq: int, min_mapq: int, threads: int,
+    split_multiallelic: bool = True, emit_all_sites: bool = False,
+    extra_mpileup_args: list[str] | None = None,
+    extra_call_args: list[str] | None = None,
+):
+    """
+    mpileup (C) -> call (C) -> norm (C) -> BGZF VCF + .tbi
+    Mantém idempotência e compatibilidade de saídas com as fases 9–13.
+    """
+    out_vcf.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _tmp_vcfgz_path(out_vcf)
+    if tmp.exists(): tmp.unlink()
+
+    reg = f"-R {shlex.quote(str(intervals_file))}" if intervals_file else ""
+    emit_flag = "-A" if emit_all_sites else "-v"
+    split_flag = "-m +any" if split_multiallelic else ""
+    xtra_mp = " ".join(map(shlex.quote, extra_mpileup_args or []))
+    xtra_call = " ".join(map(shlex.quote, extra_call_args or []))
+
+    console.print(
+        f"[{sample}] BCFtools → mpileup/call (q={min_mapq}, Q={min_baseq}) "
+        f"{'(intervals)' if intervals_file else '(genoma inteiro)'}"
+    )
+
+    # Obs.: --threads atua na compressão/IO; mpileup/call em si são single-threaded.
+    script = f"""
+set -eo pipefail
+bcftools mpileup -Ou -f refs/reference.fa -q {int(min_mapq)} -Q {int(min_baseq)} \
+  -a FORMAT/DP,FORMAT/AD,INFO/AD {reg} {xtra_mp} {shlex.quote(str(bam_or_cram))} \
+| bcftools call -m {emit_flag} -Ou {xtra_call} \
+| bcftools norm -f refs/reference.fa {split_flag} -Ou \
+| bcftools view --threads {int(max(1,threads))} -Oz -o {shlex.quote(str(tmp))}
+"""
+    run(["bash","-lc", script])
+    _atomic_rename(tmp, out_vcf)
+    _ensure_tabix(out_vcf)
+
+def _concat_vcfs_bcftools(inputs: list[Path], out: Path, io_threads: int = 2):
+    """Concatena shards com bcftools concat (idempotente)."""
+    if out.exists() and _is_newer(out, *inputs):
+        _ensure_tabix(out); return out
+    tmp = _tmp_vcfgz_path(out)
+    if tmp.exists(): tmp.unlink()
+    cmd = ["bcftools","concat","-Oz","-o",str(tmp), *map(str, sorted(inputs))]
+    if io_threads > 1: cmd += ["--threads", str(io_threads)]
+    run(cmd)
+    _atomic_rename(tmp, out)
+    _ensure_tabix(out)
+    return out
+
+def _bcftools_call_one_verbose(
+    bam_or_cram: Path, sample: str, out_vcf: Path, intervals_file: Path | None,
+    mapq: int, baseq: int, io_threads: int, emit_variants_only: bool, heartbeat_sec: int
+):
+    """Chama variantes com bcftools mpileup→call emitindo banners/heartbeats/throughput."""
+    out_vcf.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _tmp_vcfgz_path(out_vcf)
+    if tmp.exists(): tmp.unlink()
+
+    # escopo alvo (para feedback)
+    if intervals_file:
+        target_bp = _bp_in_bed(intervals_file)
+        scope = f"intervals ({_human_bp(target_bp)})"
+    else:
+        # soma do .fai
+        target_bp = sum(ln for _, ln in _read_fai(Path("refs/reference.fa.fai")))
+        scope = f"genoma inteiro ({_human_bp(target_bp)})"
+
+    label = f"[{sample}] bcftools mpileup→call " + ("(intervals)" if intervals_file else "(genoma inteiro)")
+    console.print(Panel.fit(
+        f"{label}\nAlvo: {_human_bp(target_bp)}  •  MAPQ≥{mapq}  •  BQ≥{baseq}  •  IO-threads={io_threads}",
+        border_style="magenta"
+    ))
+
+    # comandos
+    mp = ["bcftools","mpileup", "-f","refs/reference.fa",
+          "-q",str(mapq), "-Q",str(baseq),
+          "-Ou", "-a","DP,AD", str(bam_or_cram)]
+    if intervals_file:
+        mp += ["-R", str(intervals_file)]
+    if io_threads > 1:
+        mp += ["--threads", str(io_threads)]
+
+    call = ["bcftools","call","-m", "-Oz", "-o", str(tmp)]
+    if emit_variants_only:
+        call.insert(3, "-v")
+    if io_threads > 1:
+        call += ["--threads", str(io_threads)]
+
+    import time as _time
+    t0 = _time.time()
+    run_long_stream_pipeline([mp, call], label=label, heartbeat_sec=max(5, int(heartbeat_sec)))
+    dt = max(1, int(_time.time() - t0))
+    speed_mbps = (target_bp / dt) / 1e6
+    console.print(f"[bold cyan]{sample}[/bold cyan] terminou {scope} em {dt//60}m{dt%60:02d}s  (~{speed_mbps:.1f} Mbp/s)")
+    _ensure_tabix(tmp)
+    _atomic_rename(tmp, out_vcf)
+
 def call_variants(samples, threads, mem_gb):
     """
-    Gera por amostra: gVCF (g.vcf.gz) e VCF final (vcf.gz) de forma idempotente.
-    - Usa ALT/decoys por padrão; pode excluir canônicos via params.keep_alt_decoy=false.
-    - Scatter opcional via params.hc_scatter_parts (default 1).
-    - Controla RAM/threads via params.hc_java_mem_gb, params.hc_threads_native.
-    - GenotypeGVCFs também idempotente com heap separado (params.gg_java_mem_gb).
+    Gera variantes por amostra com GATK (gVCF->GenotypeGVCFs) ou BCFtools (mpileup->call->norm).
+    - Se params.variant_caller == "gatk": usa HaplotypeCaller (com scatter opcional) + GenotypeGVCFs.
+    - Se params.variant_caller == "bcftools": paraleliza shards e concatena em vcf/<sample>.vcf.gz.
+    - Idempotente: pula quando outputs existem e estão atualizados (inclui .tbi).
+
+    Parâmetros YAML (params):
+      variant_caller: "gatk" | "bcftools"
+      # BCFtools
+      bcf_scatter_parts: int          # nº de shards
+      bcf_max_parallel: int           # nº de shards em paralelo
+      bcf_threads_io: int             # --threads de htslib por processo (mpileup/norm)
+      bcf_mapq: int                   # -q em mpileup (MAPQ)
+      bcf_baseq: int                  # -Q em mpileup (BaseQ)
+      bcf_max_depth: int              # --max-depth em mpileup
+      bcf_heartbeat_sec: int          # intervalo do heartbeat (s) por shard (default 30)
+      bcf_preview_max_contigs: int    # nº máx de contigs no preview dos BEDs (default 4)
     """
+    from pathlib import Path
+    import os as _os, time, shutil, subprocess as sp, shlex
+
     Path("vcf").mkdir(exist_ok=True)
     Path("vcf/shards").mkdir(parents=True, exist_ok=True)
+    Path("logs").mkdir(exist_ok=True)
 
     p = cfg_global.get("params", {})
     g = cfg_global.get("general", {})
 
-    # === Parâmetros (com defaults sensatos) ===
-    # manter ALT/decoys por padrão; desativar com keep_alt_decoy: false OU limit_to_canonical: true
+    variant_caller = (p.get("variant_caller") or "gatk").lower().strip()
+    if variant_caller not in ("gatk", "bcftools"):
+        console.print(f"[yellow]variant_caller='{variant_caller}' desconhecido — usando GATK.[/yellow]")
+        variant_caller = "gatk"
+
+    # === Contigs/intervalos ===
     keep_alt_decoy = bool(p.get("keep_alt_decoy", True))
     if g.get("limit_to_canonical", False):
         keep_alt_decoy = False
+    contigs = _read_fai(Path("refs/reference.fa.fai"))
+    contigs_used = contigs if keep_alt_decoy else _canonical_subset(contigs)
+    intervals_dir = Path("intervals"); intervals_dir.mkdir(exist_ok=True)
 
-    scatter_parts   = max(1, int(p.get("hc_scatter_parts", 1)))
-    max_parallel    = max(1, int(p.get("hc_max_parallel", 1)))  # (simples: serial padrão)
-
-    hc_mem_gb       = int(p.get("hc_java_mem_gb", 24))
-
-    import os as _os
-    _hc_threads_cfg = p.get("hc_threads_native",
-                            cfg_global.get("general", {}).get("hc_threads_native", None))
-    try:
-        hc_nat_threads = int(_hc_threads_cfg) if _hc_threads_cfg is not None else 4
-    except Exception:
-        hc_nat_threads = 4
-
-    # limite superior: CPUs físicas (evita pedir mais threads do que existe)
-    try:
-        if _os.cpu_count():
-            hc_nat_threads = max(1, min(hc_nat_threads, _os.cpu_count()))
-        else:
-            hc_nat_threads = max(1, hc_nat_threads)
-    except Exception:
-        hc_nat_threads = max(1, hc_nat_threads)    
-
-    hc_pcr_free     = bool(p.get("hc_pcr_free", True))
-    hc_extra        = list(p.get("hc_extra_args", [])) if isinstance(p.get("hc_extra_args", []), list) else []
-
-    gg_mem_gb       = int(p.get("gg_java_mem_gb", 12))
-    gg_extra        = list(p.get("gg_extra_args", [])) if isinstance(p.get("gg_extra_args", []), list) else []
-
-    force_recall    = bool(p.get("force_recall", False))  # se True, refaz gVCF/VCF
-
-    # entradas (mkdup preferindo CRAM)
-    prefer_bam_for_calling = bool(cfg_global.get("params", {}).get("prefer_bam_for_calling", True))
-
+    # === Entradas (mkdup: prefer BAM ou CRAM) ===
+    prefer_bam_for_calling = bool(p.get("prefer_bam_for_calling", True))
     if prefer_bam_for_calling:
         aln = sorted(Path("bam").glob("*.mkdup.bam")) + sorted(Path("bam").glob("*.mkdup.cram"))
     else:
         aln = sorted(Path("bam").glob("*.mkdup.cram")) + sorted(Path("bam").glob("*.mkdup.bam"))
 
     if not aln:
-        console.print("[yellow]Aviso:[/yellow] nenhum BAM/CRAM encontrado para chamar variantes.", style="italic")
+        console.print("[yellow]Aviso:[/yellow] nenhum BAM/CRAM encontrado para chamada de variantes.", style="italic")
         return []
 
-    # contigs / intervals (único preparo por execução)
-    contigs = _read_fai(Path("refs/reference.fa.fai"))
-    contigs_used = contigs if keep_alt_decoy else _canonical_subset(contigs)
-    intervals_dir = Path("intervals"); intervals_dir.mkdir(exist_ok=True)
+    # ======== Helpers ========
+    def _mk_panel(msg, style="bright_cyan"):
+        return Panel.fit(msg, border_style=style)
 
-    shards_generated = []
+    def _fai_order_dict(fai_path="refs/reference.fa.fai"):
+        od = {}
+        with open(fai_path) as fh:
+            for i, ln in enumerate(fh):
+                od[ln.split("\t", 1)[0]] = i
+        return od
+
+    def _first_bed_contig(bed_path: Path) -> str:
+        with open(bed_path) as fh:
+            for ln in fh:
+                if ln.strip():
+                    return ln.split()[0]
+        return ""
+
+    def _read_bed_stats(bed: Path):
+        """Retorna (contigs_em_ordem, num_linhas, total_bp)."""
+        contigs_seen = []
+        total_bp = 0
+        n = 0
+        with open(bed) as fh:
+            for ln in fh:
+                if not ln.strip():
+                    continue
+                parts = ln.rstrip("\n").split("\t")
+                if len(parts) < 3:
+                    continue
+                chrom, start, end = parts[0], parts[1], parts[2]
+                try:
+                    bp = max(0, int(end) - int(start))
+                except Exception:
+                    bp = 0
+                total_bp += bp
+                n += 1
+                if (not contigs_seen) or contigs_seen[-1] != chrom:
+                    contigs_seen.append(chrom)
+        return contigs_seen, n, total_bp
+
+    def _fmt_bp(n):
+        # formato amigável para pares de bases
+        units = [("Gbp", 10**9), ("Mbp", 10**6), ("kbp", 10**3)]
+        for u, s in units:
+            if n >= s:
+                return f"{n/s:.2f} {u}"
+        return f"{n} bp"
+
+    # ---------- GATK (mesmo fluxo já usado) ----------
+    def _gatk_call_one(
+        bam_or_cram: Path, sample: str, out_gvcf: Path, intervals_file: Path|None,
+        java_mem_gb: int, nat_threads: int, pcr_free: bool, extra_args: list[str]|None=None
+    ):
+        return _haplotypecaller_one(
+            bam_or_cram, sample, out_gvcf, intervals_file,
+            java_mem_gb=java_mem_gb, nat_threads=nat_threads, pcr_free=pcr_free, extra_args=extra_args
+        )
+
+    # ---------- bcftools: cmd + labels ----------
+    def _bcf_make_cmd(sample: str, bam: Path, bed: Path, out_vcf: Path,
+                      io_threads: int, mapq: int, baseq: int, max_depth: int) -> list[str]:
+        tmp = out_vcf.with_suffix(".tmp.vcf.gz")
+        sh = (
+            "set -euo pipefail; "
+            f"bcftools mpileup -f refs/reference.fa -Ou --threads {io_threads} "
+            f"-q {mapq} -Q {baseq} --max-depth {max_depth} "
+            f"-a FORMAT/AD,FORMAT/DP,FORMAT/SP,INFO/AD "
+            f"-R {shlex.quote(str(bed))} {shlex.quote(str(bam))} "
+            f"| bcftools call -m -v -Ou "
+            f"| bcftools norm -f refs/reference.fa --threads {io_threads} --multiallelics -both "
+            f"-Oz -o {shlex.quote(str(tmp))}"
+        )
+        return ["bash","-lc", sh]
+
+    def _bcf_label(sample: str, io_threads: int, mapq: int, baseq: int, max_depth: int, shard_tag: str=""):
+        return (f"[{sample}{('|' + shard_tag) if shard_tag else ''}] bcftools: mpileup→call→norm "
+                f"(threads={io_threads}, MAPQ≥{mapq}, BaseQ≥{baseq}, max-depth={max_depth})")
+
+    # ---------- helper serial (progresso por shard) ----------
+    def _run_bcftools_shard_with_progress(sample: str, bam: Path, bed: Path, out_shard: Path,
+                                          io_threads: int, mapq: int, baseq: int, max_depth: int,
+                                          heartbeat_sec: int = 30):
+        """Executa 1 shard (sem paralelismo externo) monitorando crescimento do .tmp e emitindo heartbeat."""
+        tmp = out_shard.with_suffix(".tmp.vcf.gz")
+        tmp.unlink(missing_ok=True)
+
+        shard_tag = out_shard.name.replace(".vcf.gz","")
+        console.print(_mk_panel(_bcf_label(sample, io_threads, mapq, baseq, max_depth, shard_tag), "white"))
+
+        cmd = _bcf_make_cmd(sample, bam, bed, out_shard, io_threads, mapq, baseq, max_depth)
+        log_path = Path("logs")/f"bcftools_{sample}_{shard_tag}.log"
+        with open(log_path, "w") as log_fh:
+            if shutil.which("stdbuf"):
+                cmd = ["stdbuf","-oL","-eL"] + cmd
+            p = sp.Popen(cmd, stdout=log_fh, stderr=sp.STDOUT, text=True)
+
+            start = time.time()
+            last_ts = start
+            last_sz = 0
+            while True:
+                rc = p.poll()
+                now = time.time()
+                if now - last_ts >= max(3, int(heartbeat_sec)):
+                    sz = tmp.stat().st_size if tmp.exists() else 0
+                    dsz = max(0, sz - last_sz)
+                    console.print(f"[{sample}|{shard_tag}] … {int((now-start)//60)}m{int((now-start)%60):02d}s "
+                                  f"• out {sizeof_fmt(sz)} • Δ{sizeof_fmt(dsz)}  • log={log_path.name}", highlight=False)
+                    last_ts = now
+                    last_sz = sz
+                if rc is not None:
+                    break
+                time.sleep(0.5)
+
+        if p.returncode != 0:
+            # mostra tail do log p/ debug
+            try:
+                tail = sp.run(["bash","-lc", f"tail -n 60 {shlex.quote(str(log_path))}"],
+                              capture_output=True, text=True, check=True).stdout
+            except Exception:
+                tail = ""
+            raise sp.CalledProcessError(p.returncode, p.args, output=tail)
+
+        # finalize: renomeia tmp, indexa e reporta
+        if tmp.exists():
+            _atomic_rename(tmp, out_shard)
+        run(["tabix","-p","vcf",str(out_shard)])
+        size_mb = (out_shard.stat().st_size / (1024*1024)) if out_shard.exists() else 0.0
+        dt = int(time.time() - start)
+        # imprime resumo do log (linhas de estatística do bcftools, se houver)
+        try:
+            lines_line = sp.run(
+                ["bash","-lc", f"grep -E '^[Ll]ines\\s' -m1 {shlex.quote(str(log_path))} || true"],
+                capture_output=True, text=True, check=True
+            ).stdout.strip()
+        except Exception:
+            lines_line = ""
+        console.print(f"[{sample}] shard pronto → {out_shard.name}  •  {size_mb:.1f}MB  •  {dt//60}m{dt%60:02d}s"
+                      + (f"\n{lines_line}" if lines_line else ""))
+
+    # ======== Caminho GATK ========
+    if variant_caller == "gatk":
+        scatter_parts   = max(1, int(p.get("hc_scatter_parts", 1)))
+        hc_mem_gb       = int(p.get("hc_java_mem_gb", 24))
+        _hc_threads_cfg = p.get("hc_threads_native", g.get("hc_threads_native", None))
+        try:
+            hc_nat_threads = int(_hc_threads_cfg) if _hc_threads_cfg is not None else 4
+        except Exception:
+            hc_nat_threads = 4
+        try:
+            if _os.cpu_count():
+                hc_nat_threads = max(1, min(hc_nat_threads, _os.cpu_count()))
+        except Exception:
+            pass
+        hc_pcr_free     = bool(p.get("hc_pcr_free", True))
+        hc_extra        = list(p.get("hc_extra_args", [])) if isinstance(p.get("hc_extra_args", []), list) else []
+
+        gg_mem_gb       = int(p.get("gg_java_mem_gb", 12))
+        gg_extra        = list(p.get("gg_extra_args", [])) if isinstance(p.get("gg_extra_args", []), list) else []
+        force_recall    = bool(p.get("force_recall", False))
+
+        vcfs_final = []
+
+        for bam in aln:
+            sample = bam.name.replace(".mkdup.cram","").replace(".mkdup.bam","")
+            gvcf = Path("vcf")/f"{sample}.g.vcf.gz"
+            vcf  = Path("vcf")/f"{sample}.vcf.gz"
+
+            # ---- gVCF ----
+            need_gvcf = force_recall or (not gvcf.exists()) or (not _is_newer(gvcf, bam)) or (not Path(str(gvcf)+".tbi").exists())
+
+            if not need_gvcf and scatter_parts == 1:
+                console.print(f"[{sample}] HaplotypeCaller → [bold]SKIP (cache ok)[/bold]")
+            else:
+                if scatter_parts == 1:
+                    intervals_file = None
+                    if not keep_alt_decoy:
+                        intervals_file = intervals_dir / "canonical.bed"
+                        if not intervals_file.exists():
+                            _write_intervals_file(contigs_used, intervals_file)
+                    _gatk_call_one(
+                        bam, sample, gvcf, intervals_file,
+                        java_mem_gb=hc_mem_gb, nat_threads=hc_nat_threads,
+                        pcr_free=hc_pcr_free, extra_args=hc_extra
+                    )
+                else:
+                    parts = _split_balanced(contigs_used, scatter_parts)
+                    shard_dir = Path(f"vcf/shards/{sample}"); shard_dir.mkdir(parents=True, exist_ok=True)
+                    shard_gvcfs = []
+                    for i, part in enumerate(parts, start=1):
+                        intr = shard_dir / f"part_{i:02d}.bed"
+                        _write_intervals_file(part, intr)
+                        out_shard = shard_dir / f"{sample}.part_{i:02d}.g.vcf.gz"
+                        if not (out_shard.exists() and _is_newer(out_shard, bam) and Path(str(out_shard)+".tbi").exists()):
+                            _gatk_call_one(
+                                bam, sample, out_shard, intr,
+                                java_mem_gb=max(24, hc_mem_gb//max(1,scatter_parts//2)),
+                                nat_threads=max(1, min(16, hc_nat_threads)),
+                                pcr_free=hc_pcr_free, extra_args=hc_extra
+                            )
+                        else:
+                            _ensure_tabix(out_shard)
+                        shard_gvcfs.append(out_shard)
+                    _gather_vcfs(shard_gvcfs, gvcf)
+
+            # ---- GenotypeGVCFs → VCF ----
+            need_vcf = force_recall or (not vcf.exists()) or (not _is_newer(vcf, gvcf)) or (not Path(str(vcf)+".tbi").exists())
+            if need_vcf:
+                tmp = _tmp_vcfgz_path(vcf)
+                if tmp.exists(): tmp.unlink()
+                java_opts = f"-Xmx{gg_mem_gb}g -Dsamjdk.compression_level=2"
+                cmd = [
+                    "gatk","--java-options",java_opts,"GenotypeGVCFs",
+                    "-R","refs/reference.fa","-V",str(gvcf),"-O",str(tmp)
+                ] + gg_extra
+                console.print(f"[{sample}] GenotypeGVCFs → mem={gg_mem_gb}g")
+                run(cmd)
+                _atomic_rename(tmp, vcf)
+                _ensure_tabix(vcf)
+            else:
+                console.print(f"[{sample}] GenotypeGVCFs → [bold]SKIP (cache ok)[/bold]")
+
+            vcfs_final.append(vcf)
+            print_meta(f"VCFs ({sample})", [gvcf, vcf])
+
+        if vcfs_final:
+            print_meta("VCFs gerados (por amostra)", vcfs_final)
+        else:
+            console.print("[yellow]Aviso:[/yellow] Nenhum VCF novo foi gerado (talvez já existissem).", style="italic")
+        return vcfs_final
+
+    # ======== Caminho BCFtools (paralelo em shards) ========
+    bcf_parts        = max(1, int(p.get("bcf_scatter_parts", p.get("hc_scatter_parts", 1))))
+    bcf_max_parallel = max(1, int(p.get("bcf_max_parallel", 1)))
+    # threads de I/O (htslib) por processo — prudente para não saturar disco
+    guess_io = max(1, threads // max(1, min(bcf_max_parallel, threads)))
+    bcf_io_threads   = max(1, int(p.get("bcf_threads_io", min(2, guess_io))))
+    bcf_mapq         = int(p.get("bcf_mapq", 20))
+    bcf_baseq        = int(p.get("bcf_baseq", 20))
+    bcf_max_depth    = int(p.get("bcf_max_depth", 250))
+    bcf_heartbeat    = int(p.get("bcf_heartbeat_sec", 30))
+    bcf_prev_maxc    = int(p.get("bcf_preview_max_contigs", 4))
+    force_recall     = bool(p.get("force_recall", False))
+
     vcfs_final = []
+    fai_order = _fai_order_dict()
 
     for bam in aln:
         sample = bam.name.replace(".mkdup.cram","").replace(".mkdup.bam","")
-        gvcf = Path("vcf")/f"{sample}.g.vcf.gz"
-        vcf  = Path("vcf")/f"{sample}.vcf.gz"
+        final_vcf = Path("vcf")/f"{sample}.vcf.gz"
+        final_tbi = Path(str(final_vcf)+".tbi")
 
-        # -------- gVCF (com scatter opcional) --------
-        need_gvcf = force_recall or (not gvcf.exists()) or (not _is_newer(gvcf, bam))
-        if not need_gvcf:
-            # também exija .tbi
-            if not Path(str(gvcf)+".tbi").exists():
-                need_gvcf = True
+        # ---- gerar shards (listas de BED) ----
+        parts = _split_balanced(contigs_used, bcf_parts)
+        shard_dir = Path(f"vcf/shards/{sample}")
+        shard_dir.mkdir(parents=True, exist_ok=True)
 
-        if not need_gvcf and scatter_parts == 1:
-            console.print(f"[{sample}] HaplotypeCaller → [bold]SKIP (cache ok)[/bold]")
-        else:
-            if scatter_parts == 1:
-                # um único arquivo de intervals opcional (quando removendo decoys)
-                intervals_file = None
-                if not keep_alt_decoy:
-                    intervals_file = intervals_dir / "canonical.bed"
-                    if not intervals_file.exists():
-                        _write_intervals_file(contigs_used, intervals_file)
-                _haplotypecaller_one(
-                    bam, sample, gvcf, intervals_file,
-                    java_mem_gb=hc_mem_gb, nat_threads=hc_nat_threads,
-                    pcr_free=hc_pcr_free, extra_args=hc_extra
-                )
+        shards = []
+        for i, part in enumerate(parts, start=1):
+            bed = shard_dir / f"part_{i:02d}.bed"
+            _write_intervals_file(part, bed)
+            out_shard = shard_dir / f"{sample}.part_{i:02d}.vcf.gz"
+            shards.append((i, bed, out_shard))
+
+        # ---- PREVIEW dos BEDs (antes de iniciar) ----
+        tbl = Table(title=f"Shards {sample} — preview dos BEDs", header_style="bold cyan")
+        tbl.add_column("part", justify="right")
+        tbl.add_column("contigs (preview)")
+        tbl.add_column("#regiões", justify="right")
+        tbl.add_column("total", justify="right")
+        tbl.add_column("BED")
+        for (i, bed, _) in shards:
+            contigs_seen, n_regions, total_bp = _read_bed_stats(bed)
+            preview = ", ".join(contigs_seen[:bcf_prev_maxc]) + (f" +{len(contigs_seen)-bcf_prev_maxc}" if len(contigs_seen) > bcf_prev_maxc else "")
+            tbl.add_row(f"{i:02d}", preview if preview else "—", str(n_regions), _fmt_bp(total_bp), bed.name)
+        console.print(tbl)
+
+        # Se não for force_recall, descarta da fila os shards que já estão OK
+        todo = []
+        for i, bed, out_shard in shards:
+            ok = out_shard.exists() and Path(str(out_shard)+".tbi").exists() and _is_newer(out_shard, bam)
+            if ok and not force_recall:
+                console.print(f"[{sample}] shard pronto (cache) → {out_shard.name}")
             else:
-                # scatter: construir shards balanceados
-                parts = _split_balanced(contigs_used, scatter_parts)
-                shard_dir = Path(f"vcf/shards/{sample}")
-                shard_dir.mkdir(parents=True, exist_ok=True)
-                shard_gvcfs = []
+                todo.append((i, bed, out_shard))
 
-                for i, part in enumerate(parts, start=1):
-                    intr = shard_dir / f"part_{i:02d}.bed"
-                    _write_intervals_file(part, intr)
-                    out_shard = shard_dir / f"{sample}.part_{i:02d}.g.vcf.gz"
-                    # idempotência por shard
-                    if not (out_shard.exists() and _is_newer(out_shard, bam)):
-                        _haplotypecaller_one(
-                            bam, sample, out_shard, intr,
-                            java_mem_gb=max(24, hc_mem_gb//max(1,scatter_parts//2)),
-                            nat_threads=max(1, min(16, hc_nat_threads)),  # shards menores → menos threads
-                            pcr_free=hc_pcr_free, extra_args=hc_extra
-                        )
-                    else:
-                        _ensure_tabix(out_shard)
-                    shard_gvcfs.append(out_shard)
+        # ---- exec paralela dos shards que faltam ----
+        if todo:
+            console.print(_mk_panel(
+                f"[{sample}] Rodando {len(todo)}/{len(shards)} shard(s) (bcftools) "
+                f"com paralelismo={bcf_max_parallel} e I/O threads por proc={bcf_io_threads}",
+                "cyan"
+            ))
 
-                # Gather shards → gVCF final
-                _gather_vcfs(shard_gvcfs, gvcf)
-                shards_generated.extend(shard_gvcfs)
+            procs = {}   # i -> dict(p, bed, out, tmp, start, last_ts, last_sz, log)
+            next_idx = 0
 
-        # -------- GenotypeGVCFs (→ VCF final) --------
-        need_vcf = force_recall or (not vcf.exists()) or (not _is_newer(vcf, gvcf))
-        if not need_vcf:
-            # exija índice do VCF final (tabix)
-            if not Path(str(vcf)+".tbi").exists():
-                need_vcf = True
+            def _launch(idx: int):
+                i, bed, out_shard = todo[idx]
+                shard_tag = f"part_{i:02d}"
+                console.print(_mk_panel(_bcf_label(sample, bcf_io_threads, bcf_mapq, bcf_baseq, bcf_max_depth, shard_tag), "white"))
+                cmd = _bcf_make_cmd(sample, bam, bed, out_shard, bcf_io_threads, bcf_mapq, bcf_baseq, bcf_max_depth)
+                if shutil.which("stdbuf"):
+                    cmd = ["stdbuf","-oL","-eL"] + cmd
+                log_path = Path("logs")/f"bcftools_{sample}_{shard_tag}.log"
+                log_fh = open(log_path, "w")
+                p = sp.Popen(cmd, stdout=log_fh, stderr=sp.STDOUT, text=True)
+                procs[i] = {
+                    "p": p, "bed": bed, "out": out_shard, "tmp": out_shard.with_suffix(".tmp.vcf.gz"),
+                    "start": time.time(), "last_ts": time.time(), "last_sz": 0, "log": log_path, "log_fh": log_fh
+                }
 
-        if need_vcf:
-            tmp = _tmp_vcfgz_path(vcf)
+            # inicial
+            while next_idx < len(todo) and len(procs) < bcf_max_parallel:
+                _launch(next_idx); next_idx += 1
+
+            # loop
+            while procs:
+                finished = []
+                now = time.time()
+                for i, st in list(procs.items()):
+                    p = st["p"]
+                    rc = p.poll()
+                    # heartbeat
+                    if now - st["last_ts"] >= max(3, int(bcf_heartbeat)):
+                        sz = st["tmp"].stat().st_size if st["tmp"].exists() else 0
+                        dsz = max(0, sz - st["last_sz"])
+                        elapsed = int(now - st["start"])
+                        console.print(f"[{sample}|part_{i:02d}] … {elapsed//60}m{elapsed%60:02d}s "
+                                      f"• out {sizeof_fmt(sz)} • Δ{sizeof_fmt(dsz)}  • log={st['log'].name}",
+                                      highlight=False)
+                        st["last_ts"] = now
+                        st["last_sz"] = sz
+
+                    if rc is None:
+                        continue
+
+                    # terminou
+                    try:
+                        st["log_fh"].flush(); st["log_fh"].close()
+                    except Exception:
+                        pass
+                    finished.append(i)
+
+                    if rc != 0:
+                        # tail do log
+                        try:
+                            tail = sp.run(["bash","-lc", f"tail -n 60 {shlex.quote(str(st['log']))}"],
+                                          capture_output=True, text=True, check=True).stdout
+                        except Exception:
+                            tail = ""
+                        raise sp.CalledProcessError(rc, p.args, output=tail)
+
+                    # rename tmp -> final e index
+                    tmp = st["tmp"]
+                    out_shard = st["out"]
+                    if tmp.exists():
+                        _atomic_rename(tmp, out_shard)
+                    run(["tabix","-p","vcf",str(out_shard)])
+                    dt = int(time.time() - st["start"])
+                    size_mb = (out_shard.stat().st_size / (1024*1024)) if out_shard.exists() else 0.0
+                    # extrai a linha "Lines ..." do log, se existir
+                    try:
+                        lines_line = sp.run(
+                            ["bash","-lc", f"grep -E '^[Ll]ines\\s' -m1 {shlex.quote(str(st['log']))} || true"],
+                            capture_output=True, text=True, check=True
+                        ).stdout.strip()
+                    except Exception:
+                        lines_line = ""
+                    console.print(f"[{sample}] shard pronto → {out_shard.name}  •  {size_mb:.1f}MB  •  {dt//60}m{dt%60:02d}s"
+                                  + (f"\n{lines_line}" if lines_line else ""))
+
+                    # lança próximo
+                    if next_idx < len(todo):
+                        _launch(next_idx); next_idx += 1
+
+                    procs.pop(i, None)
+
+                time.sleep(0.3)
+
+        # ---- concatena shards → VCF final (ordem do .fai; -a) ----
+        shard_vcfs = [out for (_, _, out) in shards if out.exists()]
+        need_final = force_recall or (not final_vcf.exists()) or (not final_tbi.exists()) \
+                     or any(out.stat().st_mtime > final_vcf.stat().st_mtime for out in shard_vcfs)
+
+        if not shard_vcfs:
+            console.print(f"[orange3][{sample}] Nenhum shard VCF encontrado — nada a concatenar.[/orange3]")
+        elif need_final:
+            tmp = _tmp_vcfgz_path(final_vcf)
             if tmp.exists(): tmp.unlink()
-            java_opts = f"-Xmx{gg_mem_gb}g -Dsamjdk.compression_level=2"
-            cmd = [
-                "gatk","--java-options",java_opts,"GenotypeGVCFs",
-                "-R","refs/reference.fa","-V",str(gvcf),"-O",str(tmp)
-            ] + gg_extra
-            console.print(f"[{sample}] GenotypeGVCFs → mem={gg_mem_gb}g")
-            run(cmd)
-            _atomic_rename(tmp, vcf)
-            _ensure_tabix(vcf)
-        else:
-            console.print(f"[{sample}] GenotypeGVCFs → [bold]SKIP (cache ok)[/bold]")
 
-        vcfs_final.append(vcf)
-        print_meta(f"VCFs ({sample})", [gvcf, vcf])
+            # Ordena shards pela ordem do 1º contig do respectivo BED
+            shards_for_concat = []
+            for (i, bed, out) in shards:
+                if out.exists():
+                    c = _first_bed_contig(bed)
+                    shards_for_concat.append((fai_order.get(c, 10**9), out))
+            shards_for_concat.sort(key=lambda x: x[0])
+            shard_vcfs_sorted = [str(v) for _, v in shards_for_concat]
+
+            console.print(f"[{sample}] Concat shards → {final_vcf.name}  (n={len(shard_vcfs_sorted)})")
+            # -a: permite blocos não contíguos; -D none: não tenta deduplicar registros
+            run(["bcftools","concat","-a","-Oz","-o", str(tmp), *shard_vcfs_sorted])
+            _atomic_rename(tmp, final_vcf)
+            run(["tabix","-p","vcf",str(final_vcf)])
+        else:
+            console.print(f"[{sample}] VCF final → [bold]SKIP[/bold] (cache ok)")
+
+        vcfs_final.append(final_vcf)
+        print_meta(f"VCF ({sample})", [final_vcf])
 
     if vcfs_final:
         print_meta("VCFs gerados (por amostra)", vcfs_final)
     else:
         console.print("[yellow]Aviso:[/yellow] Nenhum VCF novo foi gerado (talvez já existissem).", style="italic")
-
     return vcfs_final
 
 def annotate_variants(assembly_name, threads, vep_cache_dir=""):
