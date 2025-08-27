@@ -2822,14 +2822,14 @@ def annotate_with_vep(samples, threads: int):
 
     # --------------- VEP disponível? ---------------
     try:
-        rc = sp.run(["vep", "--version"], stdout=sp.PIPE, stderr=sp.STDOUT, text=True, check=False)
+        rc = sp.run(["vep"], stdout=sp.PIPE, stderr=sp.STDOUT, text=True, check=False)
         vep_ver = (rc.stdout or "").strip()
         if rc.returncode != 0:
             console.print("[red]VEP não encontrado no PATH do ambiente atual.[/red] "
                           "Ative o env correto (ex.: 'conda activate genomics') ou reinstale.")
             raise SystemExit(1)
         else:
-            console.print(_mk_panel(f"Ensembl VEP detectado — versão: {vep_ver}", "green"))
+            console.print(_mk_panel(f"Ensembl VEP detectado:\n{vep_ver}", "green"))
     except FileNotFoundError:
         console.print("[red]VEP não encontrado (binário 'vep').[/red]")
         raise SystemExit(1)
