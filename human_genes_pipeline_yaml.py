@@ -2329,17 +2329,12 @@ def _is_het(gt) -> bool:
 
 def pairwise_comparisons(dna_samples):
     Path("comparisons").mkdir(exist_ok=True)
-    sample_ids = []
-    for s in dna_samples:
-        # id vem de s["id"] montado no normalizador (ou do runs[0])
-        sample_ids.append(s["id"])
-    sample_ids = sorted(set(sample_ids))
+    sample_ids = sorted(set(s["id"] for s in dna_samples))
     vcfs = {sid: Path("vcf")/f"{sid}.vcf.gz" for sid in sample_ids}
     for sid, v in vcfs.items():
         if not v.exists():
             console.print(f"[yellow]Aviso:[/yellow] VCF ausente para {sid}: {v}", style="italic")
 
-    # todas as duplas
     from itertools import combinations
     for a,b in combinations(sample_ids, 2):
         va, vb = vcfs[a], vcfs[b]
@@ -2349,61 +2344,43 @@ def pairwise_comparisons(dna_samples):
 
         pair_name = f"{a}_vs_{b}"
         out_merge = Path("comparisons")/f"{pair_name}.merge.vcf.gz"
-        if not out_merge.exists():
-            # junta sites de ambos (mesmo caller/ref → representações consistentes)
+        need_merge = not (out_merge.exists() and _is_newer(out_merge, va, vb))
+        if need_merge:
             run(["bcftools","merge","-m","all","-Oz","-o",str(out_merge), str(va), str(vb)])
             run(["bcftools","index","-t",str(out_merge)])
 
-        # extrai GT dos dois samples em cada site
+        # query e métricas (sempre recalculadas — idempotente por overwrite)
         q = sp.run(
             ["bcftools","query","-s",f"{a},{b}","-f","%CHROM\t%POS\t%REF\t%ALT[\t%GT]\n",str(out_merge)],
             capture_output=True, text=True, check=True
         ).stdout.splitlines()
 
-        stats = {
-            "pair": pair_name,
-            "sites_total": 0,
-            "sites_both_called": 0,
-            "geno_exact_match": 0,
-            "het_concord": 0,
-            "share_allele": 0,  # IBS>=1
-            "ibs0": 0,          # nenhum alelo compartilhado
-        }
+        stats = {"pair": f"{a}_vs_{b}", "sites_total": 0, "sites_both_called": 0,
+                 "geno_exact_match": 0, "het_concord": 0, "share_allele": 0, "ibs0": 0}
 
         for line in q:
             if not line or line.startswith("#"): continue
             parts = line.strip().split("\t")
             if len(parts) < 6: continue
-            gt_a = _parse_gt(parts[-2])
-            gt_b = _parse_gt(parts[-1])
-
+            gt_a = _parse_gt(parts[-2]); gt_b = _parse_gt(parts[-1])
             stats["sites_total"] += 1
             both = (gt_a is not None) and (gt_b is not None)
-            if not both:
-                continue
+            if not both: continue
             stats["sites_both_called"] += 1
+            if _same_geno(gt_a, gt_b): stats["geno_exact_match"] += 1
+            if _is_het(gt_a) and _is_het(gt_b) and _same_geno(gt_a, gt_b): stats["het_concord"] += 1
+            if _share_allele(gt_a, gt_b): stats["share_allele"] += 1
+            else: stats["ibs0"] += 1
 
-            if _same_geno(gt_a, gt_b):
-                stats["geno_exact_match"] += 1
-            if _is_het(gt_a) and _is_het(gt_b) and _same_geno(gt_a, gt_b):
-                stats["het_concord"] += 1
-            if _share_allele(gt_a, gt_b):
-                stats["share_allele"] += 1
-            else:
-                stats["ibs0"] += 1
-
-        # métricas derivadas
         bc = max(1, stats["sites_both_called"])
         frac_exact = stats["geno_exact_match"]/bc
         frac_share = stats["share_allele"]/bc
         frac_ibs0  = stats["ibs0"]/bc
 
-        # salva TSV+MD
         tsv = Path("comparisons")/f"{pair_name}.metrics.tsv"
         with open(tsv,"w") as fh:
             fh.write("metric\tvalue\n")
-            for k,v in stats.items():
-                fh.write(f"{k}\t{v}\n")
+            for k,v in stats.items(): fh.write(f"{k}\t{v}\n")
             fh.write(f"geno_exact_match_frac\t{frac_exact:.6f}\n")
             fh.write(f"share_allele_frac\t{frac_share:.6f}\n")
             fh.write(f"ibs0_frac\t{frac_ibs0:.6f}\n")
@@ -2418,9 +2395,8 @@ def pairwise_comparisons(dna_samples):
                      f"({stats['share_allele']:,}/{bc:,})\n")
             fh.write(f"- **IBS0** (nenhum alelo em comum): **{frac_ibs0:.3%}** "
                      f"({stats['ibs0']:,}/{bc:,})\n\n")
-            fh.write("> Regra prática: parentais-filhos apresentam **IBS0 muito baixo** e "
-                     "alta fração de compartilhamento de alelos. Use como triagem; "
-                     "para decisão forense, use ferramentas/controles específicos.\n")
+            fh.write("> Regra prática: parentais-filhos apresentam IBS0 muito baixo e "
+                     "alta fração de compartilhamento de alelos.\n")
 
         console.print(f"[bold cyan]Comparação {pair_name}:[/bold cyan] "
                       f"IBS0={frac_ibs0:.2%}, share≥1={frac_share:.2%}, exact={frac_exact:.2%}")
@@ -2519,13 +2495,6 @@ def _parse_ad(ad_str):
         return None, None, None
 
 def trio_denovo_report(dna_samples):
-    """
-    Encontra potenciais variantes de novo (filho ≠ pais) aplicando filtros simples:
-      - filho: GT != 0/0, DP>=min, GQ>=min; het com 0.25<=AB<=0.75; hom_alt com AB>=0.9
-      - pais: GT==0/0, DP>=min, (se AD) alt_frac<=0.02
-      - somente sites PASS
-    Gera 'trio/trio_denovo_candidates.tsv' + resumo MD.
-    """
     child, p1, p2 = _infer_trio_ids(dna_samples)
     if not child:
         console.print("[orange3]Trio não identificado — pulando relatório de de novo.[/orange3]")
@@ -2539,13 +2508,13 @@ def trio_denovo_report(dna_samples):
 
     Path("trio").mkdir(exist_ok=True)
     merged = Path("trio")/"trio_merged.vcf.gz"
-    if not merged.exists():
-        # child primeiro (ordem importa p/ leitura dos blocos)
-        run(["bcftools","merge","-m","all","-Oz","-o",str(merged), 
+    need_merge = not (merged.exists() and _is_newer(merged, vcfs[child], vcfs[p1], vcfs[p2]))
+    if need_merge:
+        run(["bcftools","merge","-m","all","-Oz","-o",str(merged),
              str(vcfs[child]), str(vcfs[p1]), str(vcfs[p2])])
         run(["bcftools","index","-t",str(merged)])
 
-    # thresholds
+    # thresholds (como antes)
     g = cfg_global.get("general", {})
     min_dp_child = int(g.get("trio_min_dp_child", 8))
     min_dp_par   = int(g.get("trio_min_dp_parents", 8))
@@ -2555,7 +2524,6 @@ def trio_denovo_report(dna_samples):
     min_ab_hom   = float(g.get("trio_min_ab_hom", 0.90))
     max_par_alt  = float(g.get("trio_max_parent_alt_frac", 0.02))
 
-    # consulta: apenas sites PASS
     q = sp.run(
         ["bash","-lc",
          f"bcftools view -f PASS {shlex.quote(str(merged))} | "
@@ -2571,7 +2539,7 @@ def trio_denovo_report(dna_samples):
             if not line.strip(): continue
             total += 1
             parts = line.rstrip("\n").split("\t")
-            if len(parts) < 4+3:  # precisa ter 3 blocos de amostra
+            if len(parts) < 7:  # precisa ter 3 blocos de amostra
                 continue
             chrom, pos, ref, alt = parts[0], parts[1], parts[2], parts[3]
             sa, sb, sc = parts[4], parts[5], parts[6]
@@ -2587,48 +2555,37 @@ def trio_denovo_report(dna_samples):
             p1GT,p1DP,p1GQ,p1AD = split_block(sb)
             p2GT,p2DP,p2GQ,p2AD = split_block(sc)
 
-            # parse
-            gt_c = _parse_gt(cGT); gt_p1 = _parse_gt(p1GT); gt_p2 = _parse_gt(p2GT)
-            _,_,ab_c  = _parse_ad(cAD)
-            _,_,ab_p1 = _parse_ad(p1AD)
-            _,_,ab_p2 = _parse_ad(p2AD)
+            gt_c  = _parse_gt(cGT); gt_p1 = _parse_gt(p1GT); gt_p2 = _parse_gt(p2GT)
+            _,_,ab_c  = _parse_ad(cAD);  _,_,ab_p1 = _parse_ad(p1AD);  _,_,ab_p2 = _parse_ad(p2AD)
 
-            # filtros pais
+            # pais
             if not _is_hom_ref(gt_p1) or not _is_hom_ref(gt_p2): continue
             if (p1DP is not None and p1DP < min_dp_par) or (p2DP is not None and p2DP < min_dp_par): continue
             if (p1GQ is not None and p1GQ < min_gq) or (p2GQ is not None and p2GQ < min_gq): continue
             if ab_p1 is not None and ab_p1 > max_par_alt: continue
             if ab_p2 is not None and ab_p2 > max_par_alt: continue
 
-            # filtros filho
+            # filho
             if not _is_nonref(gt_c): continue
             if (cDP is not None and cDP < min_dp_child): continue
             if (cGQ is not None and cGQ < min_gq): continue
             if ab_c is not None:
-                # se het: AB ~50%; se hom-alt: AB alto
-                if (gt_c == (0,1) or gt_c == (1,2) or (len(set(gt_c))>1)):
-                    if not (min_ab_het <= ab_c <= max_ab_het): 
-                        continue
+                if len(set(gt_c)) > 1:
+                    if not (min_ab_het <= ab_c <= max_ab_het): continue
                 else:
-                    # hom-alt (ex.: (1,1))
-                    if ab_c < min_ab_hom:
-                        continue
+                    if ab_c < min_ab_hom: continue
 
             out.write(f"{chrom}\t{pos}\t{ref}\t{alt}\t{cGT}\t{cDP}\t{cGQ}\t{ab_c if ab_c is not None else ''}"
                       f"\t{p1GT}\t{p1DP}\t{p1GQ}\t{ab_p1 if ab_p1 is not None else ''}"
                       f"\t{p2GT}\t{p2DP}\t{p2GQ}\t{ab_p2 if ab_p2 is not None else ''}\n")
             kept += 1
 
-    # sumário
     md = Path("trio")/"trio_denovo_summary.md"
     with open(md,"w") as fh:
         fh.write(f"# Trio de novo — {child} vs {p1},{p2}\n\n")
         fh.write(f"- Variantes elegíveis (PASS) avaliadas: **{total:,}**\n")
         fh.write(f"- Candidatos *de novo* após filtros: **{kept:,}**\n\n")
-        fh.write(f"Arquivos:\n\n")
-        fh.write(f"- TSV: `trio/{out_tsv.name}`\n")
-        fh.write(f"- Merged VCF: `trio/{merged.name}`\n\n")
-        fh.write("> Nota: filtros simples (DP, GQ, AB). Para alta confiança, considere validação adicional e/ou callers específicos de *de novo*.\n")
+        fh.write(f"- TSV: `trio/{out_tsv.name}`\n- Merged VCF: `trio/{merged.name}`\n")
 
     console.print(f"[bold cyan]Trio de novo[/bold cyan] → {out_tsv}  (n={kept})")
 
@@ -2637,17 +2594,21 @@ def trio_denovo_report(dna_samples):
 def gene_list_from_gtf():
     Path("genes").mkdir(exist_ok=True)
     out = Path("genes/gene_list.txt")
-    if out.exists():
-        console.print("Lista de genes → [bold]SKIP[/bold]")
-        print_meta("Lista de genes", [out]); return
+    gtf = Path("refs/genes.gtf")
+    # refaz se o out não existe OU é mais antigo que o GTF
+    if out.exists() and _is_newer(out, gtf):
+        console.print("Lista de genes → [bold]SKIP (atual)[/bold]")
+        print_meta("Lista de genes", [out])
+        return
     cmd = r'''awk '$3=="gene"{print $0}' refs/genes.gtf | sed -n 's/.*gene_name "\([^"]*\)".*/\1/p' | sort -u > genes/gene_list.txt'''
-    run(["bash","-lc",cmd]); print_meta("Lista de genes", [out])
+    run(["bash","-lc",cmd])
+    print_meta("Lista de genes", [out])
 
 # ============ Presença de genes por amostra (cobertura) ============
 
 def _build_genes_bed_from_gtf(gtf: Path, out_bed: Path):
-    """Extrai regiões 'gene' do GTF como BED (chr start end name)."""
-    if out_bed.exists():
+    """Extrai regiões 'gene' do GTF como BED (chr start end name). Recria se o GTF for mais novo."""
+    if out_bed.exists() and _is_newer(out_bed, gtf):
         return out_bed
     cmd = r"""awk '$3=="gene"{ 
         chr=$1; start=$4-1; end=$5; 
@@ -2686,15 +2647,11 @@ def _parse_thresholds_bed(thr_bed_gz: Path, region_len: dict) -> dict:
     return breadth
 
 def gene_presence_reports(dna_samples, min_mean_cov: float = 5.0, min_breadth_1x: float = 0.8, threads: int = 8):
-    """
-    Para cada amostra (CRAM/BAM mkdup), roda mosdepth --by genes.bed com thresholds 1,5,10
-    e gera TSV genes/<sample>_genes_presence.tsv com mean_cov, breadth_1x e 'present' True/False.
-    """
     Path("genes").mkdir(exist_ok=True)
     gtf = Path("refs/genes.gtf")
     genes_bed = _build_genes_bed_from_gtf(gtf, Path("genes/genes.bed"))
 
-    # mapa gene_id -> (gene_name, gene_type, gene_desc)
+    # gene meta (id → (name,type,desc))
     meta = {}
     with open(genes_bed) as fh:
         for line in fh:
@@ -2708,11 +2665,24 @@ def gene_presence_reports(dna_samples, min_mean_cov: float = 5.0, min_breadth_1x
         regions_bed_gz = Path(str(prefix)+".regions.bed.gz")
         thr_bed_gz     = Path(str(prefix)+".thresholds.bed.gz")
 
-        if not regions_bed_gz.exists() or not thr_bed_gz.exists():
-            run(["mosdepth","-t",str(threads),"--by",str(genes_bed),
-                 "--thresholds","1,5,10",str(prefix), str(bam)])
+        # (Re)executa mosdepth se outputs faltam ou estão mais antigos que BAM/CRAM ou genes.bed
+        need_mosdepth = True
+        if regions_bed_gz.exists() and thr_bed_gz.exists():
+            newer_regions = _is_newer(regions_bed_gz, bam, genes_bed)
+            newer_thr     = _is_newer(thr_bed_gz, bam, genes_bed)
+            need_mosdepth = not (newer_regions and newer_thr)
 
-        # lê mean coverage por gene (regions.bed.gz: última coluna é média)
+        if need_mosdepth:
+            cmd = ["mosdepth","-t",str(threads),"--by",str(genes_bed),
+                   "--thresholds","1,5,10",str(prefix), str(bam)]
+            if bam.suffix == ".cram":
+                # por segurança, garante FASTA quando entrada é CRAM
+                cmd = ["mosdepth","-t",str(threads),"--by",str(genes_bed),
+                       "--thresholds","1,5,10","--fasta","refs/reference.fa",
+                       str(prefix), str(bam)]
+            run(cmd)
+
+        # parse dos outputs (como antes)
         import gzip
         mean_cov = {}
         with gzip.open(regions_bed_gz, "rt") as fh:
@@ -2724,11 +2694,9 @@ def gene_presence_reports(dna_samples, min_mean_cov: float = 5.0, min_breadth_1x
                 mean = float(parts[7])
                 mean_cov[gid] = mean
 
-        # breadth_1x do thresholds
         region_len = {}
         breadth1 = _parse_thresholds_bed(thr_bed_gz, region_len)
 
-        # escreve TSV
         out_tsv = Path("genes")/f"{sample}_gene_presence.tsv"
         with open(out_tsv,"w") as out:
             out.write("gene_id\tgene_name\tgene_type\tlength_bp\tmean_cov\tbreadth_1x\tpresent\tmini_summary\n")
@@ -2737,7 +2705,6 @@ def gene_presence_reports(dna_samples, min_mean_cov: float = 5.0, min_breadth_1x
                 mean   = mean_cov.get(gid, 0.0)
                 br1x   = breadth1.get(gid, 0.0)
                 present = (mean >= min_mean_cov) and (br1x >= min_breadth_1x)
-                # mini resumo: usa description se houver; senão usa gene_type
                 mini = gdesc if gdesc else (gtype if gtype else "")
                 out.write(f"{gid}\t{gname}\t{gtype}\t{length}\t{mean:.2f}\t{br1x:.3f}\t{str(present)}\t{mini}\n")
 
@@ -2748,28 +2715,73 @@ def gene_presence_reports(dna_samples, min_mean_cov: float = 5.0, min_breadth_1x
 def rnaseq_pipeline(rna_samples, threads, assembly_name):
     if not rna_samples: return
     Path("rnaseq").mkdir(exist_ok=True)
-    for s in rna_samples:
-        if s["source"]=="sra": stage_fastqs_from_sra(s["sra_ids"])
-        else: stage_fastqs_from_local(s["fastq1"], s.get("fastq2"))
 
-    for r1 in sorted(Path("fastq").glob("*_1.fastq.gz")):
-        base = r1.name.replace("_1.fastq.gz","")
+    # 1) garantir FASTQs só das amostras RNA
+    for s in rna_samples:
+        if s["source"]=="sra":
+            stage_fastqs_from_sra(s["sra_ids"])
+        else:
+            stage_fastqs_from_local(s["fastq1"], s.get("fastq2"))
+
+    # helper para achar R2 correspondente ao R1
+    def _find_r2_for_r1_file(r1: Path) -> Optional[Path]:
+        name = r1.name
+        for pat, rep in (
+            (r"_1\.fastq\.gz$",  "_2.fastq.gz"),
+            (r"_1\.fq\.gz$",     "_2.fq.gz"),
+            (r"R1\.fastq\.gz$",  "R2.fastq.gz"),
+            (r"R1\.fq\.gz$",     "R2.fq.gz"),
+            (r"\.1\.fastq\.gz$", ".2.fastq.gz"),
+            (r"\.1\.fq\.gz$",    ".2.fq.gz"),
+        ):
+            if re.search(pat, name, flags=re.I):
+                cand = r1.parent / re.sub(pat, rep, name, flags=re.I)
+                if cand.exists(): return cand
+        return None
+
+    # 2) lista de R1s esperados só das amostras RNA
+    r1_list: list[Path] = []
+    for s in rna_samples:
+        if s["source"]=="sra":
+            for acc in s["sra_ids"]:
+                p = Path("fastq")/f"{acc}_1.fastq.gz"
+                if p.exists(): r1_list.append(p)
+        else:
+            fq1 = Path("fastq")/Path(s["fastq1"]).name
+            if fq1.exists(): r1_list.append(fq1)
+
+    # 3) processa cada R1
+    for r1 in sorted(set(r1_list)):
+        base = re.sub(r'_1\.fastq\.gz$', '', r1.name, flags=re.I)
+        r2 = _find_r2_for_r1_file(r1)
         gtf_out = Path("rnaseq")/f"{base}.transcripts.gtf"
-        if gtf_out.exists():
-            console.print(f"[RNA-seq:{base}] GTF → [bold]SKIP[/bold]"); continue
-        r2 = Path(str(r1).replace("_1.fastq.gz","_2.fastq.gz"))
-        if r2.exists():
+        bam_out = Path("rnaseq")/f"{base}.rnaseq.bam"
+
+        # precisa reprocessar?
+        need = not (gtf_out.exists() and _is_newer(gtf_out, r1, r2 if r2 else r1, Path("refs/genes.gtf")))
+        if not need:
+            console.print(f"[RNA-seq:{base}] GTF → [bold]SKIP (atual)[/bold]")
+            continue
+
+        # alinhamento HISAT2 → BAM
+        if r2 and r2.exists():
             cmd_list = [["hisat2","-p",str(threads),"-x",f"refs/{assembly_name}","-1",str(r1),"-2",str(r2)],
-                        ["samtools","sort","-@",str(threads),"-o",f"rnaseq/{base}.rnaseq.bam"]]
+                        ["samtools","sort","-@",str(threads),"-o",str(bam_out)]]
         else:
             cmd_list = [["hisat2","-p",str(threads),"-x",f"refs/{assembly_name}","-U",str(r1)],
-                        ["samtools","sort","-@",str(threads),"-o",f"rnaseq/{base}.rnaseq.bam"]]
+                        ["samtools","sort","-@",str(threads),"-o",str(bam_out)]]
         run_long_stream_pipeline(cmd_list, label=f"[RNA-seq:{base}] HISAT2 → sort")
-        run(["samtools","index",f"rnaseq/{base}.rnaseq.bam"])
-        run(["stringtie",f"rnaseq/{base}.rnaseq.bam","-G","refs/genes.gtf","-o",str(gtf_out),"-p",str(threads)])
+        run(["samtools","index",str(bam_out)])
+
+        # StringTie (reconstrói se GTF faltando/antigo)
+        run(["stringtie",str(bam_out),"-G","refs/genes.gtf","-o",str(gtf_out),"-p",str(threads)])
+
+    # 4) gffcompare (idempotente: só refaz se outputs faltarem)
     tgts = list(Path("rnaseq").glob("*.transcripts.gtf"))
-    if tgts and not Path("rnaseq/cmp.stats").exists():
-        run(["gffcompare","-r","refs/genes.gtf","-o","rnaseq/cmp",*map(str,tgts)])
+    cmp_prefix = Path("rnaseq")/"cmp"
+    need_cmp = tgts and (not (cmp_prefix.with_suffix(".stats").exists()))
+    if tgts and need_cmp:
+        run(["gffcompare","-r","refs/genes.gtf","-o",str(cmp_prefix),*map(str,tgts)])
 
 # ========================== Main ==========================
 
