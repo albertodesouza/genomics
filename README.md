@@ -2,6 +2,14 @@
 
 _A technical-scientific guide to `genomes_analyzer.py`_
 
+## Index
+- [Abstract](#abstract)
+- [Introduction](#introduction)
+- [Genomes Analyzer Pipeline](#genomes-analyzer-pipeline)
+- [How to Use the Genomes Analyzer](#how-to-use-the-genomes-analyzer)
+- [Conclusion](#conclusion)
+- [Appendix 1 — Tools & typical usage](#appendix-1--tools--typical-usage)
+
 ---
 
 ## Abstract
@@ -215,7 +223,7 @@ If RNA-seq samples are defined in the YAML, a lightweight expression pipeline (H
 
 ## How to Use the Genomes Analyzer
 
-### Uninstallation (se necessário)
+### Uninstallation (if desired)
 
 ```bash
 CONDA_BASE="/home/lume2/miniforge3"
