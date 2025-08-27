@@ -6,15 +6,15 @@ _A technical-scientific guide to `genomes_analyzer.py`_
 
 ## Abstract
 
-High-throughput DNA sequencing has transformed biological and clinical research, but turning raw reads into actionable variant calls still requires a reliable, explainable, and resource-efficient pipeline. **Genomes Analyzer** is a Python-driven workflow designed to take one or more whole-genome or exome samples from raw FASTQ (or pre-aligned BAM/CRAM) to compressed, indexed VCF. It emphasizes clear provenance, conservative defaults, and transparent logging, while remaining pragmatic about compute and memory on commodity Linux workstations. The pipeline integrates widely used open-source tools—`FastQC` for read quality control, `cutadapt` for adapter/quality trimming, `bwa-mem2` for alignment, `samtools` for sorting/indexing/duplication marking, and a selectable variant-calling backend: either **GATK** (HaplotypeCaller → GenotypeGVCFs) or **BCFtools** (`mpileup` → `call` → `norm`). To keep runtimes reasonable, Genomes Analyzer splits the reference into **shards** (BED intervals) and executes them in parallel with safe concatenation and indexing, while preserving chromosome order. It prints human-readable “progress dashboards” (including the shard BED preview and per-shard heartbeats) so researchers can monitor long runs without guesswork.
+High-throughput DNA sequencing has transformed biological and clinical research, but turning raw reads into actionable variant calls still requires a reliable, explainable, and resource-efficient pipeline. **Genomes Analyzer** is a Python-driven workflow designed to take one or more whole-genome or exome samples from raw FASTQ (or pre-aligned BAM/CRAM) to compressed, indexed VCF. It emphasizes clear provenance, conservative defaults, and transparent logging while remaining pragmatic about compute and memory on commodity Linux workstations. The pipeline integrates widely used open-source tools—`FastQC` for read quality control, `cutadapt` for adapter/quality trimming, `bwa-mem2` for alignment, `samtools` for sorting/indexing/duplicate marking, and a selectable variant-calling backend: either **GATK** (HaplotypeCaller → GenotypeGVCFs) or **BCFtools** (`mpileup` → `call` → `norm`). To keep runtimes reasonable, Genomes Analyzer splits the reference into **shards** (BED intervals) and executes them in parallel with safe concatenation and indexing, while preserving chromosome order. It prints human-readable progress dashboards (including the shard BED preview and per-shard heartbeats) so researchers can monitor long runs without guesswork.
 
-This document introduces the pipeline to readers **without assuming prior genomics expertise**. We define essential terms (e.g., FASTQ, BAM/CRAM, VCF, read mapping, duplicate marking, genotyping, normalization), explain each processing step and its rationale, and show representative snippets of intermediate and final outputs. We also document configuration via YAML, including paths, sample declarations, quality/coverage thresholds, and parallelization parameters. Finally, we provide an appendix detailing the external genomics tools used, typical command patterns, and commonly tuned parameters. The goal is to enable reproducible analyses with sensible defaults, while making it straightforward to adapt the pipeline to different datasets, hardware budgets, and scientific objectives.
+This document introduces the pipeline to readers **without assuming prior genomics expertise**. We define essential terms (e.g., FASTQ, BAM/CRAM, VCF, read mapping, duplicate marking, genotyping, normalization), explain each processing step and its rationale, and show representative snippets of intermediate and final outputs. We also document configuration via YAML, including paths, sample declarations, quality/coverage thresholds, and parallelization parameters. Finally, we provide an appendix detailing the external genomics tools used, typical command patterns, and commonly tuned parameters. The goal is to enable reproducible analyses with sensible defaults while making it straightforward to adapt the pipeline to different datasets, hardware budgets, and scientific objectives.
 
 ---
 
 ## Introduction
 
-**Genomes Analyzer** is a modular, script-based pipeline for small teams or single investigators who need trustworthy variant calls from short-read sequencing. It is particularly useful when:
+**Genomes Analyzer** is a modular, script-based pipeline for small teams or single investigators who need trustworthy variant calls from short-read sequencing. The script `genomes_analyzer.py` orchestrates a complete workflow from raw sequencing reads to an indexed Variant Call Format (VCF) file. The tool is particularly useful when:
 
 - You want a **transparent** pipeline using standard tools with well-understood behavior.
 - You need to **choose between** GATK and BCFtools callers without rewriting your workflow.
@@ -23,32 +23,41 @@ This document introduces the pipeline to readers **without assuming prior genomi
 
 ### Key inputs and outputs
 
-- **Inputs**: paired FASTQ files per sample (or a pre-aligned BAM/CRAM), a reference FASTA (`refs/reference.fa`) with index (`.fai`) and dictionary (`.dict`).
-- **Primary outputs**:
-  - Per-sample aligned, duplicate-marked **BAM** (`bam/<sample>.mkdup.bam`) + index (`.bai`).
-  - Per-sample compressed, indexed **VCF** (`vcf/<sample>.vcf.gz`) + index (`.tbi`).
-  - Per-sample **sharded VCFs** for parallel calling (`vcf/shards/<sample>/<sample>.part_XX.vcf.gz` + `.tbi`).
-  - Quality control artifacts (FastQC reports, optional `bcftools stats`, etc.).
+| Type | Description | Examples |
+|------|-------------|----------|
+| **Inputs** | Paired FASTQ files per sample (or a pre-aligned BAM/CRAM) and a reference FASTA with its index and dictionary. | `fastq/NA12878_R1.fastq.gz`, `fastq/NA12878_R2.fastq.gz`, `refs/GRCh38.d1.vd1.fa` |
+| **Primary outputs** | Aligned BAM/BAI, per-shard VCFs, final VCF/VCF index, and quality-control reports. | `bam/NA12878.mkdup.bam`, `vcf/NA12878.vcf.gz`, `qc/NA12878_fastqc.html` |
 
 ---
 
 ## Genomes Analyzer Pipeline
 
-Below is the end-to-end flow. Terms are defined as they appear.
+The workflow transforms raw reads into variant calls through a series of well-defined stages. Each acronym is introduced before use so that readers new to genomics can follow along.
 
 ```
-FASTQ → (QC) → (Trimming) → Alignment → Sort/Index → Mark Duplicates
-   → [Optional: BQSR] → Shard Reference → Variant Calling (GATK or BCFtools)
-   → Normalize/Index → Concatenate Shards → Final VCF (+ QC)
+FASTQ
+  ├── Quality control (FastQC)
+  ├── Adapter trimming (cutadapt)
+  ├── Alignment (BWA‑MEM2)
+  ├── Sort & index (samtools)
+  ├── Mark duplicates (samtools markdup)
+  ├── [Optional] Base Quality Score Recalibration (GATK)
+  ├── Shard reference genome (BED intervals)
+  ├── Variant calling
+  │     ├── GATK: HaplotypeCaller → GenotypeGVCFs
+  │     └── BCFtools: mpileup → call → norm
+  ├── Concatenate shards (preserve order)
+  └── Final VCF quality control
 ```
 
-### 1) Read QC (FastQC)
+### 1. Read Quality Control — FastQC
 
-**What it is**: Rapid quality assessment of raw reads (per-cycle Phred scores, over-represented sequences, adapter content).
+**FASTQ** files store sequencing reads and their per-base quality scores. `FastQC` scans these files and produces HTML reports summarizing quality metrics such as Phred scores, nucleotide composition, and overrepresented sequences.
 
-**Why it matters**: Detects library/adaptor issues that can propagate to false positives later.
+*Why it matters*: Early detection of poor-quality cycles or adapter contamination prevents misleading alignments and spares compute time.
 
-**Representative snippet** (from `fastqc_data.txt`):
+*Representative snippet* (`fastqc_data.txt`):
+
 ```
 >>Per base sequence quality  pass
 #Base    Mean    Median  Lower   Upper
@@ -57,177 +66,113 @@ FASTQ → (QC) → (Trimming) → Alignment → Sort/Index → Mark Duplicates
 >>Overrepresented sequences  warn
 ```
 
-**Outputs**: `qc/<sample>_R1_fastqc.html`, `qc/<sample>_R2_fastqc.html` (+ `.zip`).
+*Outputs*: `qc/<sample>_R1_fastqc.html`, `qc/<sample>_R2_fastqc.html` plus compressed archives containing raw metrics.
 
----
+### 2. Adapter and Quality Trimming — cutadapt
 
-### 2) Adapter/quality trimming (cutadapt)
+Sequencing libraries often carry leftover **adapter** sequences and low-quality ends. `cutadapt` removes these artifacts and can filter short reads.
 
-**What it is**: Removes leftover adapters and optionally low-quality trailing bases.
+*Why it matters*: Adapter sequences and low-quality bases reduce mapping accuracy and inflate false variant calls.
 
-**Why it matters**: Adapters reduce mapping accuracy and inflate false variant calls.
+*Representative snippet* (log extract):
 
-**Representative snippet** (from `cutadapt` log):
 ```
 === Summary ===
-Total read pairs processed:    374,102,311
-Pairs written (passing filters): 372,918,421 (99.7%)
-Total basepairs processed:     112.2 Gbp
-Quality-trimmed:               1.6 Gbp (1.4%)
+Total read pairs processed:     374,102,311
+Pairs written (passing filters):372,918,421 (99.7%)
+Total basepairs processed:      112.2 Gbp
+Quality-trimmed:                1.6 Gbp (1.4%)
 ```
 
-**Outputs**: `trimmed/<sample>_R1.fastq.gz`, `trimmed/<sample>_R2.fastq.gz`.
+*Outputs*: `trimmed/<sample>_R1.fastq.gz`, `trimmed/<sample>_R2.fastq.gz`.
 
----
+### 3. Alignment — BWA‑MEM2
 
-### 3) Alignment (bwa-mem2)
+`bwa-mem2` maps each read pair to the reference genome. The output is a **SAM** (Sequence Alignment/Map) stream that records candidate genomic coordinates, alignment scores, and flags. Alignments are typically converted on the fly to the binary **BAM** format.
 
-**What it is**: Aligns reads to the reference genome, recording positions where reads best match.
+*Why it matters*: Accurate mapping is a prerequisite to reliable variant detection. Each read receives a mapping quality score indicating confidence in its genomic position.
 
-**Why it matters**: Accurate mapping is prerequisite to reliable variant calling.
+*Representative SAM header*:
 
-**Representative SAM header**:
 ```
 @SQ SN:chr1 LN:248956422
 @SQ SN:chr2 LN:242193529
 @PG ID:bwa-mem2 PN:bwa-mem2 VN:2.2.1 CL:bwa-mem2 mem -t 16 ...
 ```
 
-**Outputs**: `aligned/<sample>.sam` (intermediate; often piped onward).
+*Outputs*: `aligned/<sample>.sam` (usually streamed downstream).
 
----
+### 4. Sorting & Indexing — samtools
 
-### 4) Sorting & indexing (samtools)
+`samtools sort` arranges BAM records by genomic coordinate and writes an index (`.bai`) to enable random access.
 
-**What it is**: Sorts alignments by genomic coordinate; builds BAM index for random access.
+*Why it matters*: Variant callers expect coordinate-sorted and indexed BAM files to quickly fetch reads overlapping regions of interest.
 
-**Why it matters**: Many downstream tools assume coordinate-sorted, indexed BAM.
+*Outputs*: `bam/<sample>.sorted.bam`, `bam/<sample>.sorted.bam.bai`.
 
-**Outputs**: `bam/<sample>.sorted.bam`, `bam/<sample>.sorted.bam.bai`.
+### 5. Duplicate Marking — samtools markdup
 
----
+PCR amplification and optical artifacts can yield **duplicate reads**—multiple observations of the same DNA fragment. `samtools markdup` flags these duplicates so that callers can ignore them.
 
-### 5) Duplicate marking (samtools markdup)
+*Why it matters*: Treating duplicates as independent evidence biases allele counts and may cause false positives.
 
-**What it is**: Marks PCR/optical duplicates (reads that are copies of the same original fragment).
+*Outputs*: `bam/<sample>.mkdup.bam`, `bam/<sample>.mkdup.bam.bai`.
 
-**Why it matters**: Duplicates inflate apparent depth and can cause false positives.
+### 6. Optional Base Quality Score Recalibration — GATK BQSR
 
-**Outputs**: `bam/<sample>.mkdup.bam`, `bam/<sample>.mkdup.bam.bai`.
+Sequencing machines sometimes misestimate base quality scores. **Base Quality Score Recalibration (BQSR)** uses known variant sites to adjust these scores.
 
----
+*Why it matters*: More accurate base qualities improve probabilistic models in downstream callers. This step is optional and can be skipped to save time.
 
-### 6) [Optional] Base Quality Score Recalibration (BQSR)
+*Outputs*: recalibrated BAM (if applied) plus BQSR reports.
 
-**What it is**: Adjusts base quality scores using known variant sites.
+### 7. Sharding the Reference Genome
 
-**When to use**: If you have reliable known-sites for your organism and sequencing chemistry benefits from BQSR. It is off by default in many lightweight pipelines.
+Large genomes are divided into manageable **BED** intervals ("shards"). Each shard is processed independently to leverage parallelism.
 
----
+*Why it matters*: Short-read variant callers parallelize poorly within a single region; sharding provides coarse-grained parallelism across chromosomes/blocks and reduces wall-clock time.
 
-### 7) Sharding the reference (BED intervals)
+*Outputs*: `vcf/shards/<sample>/<sample>.part_XX.vcf.gz` and corresponding `.tbi` indexes.
 
-**What it is**: Splits the reference genome into **balanced BED intervals** (“shards”), often by chromosome or chromosome groups, to parallelize variant calling.
+### 8. Variant Calling
 
-**Why it matters**: Shortens wall-clock time on multi-core machines.
+At this stage, aligned reads are converted into genomic variants. Two backends are available:
 
-**Illustrative preview table** (printed before calling):
+#### A. GATK HaplotypeCaller → GenotypeGVCFs
 
-```
-┏━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
-┃ part ┃ contigs (preview)                                                              ┃ #regions ┃      total ┃ BED         ┃
-┡━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
-│   01 │ chr1                                                                           │        1 │ 248.96 Mbp │ part_01.bed │
-│   02 │ chr2                                                                           │        1 │ 242.19 Mbp │ part_02.bed │
-│   …  │ …                                                                              │      …   │        …   │ part_NN.bed │
-└──────┴────────────────────────────────────────────────────────────────────────────────┴──────────┴────────────┴─────────────┘
-```
+1. **HaplotypeCaller** analyzes each shard, performing local re-assembly to produce per-sample genomic VCFs (**gVCFs**).
+2. **GenotypeGVCFs** merges gVCFs and emits a final VCF with genotypes.
 
-**Outputs**: `vcf/shards/<sample>/part_XX.bed`.
+*Outputs*: `vcf/<sample>.g.vcf.gz`, `vcf/<sample>.vcf.gz` and their indexes.
 
----
+#### B. BCFtools mpileup → call → norm
 
-### 8) Variant calling
+1. **mpileup** summarizes read evidence at each position, applying mapping-quality (MAPQ) and base-quality (BASEQ) filters.
+2. **call** infers SNPs and indels using a multiallelic model.
+3. **norm** left-aligns indels and splits multiallelic records for compatibility.
 
-Two interchangeable backends:
+*Outputs*: sharded VCFs (`part_XX.vcf.gz`) and final merged VCF (`vcf/<sample>.vcf.gz`).
 
-#### A) GATK HaplotypeCaller → GenotypeGVCFs (Java)
+### 9. Concatenation of Shards
 
-- **HaplotypeCaller** produces a per-sample **gVCF** that encodes evidence at variant and non-variant sites.
-- **GenotypeGVCFs** converts gVCF to a standard per-sample **VCF**.
-- Supports **scatter/gather** across shards.
+Per-shard VCFs are concatenated in chromosome order and re-indexed so that downstream tools see a seamless, genome-wide VCF.
 
-Representative HaplotypeCaller command (simplified):
-```
-gatk --java-options "-Xmx24g" HaplotypeCaller \
-  -R refs/reference.fa -I bam/<sample>.mkdup.bam \
-  -O vcf/<sample>.g.vcf.gz \
-  [-L vcf/shards/<sample>/part_01.bed]
-```
+*Outputs*: `vcf/<sample>.vcf.gz`, `vcf/<sample>.vcf.gz.tbi`.
 
-#### B) BCFtools mpileup → call → norm (C)
+### 10. Optional VCF Quality Control
 
-- `mpileup`: summarizes per-position evidence.
-- `call -m`: multiallelic caller producing SNPs/indels.
-- `norm`: left-aligns and splits multiallelics for consistency.
+`bcftools stats` and related utilities generate summary metrics and plots to assess callset quality.
 
-Representative per-shard pipeline:
-```
-bcftools mpileup -f refs/reference.fa -Ou --threads 2 \
-  -q 20 -Q 20 --max-depth 250 \
-  -a FORMAT/AD,FORMAT/DP,FORMAT/SP,INFO/AD \
-  -R vcf/shards/<sample>/part_03.bed bam/<sample>.mkdup.bam |
-bcftools call -m -v -Ou |
-bcftools norm -f refs/reference.fa --threads 2 --multiallelics -both \
-  -Oz -o vcf/shards/<sample>/<sample>.part_03.tmp.vcf.gz
-```
+*Outputs*: `qc/<sample>.bcftools.stats.txt` and optional graphical summaries via `plot-vcfstats` or `MultiQC`.
 
-**Per-shard heartbeat** (printed during runs):
-```
-[<sample>] shard 03… 2m30s • out 3.6MB • I/O +44.4MB read, +608KB write
-[mpileup] 1 samples in 1 input files
-[mpileup] maximum number of reads per input file set to -d 250
-Lines total/split/joined/...: 307319/2973/0/45665/0/0/0
-```
+### Output overview
 
-**Outputs**:
-- GATK path: `vcf/<sample>.g.vcf.gz`, then `vcf/<sample>.vcf.gz` (+ `.tbi`).
-- BCFtools path: `vcf/shards/<sample>/<sample>.part_XX.vcf.gz` (+ `.tbi`).
-
----
-
-### 9) Concatenation of shards (safe, ordered)
-
-**What it is**: Joins shard VCFs into a single, coordinate-ordered per-sample VCF.
-
-**Robustness features**:
-- Deterministic ordering by shard index.
-- Uses `bcftools concat` with `-a` (allow non-contiguity) and **dedup strategy `-D none`** to avoid creating spurious duplicate rows while still accepting non-contiguous blocks (e.g., when chromosomes are grouped in shards).
-- Final index with `tabix`.
-
-Representative command (generated by the script):
-```
-bcftools concat -a -D none -Oz -o vcf/<sample>.tmp.vcf.gz \
-  vcf/shards/<sample>/<sample>.part_01.vcf.gz \
-  ... \
-  vcf/shards/<sample>/<sample>.part_16.vcf.gz
-tabix -p vcf vcf/<sample>.tmp.vcf.gz
-```
-
-**Outputs**: `vcf/<sample>.vcf.gz`, `vcf/<sample>.vcf.gz.tbi`.
-
----
-
-### 10) Optional VCF QC
-
-- `bcftools stats vcf/<sample>.vcf.gz > qc/<sample>.bcftools.stats.txt`
-- `plot-vcfstats -p qc/<sample>_plots qc/<sample>.bcftools.stats.txt`
-
-**Representative VCF record**:
-```
-#CHROM POS      ID REF ALT QUAL FILTER INFO                 FORMAT  <sample>
-chr21  33033448 .  G   A   162  PASS   DP=34;MQ=60;QD=18.0  GT:AD:DP:GQ:PL  0/1:16,18:34:99:...
-```
+| Path | Type | Description |
+|------|------|-------------|
+| `bam/<sample>.mkdup.bam` | BAM | Coordinate-sorted, duplicate-marked alignments |
+| `vcf/shards/<sample>/part_XX.vcf.gz` | VCF | Per-shard variant calls |
+| `vcf/<sample>.vcf.gz` | VCF | Final, genome-wide variant calls |
+| `qc/<sample>_R1_fastqc.html` | HTML | Read quality report |
 
 ---
 
@@ -235,232 +180,128 @@ chr21  33033448 .  G   A   162  PASS   DP=34;MQ=60;QD=18.0  GT:AD:DP:GQ:PL  0/1:
 
 ### Installation
 
-**Requirements (Linux/macOS recommended)**
+1. Install a Python environment (e.g., via [conda](https://docs.conda.io/)).
+2. Optional helper script: `install_genomics_env.sh` installs common genomics packages.
+3. Activate the environment: `source start_genomics.sh`.
 
-- Python ≥ 3.10
-- Conda or mamba (recommended)
-- ~16 CPU cores & 32–64 GB RAM for whole-genome speed (but runs on less)
-- Disk space: input FASTQs + ~2–3× for intermediates
+### YAML Configuration: `config_human_30x_low_memory.yaml`
 
-**Create an environment**
+`genomes_analyzer.py` is driven by a YAML file. The example `config_human_30x_low_memory.yaml` targets a human trio at ~30× coverage using memory‑efficient settings. Important sections are summarized below.
 
-```bash
-# with mamba (faster) or conda
-mamba create -n genomes python=3.11 fastqc cutadapt bwa-mem2 samtools \
-  bcftools htslib tabix -c bioconda -c conda-forge
-# GATK (optional; requires Java):
-mamba install -n genomes gatk4 openjdk -c bioconda -c conda-forge
+#### project
 
-mamba activate genomes
-```
+| Field | Description | Example |
+|-------|-------------|---------|
+| `name` | Project identifier used in output paths. | `human_30x_trio_demo` |
+| `organism` | Latin name of the species. | `homo_sapiens` |
+| `reference.name` | Identifier for the reference genome build. | `GRCh38.d1.vd1` |
+| `reference.fasta_url` | URL to a gzipped FASTA that will be downloaded and unpacked. | `https://api.gdc.cancer.gov/...834` |
+| `reference.bwa_index_url` | Pre-built BWA index (saves RAM during alignment). | `https://api.gdc.cancer.gov/...7225` |
 
-**Project layout (example)**
-```
-.
-├── genomes_analyzer.py
-├── config.yaml
-├── refs/
-│   ├── reference.fa
-│   ├── reference.fa.fai
-│   └── reference.dict
-└── fastq/
-    ├── NA12878_R1.fastq.gz
-    └── NA12878_R2.fastq.gz
-```
+#### general
 
-### Configuration (YAML)
+| Field | Purpose | Typical value |
+|-------|---------|---------------|
+| `force_indexes` | Rebuild alignment indexes even if present. | `false` |
+| `sort_mem_mb` | Memory (MiB) per thread for `samtools sort`. | `512` |
+| `bwa_batch_k` | Reads per batch for BWA; smaller uses less RAM. | `20000000` |
+| `aln_threads` | Threads for alignment. | `16` |
+| `gene_presence_min_mean_cov` | Minimum average coverage to consider a gene present. | `5.0` |
 
-Below is a representative `config.yaml` with comments explaining each field.
+#### params
 
-```yaml
-general:
-  threads: 16             # total logical cores to utilize
-  mem_gb: 64              # available RAM (soft hint for tools that accept it)
-  limit_to_canonical: false   # if true, restricts to canonical chromosomes only (no decoy/ALT)
-  work_dir: "."           # base working directory (optional)
+Alignment and variant-calling options.
 
-paths:
-  reference: refs/reference.fa
-  known_sites: []         # optional VCF(s) for BQSR or hard filters
-  adapters: []            # optional adapter sequences for cutadapt
-  fastq_dir: fastq        # where FASTQs live (if using FASTQ input)
+| Field | Description | Example |
+|-------|-------------|---------|
+| `aligner` | Choose `bwa` or `bwa-mem2`. | `bwa` |
+| `variant_caller` | `gatk` or `bcftools`. | `bcftools` |
+| `bcf_mapq` / `bcf_baseq` | Minimum mapping/base quality in `mpileup`. | `20` |
+| `bcf_scatter_parts` | Number of BED shards for parallel calling. | `16` |
+| `hc_java_mem_gb` | Heap size for GATK HaplotypeCaller. | `24` |
 
-params:
-  # Choose the variant caller backend
-  variant_caller: "bcftools"          # "bcftools" or "gatk"
+#### storage
 
-  # BCFtools path (mpileup → call → norm)
-  bcf_scatter_parts: 16               # how many BED shards to generate
-  bcf_max_parallel: 8                 # max shards to run simultaneously
-  bcf_threads_io: 2                   # htslib I/O threads per shard
-  bcf_mapq: 20                        # minimum mapping quality (mpileup -q)
-  bcf_baseq: 20                       # minimum base quality (mpileup -Q)
-  bcf_max_depth: 250                  # cap per-position read depth (mpileup --max-depth)
-  keep_alt_decoy: true                # include ALT/decoy contigs in shards
-  prefer_bam_for_calling: true        # prefer BAM over CRAM when both exist
-  force_recall: false                 # ignore cache, recompute shards/VCFs
+| Field | Description |
+|-------|-------------|
+| `base_dir` | Root directory for results. |
+| `work_dir` | Working directory for temporary files. |
+| `temp_dir` | High‑speed disk for intermediates. |
 
-  # GATK path (HaplotypeCaller → GenotypeGVCFs)
-  hc_scatter_parts: 16                # number of shards for HaplotypeCaller (if used)
-  hc_java_mem_gb: 24                  # HaplotypeCaller Java heap
-  hc_threads_native: 4                # native threads for HaplotypeCaller
-  hc_pcr_free: true                   # adjust model for PCR-free libraries (if applicable)
-  hc_extra_args: []                   # additional raw args, e.g. ["--dont-use-soft-clipped-bases"]
+#### download
 
-  gg_java_mem_gb: 12                  # GenotypeGVCFs Java heap
-  gg_extra_args: []                   # additional raw args for GenotypeGVCFs
+Defines how sequencing data are retrieved from the Sequence Read Archive (SRA) or European Nucleotide Archive (ENA).
 
-samples:
-  - id: "NA12878"
-    # Option A: from FASTQ (paired-end)
-    r1: fastq/NA12878_R1.fastq.gz
-    r2: fastq/NA12878_R2.fastq.gz
-    # Option B: from pre-aligned data (comment FASTQs and provide BAM/CRAM)
-    # bam: bam/NA12878.mkdup.bam
+| Field | Description | Example |
+|-------|-------------|---------|
+| `tool` | Download utility (`sra_toolkit`). | `sra_toolkit` |
+| `use_ascp` | Use Aspera for faster transfers if available. | `false` |
+| `threads` | Threads for download/conversion. | `8` |
 
-  - id: "NA12891"
-    r1: fastq/NA12891_R1.fastq.gz
-    r2: fastq/NA12891_R2.fastq.gz
-```
+#### execution
 
-> **Tip (parallelization)**: On a 16-core workstation, starting points that work well are `bcf_scatter_parts: 16`, `bcf_max_parallel: 8–12`, `bcf_threads_io: 1–2`. If you see only one core busy, increase `bcf_max_parallel` until you saturate CPU without thrashing disk I/O.
+Run‑time behaviour and resilience.
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `verbose` | Verbose logging. | `true` |
+| `resume` | Skip completed steps. | `true` |
+| `progress_interval_sec` | Interval for progress reports. | `60` |
+
+#### size_control
+
+Controls downsampling or disk usage.
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `downsample.enabled` | Whether to subsample reads. | `true` |
+| `downsample.fraction` | Fraction of reads to retain (e.g., `0.25` ≈7.5×). | `0.25` |
+
+#### samples
+
+Defines the biological samples to process.
+
+| Field | Description |
+|-------|-------------|
+| `sample_id` | Unique identifier (e.g., `NA12878`). |
+| `study` | Accession of the sequencing study. |
+| `runs` | List of SRA/ENA run IDs containing the reads. |
+
+#### steps
+
+Ordered list of pipeline actions. Typical values include `fetch_fastqs`, `qc_reads`, `align_and_sort`, `mark_duplicates`, `bqsr`, `call_genes`, and `summarize`.
 
 ### Running the pipeline
 
+Execute the workflow by pointing the script to your YAML file:
+
 ```bash
-python genomes_analyzer.py --config config.yaml
+source start_genomics.sh
+./genomes_analyzer.py --config config_human_30x_low_memory.yaml
 ```
 
-**Common flags** (if supported by your copy of the script; optional):
-- `--dry-run` : show what would be done without executing.
-- `--resume`  : reuse cached outputs when possible (default behavior).
-- `--force`   : ignore caches.
-
-### What to expect on the console
-
-- A **shard BED preview** table describing how the reference is split.
-- Per-shard **heartbeat** lines showing runtime, bytes read/written, and the growing `.tmp.vcf.gz`.
-- Clear **cache notices** (e.g., “shard pronto (cache) → …”) to avoid redundant work.
-- Safe concatenation summary with the exact `bcftools concat` command.
+The console prints progress panels, including per-shard heartbeats when variant calling is parallelized.
 
 ---
 
 ## Conclusion
 
-Genomes Analyzer provides a clear, reproducible path from raw reads to variant calls using a small, dependable stack of open-source tools. By letting you switch between GATK and BCFtools and by exposing explicit sharding and parallelization controls, it adapts to many datasets and machines. Its console output favors transparency—what is running, on which genome segments, and with which performance—so you can trust both the process and the product. This guide should enable you to install, configure, and operate the pipeline confidently, even if you are new to genomics workflows.
+Genomes Analyzer provides a clear, reproducible path from raw reads to variant calls using a dependable stack of open‑source tools. By letting users switch between GATK and BCFtools and by exposing explicit sharding and parallelization controls, it adapts to many datasets and machines. The detailed documentation and YAML configuration aim to demystify genomics processing for newcomers while remaining efficient for experienced practitioners.
 
 ---
 
 ## Appendix 1 — Tools & typical usage
 
-> Commands are illustrative and omit some options for brevity. Consult each tool’s manual for full details.
+The pipeline wraps several established command‑line programs. Table 1 summarizes their roles and highlights common parameters.
 
-### FastQC
+| Tool | Role | Typical command | Key parameters |
+|------|------|----------------|----------------|
+| FastQC | Read quality assessment | `fastqc -t 8 fastq/*_R{1,2}.fastq.gz -o qc/` | `-t` threads |
+| cutadapt | Adapter and quality trimming | `cutadapt -j 8 -q 20,20 -m 30 -a ADAPT1 -A ADAPT2 -o out_R1.fastq.gz -p out_R2.fastq.gz in_R1.fastq.gz in_R2.fastq.gz` | `-q` quality cutoff, `-m` min length, `-a/-A` adapters |
+| BWA‑MEM2 | Short‑read alignment | `bwa-mem2 mem -t 16 -R "@RG\tID:S\tSM:S" refs.fa R1.fq.gz R2.fq.gz` | `-t` threads, `-R` read group |
+| samtools | BAM/CRAM processing | `samtools sort -@8 -o out.bam in.bam` | `-@` threads |
+| BCFtools | Variant calling and manipulation | `bcftools mpileup -f refs.fa -q20 -Q20 | bcftools call -m -v -Oz -o out.vcf.gz` | `-q/-Q` quality filters, `-m` multiallelic model |
+| GATK | Variant calling (Java) | `gatk --java-options "-Xmx24g" HaplotypeCaller -R refs.fa -I in.bam -O out.g.vcf.gz` | `--java-options` memory, `-L` intervals |
 
-- **Purpose**: Per-sample read quality report.
-- **Run**:
-  ```bash
-  fastqc -t 8 fastq/*_R{1,2}.fastq.gz -o qc/
-  ```
+Each tool offers many more options; consult the official manuals for advanced usage. The examples above match how `genomes_analyzer.py` invokes them under default settings.
 
-### cutadapt
-
-- **Purpose**: Adapter & quality trimming.
-- **Common options**:
-  - `-a/-A`: adapter sequences (R1/R2).
-  - `-q 20,20`: trim low-quality ends (Phred ≥20).
-  - `-m 30`: minimum length after trimming.
-- **Run**:
-  ```bash
-  cutadapt -j 8 -q 20,20 -m 30 \
-    -a AGATCGGAAGAGC -A AGATCGGAAGAGC \
-    -o trimmed/S_R1.fastq.gz -p trimmed/S_R2.fastq.gz \
-    fastq/S_R1.fastq.gz fastq/S_R2.fastq.gz
-  ```
-
-### BWA-MEM2
-
-- **Purpose**: Fast alignment of short paired-end reads.
-- **Common options**:
-  - `-t`: threads
-  - `-R`: read group (ID, sample, platform)
-- **Run**:
-  ```bash
-  bwa-mem2 index refs/reference.fa
-  bwa-mem2 mem -t 16 -R "@RG\tID:S\tSM:S\tPL:ILLUMINA" \
-    refs/reference.fa trimmed/S_R1.fastq.gz trimmed/S_R2.fastq.gz \
-    | samtools view -b -o bam/S.unsorted.bam
-  ```
-
-### samtools
-
-- **Purpose**: BAM/CRAM processing.
-- **Sort & index**:
-  ```bash
-  samtools sort -@ 8 -o bam/S.sorted.bam bam/S.unsorted.bam
-  samtools index bam/S.sorted.bam
-  ```
-- **Mark duplicates**:
-  ```bash
-  samtools markdup -@ 8 -s bam/S.sorted.bam bam/S.mkdup.bam
-  samtools index bam/S.mkdup.bam
-  ```
-- **Flagstat**:
-  ```bash
-  samtools flagstat -@ 8 bam/S.mkdup.bam > qc/S.flagstat.txt
-  ```
-
-### BCFtools (C backend)
-
-- **mpileup** (summary of evidence per position)
-  - `-q`: min mapping quality
-  - `-Q`: min base quality
-  - `--max-depth`: cap for per-position reads (performance/FP control)
-  - `-a`: which annotations to include (e.g., `FORMAT/AD,FORMAT/DP`)
-- **call -m**: multiallelic model (SNPs/indels)
-- **norm**: left-align, split multiallelics
-- **concat**: concatenate shards
-- **stats**: VCF QC summary
-- **Examples**:
-  ```bash
-  bcftools mpileup -f refs/reference.fa -q 20 -Q 20 --max-depth 250 \
-    -a FORMAT/AD,FORMAT/DP -Ou -R part_03.bed bam/S.mkdup.bam |
-  bcftools call -m -v -Ou |
-  bcftools norm -f refs/reference.fa --multiallelics -both -Oz -o S.part_03.vcf.gz
-  tabix -p vcf S.part_03.vcf.gz
-
-  bcftools concat -a -D none -Oz -o S.vcf.gz S.part_*.vcf.gz
-  tabix -p vcf S.vcf.gz
-
-  bcftools stats S.vcf.gz > qc/S.bcftools.stats.txt
-  ```
-
-### GATK (Java backend)
-
-- **HaplotypeCaller** (gVCF mode):
-  ```bash
-  gatk --java-options "-Xmx24g -Dsamjdk.compression_level=2" HaplotypeCaller \
-    -R refs/reference.fa -I bam/S.mkdup.bam \
-    -O vcf/S.g.vcf.gz \
-    [-L vcf/shards/S/part_01.bed] --native-pair-hmm-threads 4
-  ```
-- **GenotypeGVCFs** (gVCF → VCF):
-  ```bash
-  gatk --java-options "-Xmx12g -Dsamjdk.compression_level=2" GenotypeGVCFs \
-    -R refs/reference.fa -V vcf/S.g.vcf.gz -O vcf/S.vcf.gz
-  ```
-
----
-
-### Frequently Asked Questions
-
-**Q: Which backend should I choose?**  
-A: If your lab standardizes on GATK, use it for consistency. If you prefer a fast, C-based stack with simpler dependencies, the BCFtools path is robust and efficient. The pipeline lets you switch via `params.variant_caller`.
-
-**Q: Why split into shards?**  
-A: Short-read callers parallelize poorly within a single region; sharding gives coarse-grained parallelism across chromosomes/blocks, improving wall-clock time.
-
-**Q: I see only one core busy.**  
-A: Increase `bcf_max_parallel` (number of shards running concurrently). Keep `bcf_threads_io` small (1–2) to avoid I/O bottlenecks.
-
----

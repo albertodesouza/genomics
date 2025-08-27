@@ -1,4 +1,4 @@
-# config_human_30x.yaml  (versão low-mem p/ human_genes_pipeline_yaml_lowmem.py)
+# config_human_30x.yaml  (low-memory version for genomes_analyzer.py)
 project:
   name: human_30x_trio_demo
   organism: homo_sapiens
