@@ -42,12 +42,16 @@ FASTQ
   ├── Sort & index (samtools)
   ├── Mark duplicates (samtools markdup)
   ├── [Optional] Base Quality Score Recalibration (GATK)
+  ├── CRAM conversion & coverage (mosdepth)
   ├── Shard reference genome (BED intervals)
   ├── Variant calling
   │     ├── GATK: HaplotypeCaller → GenotypeGVCFs
   │     └── BCFtools: mpileup → call → norm
   ├── Concatenate shards (preserve order)
-  └── Final VCF quality control
+  ├── Final VCF quality control
+  ├── Gene list & per-sample coverage
+  ├── Pairwise & trio comparisons
+  └── [Optional] RNA-seq module
 ```
 
 ### 1. Read Quality Control — [FastQC](https://www.bioinformatics.babraham.ac.uk/projects/fastqc/)
@@ -126,7 +130,15 @@ Sequencing machines sometimes misestimate base quality scores. **Base Quality Sc
 
 *Outputs*: recalibrated BAM (if applied) plus BQSR reports.
 
-### 7. Sharding the Reference Genome
+### 7. CRAM Conversion & Coverage — samtools + [mosdepth](https://github.com/brentp/mosdepth)
+
+After duplicate marking (and optional BQSR) the pipeline compresses BAM files to CRAM and runs `mosdepth` to summarize per-base coverage.
+
+*Why it matters*: CRAM greatly reduces disk usage while coverage metrics reveal under‑covered regions and overall depth.
+
+*Outputs*: `bam/<sample>.mkdup.cram`, `bam/<sample>.mkdup.cram.crai`, `bam/<sample>.mosdepth.summary.txt`.
+
+### 8. Sharding the Reference Genome
 
 Large genomes are divided into manageable **[BED](https://genome.ucsc.edu/FAQ/FAQformat.html#format1)** intervals ("shards"). Each shard is processed independently to leverage parallelism.
 
@@ -134,7 +146,7 @@ Large genomes are divided into manageable **[BED](https://genome.ucsc.edu/FAQ/FA
 
 *Outputs*: `vcf/shards/<sample>/<sample>.part_XX.vcf.gz` and corresponding `.tbi` indexes.
 
-### 8. Variant Calling
+### 9. Variant Calling
 
 At this stage, aligned reads are converted into genomic variants. Two backends are available:
 
@@ -153,25 +165,50 @@ At this stage, aligned reads are converted into genomic variants. Two backends a
 
 *Outputs*: sharded VCFs (`part_XX.vcf.gz`) and final merged VCF (`vcf/<sample>.vcf.gz`).
 
-### 9. Concatenation of Shards
+### 10. Concatenation of Shards
 
 Per-shard VCFs are concatenated in chromosome order and re-indexed so that downstream tools see a seamless, genome-wide VCF.
 
 *Outputs*: `vcf/<sample>.vcf.gz`, `vcf/<sample>.vcf.gz.tbi`.
 
-### 10. Optional VCF Quality Control
+### 11. Optional VCF Quality Control
 
 [`bcftools stats`](https://samtools.github.io/bcftools/howtos/stats.html) and related utilities generate summary metrics and plots to assess callset quality.
 
 *Outputs*: `qc/<sample>.bcftools.stats.txt` and optional graphical summaries via `plot-vcfstats` or `MultiQC`.
+
+### 12. Gene List & Coverage Reports
+
+`genomes_analyzer.py` extracts gene coordinates from the reference GTF and, using `mosdepth`, calculates breadth and depth per gene for each sample.
+
+*Why it matters*: Gene-level summaries highlight targets with insufficient coverage and facilitate downstream presence/absence analyses.
+
+*Outputs*: `genes/genes.bed`, `genes/<sample>_gene_presence.tsv`.
+
+### 13. Pairwise & Trio Comparisons
+
+For cohorts or family trios, the pipeline can compare VCFs pairwise and flag candidate de novo variants absent in the parents.
+
+*Why it matters*: Automated comparison streamlines interpretation and quality control across samples.
+
+*Outputs*: reports in `comparisons/` and `trio/` directories.
+
+### 14. Optional RNA-seq Module
+
+If RNA-seq samples are defined in the YAML, a lightweight expression pipeline (HISAT2 → StringTie → gffcompare) is executed after DNA analysis.
+
+*Outputs*: transcript assemblies and expression tables under `rna/`.
 
 ### Output overview
 
 | Path | Type | Description |
 |------|------|-------------|
 | `bam/<sample>.mkdup.bam` | BAM | Coordinate-sorted, duplicate-marked alignments |
+| `bam/<sample>.mkdup.cram` | CRAM | Compressed alignments with index |
+| `bam/<sample>.mosdepth.summary.txt` | TXT | Coverage summary (mosdepth) |
 | `vcf/shards/<sample>/part_XX.vcf.gz` | VCF | Per-shard variant calls |
 | `vcf/<sample>.vcf.gz` | VCF | Final, genome-wide variant calls |
+| `genes/<sample>_gene_presence.tsv` | TSV | Per-gene coverage report |
 | `qc/<sample>_R1_fastqc.html` | HTML | Read quality report |
 
 ---
@@ -180,18 +217,13 @@ Per-shard VCFs are concatenated in chromosome order and re-indexed so that downs
 
 ### Installation
 
-1. Use a Unix-like system with [Python](https://www.python.org/) 3.10 or newer available.
-2. Create an isolated environment, for example with [conda](https://docs.conda.io/):
+1. Ensure a Unix-like system with [conda](https://docs.conda.io/) or [mamba](https://mamba.readthedocs.io/) available.
+2. Run the installer to create/update the `genomics` environment and optionally fetch the Ensembl VEP cache:
    ```bash
-   conda create -n genomes python=3.10
-   conda activate genomes
+   bash install_genomics_env.sh --install-vep-cache
+   conda activate genomics   # use --help to see options
    ```
-3. Run the helper script to install required bioinformatics tools (FastQC, cutadapt, bwa-mem2, samtools, bcftools, GATK):
-   ```bash
-   bash install_genomics_env.sh
-   ```
-   The script downloads binaries and adds them to `PATH`.
-4. Configure shell variables and paths for the session:
+3. Configure shell variables and paths for the session:
    ```bash
    source start_genomics.sh
    ```
