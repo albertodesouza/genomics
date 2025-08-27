@@ -464,7 +464,3 @@ A: Short-read callers parallelize poorly within a single region; sharding gives 
 A: Increase `bcf_max_parallel` (number of shards running concurrently). Keep `bcf_threads_io` small (1–2) to avoid I/O bottlenecks.
 
 ---
-
-### On your question about other OpenAI tools
-
-You don’t need Codex, Agent Mode, or “Deep Research” for this. Producing a well-structured, technical README with explanations and examples is exactly what I can do here. If you later want automated code refactors or live repository sweeps, we can discuss complementary tooling—but for this documentation, we’re good.
