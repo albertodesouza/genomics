@@ -246,6 +246,7 @@ fi
 
 conda activate
 ./install_genomics_env.sh
+source vep_install.sh
 ```
 
 ### Starting the environment
@@ -256,6 +257,18 @@ Leave any active conda environment and initialize the session:
 conda deactivate
 source start_genomics.sh
 ```
+
+### Running the pipeline
+
+Execute the workflow by pointing the script to your YAML file:
+
+```bash
+conda deactivate
+source start_genomics.sh
+./genomes_analyzer.py --config config_human_30x_low_memory.yaml
+```
+
+The console prints progress panels, including per-shard heartbeats when variant calling is parallelized.
 
 ### YAML Configuration: `config_human_30x_low_memory.yaml`
 
@@ -343,18 +356,6 @@ Defines the biological samples to process.
 #### steps
 
 Ordered list of pipeline actions. Typical values include `fetch_fastqs`, `qc_reads`, `align_and_sort`, `mark_duplicates`, `bqsr`, `call_genes`, and `summarize`.
-
-### Running the pipeline
-
-Execute the workflow by pointing the script to your YAML file:
-
-```bash
-conda deactivate
-source start_genomics.sh
-./genomes_analyzer.py --config config_human_30x_low_memory.yaml
-```
-
-The console prints progress panels, including per-shard heartbeats when variant calling is parallelized.
 
 ---
 
