@@ -100,12 +100,12 @@ params:
   vep_heartbeat_sec: 30          # updates mais frequentes
   vep_compress_output: false     # manter compatibilidade
   
-  # Flags VEP otimizadas
+  # Flags VEP otimizadas para versão mais recente
   vep_extra:
     - "--everything"             # todas as anotações
     - "--no_stats"               # sem estatísticas para velocidade
-    - "--cache_version"          # usar cache mais eficientemente
-    - "88"
+    - "--cache_version"          # usar cache mais eficientemente  
+    - "114"                      # versão mais recente (era 88)
 
 storage:
   base_dir: "/dados/GENOMICS_DATA/latest_ref"
