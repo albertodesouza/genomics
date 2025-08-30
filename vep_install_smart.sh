@@ -1,7 +1,7 @@
 #!/bin/bash
 # vep_install_smart.sh - Instalador inteligente do VEP com detecção automática de versão
 
-set -euo pipefail
+#set -euo pipefail
 
 echo "🧬 Instalador Inteligente do VEP - Ensembl GitHub"
 echo "==============================================="
