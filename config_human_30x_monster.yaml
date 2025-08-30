@@ -35,9 +35,9 @@ general:
 
 # Parâmetros otimizados para 128 cores
 params:
-  aligner: bwa # bwa-mem2
-  bwa_mem2_threads: 2
-  gatk_threads: 32
+  aligner: bwa-mem2
+  bwa_mem2_threads: 64
+  gatk_threads: 96
   target_gene_list: null   # ou caminho para um painel BED/genes de interesse
 
   variant_caller: bcftools       # bcftools escala melhor que GATK para muitos cores
