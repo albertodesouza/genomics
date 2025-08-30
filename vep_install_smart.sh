@@ -19,30 +19,16 @@ detect_latest_vep_version() {
     # Tenta via API do GitHub (mais confiável)
     if command -v curl >/dev/null 2>&1; then
         LATEST=$(curl -s https://api.github.com/repos/Ensembl/ensembl-vep/releases/latest | grep '"tag_name"' | sed 's/.*"tag_name": "\([^"]*\)".*/\1/' 2>/dev/null || echo "")
-        if [ -n "$LATEST" ]; then
+        if [ -n "$LATEST" ] && [ "$LATEST" != "null" ]; then
             echo "✅ Última release via GitHub API: $LATEST"
             echo "$LATEST"
             return 0
         fi
     fi
     
-    # Fallback: clona temporariamente para ver tags
-    echo "🔄 Fallback: verificando tags diretamente..."
-    TEMP_DIR=$(mktemp -d)
-    git clone --depth 1 https://github.com/Ensembl/ensembl-vep.git "$TEMP_DIR" 2>/dev/null || {
-        rm -rf "$TEMP_DIR"
-        echo "release/114"  # Fallback final
-        return 0
-    }
-    
-    cd "$TEMP_DIR"
-    git fetch --tags 2>/dev/null || true
-    LATEST=$(git tag --sort=-version:refname | grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)?$' | head -1 2>/dev/null || echo "release/114")
-    cd - >/dev/null
-    rm -rf "$TEMP_DIR"
-    
-    echo "✅ Última versão detectada: $LATEST"
-    echo "$LATEST"
+    # Fallback: usa branch release/114 (estável)
+    echo "🔄 Usando versão estável conhecida: release/114"
+    echo "release/114"
 }
 
 # Função principal de instalação
@@ -77,25 +63,25 @@ install_vep_latest() {
     echo "📋 Informações da versão instalada:"
     git log --oneline -1
     
-    # Verifica dependências
+    # Verifica e instala dependências Perl essenciais
     echo ""
-    echo "🐪 Verificando dependências Perl..."
+    echo "🐪 Instalando dependências Perl via conda..."
     
-    # Dependências essenciais
-    PERL_DEPS=("DBI" "Archive::Zip" "LWP::Simple" "JSON")
-    for dep in "${PERL_DEPS[@]}"; do
-        if perl -M"$dep" -e 1 2>/dev/null; then
-            echo "   ✅ $dep"
-        else
-            echo "   🔧 Instalando $dep..."
-            case "$dep" in
-                "DBI") conda install -c bioconda perl-dbi -y ;;
-                "Archive::Zip") conda install -c conda-forge perl-archive-zip -y ;;
-                "LWP::Simple") conda install -c conda-forge perl-lwp-simple -y ;;
-                "JSON") conda install -c conda-forge perl-json -y ;;
-            esac
-        fi
-    done
+    # Instala todas as dependências de uma vez
+    conda install -c bioconda -c conda-forge -y \
+        perl-dbi \
+        perl-archive-zip \
+        perl-lwp-simple \
+        perl-json \
+        perl-list-moreutils \
+        perl-set-intervaltree \
+        perl-bio-db-hts \
+        perl-compress-raw-zlib || {
+        
+        echo "⚠️  Algumas dependências falharam via conda, continuando..."
+    }
+    
+    echo "✅ Dependências instaladas"
     
     # Torna executável
     chmod +x INSTALL.pl
@@ -104,30 +90,20 @@ install_vep_latest() {
     echo "⚡ Executando instalação do VEP..."
     echo "💡 Isso pode demorar 15-30 minutos (baixa cache + compila)..."
     
-    # Instalação com progresso
+    # Instalação simples sem cache (mais confiável)
+    echo "🔧 Instalando APIs do VEP..."
     ./INSTALL.pl \
         --AUTO a \
-        --SPECIES "$SPECIES" \
-        --ASSEMBLY "$ASSEMBLY" \
-        --CACHEDIR "$VEPCACHE" \
         --NO_BIOPERL \
         --NO_HTSLIB \
         --NO_TEST \
-        --VERBOSE \
-        --DESTDIR "$VEP_DIR" \
-        --CACHE_VERSION "114" || {
+        --NO_UPDATE || {
         
-        echo "⚠️  Instalação com cache falhou, tentando sem cache..."
-        ./INSTALL.pl \
-            --AUTO a \
-            --SPECIES "$SPECIES" \
-            --ASSEMBLY "$ASSEMBLY" \
-            --NO_BIOPERL \
-            --NO_HTSLIB \
-            --NO_TEST \
-            --NO_UPDATE \
-            --DESTDIR "$VEP_DIR"
+        echo "❌ Instalação falhou"
+        return 1
     }
+    
+    echo "✅ APIs do VEP instaladas"
 }
 
 # Função para configurar PATH
@@ -161,19 +137,26 @@ install_vep_cache() {
     echo ""
     echo "💾 Instalando cache do VEP..."
     
-    if command -v vep_install >/dev/null 2>&1; then
-        echo "🔧 Usando vep_install para cache..."
-        vep_install -a cf -s "$SPECIES" -y "$ASSEMBLY" -c "$VEPCACHE" --NO_BIOPERL
-    else
-        echo "⚠️  vep_install não encontrado, usando INSTALL.pl..."
-        cd "$VEP_DIR"
-        ./INSTALL.pl \
-            --AUTO cf \
-            --SPECIES "$SPECIES" \
-            --ASSEMBLY "$ASSEMBLY" \
-            --CACHEDIR "$VEPCACHE" \
-            --NO_BIOPERL
-    fi
+    cd "$VEP_DIR"
+    
+    # Usa INSTALL.pl do VEP baixado para instalar cache
+    echo "🔧 Instalando cache via INSTALL.pl..."
+    ./INSTALL.pl \
+        --AUTO cf \
+        --SPECIES "$SPECIES" \
+        --ASSEMBLY "$ASSEMBLY" \
+        --CACHEDIR "$VEPCACHE" \
+        --NO_BIOPERL \
+        --NO_UPDATE || {
+        
+        echo "⚠️  Instalação automática do cache falhou"
+        echo "💡 Você pode instalar manualmente depois com:"
+        echo "   cd $VEP_DIR"
+        echo "   ./INSTALL.pl --AUTO cf --SPECIES $SPECIES --ASSEMBLY $ASSEMBLY --CACHEDIR $VEPCACHE --NO_BIOPERL"
+        return 1
+    }
+    
+    echo "✅ Cache instalado"
 }
 
 # Função de teste
