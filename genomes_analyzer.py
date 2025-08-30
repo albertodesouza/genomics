@@ -806,6 +806,10 @@ def _filter_problematic_contigs(contigs):
         "HCV-1", "HCV-2", "HIV-1", "HIV-2", "HTLV-1", "HTLV-2",
         # Vetores e plasmídeos
         "pUC", "pBR", "pET", "pcDNA", "VECTOR", "PLASMID",
+        # Contigs decoy problemáticos (causam reference mismatch)
+        "_DECOY", "DECOY", "JTFH01", "KN707", "KI270", "GL000",
+        # Prefixos de contigs não mapeados problemáticos
+        "CHRUN_", "chrUn_",
         # Outros problemáticos
         "LAMBDA", "PHAGE", "SYNTHETIC", "ARTIFICIAL"
     }
@@ -816,6 +820,18 @@ def _filter_problematic_contigs(contigs):
     for ctg, length in contigs:
         ctg_upper = ctg.upper()
         is_problematic = any(pattern in ctg_upper for pattern in problem_patterns)
+        
+        # Verifica padrões específicos adicionais
+        if not is_problematic:
+            # Contigs decoy específicos
+            if ctg.startswith("chrUn_") and ("_decoy" in ctg or "JTFH01" in ctg or "KN707" in ctg):
+                is_problematic = True
+            # Contigs KI270 problemáticos
+            elif "KI270" in ctg_upper:
+                is_problematic = True
+            # Contigs GL000 problemáticos  
+            elif "GL000" in ctg_upper:
+                is_problematic = True
         
         if not is_problematic:
             keep.append((ctg, length))
