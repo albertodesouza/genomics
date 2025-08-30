@@ -1452,18 +1452,27 @@ def _build_bwa_index_optimized(ref_prefix: Path, label: str = "BWA"):
             files_info = []
             total_size = 0
             
-            for ext in [".amb", ".ann", ".bwt", ".pac", ".sa"]:
+            # BWA clássico cria 5 arquivos principais
+            bwa_files = [
+                (".amb", "amb"),
+                (".ann", "ann"), 
+                (".bwt", "bwt"),
+                (".pac", "pac"),
+                (".sa", "sa")
+            ]
+            
+            for ext, display_name in bwa_files:
                 file_path = Path(str(ref_prefix) + ext)
                 if file_path.exists():
                     size = file_path.stat().st_size
-                    total_size += size
-                    files_info.append(f"{ext[1:]}({sizeof_fmt(size)})")
+                    if size > 0:  # Só conta arquivos com conteúdo
+                        total_size += size
+                        files_info.append(f"{display_name}({sizeof_fmt(size)})")
             
-            # Status compacto com total
+            # Status mais limpo
             if files_info:
-                status = f"total {sizeof_fmt(total_size)} • {', '.join(files_info[:3])}"
-                if len(files_info) > 3:
-                    status += f" +{len(files_info)-3} mais"
+                main_status = ', '.join(files_info[:3])
+                status = f"total {sizeof_fmt(total_size)} • {main_status}"
             else:
                 status = "iniciando..."
                 
@@ -1557,30 +1566,28 @@ def _build_bwa_mem2_index_optimized(ref_prefix: Path, label: str = "BWA-MEM2"):
             files_info = []
             total_size = 0
             
-            # BWA-MEM2 cria arquivos diferentes
-            bwa_mem2_exts = [".0123", ".amb", ".ann", ".bwt.2bit.64", ".pac"]
-            for ext in bwa_mem2_exts:
+            # BWA-MEM2 cria arquivos específicos - verifica apenas os principais
+            main_files = [
+                (".0123", "idx"),
+                (".amb", "amb"), 
+                (".ann", "ann"),
+                (".bwt.2bit.64", "bwt"),
+                (".pac", "pac")
+            ]
+            
+            for ext, display_name in main_files:
                 file_path = Path(str(ref_prefix) + ext)
                 if file_path.exists():
                     size = file_path.stat().st_size
-                    total_size += size
-                    # Simplifica nome da extensão para display
-                    ext_name = ext.replace('.', '').replace('2bit64', '2bit')
-                    files_info.append(f"{ext_name}({sizeof_fmt(size)})")
+                    if size > 0:  # Só conta arquivos com conteúdo
+                        total_size += size
+                        files_info.append(f"{display_name}({sizeof_fmt(size)})")
             
-            # Verifica também padrões alternativos do BWA-MEM2
-            for file_path in Path("refs").glob("reference.fa.*"):
-                if file_path.is_file() and str(file_path) not in [str(ref_prefix) + ext for ext in bwa_mem2_exts]:
-                    size = file_path.stat().st_size
-                    total_size += size
-                    ext_name = file_path.suffix.replace('.', '')
-                    files_info.append(f"{ext_name}({sizeof_fmt(size)})")
-            
-            # Status compacto
+            # Status mais limpo - mostra apenas arquivos principais
             if files_info:
-                status = f"total {sizeof_fmt(total_size)} • {', '.join(files_info[:3])}"
-                if len(files_info) > 3:
-                    status += f" +{len(files_info)-3} mais"
+                # Limita a 3 arquivos principais para evitar linha muito longa
+                main_status = ', '.join(files_info[:3])
+                status = f"total {sizeof_fmt(total_size)} • {main_status}"
             else:
                 status = "iniciando..."
                 
