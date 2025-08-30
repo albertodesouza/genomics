@@ -14,20 +14,16 @@ VEP_DIR="$HOME/ensembl-vep"
 
 # Função para detectar última versão
 detect_latest_vep_version() {
-    echo "🔍 Detectando última versão do VEP no GitHub..."
-    
     # Tenta via API do GitHub (mais confiável)
     if command -v curl >/dev/null 2>&1; then
         LATEST=$(curl -s https://api.github.com/repos/Ensembl/ensembl-vep/releases/latest | grep '"tag_name"' | sed 's/.*"tag_name": "\([^"]*\)".*/\1/' 2>/dev/null || echo "")
         if [ -n "$LATEST" ] && [ "$LATEST" != "null" ]; then
-            echo "✅ Última release via GitHub API: $LATEST"
             echo "$LATEST"
             return 0
         fi
     fi
     
     # Fallback: usa branch release/114 (estável)
-    echo "🔄 Usando versão estável conhecida: release/114"
     echo "release/114"
 }
 
@@ -67,7 +63,8 @@ install_vep_latest() {
     echo ""
     echo "🐪 Instalando dependências Perl via conda..."
     
-    # Instala todas as dependências de uma vez
+    # Instala todas as dependências essenciais
+    echo "📦 Instalando dependências Perl completas..."
     conda install -c bioconda -c conda-forge -y \
         perl-dbi \
         perl-archive-zip \
@@ -76,7 +73,12 @@ install_vep_latest() {
         perl-list-moreutils \
         perl-set-intervaltree \
         perl-bio-db-hts \
-        perl-compress-raw-zlib || {
+        perl-compress-raw-zlib \
+        perl-try-tiny \
+        perl-uri \
+        perl-http-message \
+        perl-io-string \
+        perl-text-csv || {
         
         echo "⚠️  Algumas dependências falharam via conda, continuando..."
     }
@@ -146,14 +148,27 @@ install_vep_cache() {
         --SPECIES "$SPECIES" \
         --ASSEMBLY "$ASSEMBLY" \
         --CACHEDIR "$VEPCACHE" \
+        --CACHE_VERSION 114 \
         --NO_BIOPERL \
         --NO_UPDATE || {
         
         echo "⚠️  Instalação automática do cache falhou"
-        echo "💡 Você pode instalar manualmente depois com:"
-        echo "   cd $VEP_DIR"
-        echo "   ./INSTALL.pl --AUTO cf --SPECIES $SPECIES --ASSEMBLY $ASSEMBLY --CACHEDIR $VEPCACHE --NO_BIOPERL"
-        return 1
+        echo "💡 Tentando com versão específica..."
+        
+        # Fallback: força versão 114
+        ./INSTALL.pl \
+            --AUTO cf \
+            --SPECIES "$SPECIES" \
+            --ASSEMBLY "$ASSEMBLY" \
+            --CACHEDIR "$VEPCACHE" \
+            --CACHE_VERSION 114 \
+            --NO_BIOPERL || {
+            
+            echo "⚠️  Cache ainda falhou - pode instalar manualmente depois"
+            echo "💡 Comando manual:"
+            echo "   cd $VEP_DIR"
+            echo "   ./INSTALL.pl --AUTO cf --SPECIES $SPECIES --ASSEMBLY $ASSEMBLY --CACHEDIR $VEPCACHE --CACHE_VERSION 114 --NO_BIOPERL"
+        }
     }
     
     echo "✅ Cache instalado"
@@ -195,9 +210,12 @@ test_vep_installation() {
 
 # Execução principal
 main() {
+    echo "🔍 Detectando última versão do VEP no GitHub..."
+    
     # Detecta versão mais recente
     LATEST_VERSION=$(detect_latest_vep_version)
     
+    echo "✅ Versão detectada: $LATEST_VERSION"
     echo ""
     echo "🎯 Versão selecionada: $LATEST_VERSION"
     echo ""
@@ -224,7 +242,7 @@ main() {
         echo ""
         echo "🎉 Instalação do VEP concluída com sucesso!"
         echo "📋 Resumo:"
-        echo "   • Versão: $LATEST_VERSION (última do GitHub)"
+        echo "   • Versão: $LATEST_VERSION (GitHub)"
         echo "   • Localização: $VEP_DIR"
         echo "   • Cache: $VEPCACHE"
         echo "   • Espécie: $SPECIES"
@@ -235,9 +253,9 @@ main() {
     else
         echo ""
         echo "❌ Problemas na instalação detectados"
-        echo "💡 Verifique logs acima e tente:"
+        echo "💡 Para resolver dependências faltantes:"
+        echo "   conda install -c conda-forge perl-try-tiny perl-uri perl-http-message"
         echo "   source start_genomics_universal.sh"
-        echo "   ./vep_install_latest.sh"
     fi
 }
 
