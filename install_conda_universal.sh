@@ -1,7 +1,7 @@
 #!/bin/bash
 # install_conda_universal.sh - Instala conda/mamba em qualquer máquina Linux
 
-set -euo pipefail
+# set -euo pipefail
 
 echo "🐍 Instalador Universal do Conda/Mamba"
 echo "======================================="

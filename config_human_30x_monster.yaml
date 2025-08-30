@@ -1,18 +1,20 @@
 # config_human_30x_monster.yaml - Configuração otimizada para máquina monster (128 cores + 256GB RAM)
 project:
-  name: human_30x_trio_monster_256gb
+  name: human_30x_trio_demo
   organism: homo_sapiens
   reference:
     # use o nome que preferir; este é o do pacote do GDC
     name: GRCh38.d1.vd1
     # FASTA em tar.gz do GDC (o script extrai e cria refs/reference.fa)
     fasta_url: "https://api.gdc.cancer.gov/data/254f697d-310d-4d7d-a27b-27fbf767a834"
-    # Para 128 cores, é melhor NÃO usar índice pré-construído e usar bwa-mem2
-    # bwa_index_url: "https://api.gdc.cancer.gov/data/25217ec9-af07-4a17-8db9-101271ee7225"
+    # índice BWA pré-construído (evita indexar localmente → baixa RAM) --> so usar com bwa classico; com bwa-mem2, comentar
+    bwa_index_url: "https://api.gdc.cancer.gov/data/25217ec9-af07-4a17-8db9-101271ee7225"
+    # (opcional) se quiser fixar um GTF específico, adicione:
+    # gtf_url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/gencode.v46.primary_assembly.annotation.gtf.gz"
 
 general:
   # Para máquina monster: usar bwa-mem2 e force_indexes para criar índices otimizados
-  force_indexes: true
+  force_indexes: false
   sort_mem_mb: 4096         # 4GB por thread (com 256GB RAM, podemos ser generosos)
   bwa_batch_k: 200000000    # lotes ainda maiores (200M reads) para aproveitar RAM
   aln_threads: 96           # usar 3/4 dos cores para alinhamento máximo
@@ -34,10 +36,10 @@ general:
 
 # Parâmetros otimizados para 128 cores
 params:
-  aligner: bwa-mem2              # bwa-mem2 é mais rápido e usa melhor os cores
-  bwa_mem2_threads: 8            # threads por processo bwa-mem2
-  gatk_threads: 32               # mais threads para GATK
-  target_gene_list: null
+  aligner: bwa # bwa-mem2
+  bwa_mem2_threads: 2
+  gatk_threads: 32
+  target_gene_list: null   # ou caminho para um painel BED/genes de interesse
 
   variant_caller: bcftools       # bcftools escala melhor que GATK para muitos cores
 
@@ -69,7 +71,7 @@ params:
   hc_max_parallel: 24            # mais processos paralelos
   hc_extra_args: 
     - "--native-pair-hmm-threads"
-    - "16"                       # threads nativos para HMM
+    - "64"                       # threads nativos para HMM
 
   # GenotypeGVCFs - Otimizado para 256GB
   gg_java_mem_gb: 64             # muito mais memória
@@ -86,7 +88,7 @@ params:
   # Performance VEP extrema - 256GB RAM
   vep_fork: 96                   # usar 3/4 dos cores para VEP
   vep_buffer_size: 100000        # buffer massivo (100K variantes) para máximo throughput
-  vep_heartbeat_sec: 10          # updates mais frequentes
+  vep_heartbeat_sec: 30          # updates mais frequentes
   vep_compress_output: false     # manter compatibilidade
   
   # Flags VEP otimizadas
@@ -97,15 +99,15 @@ params:
     - "88"
 
 storage:
-  base_dir: "/dados/GENOMICS_DATA/monster_256gb"
-  work_dir: "/dados/GENOMICS_DATA/monster_256gb/work"
-  keep_intermediates: false      # limpar intermediários para economizar espaço
-  temp_dir: "/dev/shm"           # usar RAM disk (tmpfs) para máxima velocidade com 256GB
-                                 # ATENÇÃO: /dev/shm pode usar até 50% da RAM (128GB)
+  base_dir: "/dados/GENOMICS_DATA/low_memory"
+  work_dir: "/dados/GENOMICS_DATA/low_memory/work"
+  # temp_dir: "/dados/GENOMICS_DATA/low_memory/tmp"
+  keep_intermediates: true   # útil para retomar e inspecionar
+  temp_dir: "/dados/tmp"   # ← seu disco rápido
 
 download:
   tool: sra_toolkit
-  use_ascp: true                 # usar Aspera se disponível para downloads mais rápidos
+  use_ascp: false                 # usar Aspera se disponível para downloads mais rápidos
   threads: 32                    # muito mais threads para download
   prefetch_retries: 3
 
@@ -113,17 +115,17 @@ execution:
   verbose: true
   resume: true
   skip_existing: true
-  progress_interval_sec: 30      # updates mais frequentes
-  stall_warn_min: 3              # alertas mais rápidos
-  stall_fail_min: 20             # timeout mais agressivo
+  progress_interval_sec: 60      # updates mais frequentes
+  stall_warn_min: 5              # alertas mais rápidos
+  stall_fail_min: 50             # timeout mais agressivo
   ena_fallback: true
   cancel_on_convert_stall: false
-  prefer_ena_fastq: true         # preferir FASTQs prontos para velocidade
+  prefer_ena_fastq: false         # preferir FASTQs prontos para velocidade
   
 size_control:
   downsample:
-    enabled: false               # DESABILITADO - usar dados completos 30×
-    fraction: 1.0                # 100% = cobertura completa 30×
+    enabled: true               # DESABILITADO - usar dados completos 30×
+    fraction: 0.25                # 100% = cobertura completa 30×
 
 # Amostras 30× completas (sem downsample para aproveitar a máquina monster)
 limit_to_canonical: false
@@ -132,7 +134,7 @@ samples:
   - sample_id: NA12878           # filha (HG001 / GM12878)
     study: PRJEB31736            # 1000G 30× (lote principal)
     runs:
-      - ERR3239334               # FASTQs gerados pelo ENA
+      - ERR3239334            # FASTQs gerados pelo ENA: ERR3239334_1.fastq.gz / _2.fastq.gz
     notes: "CRAM 'final' disponível: ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR323/ERR3239334/NA12878.final.cram"
 
   - sample_id: NA12891           # pai
@@ -147,13 +149,13 @@ samples:
       - ERR3989342               # ENA fornece FASTQ gerado para este run
     notes: "CRAM 'final': ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR398/ERR3989342/NA12892.final.cram"
 
-# Etapas do pipeline otimizadas
+# Etapas do pipeline (ajuste conforme seu script)
 steps:
-  - fetch_fastqs               # downloads paralelos
-  - qc_reads                   # QC paralelo
-  - align_and_sort             # alinhamento massivamente paralelo
-  - mark_duplicates            # duplicatas em paralelo
-  - bqsr                       # BQSR paralelo (opcional)
-  - call_genes                 # chamadas de variantes paralelas
-  - summarize                  # relatórios finais
+  - fetch_fastqs          # prefetch/fasterq-dump; respeita skip_existing/resume
+  - qc_reads              # FastQC/MultiQC (se configurados)
+  - align_and_sort        # BWA-MEM/BWA-MEM2 + samtools
+  - mark_duplicates       # GATK MarkDuplicatesSpark/picard
+  - bqsr                  # GATK BaseRecalibrator/applyBQSR (opcional)
+  - call_genes            # sua extração/varredura de genes (exons/introns) e comparação
+  - summarize             # relatórios e métricas
 

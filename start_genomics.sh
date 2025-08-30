@@ -4,7 +4,7 @@
 
 # set -euo pipefail
 
-CONDA_BASE="/home/lume2/miniforge3"
+CONDA_BASE="~/miniforge3"
 
 # Inicializa o conda sem precisar do bloco no .bashrc
 if [ -f "$CONDA_BASE/etc/profile.d/conda.sh" ]; then
