@@ -799,12 +799,15 @@ def _filter_problematic_contigs(contigs):
     """
     # Cromossomos problemáticos conhecidos (virais, vetores, etc.)
     problem_patterns = {
-        # Vírus
-        "EBV", "CMV", "HBV", "HCV", "HIV", "HPV", "HTLV", "KSHV", "SV40",
-        # Vetores e plasmídeos comuns
-        "pUC", "pBR", "pET", "pcDNA", "vector",
+        # Vírus (mais abrangente)
+        "EBV", "CMV", "HBV", "HCV", "HIV", "HPV", "HTLV", "KSHV", "SV40", "HSV",
+        "HERPES", "POLYOMA", "ADENO", "PAPILLOMA", "RETRO", "LENTI",
+        # Vírus específicos encontrados nos dados
+        "HCV-1", "HCV-2", "HIV-1", "HIV-2", "HTLV-1", "HTLV-2",
+        # Vetores e plasmídeos
+        "pUC", "pBR", "pET", "pcDNA", "VECTOR", "PLASMID",
         # Outros problemáticos
-        "lambda", "phage"
+        "LAMBDA", "PHAGE", "SYNTHETIC", "ARTIFICIAL"
     }
     
     keep = []
