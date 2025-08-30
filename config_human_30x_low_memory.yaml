@@ -75,21 +75,22 @@ params:
   gg_java_mem_gb: 12
   gg_extra_args: []
 
-  # VEP
-  vep_fork: 16
-  vep_everything: true
-  vep_extra_args: []
-  # force_recall: false     # defina true para refazer gVCF/VCF mesmo se existirem
+  # VEP (Variant Effect Predictor)
   annotate_with_vep: true
   vep_species: "homo_sapiens"
   vep_assembly: "GRCh38"        # (não use GRCh38.d1.vd1 aqui)
   vep_dir_cache: "/dados/vep_cache"
-  vep_fork: 16
+  
+  # Performance VEP
+  vep_fork: 16                  # threads para processamento paralelo
+  vep_buffer_size: 10000        # variantes por lote (aumentado para melhor performance)
+  vep_heartbeat_sec: 15         # intervalo dos updates de progresso
+  vep_compress_output: false    # desabilita bgzip para compatibilidade
+  
+  # Flags extras (o buffer_size acima sobrescreve o dos vep_extra)
   vep_extra:
-    - "--everything"
-    - "--no_stats"
-    - "--buffer_size"
-    - "5000"
+    - "--everything"            # todas as anotações disponíveis
+    - "--no_stats"              # pula estatísticas desnecessárias para velocidade
       
 storage:
   base_dir: "/dados/GENOMICS_DATA/low_memory"

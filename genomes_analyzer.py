@@ -2791,9 +2791,17 @@ def annotate_with_vep(samples, threads: int):
         vep_assembly (str)      : "GRCh38" (default) ou "GRCh37"/"hg19" (normalizado)
         vep_dir_cache (str)     : diretório do cache do VEP (default: ~/.vep)
         vep_fork (int)          : processos internos do VEP (default: max(1, threads//2))
+        vep_buffer_size (int)   : tamanho do buffer para processamento em lotes (default: 5000)
         vep_extra (list[str])   : flags extra para o VEP (opcional)
+        vep_heartbeat_sec (int) : intervalo do heartbeat de progresso (default: 30)
     - Idempotente: se o .vep.vcf.gz existir e estiver mais novo que o VCF de entrada, faz SKIP.
     - Valida presença do cache (estrutura nova do VEP: ~/.vep/<species>/<version>_<assembly>/).
+    - Verifica e corrige automaticamente o formato do FASTA (linhas ≤65536 chars para Bio::DB::Fasta).
+    - Garante que o índice .fai existe para o arquivo FASTA de referência.
+    - Remove arquivos temporários órfãos e usa --force_overwrite para robustez.
+    - Verifica e filtra automaticamente cromossomos problemáticos (virais: chrEBV, chrCMV, etc.).
+    - Recupera automaticamente trabalho anterior de arquivos temporários grandes (>100MB).
+    - Monitora progresso durante execução com heartbeats informativos (tamanho de saída e tempo decorrido).
     """
     from pathlib import Path
     import os as _os
@@ -2810,13 +2818,243 @@ def annotate_with_vep(samples, threads: int):
 
     def _mk_panel(msg, style="bright_cyan"):
         return Panel.fit(msg, border_style=style)
+    
+    def _check_and_filter_vcf_for_vep(vcf_in: Path, sample_id: str) -> Path:
+        """
+        Verifica se VCF contém cromossomos problemáticos para o VEP.
+        Se encontrar, cria versão filtrada. Se não, retorna o original.
+        Retorna o caminho do VCF a ser usado pelo VEP.
+        """
+        import subprocess as sp
+        
+        # Lista de cromossomos problemáticos conhecidos (virais, etc.)
+        problem_chroms = {"chrEBV", "chrCMV", "chrHBV", "chrHCV", "chrHIV", "chrHPV", "chrSV40"}
+        
+        console.print(f"[cyan]🔍 Verificando cromossomos no VCF: {vcf_in.name}[/cyan]")
+        
+        try:
+            # Verifica cromossomos presentes no VCF (rápido)
+            cmd_check = ["bcftools", "index", "--stats", str(vcf_in)]
+            result = sp.run(cmd_check, capture_output=True, text=True, check=False)
+            
+            if result.returncode != 0:
+                # Fallback: usa zcat + grep se bcftools falhar
+                cmd_check = f"zcat {vcf_in} | grep -v '^#' | cut -f1 | sort -u"
+                result = sp.run(cmd_check, shell=True, capture_output=True, text=True, check=True)
+                chroms_in_vcf = set(result.stdout.strip().split('\n')) if result.stdout.strip() else set()
+            else:
+                # Extrai cromossomos do stats do bcftools
+                chroms_in_vcf = set()
+                for line in result.stdout.split('\n'):
+                    if line.startswith('CHR\t'):
+                        chrom = line.split('\t')[1]
+                        chroms_in_vcf.add(chrom)
+            
+            # Verifica se há cromossomos problemáticos
+            problem_found = chroms_in_vcf & problem_chroms
+            
+            if not problem_found:
+                console.print("[green]✅ Nenhum cromossomo problemático encontrado[/green]")
+                return vcf_in  # Usa VCF original
+                
+            # Cromossomos problemáticos encontrados - precisa filtrar
+            console.print(f"[yellow]⚠️  Cromossomos problemáticos: {', '.join(sorted(problem_found))}[/yellow]")
+            console.print("[cyan]🔄 Criando VCF filtrado para VEP...[/cyan]")
+            
+            # Cria VCF filtrado
+            vcf_filtered = vcf_in.parent / f"{sample_id}.filtered_for_vep.vcf.gz"
+            
+            # Remove arquivo filtrado anterior se existir
+            if vcf_filtered.exists():
+                vcf_filtered.unlink()
+                
+            # Constrói expressão de filtro (exclui cromossomos problemáticos)
+            exclude_expr = " || ".join([f'CHROM=="{chrom}"' for chrom in problem_found])
+            
+            # Filtra VCF
+            cmd_filter = [
+                "bcftools", "view", 
+                "-e", exclude_expr,  # Exclui (-e) cromossomos problemáticos
+                "-O", "z", "-o", str(vcf_filtered),
+                str(vcf_in)
+            ]
+            
+            console.print(f"[dim]Executando: {' '.join(cmd_filter)}[/dim]")
+            sp.run(cmd_filter, check=True)
+            
+            # Indexa VCF filtrado
+            sp.run(["tabix", "-p", "vcf", str(vcf_filtered)], check=True)
+            
+            console.print(f"[green]✅ VCF filtrado criado: {vcf_filtered.name}[/green]")
+            console.print(f"[dim]Excluídos: {', '.join(sorted(problem_found))}[/dim]")
+            
+            return vcf_filtered  # Usa VCF filtrado
+            
+        except Exception as e:
+            console.print(f"[red]❌ Erro ao verificar/filtrar VCF: {e}[/red]")
+            console.print("[yellow]⚠️  Continuando com VCF original (pode falhar em cromossomos problemáticos)[/yellow]")
+            return vcf_in  # Fallback para VCF original
+    
+    def _run_vep_with_progress(cmd: list, sample_id: str, output_file: Path, species: str, assembly: str, fork: int, heartbeat_sec: int = 30):
+        """
+        Executa VEP monitorando progresso através do tamanho do arquivo de saída.
+        """
+        import time
+        import subprocess as sp
+        
+        console.print(_mk_panel(f"[{sample_id}] VEP → {species} {assembly} (fork={fork})", "cyan"))
+        
+        # Mostra comando completo
+        cmd_str = " ".join(cmd)
+        console.print(f"[dim]> {cmd_str}[/dim]")
+        
+        start_time = time.time()
+        last_heartbeat = start_time
+        last_size = 0
+        
+        # Executa VEP em background
+        proc = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
+        
+        while True:
+            # Verifica se o processo terminou
+            rc = proc.poll()
+            current_time = time.time()
+            
+            # Heartbeat periódico
+            if current_time - last_heartbeat >= heartbeat_sec:
+                elapsed = int(current_time - start_time)
+                
+                # Verifica tamanho do arquivo de saída
+                current_size = output_file.stat().st_size if output_file.exists() else 0
+                delta_size = current_size - last_size
+                
+                # Adiciona contexto sobre a fase do VEP
+                phase_info = ""
+                if current_size == 0:
+                    phase_info = " (iniciando…)"
+                elif delta_size == 0 and current_size > 0:
+                    if elapsed < 300:  # 5 minutos
+                        phase_info = " (carregando cache…)"
+                    else:
+                        phase_info = " (processando…)"
+                elif delta_size > 0:
+                    phase_info = " (escrevendo resultados)"
+                
+                console.print(
+                    f"[{sample_id}] VEP … {elapsed//60}m{elapsed%60:02d}s • "
+                    f"{output_file.name} {sizeof_fmt(current_size)} • Δ{sizeof_fmt(delta_size)}{phase_info}",
+                    highlight=False
+                )
+                
+                last_heartbeat = current_time
+                last_size = current_size
+            
+            if rc is not None:
+                break
+                
+            time.sleep(1)
+        
+        # Verifica se houve erro
+        if proc.returncode != 0:
+            stdout, stderr = proc.communicate()
+            console.print(f"[red]❌ VEP falhou com código {proc.returncode}[/red]")
+            if stderr and stderr.strip():
+                console.print(f"[red]Erro VEP:[/red]\n{stderr.strip()}")
+            if stdout and stdout.strip():
+                console.print(f"[dim]Saída VEP:[/dim]\n{stdout.strip()}")
+            raise sp.CalledProcessError(proc.returncode, cmd)
+        
+        # Relatório final
+        elapsed = int(time.time() - start_time)
+        final_size = output_file.stat().st_size if output_file.exists() else 0
+        console.print(
+            f"[bold cyan]{sample_id}[/bold cyan] VEP concluído em {elapsed//60}m{elapsed%60:02d}s • "
+            f"{output_file.name} {sizeof_fmt(final_size)}"
+        )
+    
+    def _ensure_fasta_format_for_vep(ref_fa: Path) -> bool:
+        """
+        Verifica se o arquivo FASTA tem linhas compatíveis com Bio::DB::Fasta (≤65536 chars).
+        Se necessário, reformata o arquivo para ter linhas de 80 caracteres.
+        Retorna True se alguma correção foi feita.
+        """
+        if not ref_fa.exists():
+            return False
+            
+        console.print(f"[cyan]Verificando formato do FASTA: {ref_fa.name}[/cyan]")
+        
+        # Verifica se há linhas muito longas (usa awk para eficiência)
+        needs_reformat = False
+        try:
+            import subprocess as sp
+            result = sp.run(
+                ["awk", "length($0) > 65536 && !/^>/ {print NR \":\" length($0); exit}", str(ref_fa)],
+                capture_output=True, text=True, check=False
+            )
+            if result.stdout.strip():
+                line_info = result.stdout.strip()
+                needs_reformat = True
+                console.print(f"[yellow]⚠️  FASTA linha {line_info} caracteres (>65536) — incompatível com VEP[/yellow]")
+            else:
+                console.print("[green]✅ FASTA já está no formato correto (linhas ≤65536 chars)[/green]")
+        except Exception:
+            return False
+            
+        if not needs_reformat:
+            return False
+            
+        # Reformata o arquivo
+        console.print(_mk_panel("[bold]Reformatando FASTA para compatibilidade com VEP[/bold]\n"
+                               "• Criando backup do arquivo original\n"
+                               "• Reformatando para linhas de 80 caracteres\n"
+                               "• Recriando índice .fai", "yellow"))
+        
+        backup_path = ref_fa.with_suffix('.fa.backup')
+        temp_path = ref_fa.with_suffix('.fa.tmp')
+        
+        # Backup do original (apenas se não existir)
+        if not backup_path.exists():
+            import shutil
+            console.print(f"[cyan]📦 Criando backup: {backup_path.name}[/cyan]")
+            shutil.copy2(ref_fa, backup_path)
+        else:
+            console.print(f"[dim]📦 Backup já existe: {backup_path.name}[/dim]")
+            
+        # Reformata usando seqtk
+        console.print("[cyan]🔄 Reformatando FASTA (seqtk seq -l 80)...[/cyan]")
+        cmd = ["seqtk", "seq", "-l", "80", str(backup_path)]
+        try:
+            with open(temp_path, 'w') as f:
+                sp.run(cmd, stdout=f, check=True)
+            
+            # Substitui o original
+            temp_path.replace(ref_fa)
+            console.print(f"[green]✅ Arquivo reformatado: {ref_fa.name}[/green]")
+            
+            # Recria o índice
+            fai_path = ref_fa.with_suffix('.fa.fai')
+            if fai_path.exists():
+                fai_path.unlink()
+            console.print("[cyan]📇 Recriando índice .fai...[/cyan]")
+            sp.run(["samtools", "faidx", str(ref_fa)], check=True)
+            
+            console.print("[green]✅ FASTA reformatado e indexado com sucesso![/green]")
+            return True
+            
+        except Exception as e:
+            console.print(f"[red]❌ Erro ao reformatar FASTA: {e}[/red]")
+            # Restaura o backup se algo deu errado
+            if backup_path.exists() and temp_path.exists():
+                temp_path.unlink()
+            return False
 
     # --------------- Parâmetros ---------------
-    vep_species   = (p.get("vep_species") or "homo_sapiens").lower()
-    vep_assembly  = _vep_norm_assembly(p.get("vep_assembly") or "GRCh38")
-    vep_dir_cache = p.get("vep_dir_cache") or str(Path.home()/".vep")
-    vep_fork      = int(p.get("vep_fork", max(1, threads//2)))
-    vep_extra     = list(p.get("vep_extra", []))
+    vep_species     = (p.get("vep_species") or "homo_sapiens").lower()
+    vep_assembly    = _vep_norm_assembly(p.get("vep_assembly") or "GRCh38")
+    vep_dir_cache   = p.get("vep_dir_cache") or str(Path.home()/".vep")
+    vep_fork        = int(p.get("vep_fork", max(1, threads//2)))
+    vep_extra       = list(p.get("vep_extra", []))
+    vep_heartbeat   = int(p.get("vep_heartbeat_sec", 30))
 
     Path("vep").mkdir(exist_ok=True)
 
@@ -2833,6 +3071,17 @@ def annotate_with_vep(samples, threads: int):
     except FileNotFoundError:
         console.print("[red]VEP não encontrado (binário 'vep').[/red]")
         raise SystemExit(1)
+
+    # --------------- Verificação do FASTA ---------------
+    console.print(_mk_panel("[bold]Preparação do FASTA para VEP[/bold]\n"
+                           "• Verificando compatibilidade com Bio::DB::Fasta\n"
+                           "• Reformatando se necessário (linhas ≤65536 chars)", "cyan"))
+    
+    ref_fa = Path("refs/reference.fa")
+    if ref_fa.exists():
+        _ensure_fasta_format_for_vep(ref_fa)
+    else:
+        console.print(f"[yellow]⚠️  FASTA de referência não encontrado: {ref_fa}[/yellow]")
 
     # --------------- Checagem de cache ---------------
     cache_root = Path(vep_dir_cache)
@@ -2870,22 +3119,90 @@ def annotate_with_vep(samples, threads: int):
     # --------------- Execução por amostra ---------------
     annotated = []
     for sample in samples:
-        vcf_in  = Path("vcf")/f"{sample}.vcf.gz"
-        vcf_tbi = Path(str(vcf_in)+".tbi")
-        if not vcf_in.exists():
-            console.print(f"[yellow][{sample}] VCF de entrada não encontrado:[/yellow] {vcf_in}")
+        sample_id = sample["id"] if isinstance(sample, dict) else sample
+        vcf_original = Path("vcf")/f"{sample_id}.vcf.gz"
+        vcf_tbi = Path(str(vcf_original)+".tbi")
+        if not vcf_original.exists():
+            console.print(f"[yellow][{sample_id}] VCF de entrada não encontrado:[/yellow] {vcf_original}")
             continue
 
-        out_vep = Path("vep")/f"{sample}.vep.vcf.gz"
-        tmp_vep = Path("vep")/f"{sample}.vep.vcf.gz.tmp"
+        # Verifica e filtra cromossomos problemáticos se necessário
+        vcf_in = _check_and_filter_vcf_for_vep(vcf_original, sample_id)
+
+        out_vep = Path("vep")/f"{sample_id}.vep.vcf.gz"
+        tmp_vep = Path("vep")/f"{sample_id}.vep.vcf.gz.tmp"
 
         # Skip se já está atualizado
         if out_vep.exists() and _is_newer(out_vep, vcf_in):
-            console.print(f"[{sample}] VEP → [bold]SKIP[/bold] (cache ok)")
+            console.print(f"[{sample_id}] VEP → [bold]SKIP[/bold] (cache ok)")
             annotated.append(out_vep)
             continue
 
+        # Gerencia arquivos temporários de forma inteligente
+        if tmp_vep.exists():
+            tmp_size = tmp_vep.stat().st_size
+            # Se arquivo temporário é grande (>100MB), pode conter trabalho válido
+            if tmp_size > 100 * 1024 * 1024:  # 100MB
+                console.print(f"[yellow]⚠️  Arquivo temporário grande encontrado: {tmp_vep.name} ({sizeof_fmt(tmp_size)})[/yellow]")
+                
+                # Tenta recuperar como arquivo final se não existe
+                if not out_vep.exists():
+                    console.print(f"[cyan]🔄 Tentando recuperar trabalho anterior...[/cyan]")
+                    try:
+                        # Verifica se é VCF válido
+                        result = sp.run(["head", "-50", str(tmp_vep)], capture_output=True, text=True)
+                        if "##fileformat=VCF" in result.stdout:
+                            # Conta variantes no arquivo
+                            count_result = sp.run(["grep", "-v", "^#", str(tmp_vep)], 
+                                                capture_output=True, text=True)
+                            if count_result.returncode == 0:
+                                variant_count = len(count_result.stdout.strip().split('\n')) if count_result.stdout.strip() else 0
+                                console.print(f"[cyan]📊 Encontradas {variant_count:,} variantes anotadas[/cyan]")
+                            
+                            # Comprime e move para arquivo final
+                            console.print(f"[cyan]📦 Comprimindo arquivo recuperado...[/cyan]")
+                            with open(out_vep, 'wb') as f:
+                                sp.run(["bgzip", "-c", str(tmp_vep)], stdout=f, check=True)
+                            sp.run(["tabix", "-p", "vcf", str(out_vep)], check=True)
+                            
+                            # Remove temporário após sucesso
+                            tmp_vep.unlink()
+                            console.print(f"[green]✅ Trabalho anterior recuperado: {out_vep.name}[/green]")
+                            annotated.append(out_vep)
+                            continue
+                        else:
+                            console.print(f"[red]❌ Arquivo temporário não é VCF válido[/red]")
+                    except Exception as e:
+                        console.print(f"[red]❌ Erro ao recuperar arquivo: {e}[/red]")
+                
+                # Se não conseguiu recuperar ou arquivo final já existe, faz backup
+                backup_path = tmp_vep.with_suffix('.tmp.backup')
+                if not backup_path.exists():
+                    console.print(f"[cyan]📦 Fazendo backup do arquivo temporário grande...[/cyan]")
+                    import shutil
+                    shutil.move(str(tmp_vep), str(backup_path))
+                    console.print(f"[dim]Backup salvo como: {backup_path.name}[/dim]")
+                else:
+                    tmp_vep.unlink()
+                    console.print(f"[cyan]🧹 Removido arquivo temporário (backup já existe)[/cyan]")
+            else:
+                # Arquivo pequeno (<100MB) - remove normalmente
+                tmp_vep.unlink()
+                console.print(f"[cyan]🧹 Removido arquivo temporário pequeno: {tmp_vep.name} ({sizeof_fmt(tmp_size)})[/cyan]")
+
         # Constrói comando
+        ref_fa = Path("refs/reference.fa")
+        
+        # Garante que o índice .fai existe
+        fai_path = ref_fa.with_suffix('.fa.fai')
+        if ref_fa.exists() and not fai_path.exists():
+            console.print(f"[cyan]📇 Criando índice .fai para {ref_fa.name}...[/cyan]")
+            sp.run(["samtools", "faidx", str(ref_fa)], check=True)
+            console.print(f"[green]✅ Índice criado: {fai_path.name}[/green]")
+        
+        # Parâmetros otimizados para performance
+        buffer_size = p.get("vep_buffer_size", 5000)  # Default do VEP é 5000
+        
         cmd = [
             "vep",
             "--cache", "--offline",
@@ -2896,20 +3213,26 @@ def annotate_with_vep(samples, threads: int):
             "--format", "vcf", "--vcf",
             "-i", str(vcf_in),
             "-o", str(tmp_vep),
-            # Defaults razoáveis (pode suprimir via vep_extra se desejar):
-            "--no_stats", "--everything"
-        ] + vep_extra
+            "--fasta", str(ref_fa),
+            "--force_overwrite",
+            "--buffer_size", str(buffer_size)
+        ]
+        
+        # Adiciona compressão se suportada (VEP mais novos)
+        if p.get("vep_compress_output", False):  # Mudado para False por padrão
+            cmd.extend(["--compress_output", "bgzip"])
+            
+        cmd += vep_extra
 
-        console.print(_mk_panel(f"[{sample}] VEP → {vep_species} {vep_assembly} (fork={vep_fork})", "cyan"))
-        # Executa
-        run(cmd)
+        # Executa VEP com monitoramento de progresso
+        _run_vep_with_progress(cmd, sample_id, tmp_vep, vep_species, vep_assembly, vep_fork, heartbeat_sec=vep_heartbeat)
 
         # Atomic rename
         _atomic_rename(tmp_vep, out_vep)
         annotated.append(out_vep)
 
         # Mostra meta
-        print_meta(f"VEP ({sample})", [out_vep])
+        print_meta(f"VEP ({sample_id})", [out_vep])
 
     if annotated:
         print_meta("VCFs anotados (VEP) — por amostra", annotated)
