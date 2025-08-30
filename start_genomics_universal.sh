@@ -7,12 +7,13 @@ detect_conda_base() {
     # Lista de locais comuns para conda/miniforge
     local conda_paths=(
         "$HOME/miniforge3"
-        "$HOME/miniconda3"
+        "$HOME/miniconda3" 
         "$HOME/anaconda3"
         "/opt/conda"
         "/opt/miniforge3"
         "/usr/local/conda"
         "/usr/local/miniforge3"
+        "/home/lume2/miniforge3"  # seu path específico
     )
     
     # Verifica cada local
@@ -53,6 +54,7 @@ if [ -z "$CONDA_BASE" ]; then
     echo "   $HOME/anaconda3"
     echo "   /opt/conda"
     echo "   /opt/miniforge3"
+    echo "   /home/lume2/miniforge3"
     return 1
 fi
 

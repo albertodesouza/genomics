@@ -792,6 +792,39 @@ def _canonical_subset(contigs):
             keep.append((ctg,_))
     return keep
 
+def _filter_problematic_contigs(contigs):
+    """
+    Remove cromossomos/contigs problemáticos que podem causar falhas no BCFtools/VEP.
+    Filtra cromossomos virais, vetores e contigs problemáticos conhecidos.
+    """
+    # Cromossomos problemáticos conhecidos (virais, vetores, etc.)
+    problem_patterns = {
+        # Vírus
+        "EBV", "CMV", "HBV", "HCV", "HIV", "HPV", "HTLV", "KSHV", "SV40",
+        # Vetores e plasmídeos comuns
+        "pUC", "pBR", "pET", "pcDNA", "vector",
+        # Outros problemáticos
+        "lambda", "phage"
+    }
+    
+    keep = []
+    filtered_count = 0
+    
+    for ctg, length in contigs:
+        ctg_upper = ctg.upper()
+        is_problematic = any(pattern in ctg_upper for pattern in problem_patterns)
+        
+        if not is_problematic:
+            keep.append((ctg, length))
+        else:
+            filtered_count += 1
+    
+    if filtered_count > 0:
+        console.print(f"[yellow]⚠️  Filtrados {filtered_count} cromossomos problemáticos (virais/vetores)[/yellow]")
+        console.print("[dim]Cromossomos filtrados podem causar falhas em BCFtools/VEP[/dim]")
+    
+    return keep
+
 def _write_intervals_file(contigs, dest: Path):
     dest.parent.mkdir(parents=True, exist_ok=True)
     # Escreve BED: chrom  start(0)  end(len)
@@ -2322,6 +2355,7 @@ def call_variants(samples, threads, mem_gb):
 
     Parâmetros YAML (params):
       variant_caller: "gatk" | "bcftools"
+      filter_problematic_contigs: bool # filtra cromossomos virais/problemáticos (default: true)
       # BCFtools
       bcf_scatter_parts: int          # nº de shards
       bcf_max_parallel: int           # nº de shards em paralelo
@@ -2349,10 +2383,22 @@ def call_variants(samples, threads, mem_gb):
 
     # === Contigs/intervalos ===
     keep_alt_decoy = bool(p.get("keep_alt_decoy", True))
+    filter_problematic = bool(p.get("filter_problematic_contigs", True))  # Novo parâmetro
+    
     if g.get("limit_to_canonical", False):
         keep_alt_decoy = False
+        
     contigs = _read_fai(Path("refs/reference.fa.fai"))
-    contigs_used = contigs if keep_alt_decoy else _canonical_subset(contigs)
+    
+    # Aplica filtros em sequência
+    if keep_alt_decoy:
+        contigs_used = contigs
+    else:
+        contigs_used = _canonical_subset(contigs)
+    
+    # Filtra cromossomos problemáticos se habilitado
+    if filter_problematic:
+        contigs_used = _filter_problematic_contigs(contigs_used)
     intervals_dir = Path("intervals"); intervals_dir.mkdir(exist_ok=True)
 
     # === Entradas (mkdup: prefer BAM ou CRAM) ===

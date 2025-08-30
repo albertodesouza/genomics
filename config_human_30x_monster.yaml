@@ -42,6 +42,7 @@ params:
   target_gene_list: null   # ou caminho para um painel BED/genes de interesse
 
   variant_caller: bcftools       # bcftools escala melhor que GATK para muitos cores
+  filter_problematic_contigs: true  # filtra cromossomos virais/problemáticos automaticamente
 
   # BCFtools otimizado para 128 cores
   bcf_verbose: true
