@@ -53,9 +53,9 @@ params:
   bcf_baseq: 20
   bcf_max_depth: 500             # profundidade maior para 30× completo
   bcf_scatter_parts: 64          # muito mais shards para paralelização máxima
-  bcf_max_parallel: 32           # usar 1/4 dos cores para paralelização
+  bcf_max_parallel: 128          # usar muitos cores para paralelização
   bcf_threads_io: 4              # mais threads I/O por processo
-  bcf_io_threads: 32             # muito mais threads para compressão/IO
+  bcf_io_threads: 128            # muito mais threads para compressão/IO
   bcf_emit_variants_only: true
   bcf_min_baseq: 20
   bcf_min_mapq: 20
