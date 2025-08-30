@@ -1,16 +1,15 @@
 # config_human_30x_monster.yaml - Configuração otimizada para máquina monster (128 cores + 256GB RAM)
 project:
-  name: human_30x_trio_demo
+  name: human_30x_trio_latest_ref
   organism: homo_sapiens
   reference:
-    # use o nome que preferir; este é o do pacote do GDC
-    name: GRCh38.d1.vd1
-    # FASTA em tar.gz do GDC (o script extrai e cria refs/reference.fa)
-    fasta_url: "https://api.gdc.cancer.gov/data/254f697d-310d-4d7d-a27b-27fbf767a834"
-    # índice BWA pré-construído (evita indexar localmente → baixa RAM) --> so usar com bwa classico; com bwa-mem2, comentar
-    bwa_index_url: "https://api.gdc.cancer.gov/data/25217ec9-af07-4a17-8db9-101271ee7225"
-    # (opcional) se quiser fixar um GTF específico, adicione:
-    # gtf_url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/gencode.v46.primary_assembly.annotation.gtf.gz"
+    # Referência GENCODE mais recente (2024)
+    name: GRCh38.primary_assembly.genome
+    # FASTA atualizado do GENCODE release 46
+    fasta_url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/GRCh38.primary_assembly.genome.fa.gz"
+    # GTF correspondente
+    gtf_url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/gencode.v46.primary_assembly.annotation.gtf.gz"
+    # NÃO usar índice pré-construído do GDC (versão diferente)
 
 general:
   # Para máquina monster: usar bwa-mem2 e force_indexes para criar índices otimizados
@@ -103,11 +102,11 @@ params:
     - "88"
 
 storage:
-  base_dir: "/dados/GENOMICS_DATA/low_memory"
-  work_dir: "/dados/GENOMICS_DATA/low_memory/work"
-  # temp_dir: "/dados/GENOMICS_DATA/low_memory/tmp"
+  base_dir: "/dados/GENOMICS_DATA/latest_ref"
+  work_dir: "/dados/GENOMICS_DATA/latest_ref/work"
+  temp_dir: "/dados/GENOMICS_DATA/latest_ref/tmp"
   keep_intermediates: true   # útil para retomar e inspecionar
-  temp_dir: "/dados/tmp"   # ← seu disco rápido
+  # temp_dir: "/dados/tmp"   # ← seu disco rápido
 
 download:
   tool: sra_toolkit
