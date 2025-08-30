@@ -1428,7 +1428,8 @@ def _build_bwa_index_optimized(ref_prefix: Path, label: str = "BWA"):
     # Comando otimizado
     cmd = ["bwa", "index", "-a", bwa_index_algorithm, "-b", str(block_size), str(ref_prefix)]
     
-    console.print(f"[dim]💻 Comando: {' '.join(cmd)}[/dim]")
+    console.print(f"[bold]💻 Comando executado:[/bold]")
+    console.print(f"[yellow]> {' '.join(cmd)}[/yellow]")
     
     # Executa com monitoramento de progresso
     start_time = time.time()
@@ -1447,15 +1448,25 @@ def _build_bwa_index_optimized(ref_prefix: Path, label: str = "BWA"):
         if current_time - last_progress >= bwa_index_progress_sec:
             elapsed = int(current_time - start_time)
             
-            # Verifica se arquivos estão sendo criados
-            files_created = []
+            # Verifica arquivos BWA sendo criados e calcula total
+            files_info = []
+            total_size = 0
+            
             for ext in [".amb", ".ann", ".bwt", ".pac", ".sa"]:
                 file_path = Path(str(ref_prefix) + ext)
                 if file_path.exists():
                     size = file_path.stat().st_size
-                    files_created.append(f"{ext[1:]}({sizeof_fmt(size)})")
+                    total_size += size
+                    files_info.append(f"{ext[1:]}({sizeof_fmt(size)})")
             
-            status = ", ".join(files_created) if files_created else "iniciando..."
+            # Status compacto com total
+            if files_info:
+                status = f"total {sizeof_fmt(total_size)} • {', '.join(files_info[:3])}"
+                if len(files_info) > 3:
+                    status += f" +{len(files_info)-3} mais"
+            else:
+                status = "iniciando..."
+                
             console.print(
                 f"[cyan]BWA index … {elapsed//60}m{elapsed%60:02d}s • {status}[/cyan]",
                 highlight=False
@@ -1490,8 +1501,9 @@ def _build_bwa_index_optimized(ref_prefix: Path, label: str = "BWA"):
 
 def _build_bwa_mem2_index_optimized(ref_prefix: Path, label: str = "BWA-MEM2"):
     """
-    Constrói índice BWA-MEM2 otimizado com monitoramento de progresso.
-    BWA-MEM2 não tem parâmetro -b, mas pode ser otimizado com mais RAM e monitoramento.
+    Constrói índice BWA-MEM2 com monitoramento de progresso.
+    NOTA: BWA-MEM2 não aceita parâmetros de otimização como -b (block size),
+    mas usa automaticamente toda RAM disponível e é mais eficiente que BWA clássico.
     """
     import subprocess as sp
     import time
@@ -1506,21 +1518,23 @@ def _build_bwa_mem2_index_optimized(ref_prefix: Path, label: str = "BWA-MEM2"):
     
     # Detecta RAM total
     total_ram_gb = psutil.virtual_memory().total / (1024**3)
-    estimated_ram_gb = min(total_ram_gb * 0.8, 200)  # BWA-MEM2 pode usar até 80% da RAM
+    estimated_ram_gb = min(total_ram_gb * 0.8, 200)  # BWA-MEM2 usa automaticamente muita RAM
     
     console.print(Panel.fit(
-        f"[bold]Criando Índice BWA-MEM2 Otimizado ({label})[/bold]\n"
+        f"[bold]Criando Índice BWA-MEM2 ({label})[/bold]\n"
         f"• RAM total: {total_ram_gb:.0f}GB\n"
-        f"• RAM estimada para indexação: ~{estimated_ram_gb:.0f}GB\n"
-        f"• Algoritmo: otimizado para genomas grandes\n"
-        f"• Tempo estimado: {30 if total_ram_gb >= 200 else 60}-{60 if total_ram_gb >= 200 else 120}min",
+        f"• RAM que será usada: ~{estimated_ram_gb:.0f}GB (automático)\n"
+        f"• Algoritmo: BWA-MEM2 (otimizado internamente)\n"
+        f"• Tempo estimado: {20 if total_ram_gb >= 200 else 45}-{45 if total_ram_gb >= 200 else 90}min\n"
+        f"• NOTA: BWA-MEM2 não aceita parâmetros de block size",
         border_style="green"
     ))
     
-    # Comando BWA-MEM2
+    # Comando BWA-MEM2 (sem parâmetros extras - ele otimiza internamente)
     cmd = ["bwa-mem2", "index", str(ref_prefix)]
     
-    console.print(f"[dim]💻 Comando: {' '.join(cmd)}[/dim]")
+    console.print(f"[bold]💻 Comando executado:[/bold]")
+    console.print(f"[yellow]> {' '.join(cmd)}[/yellow]")
     
     # Executa com monitoramento de progresso
     start_time = time.time()
@@ -1539,24 +1553,37 @@ def _build_bwa_mem2_index_optimized(ref_prefix: Path, label: str = "BWA-MEM2"):
         if current_time - last_progress >= bwa_mem2_progress_sec:
             elapsed = int(current_time - start_time)
             
-            # Verifica arquivos BWA-MEM2 sendo criados
-            files_created = []
+            # Verifica arquivos BWA-MEM2 sendo criados e calcula total
+            files_info = []
+            total_size = 0
             
             # BWA-MEM2 cria arquivos diferentes
-            for ext in [".0123", ".amb", ".ann", ".bwt.2bit.64", ".pac"]:
+            bwa_mem2_exts = [".0123", ".amb", ".ann", ".bwt.2bit.64", ".pac"]
+            for ext in bwa_mem2_exts:
                 file_path = Path(str(ref_prefix) + ext)
                 if file_path.exists():
                     size = file_path.stat().st_size
-                    files_created.append(f"{ext.replace('.', '')}({sizeof_fmt(size)})")
+                    total_size += size
+                    # Simplifica nome da extensão para display
+                    ext_name = ext.replace('.', '').replace('2bit64', '2bit')
+                    files_info.append(f"{ext_name}({sizeof_fmt(size)})")
             
-            # Verifica também padrões alternativos
-            for pattern in ["*.0123", "*.amb.*", "*.bwt.*"]:
-                for file_path in Path("refs").glob(f"reference.fa{pattern}"):
-                    if file_path.exists():
-                        size = file_path.stat().st_size
-                        files_created.append(f"{file_path.suffix}({sizeof_fmt(size)})")
+            # Verifica também padrões alternativos do BWA-MEM2
+            for file_path in Path("refs").glob("reference.fa.*"):
+                if file_path.is_file() and str(file_path) not in [str(ref_prefix) + ext for ext in bwa_mem2_exts]:
+                    size = file_path.stat().st_size
+                    total_size += size
+                    ext_name = file_path.suffix.replace('.', '')
+                    files_info.append(f"{ext_name}({sizeof_fmt(size)})")
             
-            status = ", ".join(files_created) if files_created else "iniciando..."
+            # Status compacto
+            if files_info:
+                status = f"total {sizeof_fmt(total_size)} • {', '.join(files_info[:3])}"
+                if len(files_info) > 3:
+                    status += f" +{len(files_info)-3} mais"
+            else:
+                status = "iniciando..."
+                
             console.print(
                 f"[green]BWA-MEM2 index … {elapsed//60}m{elapsed%60:02d}s • {status}[/green]",
                 highlight=False
