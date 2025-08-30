@@ -1,7 +1,7 @@
 #!/bin/bash
 # run_monster_background.sh - Script para executar pipeline em background na máquina monster
 
-set -euo pipefail
+#set -euo pipefail
 
 # Configurações
 CONFIG="config_human_30x_monster.yaml"
@@ -26,26 +26,11 @@ if [ -f "$PID_FILE" ]; then
     fi
 fi
 
-# Ativa ambiente usando script universal
-echo "🔧 Ativando ambiente genomics..."
-if [ -f "start_genomics_universal.sh" ]; then
-    source start_genomics_universal.sh
-elif [ -f "start_genomics.sh" ]; then
-    source start_genomics.sh
-else
-    echo "❌ Script de ativação não encontrado!"
-    echo "💡 Certifique-se que start_genomics_universal.sh existe"
-    exit 1
-fi
-
 # Verifica se config existe
 if [ ! -f "$CONFIG" ]; then
     echo "❌ Arquivo de configuração não encontrado: $CONFIG"
     exit 1
 fi
-
-# Cria diretório de logs
-mkdir -p logs
 
 # Executa em background com nohup
 echo "🚀 Iniciando pipeline em background..."

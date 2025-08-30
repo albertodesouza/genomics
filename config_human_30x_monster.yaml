@@ -62,6 +62,9 @@ params:
   bcf_min_mapq: 20
   bcf_emit_all_sites: false
   bcf_split_multiallelic: true
+  # Proteções para reference mismatch
+  bcf_ignore_ref_mismatch: true      # ignora read groups problemáticos
+  bcf_skip_indels_on_mismatch: true  # pula indels em regiões problemáticas
 
   # GATK HaplotypeCaller (caso queira usar) - Otimizado para 256GB RAM
   hc_java_mem_gb: 128            # usar metade da RAM disponível para GATK

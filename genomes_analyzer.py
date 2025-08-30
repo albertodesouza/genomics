@@ -2384,6 +2384,8 @@ def call_variants(samples, threads, mem_gb):
       bcf_max_depth: int              # --max-depth em mpileup
       bcf_heartbeat_sec: int          # intervalo do heartbeat (s) por shard (default 30)
       bcf_preview_max_contigs: int    # nº máx de contigs no preview dos BEDs (default 4)
+      bcf_ignore_ref_mismatch: bool   # adiciona --ignore-RG para robustez (default: true)
+      bcf_skip_indels_on_mismatch: bool # adiciona --skip-indels para robustez (default: true)
     """
     from pathlib import Path
     import os as _os, time, shutil, subprocess as sp, shlex
@@ -2494,11 +2496,25 @@ def call_variants(samples, threads, mem_gb):
     def _bcf_make_cmd(sample: str, bam: Path, bed: Path, out_vcf: Path,
                       io_threads: int, mapq: int, baseq: int, max_depth: int) -> list[str]:
         tmp = out_vcf.with_suffix(".tmp.vcf.gz")
+        
+        # Parâmetros para lidar com reference mismatches
+        p = cfg_global.get("params", {})
+        skip_indels = bool(p.get("bcf_skip_indels_on_mismatch", True))
+        ignore_ref_mismatch = bool(p.get("bcf_ignore_ref_mismatch", True))
+        
+        # Flags adicionais para robustez
+        extra_mpileup_flags = ""
+        if ignore_ref_mismatch:
+            extra_mpileup_flags += " --ignore-RG"  # Ignora read groups problemáticos
+        if skip_indels:
+            extra_mpileup_flags += " --skip-indels"  # Pula indels em regiões problemáticas
+            
         sh = (
             "set -euo pipefail; "
             f"bcftools mpileup -f refs/reference.fa -Ou --threads {io_threads} "
             f"-q {mapq} -Q {baseq} --max-depth {max_depth} "
             f"-a FORMAT/AD,FORMAT/DP,FORMAT/SP,INFO/AD "
+            f"{extra_mpileup_flags} "
             f"-R {shlex.quote(str(bed))} {shlex.quote(str(bam))} "
             f"| bcftools call -m -v -Ou "
             f"| bcftools norm -f refs/reference.fa --threads {io_threads} --multiallelics -both "
