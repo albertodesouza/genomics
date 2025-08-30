@@ -1488,6 +1488,109 @@ def _build_bwa_index_optimized(ref_prefix: Path, label: str = "BWA"):
         f"tamanho total: {sizeof_fmt(total_size)}[/bold green]"
     )
 
+def _build_bwa_mem2_index_optimized(ref_prefix: Path, label: str = "BWA-MEM2"):
+    """
+    Constrói índice BWA-MEM2 otimizado com monitoramento de progresso.
+    BWA-MEM2 não tem parâmetro -b, mas pode ser otimizado com mais RAM e monitoramento.
+    """
+    import subprocess as sp
+    import time
+    import psutil
+    from pathlib import Path
+    
+    g = cfg_global.get("general", {})
+    p = cfg_global.get("params", {})
+    
+    # Parâmetros configuráveis
+    bwa_mem2_progress_sec = int(p.get("bwa_index_progress_sec", 60))
+    
+    # Detecta RAM total
+    total_ram_gb = psutil.virtual_memory().total / (1024**3)
+    estimated_ram_gb = min(total_ram_gb * 0.8, 200)  # BWA-MEM2 pode usar até 80% da RAM
+    
+    console.print(Panel.fit(
+        f"[bold]Criando Índice BWA-MEM2 Otimizado ({label})[/bold]\n"
+        f"• RAM total: {total_ram_gb:.0f}GB\n"
+        f"• RAM estimada para indexação: ~{estimated_ram_gb:.0f}GB\n"
+        f"• Algoritmo: otimizado para genomas grandes\n"
+        f"• Tempo estimado: {30 if total_ram_gb >= 200 else 60}-{60 if total_ram_gb >= 200 else 120}min",
+        border_style="green"
+    ))
+    
+    # Comando BWA-MEM2
+    cmd = ["bwa-mem2", "index", str(ref_prefix)]
+    
+    console.print(f"[dim]💻 Comando: {' '.join(cmd)}[/dim]")
+    
+    # Executa com monitoramento de progresso
+    start_time = time.time()
+    last_progress = start_time
+    
+    console.print(f"[green]🚀 Iniciando criação do índice BWA-MEM2...[/green]")
+    
+    # Executa em background para monitorar
+    proc = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
+    
+    while True:
+        rc = proc.poll()
+        current_time = time.time()
+        
+        # Progress heartbeat
+        if current_time - last_progress >= bwa_mem2_progress_sec:
+            elapsed = int(current_time - start_time)
+            
+            # Verifica arquivos BWA-MEM2 sendo criados
+            files_created = []
+            
+            # BWA-MEM2 cria arquivos diferentes
+            for ext in [".0123", ".amb", ".ann", ".bwt.2bit.64", ".pac"]:
+                file_path = Path(str(ref_prefix) + ext)
+                if file_path.exists():
+                    size = file_path.stat().st_size
+                    files_created.append(f"{ext.replace('.', '')}({sizeof_fmt(size)})")
+            
+            # Verifica também padrões alternativos
+            for pattern in ["*.0123", "*.amb.*", "*.bwt.*"]:
+                for file_path in Path("refs").glob(f"reference.fa{pattern}"):
+                    if file_path.exists():
+                        size = file_path.stat().st_size
+                        files_created.append(f"{file_path.suffix}({sizeof_fmt(size)})")
+            
+            status = ", ".join(files_created) if files_created else "iniciando..."
+            console.print(
+                f"[green]BWA-MEM2 index … {elapsed//60}m{elapsed%60:02d}s • {status}[/green]",
+                highlight=False
+            )
+            last_progress = current_time
+        
+        if rc is not None:
+            break
+            
+        time.sleep(5)
+    
+    # Verifica resultado
+    if proc.returncode != 0:
+        stdout, stderr = proc.communicate()
+        console.print(f"[red]❌ BWA-MEM2 index falhou com código {proc.returncode}[/red]")
+        if stderr:
+            console.print(f"[red]Erro:[/red] {stderr}")
+        raise sp.CalledProcessError(proc.returncode, cmd)
+    
+    # Relatório final
+    elapsed = int(time.time() - start_time)
+    
+    # Calcula tamanho total dos arquivos BWA-MEM2
+    total_size = 0
+    mem2_files = list(Path("refs").glob("reference.fa.*"))
+    for file_path in mem2_files:
+        if file_path.is_file():
+            total_size += file_path.stat().st_size
+    
+    console.print(
+        f"[bold green]✅ Índice BWA-MEM2 criado em {elapsed//60}m{elapsed%60:02d}s • "
+        f"tamanho total: {sizeof_fmt(total_size)}[/bold green]"
+    )
+
 def build_indexes(default_read_type, assembly_name, need_rna_index, threads, force=False):
     """
     Prepara índices de referência para o(s) alinhador(es):
@@ -1564,7 +1667,7 @@ def build_indexes(default_read_type, assembly_name, need_rna_index, threads, for
                 else:
                     # tentar construir índice do mem2 (pode falhar por RAM)
                     try:
-                        run(["bwa-mem2","index", str(ref_prefix)])
+                        _build_bwa_mem2_index_optimized(ref_prefix, "BWA-MEM2")
                         console.print("Índice BWA-MEM2 construído.", style="dim")
                     except sp.CalledProcessError:
                         console.print("[red]Falha ao indexar com bwa-mem2 (provável falta de RAM).[/red]")
