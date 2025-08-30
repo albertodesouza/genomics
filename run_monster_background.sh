@@ -26,9 +26,17 @@ if [ -f "$PID_FILE" ]; then
     fi
 fi
 
-# Ativa ambiente
+# Ativa ambiente usando script universal
 echo "🔧 Ativando ambiente genomics..."
-source start_genomics.sh
+if [ -f "start_genomics_universal.sh" ]; then
+    source start_genomics_universal.sh
+elif [ -f "start_genomics.sh" ]; then
+    source start_genomics.sh
+else
+    echo "❌ Script de ativação não encontrado!"
+    echo "💡 Certifique-se que start_genomics_universal.sh existe"
+    exit 1
+fi
 
 # Verifica se config existe
 if [ ! -f "$CONFIG" ]; then
