@@ -2490,6 +2490,24 @@ def call_variants(samples, threads, mem_gb):
         )
         return ["bash","-lc", sh]
 
+    def _bcf_log_command_and_bed(sample: str, bed: Path, cmd: list[str]):
+        """Mostra comando bcftools e cromossomos do BED para debug."""
+        console.print(f"[dim]💻 Comando BCFtools:[/dim]")
+        console.print(f"[dim]> {' '.join(cmd)}[/dim]")
+        
+        # Mostra cromossomos no BED
+        try:
+            with open(bed) as f:
+                chroms = set()
+                for line in f:
+                    if line.strip():
+                        chrom = line.split('\t')[0]
+                        chroms.add(chrom)
+                if chroms:
+                    console.print(f"[dim]📋 Cromossomos no shard: {', '.join(sorted(chroms))}[/dim]")
+        except Exception:
+            pass
+
     def _bcf_label(sample: str, io_threads: int, mapq: int, baseq: int, max_depth: int, shard_tag: str=""):
         return (f"[{sample}{('|' + shard_tag) if shard_tag else ''}] bcftools: mpileup→call→norm "
                 f"(threads={io_threads}, MAPQ≥{mapq}, BaseQ≥{baseq}, max-depth={max_depth})")
@@ -2506,6 +2524,7 @@ def call_variants(samples, threads, mem_gb):
         console.print(_mk_panel(_bcf_label(sample, io_threads, mapq, baseq, max_depth, shard_tag), "white"))
 
         cmd = _bcf_make_cmd(sample, bam, bed, out_shard, io_threads, mapq, baseq, max_depth)
+        _bcf_log_command_and_bed(sample, bed, cmd)  # 🔧 Mostra comando e cromossomos
         log_path = Path("logs")/f"bcftools_{sample}_{shard_tag}.log"
         with open(log_path, "w") as log_fh:
             if shutil.which("stdbuf"):
@@ -2717,6 +2736,7 @@ def call_variants(samples, threads, mem_gb):
                 shard_tag = f"part_{i:02d}"
                 console.print(_mk_panel(_bcf_label(sample, bcf_io_threads, bcf_mapq, bcf_baseq, bcf_max_depth, shard_tag), "white"))
                 cmd = _bcf_make_cmd(sample, bam, bed, out_shard, bcf_io_threads, bcf_mapq, bcf_baseq, bcf_max_depth)
+                _bcf_log_command_and_bed(sample, bed, cmd)  # 🔧 Mostra comando e cromossomos
                 if shutil.which("stdbuf"):
                     cmd = ["stdbuf","-oL","-eL"] + cmd
                 log_path = Path("logs")/f"bcftools_{sample}_{shard_tag}.log"
@@ -2760,12 +2780,38 @@ def call_variants(samples, threads, mem_gb):
                     finished.append(i)
 
                     if rc != 0:
+                        # Informações detalhadas do erro
+                        shard_info = f"part_{i:02d}"
+                        console.print(f"[red]❌ BCFtools falhou no shard {shard_info} com código {rc}[/red]")
+                        
+                        # Mostra cromossomos do shard problemático
+                        try:
+                            with open(st["bed"]) as f:
+                                chroms = set()
+                                for line in f:
+                                    if line.strip():
+                                        chrom = line.split('\t')[0]
+                                        chroms.add(chrom)
+                                if chroms:
+                                    console.print(f"[yellow]🧬 Cromossomos no shard {shard_info}: {', '.join(sorted(chroms))}[/yellow]")
+                        except Exception:
+                            pass
+                        
+                        # Mostra comando que falhou
+                        console.print(f"[red]💻 Comando que falhou:[/red]")
+                        console.print(f"[red]> {' '.join(p.args)}[/red]")
+                        
                         # tail do log
                         try:
                             tail = sp.run(["bash","-lc", f"tail -n 60 {shlex.quote(str(st['log']))}"],
                                           capture_output=True, text=True, check=True).stdout
+                            if tail.strip():
+                                console.print(f"[red]📝 Log do erro (últimas 60 linhas):[/red]")
+                                console.print(f"[dim]{tail}[/dim]")
                         except Exception:
                             tail = ""
+                        
+                        console.print(f"[yellow]💡 Log completo em: {st['log']}[/yellow]")
                         raise sp.CalledProcessError(rc, p.args, output=tail)
 
                     # rename tmp -> final e index
