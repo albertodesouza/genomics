@@ -65,6 +65,12 @@ params:
   bcf_ignore_ref_mismatch: true      # ignora read groups problemáticos
   bcf_skip_indels_on_mismatch: true  # pula indels em regiões problemáticas
 
+  # BWA Index otimizado para 256GB RAM
+  bwa_index_max_mem_gb: 120          # usar até 120GB para indexação (deixa 136GB livres)
+  bwa_index_block_size: "auto"       # calcula automaticamente baseado na RAM
+  bwa_index_algorithm: "bwtsw"       # algoritmo para genomas grandes
+  bwa_index_progress_sec: 30         # updates de progresso a cada 30s
+
   # GATK HaplotypeCaller (caso queira usar) - Otimizado para 256GB RAM
   hc_java_mem_gb: 128            # usar metade da RAM disponível para GATK
   hc_threads_native: 16          # muito mais threads nativas

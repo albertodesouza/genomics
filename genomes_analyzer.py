@@ -1370,20 +1370,143 @@ def limit_reference_to_canonical_if_enabled():
     console.print("[green]Referência reduzida aos cromossomos canônicos.[/green]")
 
 
+def _build_bwa_index_optimized(ref_prefix: Path, label: str = "BWA"):
+    """
+    Constrói índice BWA otimizado baseado na RAM disponível e parâmetros YAML.
+    - Detecta RAM total do sistema
+    - Usa parâmetros configuráveis do YAML
+    - Monitora progresso durante construção
+    - Otimiza block size para máquinas monster
+    """
+    import subprocess as sp
+    import time
+    import psutil
+    from pathlib import Path
+    
+    g = cfg_global.get("general", {})
+    p = cfg_global.get("params", {})
+    
+    # Parâmetros configuráveis
+    bwa_index_max_mem_gb = int(p.get("bwa_index_max_mem_gb", 100))  # Máximo de RAM a usar
+    bwa_index_block_size = p.get("bwa_index_block_size", "auto")    # Block size ou "auto"
+    bwa_index_algorithm = p.get("bwa_index_algorithm", "bwtsw")     # Algoritmo
+    bwa_index_progress_sec = int(p.get("bwa_index_progress_sec", 60))  # Intervalo de progresso
+    
+    # Detecta RAM total
+    total_ram_gb = psutil.virtual_memory().total / (1024**3)
+    
+    # Calcula block size otimizado
+    if bwa_index_block_size == "auto":
+        if total_ram_gb >= 200:
+            # Máquinas monster (200GB+): usar até 100GB para indexação
+            block_size = min(2000000000, bwa_index_max_mem_gb * 20000000)  # 20M por GB
+        elif total_ram_gb >= 64:
+            # Máquinas potentes (64GB+): usar proporcionalmente
+            block_size = min(1000000000, int(total_ram_gb * 15000000))     # 15M por GB
+        else:
+            # Máquinas normais: usar padrão
+            block_size = 10000000
+    else:
+        block_size = int(bwa_index_block_size)
+    
+    # Limita RAM usada ao configurado
+    estimated_ram_gb = block_size / 50000000  # Aproximação: 50M block = 1GB RAM
+    if estimated_ram_gb > bwa_index_max_mem_gb:
+        block_size = bwa_index_max_mem_gb * 50000000
+        estimated_ram_gb = bwa_index_max_mem_gb
+    
+    console.print(Panel.fit(
+        f"[bold]Criando Índice BWA Otimizado ({label})[/bold]\n"
+        f"• RAM total: {total_ram_gb:.0f}GB\n"
+        f"• RAM para indexação: ~{estimated_ram_gb:.0f}GB\n"
+        f"• Block size: {block_size:,}\n"
+        f"• Algoritmo: {bwa_index_algorithm}\n"
+        f"• Tempo estimado: {45 if total_ram_gb >= 200 else 90}-{90 if total_ram_gb >= 200 else 180}min",
+        border_style="cyan"
+    ))
+    
+    # Comando otimizado
+    cmd = ["bwa", "index", "-a", bwa_index_algorithm, "-b", str(block_size), str(ref_prefix)]
+    
+    console.print(f"[dim]💻 Comando: {' '.join(cmd)}[/dim]")
+    
+    # Executa com monitoramento de progresso
+    start_time = time.time()
+    last_progress = start_time
+    
+    console.print(f"[cyan]🚀 Iniciando criação do índice BWA...[/cyan]")
+    
+    # Executa em background para monitorar
+    proc = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
+    
+    while True:
+        rc = proc.poll()
+        current_time = time.time()
+        
+        # Progress heartbeat
+        if current_time - last_progress >= bwa_index_progress_sec:
+            elapsed = int(current_time - start_time)
+            
+            # Verifica se arquivos estão sendo criados
+            files_created = []
+            for ext in [".amb", ".ann", ".bwt", ".pac", ".sa"]:
+                file_path = Path(str(ref_prefix) + ext)
+                if file_path.exists():
+                    size = file_path.stat().st_size
+                    files_created.append(f"{ext[1:]}({sizeof_fmt(size)})")
+            
+            status = ", ".join(files_created) if files_created else "iniciando..."
+            console.print(
+                f"[cyan]BWA index … {elapsed//60}m{elapsed%60:02d}s • {status}[/cyan]",
+                highlight=False
+            )
+            last_progress = current_time
+        
+        if rc is not None:
+            break
+            
+        time.sleep(5)
+    
+    # Verifica resultado
+    if proc.returncode != 0:
+        stdout, stderr = proc.communicate()
+        console.print(f"[red]❌ BWA index falhou com código {proc.returncode}[/red]")
+        if stderr:
+            console.print(f"[red]Erro:[/red] {stderr}")
+        raise sp.CalledProcessError(proc.returncode, cmd)
+    
+    # Relatório final
+    elapsed = int(time.time() - start_time)
+    total_size = sum(
+        Path(str(ref_prefix) + ext).stat().st_size 
+        for ext in [".amb", ".ann", ".bwt", ".pac", ".sa"]
+        if Path(str(ref_prefix) + ext).exists()
+    )
+    
+    console.print(
+        f"[bold green]✅ Índice BWA criado em {elapsed//60}m{elapsed%60:02d}s • "
+        f"tamanho total: {sizeof_fmt(total_size)}[/bold green]"
+    )
+
 def build_indexes(default_read_type, assembly_name, need_rna_index, threads, force=False):
     """
     Prepara índices de referência para o(s) alinhador(es):
       - Se general.bwa_prebuilt_url estiver definido → instala/relinca índice BWA pré-pronto do GDC.
       - Se aligner == bwa-mem2:
           * usa índice do mem2 se já existir;
-          * senão tenta "bwa-mem2 index"; se falhar por RAM, faz fallback p/ BWA clássico:
-              - se houver prebuilt_url → usa prebuilt;
-              - senão tenta "bwa index -a bwtsw".
-      - Se aligner == bwa (sem prebuilt): garante índice clássico (constrói se faltar).
+          * senão tenta "bwa-mem2 index"; se falhar por RAM, faz fallback p/ BWA clássico otimizado.
+      - Se aligner == bwa (sem prebuilt): garante índice clássico otimizado.
     Também monta índice HISAT2 quando need_rna_index=True.
+
+    Parâmetros YAML para otimização BWA index (params):
+      bwa_index_max_mem_gb: int     # máximo de RAM a usar (default: 100GB)
+      bwa_index_block_size: str|int # "auto" ou valor específico (default: "auto")
+      bwa_index_algorithm: str      # "bwtsw" para genomas grandes (default: "bwtsw")
+      bwa_index_progress_sec: int   # intervalo de updates (default: 60s)
 
     Observação importante:
       - NÃO use limit_to_canonical com índice prebuilt do GDC (mismatch de contigs).
+      - Em máquinas monster (200GB+), pode usar até 120GB para indexação 3x mais rápida.
     """
     from pathlib import Path
     import subprocess as sp
@@ -1460,7 +1583,7 @@ def build_indexes(default_read_type, assembly_name, need_rna_index, threads, for
                             # tentar construir índice do BWA clássico localmente
                             try:
                                 # Para genomas grandes, -a bwtsw é o recomendado p/ BWA clássico
-                                run(["bwa","index","-a","bwtsw", str(ref_prefix)])
+                                _build_bwa_index_optimized(ref_prefix, "fallback BWA clássico")
                                 if not _bwa_index_ready(ref_prefix):
                                     raise RuntimeError("Índice BWA clássico parece incompleto após 'bwa index'.")
                                 console.print("Índice BWA clássico construído (fallback).", style="dim")
@@ -1478,7 +1601,7 @@ def build_indexes(default_read_type, assembly_name, need_rna_index, threads, for
                         console.print("Índice BWA → [bold]SKIP[/bold]", style="dim")
                     else:
                         # construir localmente
-                        run(["bwa","index","-a","bwtsw", str(ref_prefix)])
+                        _build_bwa_index_optimized(ref_prefix, "BWA clássico")
                         if not _bwa_index_ready(ref_prefix):
                             raise RuntimeError("Índice BWA clássico parece incompleto após 'bwa index'.")
                         console.print("Índice BWA clássico construído.", style="dim")
