@@ -4020,11 +4020,13 @@ def trio_denovo_report(dna_samples):
     g = cfg_global.get("general", {})
     min_dp_child = int(g.get("trio_min_dp_child", 8))
     min_dp_par   = int(g.get("trio_min_dp_parents", 8))
-    min_gq       = int(g.get("trio_min_gq", 20))
+    min_gq       = int(g.get("trio_min_gq", 20))  # Não usado (GQ não disponível no VCF)
     min_ab_het   = float(g.get("trio_min_ab_het", 0.25))
     max_ab_het   = float(g.get("trio_max_ab_het", 0.75))
     min_ab_hom   = float(g.get("trio_min_ab_hom", 0.90))
     max_par_alt  = float(g.get("trio_max_parent_alt_frac", 0.02))
+    
+    console.print(f"[yellow]⚠️  GQ (Genotype Quality) não disponível no VCF - filtros de qualidade baseados apenas em DP[/yellow]")
 
     # Diagnóstico do arquivo trio antes de query
     console.print(f"[cyan]🔍 Diagnosticando arquivo trio merged...[/cyan]")
@@ -4072,14 +4074,14 @@ def trio_denovo_report(dna_samples):
     
     if pass_count == 0:
         console.print(f"[yellow]⚠️  Nenhuma variante com FILTER=PASS - usando todas as variantes...[/yellow]")
-        # Query sem filtro PASS (mais permissivo)
-        trio_query_cmd = f"bcftools query -s {mapped_child},{mapped_p1},{mapped_p2} -f '%CHROM\\t%POS\\t%REF\\t%ALT[\\t%GT:%DP:%GQ:%AD]\\n' {shlex.quote(str(merged))}"
+        # Query sem filtro PASS (mais permissivo) - removendo GQ que não existe
+        trio_query_cmd = f"bcftools query -s {mapped_child},{mapped_p1},{mapped_p2} -f '%CHROM\\t%POS\\t%REF\\t%ALT[\\t%GT:%DP:%AD]\\n' {shlex.quote(str(merged))}"
     else:
         console.print(f"[green]✅ {pass_count:,} variantes passaram no filtro PASS[/green]")
-        # Query com filtro PASS
+        # Query com filtro PASS - removendo GQ que não existe
         trio_query_cmd = (
             f"bcftools view -f PASS {shlex.quote(str(merged))} | "
-            f"bcftools query -s {mapped_child},{mapped_p1},{mapped_p2} -f '%CHROM\\t%POS\\t%REF\\t%ALT[\\t%GT:%DP:%GQ:%AD]\\n'"
+            f"bcftools query -s {mapped_child},{mapped_p1},{mapped_p2} -f '%CHROM\\t%POS\\t%REF\\t%ALT[\\t%GT:%DP:%AD]\\n'"
         )
     
     console.print(f"[cyan]🔍 Extraindo genótipos do trio para análise de novo...[/cyan]")
@@ -4133,8 +4135,9 @@ def trio_denovo_report(dna_samples):
                 xx = b.split(":")
                 GT = xx[0] if len(xx)>0 else "."
                 DP = int(xx[1]) if len(xx)>1 and xx[1].isdigit() else None
-                GQ = int(xx[2]) if len(xx)>2 and xx[2].isdigit() else None
-                AD = xx[3] if len(xx)>3 else ""
+                AD = xx[2] if len(xx)>2 else ""
+                # GQ não disponível no VCF - será None para todos
+                GQ = None
                 return GT, DP, GQ, AD
 
             cGT,cDP,cGQ,cAD = split_block(sa)
@@ -4147,14 +4150,14 @@ def trio_denovo_report(dna_samples):
             # pais
             if not _is_hom_ref(gt_p1) or not _is_hom_ref(gt_p2): continue
             if (p1DP is not None and p1DP < min_dp_par) or (p2DP is not None and p2DP < min_dp_par): continue
-            if (p1GQ is not None and p1GQ < min_gq) or (p2GQ is not None and p2GQ < min_gq): continue
+            # Removido filtro GQ para pais (não disponível no VCF)
             if ab_p1 is not None and ab_p1 > max_par_alt: continue
             if ab_p2 is not None and ab_p2 > max_par_alt: continue
 
             # filho
             if not _is_nonref(gt_c): continue
             if (cDP is not None and cDP < min_dp_child): continue
-            if (cGQ is not None and cGQ < min_gq): continue
+            # Removido filtro GQ para filho (não disponível no VCF)
             if ab_c is not None:
                 if len(set(gt_c)) > 1:
                     if not (min_ab_het <= ab_c <= max_ab_het): continue
