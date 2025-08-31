@@ -21,6 +21,9 @@ general:
   gene_presence_min_mean_cov: 5.0
   gene_presence_min_breadth_1x: 0.8
 
+  # RNA-seq (ativar para etapa 13)
+  rnaseq: false                      # 🔧 MUDE PARA true PARA ATIVAR
+
   trio_child_id: NA12878
   trio_parent_ids: [NA12891, NA12892]
 
@@ -162,6 +165,21 @@ samples:
     runs:
       - ERR3989342               # ENA fornece FASTQ gerado para este run
     notes: "CRAM 'final': ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR398/ERR3989342/NA12892.final.cram"
+
+# =================== RNA-seq (Etapa 13 - Opcional) ===================
+# Para ativar: mude rnaseq: true na seção general
+rna_samples:
+  # Exemplo de amostras RNA-seq (descomente e ajuste se tiver dados RNA)
+  # - sample_id: NA12878_RNA
+  #   source: sra
+  #   sra_ids: ["SRR_RNA_ID"]  # substitua por IDs reais de RNA-seq
+  #   read_type: short
+  # 
+  # - sample_id: NA12891_RNA  
+  #   source: local
+  #   fastq1: "/path/to/RNA_R1.fastq.gz"
+  #   fastq2: "/path/to/RNA_R2.fastq.gz"
+  #   read_type: short
 
 # Etapas do pipeline (ajuste conforme seu script)
 steps:
