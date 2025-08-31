@@ -4070,44 +4070,16 @@ def trio_denovo_report(dna_samples):
                     filters_found.append(filter_match.group(1))
         console.print(f"[dim]📋 Filtros disponíveis: {', '.join(filters_found) if filters_found else 'nenhum'}[/dim]")
     
-    # Verifica campos FORMAT disponíveis no VCF
-    format_check = sp.run(
-        ["bcftools", "view", "-h", str(merged)],
-        capture_output=True, text=True, check=False
-    )
-    
-    available_formats = []
-    if format_check.returncode == 0:
-        for line in format_check.stdout.split('\n'):
-            if line.startswith('##FORMAT='):
-                format_match = re.search(r'ID=([^,>]+)', line)
-                if format_match:
-                    available_formats.append(format_match.group(1))
-    
-    console.print(f"[dim]📋 Campos FORMAT disponíveis: {', '.join(available_formats) if available_formats else 'nenhum'}[/dim]")
-    
-    # Constrói formato de query baseado nos campos disponíveis
-    query_fields = ["GT"]  # GT sempre presente
-    if "DP" in available_formats:
-        query_fields.append("DP")
-    if "GQ" in available_formats:
-        query_fields.append("GQ")
-    if "AD" in available_formats:
-        query_fields.append("AD")
-    
-    query_format = ":".join(query_fields)
-    console.print(f"[dim]📋 Formato de query adaptado: {query_format}[/dim]")
-    
     if pass_count == 0:
         console.print(f"[yellow]⚠️  Nenhuma variante com FILTER=PASS - usando todas as variantes...[/yellow]")
         # Query sem filtro PASS (mais permissivo)
-        trio_query_cmd = f"bcftools query -s {mapped_child},{mapped_p1},{mapped_p2} -f '%CHROM\\t%POS\\t%REF\\t%ALT[\\t{query_format}]\\n' {shlex.quote(str(merged))}"
+        trio_query_cmd = f"bcftools query -s {mapped_child},{mapped_p1},{mapped_p2} -f '%CHROM\\t%POS\\t%REF\\t%ALT[\\t%GT:%DP:%GQ:%AD]\\n' {shlex.quote(str(merged))}"
     else:
         console.print(f"[green]✅ {pass_count:,} variantes passaram no filtro PASS[/green]")
         # Query com filtro PASS
         trio_query_cmd = (
-         f"bcftools view -f PASS {shlex.quote(str(merged))} | "
-            f"bcftools query -s {mapped_child},{mapped_p1},{mapped_p2} -f '%CHROM\\t%POS\\t%REF\\t%ALT[\\t{query_format}]\\n'"
+            f"bcftools view -f PASS {shlex.quote(str(merged))} | "
+            f"bcftools query -s {mapped_child},{mapped_p1},{mapped_p2} -f '%CHROM\\t%POS\\t%REF\\t%ALT[\\t%GT:%DP:%GQ:%AD]\\n'"
         )
     
     console.print(f"[cyan]🔍 Extraindo genótipos do trio para análise de novo...[/cyan]")
@@ -4117,8 +4089,8 @@ def trio_denovo_report(dna_samples):
     try:
         q = sp.run(
             ["bash","-lc", trio_query_cmd],
-        capture_output=True, text=True, check=True
-    ).stdout.splitlines()
+            capture_output=True, text=True, check=True
+        ).stdout.splitlines()
         console.print(f"[green]✅ Trio query concluído: {len(q):,} variantes extraídas[/green]")
         
         if len(q) == 0:
@@ -4147,22 +4119,8 @@ def trio_denovo_report(dna_samples):
 
     out_tsv = Path("trio")/"trio_denovo_candidates.tsv"
     kept = 0; total = 0
-    
-    # Adapta header baseado nos campos disponíveis
-    header_fields = ["chrom", "pos", "ref", "alt"]
-    for sample_name in ["child", "p1", "p2"]:
-        header_fields.append(f"{sample_name}_GT")
-        if "DP" in available_formats:
-            header_fields.append(f"{sample_name}_DP")
-        if "GQ" in available_formats:
-            header_fields.append(f"{sample_name}_GQ")
-        if "AD" in available_formats:
-            header_fields.append(f"{sample_name}_AB")
-    
-    console.print(f"[dim]📋 Header adaptado: {len(header_fields)} campos[/dim]")
-    
     with open(out_tsv, "w") as out:
-        out.write("\t".join(header_fields) + "\n")
+        out.write("chrom\tpos\tref\talt\tchild_GT\tchild_DP\tchild_GQ\tchild_AB\tp1_GT\tp1_DP\tp1_GQ\tp1_AB\tp2_GT\tp2_DP\tp2_GQ\tp2_AB\n")
         for line in q:
             if not line.strip(): continue
             total += 1
@@ -4171,41 +4129,17 @@ def trio_denovo_report(dna_samples):
                 continue
             chrom, pos, ref, alt = parts[0], parts[1], parts[2], parts[3]
             sa, sb, sc = parts[4], parts[5], parts[6]
-            
             def split_block(b):
-                """Extrai campos baseado no formato disponível"""
                 xx = b.split(":")
-                result = {}
-                result["GT"] = xx[0] if len(xx) > 0 else "."
-                
-                field_idx = 1
-                if "DP" in available_formats:
-                    result["DP"] = int(xx[field_idx]) if len(xx) > field_idx and xx[field_idx].isdigit() else None
-                    field_idx += 1
-                else:
-                    result["DP"] = None
-                    
-                if "GQ" in available_formats:
-                    result["GQ"] = int(xx[field_idx]) if len(xx) > field_idx and xx[field_idx].isdigit() else None
-                    field_idx += 1
-                else:
-                    result["GQ"] = None
-                    
-                if "AD" in available_formats:
-                    result["AD"] = xx[field_idx] if len(xx) > field_idx else ""
-                else:
-                    result["AD"] = ""
-                    
-                return result
+                GT = xx[0] if len(xx)>0 else "."
+                DP = int(xx[1]) if len(xx)>1 and xx[1].isdigit() else None
+                GQ = int(xx[2]) if len(xx)>2 and xx[2].isdigit() else None
+                AD = xx[3] if len(xx)>3 else ""
+                return GT, DP, GQ, AD
 
-            child_data = split_block(sa)
-            p1_data = split_block(sb)
-            p2_data = split_block(sc)
-
-            # Extrai dados com nomes consistentes
-            cGT, cDP, cGQ, cAD = child_data["GT"], child_data["DP"], child_data["GQ"], child_data["AD"]
-            p1GT, p1DP, p1GQ, p1AD = p1_data["GT"], p1_data["DP"], p1_data["GQ"], p1_data["AD"]
-            p2GT, p2DP, p2GQ, p2AD = p2_data["GT"], p2_data["DP"], p2_data["GQ"], p2_data["AD"]
+            cGT,cDP,cGQ,cAD = split_block(sa)
+            p1GT,p1DP,p1GQ,p1AD = split_block(sb)
+            p2GT,p2DP,p2GQ,p2AD = split_block(sc)
 
             gt_c  = _parse_gt(cGT); gt_p1 = _parse_gt(p1GT); gt_p2 = _parse_gt(p2GT)
             _,_,ab_c  = _parse_ad(cAD);  _,_,ab_p1 = _parse_ad(p1AD);  _,_,ab_p2 = _parse_ad(p2AD)
@@ -4278,8 +4212,8 @@ def _build_genes_bed_from_gtf(gtf: Path, out_bed: Path):
         
         # Só escreve se gene_id for válido
         if(gid!="" && chr!="") {
-        name=gname!=""?gname:gid;
-        print chr"\t"start"\t"end"\t"gid"\t"name"\t"gtype"\t"gdesc;
+            name=gname!=""?gname:gid;
+            print chr"\t"start"\t"end"\t"gid"\t"name"\t"gtype"\t"gdesc;
         }
     }' """ + shlex.quote(str(gtf)) + " > " + shlex.quote(str(out_bed))
     
@@ -4348,7 +4282,7 @@ def _parse_thresholds_bed(thr_bed_gz: Path, region_len: dict) -> dict:
                 if start_coord < 0 or end_coord <= start_coord:
                     continue
                     
-            gid = parts[3]
+                gid = parts[3]
                 if not gid or gid == "":
                     continue
                     
@@ -4362,9 +4296,9 @@ def _parse_thresholds_bed(thr_bed_gz: Path, region_len: dict) -> dict:
                     except ValueError:
                         counts.append(0)
                 
-            cov1 = counts[0] if counts else 0
-            breadth[gid] = cov1 / length
-            region_len[gid] = length
+                cov1 = counts[0] if counts else 0
+                breadth[gid] = cov1 / length
+                region_len[gid] = length
                 valid_lines += 1
                 
             except (ValueError, IndexError) as e:
