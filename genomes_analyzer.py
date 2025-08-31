@@ -3717,7 +3717,7 @@ def pairwise_comparisons(dna_samples):
             console.print(f"[red]❌ Arquivo merge não encontrado: {out_merge}[/red]")
             continue
             
-        # Verifica amostras no arquivo merged
+        # Verifica e corrige sample names no arquivo merged
         console.print(f"[cyan]📊 Verificando amostras no arquivo merged...[/cyan]")
         samples_check = sp.run(
             ["bcftools","query","-l",str(out_merge)],
@@ -3728,19 +3728,44 @@ def pairwise_comparisons(dna_samples):
             console.print(f"[red]❌ Erro ao verificar amostras no arquivo merged[/red]")
             continue
             
-        available_samples = samples_check.stdout.strip().split('\n') if samples_check.stdout.strip() else []
-        console.print(f"[dim]📋 Amostras disponíveis: {', '.join(available_samples)}[/dim]")
+        available_samples_raw = samples_check.stdout.strip().split('\n') if samples_check.stdout.strip() else []
+        console.print(f"[dim]📋 Sample names no VCF: {', '.join(available_samples_raw)}[/dim]")
         
-        # Verifica se as amostras solicitadas existem
-        missing_samples = [s for s in [a, b] if s not in available_samples]
-        if missing_samples:
-            console.print(f"[yellow]⚠️  Amostras não encontradas no merge: {', '.join(missing_samples)}[/yellow]")
+        # Função para mapear sample names problemáticos
+        def _map_sample_name(expected_name, available_names):
+            """Mapeia nome esperado para nome disponível no VCF"""
+            # Busca exata
+            if expected_name in available_names:
+                return expected_name
+            
+            # Busca por substring (NA12878 em bam/NA12878.mkdup.bam)
+            for avail_name in available_names:
+                if expected_name in avail_name:
+                    return avail_name
+            
+            # Busca por padrão de arquivo
+            for avail_name in available_names:
+                if avail_name.endswith(f'{expected_name}.mkdup.bam') or avail_name.endswith(f'{expected_name}.bam'):
+                    return avail_name
+            
+            return None
+        
+        # Mapeia nomes das amostras
+        mapped_a = _map_sample_name(a, available_samples_raw)
+        mapped_b = _map_sample_name(b, available_samples_raw)
+        
+        if not mapped_a or not mapped_b:
+            console.print(f"[yellow]⚠️  Não foi possível mapear amostras:[/yellow]")
+            console.print(f"[yellow]   Esperado: {a}, {b}[/yellow]")
+            console.print(f"[yellow]   Disponível: {', '.join(available_samples_raw)}[/yellow]")
             console.print(f"[yellow]Pulando comparação {a} vs {b}[/yellow]")
             continue
+        
+        console.print(f"[green]✅ Mapeamento: {a}→{mapped_a}, {b}→{mapped_b}[/green]")
 
-        # query e métricas (sempre recalculadas — idempotente por overwrite)
+        # query e métricas usando nomes mapeados
         console.print(f"[cyan]🔍 Extraindo genótipos para comparação...[/cyan]")
-        query_cmd = ["bcftools","query","-s",f"{a},{b}","-f","%CHROM\t%POS\t%REF\t%ALT[\t%GT]\n",str(out_merge)]
+        query_cmd = ["bcftools","query","-s",f"{mapped_a},{mapped_b}","-f","%CHROM\t%POS\t%REF\t%ALT[\t%GT]\n",str(out_merge)]
         console.print(f"[dim]💻 Comando query:[/dim]")
         console.print(f"[dim]> {' '.join(query_cmd)}[/dim]")
         
@@ -3750,7 +3775,7 @@ def pairwise_comparisons(dna_samples):
         except sp.CalledProcessError as e:
             console.print(f"[red]❌ bcftools query falhou com código {e.returncode}[/red]")
             console.print(f"[red]Comando: {' '.join(query_cmd)}[/red]")
-            if e.stderr:
+            if hasattr(e, 'stderr') and e.stderr:
                 console.print(f"[red]Erro: {e.stderr}[/red]")
             continue
 
@@ -3909,9 +3934,57 @@ def trio_denovo_report(dna_samples):
     merged = Path("trio")/"trio_merged.vcf.gz"
     need_merge = not (merged.exists() and _is_newer(merged, vcfs[child], vcfs[p1], vcfs[p2]))
     if need_merge:
-        run(["bcftools","merge","-m","all","-Oz","-o",str(merged),
-             str(vcfs[child]), str(vcfs[p1]), str(vcfs[p2])])
-        run(["bcftools","index","-t",str(merged)])
+        console.print(f"[cyan]🧬 Fazendo merge trio: {child} (filho) + {p1}, {p2} (pais)[/cyan]")
+        merge_cmd = ["bcftools","merge","-m","all","-Oz","-o",str(merged),
+                     str(vcfs[child]), str(vcfs[p1]), str(vcfs[p2])]
+        console.print(f"[dim]💻 Comando merge trio:[/dim]")
+        console.print(f"[dim]> {' '.join(merge_cmd)}[/dim]")
+        run(merge_cmd)
+        
+        index_cmd = ["bcftools","index","-t",str(merged)]
+        console.print(f"[dim]💻 Comando index trio:[/dim]")
+        console.print(f"[dim]> {' '.join(index_cmd)}[/dim]")
+        run(index_cmd)
+        console.print(f"[green]✅ Merge trio concluído: {merged.name}[/green]")
+    else:
+        console.print(f"Trio merge → [bold]SKIP[/bold] (cache ok)")
+
+    # Verifica e mapeia sample names no trio merged
+    console.print(f"[cyan]📊 Verificando sample names no trio merged...[/cyan]")
+    samples_check = sp.run(
+        ["bcftools","query","-l",str(merged)],
+        capture_output=True, text=True, check=False
+    )
+    
+    if samples_check.returncode != 0:
+        console.print(f"[red]❌ Erro ao verificar amostras no trio merged[/red]")
+        return
+        
+    available_samples = samples_check.stdout.strip().split('\n') if samples_check.stdout.strip() else []
+    console.print(f"[dim]📋 Sample names no trio VCF: {', '.join(available_samples)}[/dim]")
+    
+    # Função para mapear sample names (reutilizada da etapa 11)
+    def _map_trio_sample_name(expected_name, available_names):
+        """Mapeia nome esperado para nome disponível no VCF trio"""
+        if expected_name in available_names:
+            return expected_name
+        for avail_name in available_names:
+            if expected_name in avail_name:
+                return avail_name
+        return None
+    
+    # Mapeia nomes do trio
+    mapped_child = _map_trio_sample_name(child, available_samples)
+    mapped_p1 = _map_trio_sample_name(p1, available_samples)
+    mapped_p2 = _map_trio_sample_name(p2, available_samples)
+    
+    if not all([mapped_child, mapped_p1, mapped_p2]):
+        console.print(f"[red]❌ Não foi possível mapear todas as amostras do trio:[/red]")
+        console.print(f"[red]   Esperado: {child}, {p1}, {p2}[/red]")
+        console.print(f"[red]   Disponível: {', '.join(available_samples)}[/red]")
+        return
+    
+    console.print(f"[green]✅ Mapeamento trio: {child}→{mapped_child}, {p1}→{mapped_p1}, {p2}→{mapped_p2}[/green]")
 
     # thresholds (como antes)
     g = cfg_global.get("general", {})
@@ -3923,12 +3996,27 @@ def trio_denovo_report(dna_samples):
     min_ab_hom   = float(g.get("trio_min_ab_hom", 0.90))
     max_par_alt  = float(g.get("trio_max_parent_alt_frac", 0.02))
 
-    q = sp.run(
-        ["bash","-lc",
-         f"bcftools view -f PASS {shlex.quote(str(merged))} | "
-         f"bcftools query -s {child},{p1},{p2} -f '%CHROM\\t%POS\\t%REF\\t%ALT[\\t%GT:%DP:%GQ:%AD]\\n'"],
-        capture_output=True, text=True, check=True
-    ).stdout.splitlines()
+    # Query usando nomes mapeados
+    console.print(f"[cyan]🔍 Extraindo genótipos do trio para análise de novo...[/cyan]")
+    trio_query_cmd = (
+        f"bcftools view -f PASS {shlex.quote(str(merged))} | "
+        f"bcftools query -s {mapped_child},{mapped_p1},{mapped_p2} -f '%CHROM\\t%POS\\t%REF\\t%ALT[\\t%GT:%DP:%GQ:%AD]\\n'"
+    )
+    console.print(f"[dim]💻 Comando trio query:[/dim]")
+    console.print(f"[dim]> {trio_query_cmd}[/dim]")
+    
+    try:
+        q = sp.run(
+            ["bash","-lc", trio_query_cmd],
+            capture_output=True, text=True, check=True
+        ).stdout.splitlines()
+        console.print(f"[green]✅ Trio query concluído: {len(q):,} variantes extraídas[/green]")
+    except sp.CalledProcessError as e:
+        console.print(f"[red]❌ bcftools trio query falhou com código {e.returncode}[/red]")
+        console.print(f"[red]Comando: {trio_query_cmd}[/red]")
+        if hasattr(e, 'stderr') and e.stderr:
+            console.print(f"[red]Erro: {e.stderr}[/red]")
+        return
 
     out_tsv = Path("trio")/"trio_denovo_candidates.tsv"
     kept = 0; total = 0
