@@ -71,6 +71,11 @@ params:
   bwa_index_algorithm: "bwtsw"       # algoritmo para genomas grandes
   bwa_index_progress_sec: 30         # updates de progresso a cada 30s
 
+  # Configuração de logs para execução em background
+  log_width_background: 180          # largura das linhas em logs background (default: 180)
+  log_emoji_background: true         # abilita emojis em background
+  log_colors_background: true        # abilita cores em background
+
   # GATK HaplotypeCaller (caso queira usar) - Otimizado para 256GB RAM
   hc_java_mem_gb: 128            # usar metade da RAM disponível para GATK
   hc_threads_native: 16          # muito mais threads nativas

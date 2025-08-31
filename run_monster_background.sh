@@ -38,7 +38,8 @@ echo "📝 Logs serão salvos em: $LOG_FILE"
 echo "🔍 Para monitorar: tail -f $LOG_FILE"
 echo "⏹️  Para parar: kill \$(cat $PID_FILE)"
 
-# Executa pipeline
+# Executa pipeline com largura de log otimizada
+echo "🔧 Configurando logs com largura de 180 caracteres..."
 nohup ./genomes_analyzer.py --config "$CONFIG" > "$LOG_FILE" 2>&1 &
 PIPELINE_PID=$!
 

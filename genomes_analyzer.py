@@ -14,8 +14,37 @@ from rich.text import Text
 import re, shlex
 from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn, TimeElapsedColumn, TransferSpeedColumn
 
+# Detecta se está rodando em terminal interativo ou background/nohup
+import sys
+is_interactive = sys.stdout.isatty() and sys.stderr.isatty()
 
-console = Console(highlight=False, emoji=True)  # emoji=True por clareza
+# Função para configurar console (será reconfigurado após carregar YAML)
+def _configure_console_for_mode(cfg_params=None):
+    """Configura console baseado no modo de execução e parâmetros YAML"""
+    global console
+    
+    if is_interactive:
+        # Terminal interativo: usa largura automática
+        console = Console(highlight=False, emoji=True)
+    else:
+        # Background/nohup: usa parâmetros configuráveis
+        params = cfg_params or {}
+        log_width = int(params.get("log_width_background", 180))
+        log_emoji = bool(params.get("log_emoji_background", False))
+        log_colors = bool(params.get("log_colors_background", False))
+        
+        console = Console(
+            highlight=False, 
+            emoji=log_emoji,
+            force_terminal=log_colors,
+            width=log_width,
+            no_color=not log_colors,
+            legacy_windows=False
+        )
+
+# Configuração inicial (será reconfigurada no main)
+console = Console(highlight=False, emoji=True if is_interactive else False, 
+                 width=None if is_interactive else 180)
 
 # cfg global para funções auxiliares
 cfg_global = None
@@ -3669,14 +3698,61 @@ def pairwise_comparisons(dna_samples):
         out_merge = Path("comparisons")/f"{pair_name}.merge.vcf.gz"
         need_merge = not (out_merge.exists() and _is_newer(out_merge, va, vb))
         if need_merge:
-            run(["bcftools","merge","-m","all","-Oz","-o",str(out_merge), str(va), str(vb)])
-            run(["bcftools","index","-t",str(out_merge)])
+            console.print(f"[cyan]🔀 Fazendo merge de VCFs: {a} vs {b}[/cyan]")
+            merge_cmd = ["bcftools","merge","-m","all","-Oz","-o",str(out_merge), str(va), str(vb)]
+            console.print(f"[dim]💻 Comando merge:[/dim]")
+            console.print(f"[dim]> {' '.join(merge_cmd)}[/dim]")
+            run(merge_cmd)
+            
+            index_cmd = ["bcftools","index","-t",str(out_merge)]
+            console.print(f"[dim]💻 Comando index:[/dim]")
+            console.print(f"[dim]> {' '.join(index_cmd)}[/dim]")
+            run(index_cmd)
+            console.print(f"[green]✅ Merge concluído: {out_merge.name}[/green]")
+        else:
+            console.print(f"[{pair_name}] merge → [bold]SKIP[/bold] (cache ok)")
+
+        # Verifica se arquivo merged é válido antes de query
+        if not out_merge.exists():
+            console.print(f"[red]❌ Arquivo merge não encontrado: {out_merge}[/red]")
+            continue
+            
+        # Verifica amostras no arquivo merged
+        console.print(f"[cyan]📊 Verificando amostras no arquivo merged...[/cyan]")
+        samples_check = sp.run(
+            ["bcftools","query","-l",str(out_merge)],
+            capture_output=True, text=True, check=False
+        )
+        
+        if samples_check.returncode != 0:
+            console.print(f"[red]❌ Erro ao verificar amostras no arquivo merged[/red]")
+            continue
+            
+        available_samples = samples_check.stdout.strip().split('\n') if samples_check.stdout.strip() else []
+        console.print(f"[dim]📋 Amostras disponíveis: {', '.join(available_samples)}[/dim]")
+        
+        # Verifica se as amostras solicitadas existem
+        missing_samples = [s for s in [a, b] if s not in available_samples]
+        if missing_samples:
+            console.print(f"[yellow]⚠️  Amostras não encontradas no merge: {', '.join(missing_samples)}[/yellow]")
+            console.print(f"[yellow]Pulando comparação {a} vs {b}[/yellow]")
+            continue
 
         # query e métricas (sempre recalculadas — idempotente por overwrite)
-        q = sp.run(
-            ["bcftools","query","-s",f"{a},{b}","-f","%CHROM\t%POS\t%REF\t%ALT[\t%GT]\n",str(out_merge)],
-            capture_output=True, text=True, check=True
-        ).stdout.splitlines()
+        console.print(f"[cyan]🔍 Extraindo genótipos para comparação...[/cyan]")
+        query_cmd = ["bcftools","query","-s",f"{a},{b}","-f","%CHROM\t%POS\t%REF\t%ALT[\t%GT]\n",str(out_merge)]
+        console.print(f"[dim]💻 Comando query:[/dim]")
+        console.print(f"[dim]> {' '.join(query_cmd)}[/dim]")
+        
+        try:
+            q = sp.run(query_cmd, capture_output=True, text=True, check=True).stdout.splitlines()
+            console.print(f"[green]✅ Query concluído: {len(q):,} variantes extraídas[/green]")
+        except sp.CalledProcessError as e:
+            console.print(f"[red]❌ bcftools query falhou com código {e.returncode}[/red]")
+            console.print(f"[red]Comando: {' '.join(query_cmd)}[/red]")
+            if e.stderr:
+                console.print(f"[red]Erro: {e.stderr}[/red]")
+            continue
 
         stats = {"pair": f"{a}_vs_{b}", "sites_total": 0, "sites_both_called": 0,
                  "geno_exact_match": 0, "het_concord": 0, "share_allele": 0, "ibs0": 0}
@@ -4209,6 +4285,10 @@ def rnaseq_pipeline(rna_samples, threads, assembly_name):
 
 def main(cfg):
     g = cfg["general"]
+    
+    # Reconfigura console com parâmetros do YAML
+    _configure_console_for_mode(cfg.get("params", {}))
+    
     base_dir = Path(g.get("base_dir",".")).expanduser().resolve()
     base_dir.mkdir(parents=True, exist_ok=True)
     os.chdir(base_dir)
