@@ -1,0 +1,195 @@
+# config_human_30x_monster.yaml - Configuração otimizada para máquina monster (128 cores + 256GB RAM)
+project:
+  name: human_30x_trio_latest_ref
+  organism: homo_sapiens
+  reference:
+  reference:
+    # use o nome que preferir; este é o do pacote do GDC
+    name: GRCh38.d1.vd1
+    # FASTA em tar.gz do GDC (o script extrai e cria refs/reference.fa)
+    fasta_url: "https://api.gdc.cancer.gov/data/254f697d-310d-4d7d-a27b-27fbf767a834"
+    # índice BWA pré-construído (evita indexar localmente → baixa RAM) --> so usar com bwa classico; com bwa-mem2, comentar
+    bwa_index_url: "https://api.gdc.cancer.gov/data/25217ec9-af07-4a17-8db9-101271ee7225"
+    # (opcional) se quiser fixar um GTF específico, adicione:
+    # gtf_url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/gencode.v46.primary_assembly.annotation.gtf.gz"
+
+general:
+  # Para máquina monster: usar bwa-mem2 e force_indexes para criar índices otimizados
+  force_indexes: false
+  sort_mem_mb: 4096         # 4GB por thread (com 256GB RAM, podemos ser generosos)
+  bwa_batch_k: 200000000    # lotes ainda maiores (200M reads) para aproveitar RAM
+  aln_threads: 96           # usar 3/4 dos cores para alinhamento máximo
+
+  gene_presence_min_mean_cov: 5.0
+  gene_presence_min_breadth_1x: 0.8
+
+  # RNA-seq (ativar para etapa 13)
+  rnaseq: false                      # 🔧 MUDE PARA true PARA ATIVAR
+
+  trio_child_id: NA12878
+  trio_parent_ids: [NA12891, NA12892]
+
+  # filtros para de novo (ajustados para 30× completo)
+  trio_min_dp_child: 15
+  trio_min_dp_parents: 15
+  trio_min_gq: 30
+  trio_min_ab_het: 0.25
+  trio_max_ab_het: 0.75
+  trio_min_ab_hom: 0.90
+  trio_max_parent_alt_frac: 0.02
+
+# Parâmetros otimizados para 128 cores
+params:
+  aligner: bwa-mem2
+  bwa_mem2_threads: 64
+  gatk_threads: 96
+  target_gene_list: null   # ou caminho para um painel BED/genes de interesse
+
+  variant_caller: bcftools       # bcftools escala melhor que GATK para muitos cores
+  filter_problematic_contigs: true  # filtra cromossomos virais/problemáticos automaticamente
+
+  # BCFtools otimizado para 128 cores
+  bcf_verbose: true
+  bcf_show_intervals: true
+  bcf_show_intervals_rows: 20    # mais linhas para máquina potente
+  bcf_heartbeat_sec: 15          # updates mais frequentes
+  bcf_progress_sec: 15
+  bcf_mapq: 20
+  bcf_baseq: 20
+  bcf_max_depth: 500             # profundidade maior para 30× completo
+  bcf_scatter_parts: 64          # muito mais shards para paralelização máxima
+  bcf_max_parallel: 128          # usar muitos cores para paralelização
+  bcf_threads_io: 4              # mais threads I/O por processo
+  bcf_io_threads: 128            # muito mais threads para compressão/IO
+  bcf_emit_variants_only: true
+  bcf_min_baseq: 20
+  bcf_min_mapq: 20
+  bcf_emit_all_sites: false
+  bcf_split_multiallelic: true
+  # Proteções para reference mismatch
+  bcf_ignore_ref_mismatch: true      # ignora read groups problemáticos
+  bcf_skip_indels_on_mismatch: true  # pula indels em regiões problemáticas
+
+  # BWA Index otimizado para 256GB RAM
+  bwa_index_max_mem_gb: 120          # usar até 120GB para indexação (deixa 136GB livres)
+  bwa_index_block_size: "auto"       # calcula automaticamente baseado na RAM
+  bwa_index_algorithm: "bwtsw"       # algoritmo para genomas grandes
+  bwa_index_progress_sec: 30         # updates de progresso a cada 30s
+
+  # Configuração de logs para execução em background
+  log_width_background: 180          # largura das linhas em logs background (default: 180)
+  log_emoji_background: true         # abilita emojis em background
+  log_colors_background: true        # abilita cores em background
+
+  # GATK HaplotypeCaller (caso queira usar) - Otimizado para 256GB RAM
+  hc_java_mem_gb: 128            # usar metade da RAM disponível para GATK
+  hc_threads_native: 16          # muito mais threads nativas
+  hc_pcr_free: true
+  keep_alt_decoy: true
+  hc_scatter_parts: 64           # ainda mais shards para máxima paralelização
+  hc_max_parallel: 24            # mais processos paralelos
+  hc_extra_args: 
+    - "--native-pair-hmm-threads"
+    - "64"                       # threads nativos para HMM
+
+  # GenotypeGVCFs - Otimizado para 256GB
+  gg_java_mem_gb: 64             # muito mais memória
+  gg_extra_args:
+    - "--max-alternate-alleles"
+    - "6"                        # processa mais alelos alternativos
+
+  # VEP (Variant Effect Predictor) - Otimizado para 128 cores
+  annotate_with_vep: true
+  vep_species: "homo_sapiens"
+  vep_assembly: "GRCh38"
+  vep_dir_cache: "/dados/vep_cache"
+  
+  # Performance VEP extrema - 256GB RAM
+  vep_fork: 96                   # usar 3/4 dos cores para VEP
+  vep_buffer_size: 100000        # buffer massivo (100K variantes) para máximo throughput
+  vep_heartbeat_sec: 30          # updates mais frequentes
+  vep_compress_output: false     # manter compatibilidade
+  
+  # Flags VEP otimizadas para versão mais recente
+  vep_extra:
+    - "--everything"             # todas as anotações
+    - "--no_stats"               # sem estatísticas para velocidade
+    - "--cache_version"          # usar cache mais eficientemente  
+    - "88"                       # versão
+
+storage:
+  base_dir: "/dados/GENOMICS_DATA/latest_ref"
+  work_dir: "/dados/GENOMICS_DATA/latest_ref/work"
+  temp_dir: "/dados/GENOMICS_DATA/latest_ref/tmp"
+  keep_intermediates: true   # útil para retomar e inspecionar
+  # temp_dir: "/dados/tmp"   # ← seu disco rápido
+
+download:
+  tool: sra_toolkit
+  use_ascp: false                 # usar Aspera se disponível para downloads mais rápidos
+  threads: 32                    # muito mais threads para download
+  prefetch_retries: 3
+
+execution:
+  verbose: true
+  resume: true
+  skip_existing: true
+  progress_interval_sec: 60      # updates mais frequentes
+  stall_warn_min: 5              # alertas mais rápidos
+  stall_fail_min: 50             # timeout mais agressivo
+  ena_fallback: true
+  cancel_on_convert_stall: false
+  prefer_ena_fastq: false         # preferir FASTQs prontos para velocidade
+  
+size_control:
+  downsample:
+    enabled: true               # DESABILITADO - usar dados completos 30×
+    fraction: 0.25                # 100% = cobertura completa 30×
+
+# Amostras 30× completas (sem downsample para aproveitar a máquina monster)
+limit_to_canonical: false
+
+samples:
+  - sample_id: NA12878           # filha (HG001 / GM12878)
+    study: PRJEB31736            # 1000G 30× (lote principal)
+    runs:
+      - ERR3239334            # FASTQs gerados pelo ENA: ERR3239334_1.fastq.gz / _2.fastq.gz
+    notes: "CRAM 'final' disponível: ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR323/ERR3239334/NA12878.final.cram"
+
+  - sample_id: NA12891           # pai
+    study: PRJEB36890            # 1000G 30× (trios adicionais)
+    runs:
+      - ERR3989341               # ENA fornece FASTQ gerado para este run
+    notes: "CRAM 'final': ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR398/ERR3989341/NA12891.final.cram"
+
+  - sample_id: NA12892           # mãe
+    study: PRJEB36890
+    runs:
+      - ERR3989342               # ENA fornece FASTQ gerado para este run
+    notes: "CRAM 'final': ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR398/ERR3989342/NA12892.final.cram"
+
+# =================== RNA-seq (Etapa 13 - Opcional) ===================
+# Para ativar: mude rnaseq: true na seção general
+rna_samples:
+  # Exemplo de amostras RNA-seq (descomente e ajuste se tiver dados RNA)
+  # - sample_id: NA12878_RNA
+  #   source: sra
+  #   sra_ids: ["SRR_RNA_ID"]  # substitua por IDs reais de RNA-seq
+  #   read_type: short
+  # 
+  # - sample_id: NA12891_RNA  
+  #   source: local
+  #   fastq1: "/path/to/RNA_R1.fastq.gz"
+  #   fastq2: "/path/to/RNA_R2.fastq.gz"
+  #   read_type: short
+
+# Etapas do pipeline (ajuste conforme seu script)
+steps:
+  - fetch_fastqs          # prefetch/fasterq-dump; respeita skip_existing/resume
+  - qc_reads              # FastQC/MultiQC (se configurados)
+  - align_and_sort        # BWA-MEM/BWA-MEM2 + samtools
+  - mark_duplicates       # GATK MarkDuplicatesSpark/picard
+  - bqsr                  # GATK BaseRecalibrator/applyBQSR (opcional)
+  - call_genes            # sua extração/varredura de genes (exons/introns) e comparação
+  - summarize             # relatórios e métricas
+
