@@ -4106,7 +4106,7 @@ def trio_denovo_report(dna_samples):
         console.print(f"[green]✅ {pass_count:,} variantes passaram no filtro PASS[/green]")
         # Query com filtro PASS
         trio_query_cmd = (
-            f"bcftools view -f PASS {shlex.quote(str(merged))} | "
+         f"bcftools view -f PASS {shlex.quote(str(merged))} | "
             f"bcftools query -s {mapped_child},{mapped_p1},{mapped_p2} -f '%CHROM\\t%POS\\t%REF\\t%ALT[\\t{query_format}]\\n'"
         )
     
@@ -4117,8 +4117,8 @@ def trio_denovo_report(dna_samples):
     try:
         q = sp.run(
             ["bash","-lc", trio_query_cmd],
-            capture_output=True, text=True, check=True
-        ).stdout.splitlines()
+        capture_output=True, text=True, check=True
+    ).stdout.splitlines()
         console.print(f"[green]✅ Trio query concluído: {len(q):,} variantes extraídas[/green]")
         
         if len(q) == 0:
@@ -4278,8 +4278,8 @@ def _build_genes_bed_from_gtf(gtf: Path, out_bed: Path):
         
         # Só escreve se gene_id for válido
         if(gid!="" && chr!="") {
-            name=gname!=""?gname:gid;
-            print chr"\t"start"\t"end"\t"gid"\t"name"\t"gtype"\t"gdesc;
+        name=gname!=""?gname:gid;
+        print chr"\t"start"\t"end"\t"gid"\t"name"\t"gtype"\t"gdesc;
         }
     }' """ + shlex.quote(str(gtf)) + " > " + shlex.quote(str(out_bed))
     
@@ -4348,7 +4348,7 @@ def _parse_thresholds_bed(thr_bed_gz: Path, region_len: dict) -> dict:
                 if start_coord < 0 or end_coord <= start_coord:
                     continue
                     
-                gid = parts[3]
+            gid = parts[3]
                 if not gid or gid == "":
                     continue
                     
@@ -4362,9 +4362,9 @@ def _parse_thresholds_bed(thr_bed_gz: Path, region_len: dict) -> dict:
                     except ValueError:
                         counts.append(0)
                 
-                cov1 = counts[0] if counts else 0
-                breadth[gid] = cov1 / length
-                region_len[gid] = length
+            cov1 = counts[0] if counts else 0
+            breadth[gid] = cov1 / length
+            region_len[gid] = length
                 valid_lines += 1
                 
             except (ValueError, IndexError) as e:
