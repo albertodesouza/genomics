@@ -3822,8 +3822,38 @@ def pairwise_comparisons(dna_samples):
             fh.write("> Regra prática: parentais-filhos apresentam IBS0 muito baixo e "
                      "alta fração de compartilhamento de alelos.\n")
 
-        console.print(f"[bold cyan]Comparação {pair_name}:[/bold cyan] "
-                      f"IBS0={frac_ibs0:.2%}, share≥1={frac_share:.2%}, exact={frac_exact:.2%}")
+        # Interpretação dos resultados
+        def _interpret_relationship(ibs0_pct, share_pct, exact_pct, sample_a, sample_b):
+            """Interpreta métricas de comparação genética"""
+            if ibs0_pct < 0.001:  # <0.1%
+                if exact_pct > 0.7:  # >70%
+                    return "👨‍👩‍👧 Relação parental forte"
+                elif exact_pct > 0.6:  # >60%
+                    return "👥 Relação familiar provável"
+                else:
+                    return "🤝 Mesma população"
+            elif ibs0_pct < 0.01:  # <1%
+                return "👨‍👩‍👧 Família ou população próxima"
+            elif ibs0_pct < 0.05:  # <5%
+                return "🌍 Mesma ancestralidade"
+            else:
+                return "🌐 Populações diferentes"
+        
+        relationship = _interpret_relationship(frac_ibs0, frac_share, frac_exact, a, b)
+        
+        console.print(Panel.fit(
+            f"[bold]Comparação Genética: {a} vs {b}[/bold]\n"
+            f"📊 Variantes analisadas: {stats['sites_both_called']:,} (ambas amostras)\n"
+            f"🧬 Genótipos idênticos: {frac_exact:.2%} ({stats['geno_exact_match']:,} sites)\n"
+            f"🤝 Compartilham ≥1 alelo: {frac_share:.2%} ({stats['share_allele']:,} sites)\n"
+            f"🚫 IBS0 (zero alelos): {frac_ibs0:.2%} ({stats['ibs0']:,} sites)\n"
+            f"🎯 Interpretação: {relationship}",
+            border_style="green"
+        ))
+        
+        # Resumo compacto para logs
+        console.print(f"[bold cyan]Resumo {pair_name}:[/bold cyan] "
+                      f"IBS0={frac_ibs0:.2%}, share≥1={frac_share:.2%}, exact={frac_exact:.2%} • {relationship}")
 
 # =================== Consolida par-a-par ===================
 
