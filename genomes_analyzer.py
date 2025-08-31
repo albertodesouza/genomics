@@ -3933,17 +3933,54 @@ def _build_genes_bed_from_gtf(gtf: Path, out_bed: Path):
     """Extrai regiões 'gene' do GTF como BED (chr start end name). Recria se o GTF for mais novo."""
     if out_bed.exists() and _is_newer(out_bed, gtf):
         return out_bed
-    cmd = r"""awk '$3=="gene"{ 
+    # Comando AWK robusto que valida dados antes de escrever
+    cmd = r"""awk '$3=="gene" && NF>=9 && $4~/^[0-9]+$/ && $5~/^[0-9]+$/ { 
         chr=$1; start=$4-1; end=$5; 
+        
+        # Valida coordenadas
+        if(start<0 || end<=start) next;
+        
+        # Extrai atributos com validação
         match($0,/gene_id "([^"]+)"/,a); gid=a[1];
         match($0,/gene_name "([^"]+)"/,b); gname=b[1];
         match($0,/gene_type "([^"]+)"/,c); gtype=c[1];
         match($0,/gene_biotype "([^"]+)"/,d); if(d[1]=="") d[1]=c[1];
         match($0,/gene_description "([^"]+)"/,e); gdesc=e[1];
-        name=gname!=""?gname:gid;
-        print chr"\t"start"\t"end"\t"gid"\t"name"\t"gtype"\t"gdesc;
+        
+        # Só escreve se gene_id for válido
+        if(gid!="" && chr!="") {
+            name=gname!=""?gname:gid;
+            print chr"\t"start"\t"end"\t"gid"\t"name"\t"gtype"\t"gdesc;
+        }
     }' """ + shlex.quote(str(gtf)) + " > " + shlex.quote(str(out_bed))
+    
+    console.print(f"[cyan]🧬 Extraindo genes do GTF...[/cyan]")
+    console.print(f"[dim]💻 Comando GTF parsing:[/dim]")
+    console.print(f"[dim]> {cmd}[/dim]")
     run(["bash","-lc",cmd])
+    
+    # Verifica se arquivo BED foi criado corretamente
+    if not out_bed.exists():
+        raise RuntimeError(f"Falha ao criar arquivo BED: {out_bed}")
+    
+    # Conta genes extraídos e valida formato
+    gene_count = 0
+    with open(out_bed) as f:
+        for line_num, line in enumerate(f, 1):
+            if not line.strip():
+                continue
+            parts = line.strip().split('\t')
+            if len(parts) >= 4:
+                try:
+                    # Valida que coordenadas são números
+                    int(parts[1])  # start
+                    int(parts[2])  # end
+                    gene_count += 1
+                except ValueError:
+                    console.print(f"[red]❌ Linha {line_num} inválida no BED: {line.strip()[:80]}...[/red]")
+                    raise RuntimeError(f"Arquivo BED contém dados inválidos na linha {line_num}")
+    
+    console.print(f"[green]✅ Arquivo BED criado: {gene_count:,} genes extraídos[/green]")
     return out_bed
 
 def _parse_thresholds_bed(thr_bed_gz: Path, region_len: dict) -> dict:
@@ -3954,19 +3991,61 @@ def _parse_thresholds_bed(thr_bed_gz: Path, region_len: dict) -> dict:
     """
     import gzip
     breadth = {}
+    line_num = 0
+    valid_lines = 0
+    
     with gzip.open(thr_bed_gz, "rt") as fh:
         for line in fh:
-            if not line.strip(): continue
-            parts = line.rstrip("\n").split("\t")
-            if len(parts) < 5: continue
-            gid = parts[3]
-            length = max(1, int(parts[2]) - int(parts[1]))
-            # coluna 4 é o nome; as demais são contagens por threshold
-            # mosdepth escreve os thresholds depois das 4 primeiras colunas
-            counts = [int(x) for x in parts[4:]] if len(parts) > 4 else [0]
-            cov1 = counts[0] if counts else 0
-            breadth[gid] = cov1 / length
-            region_len[gid] = length
+            line_num += 1
+            line = line.strip()
+            
+            if not line:
+                continue
+                
+            # Pula headers e comentários
+            if line.startswith("#") or line.startswith("chrom") or "start" in line[:20]:
+                continue
+                
+            parts = line.split("\t")
+            if len(parts) < 5:
+                continue
+                
+            try:
+                # Valida que as coordenadas são números válidos
+                start_coord = int(parts[1])
+                end_coord = int(parts[2])
+                
+                # Valida coordenadas lógicas
+                if start_coord < 0 or end_coord <= start_coord:
+                    continue
+                    
+                gid = parts[3]
+                if not gid or gid == "":
+                    continue
+                    
+                length = max(1, end_coord - start_coord)
+                
+                # Processa contagens de threshold
+                counts = []
+                for count_str in parts[4:]:
+                    try:
+                        counts.append(int(count_str))
+                    except ValueError:
+                        counts.append(0)
+                
+                cov1 = counts[0] if counts else 0
+                breadth[gid] = cov1 / length
+                region_len[gid] = length
+                valid_lines += 1
+                
+            except (ValueError, IndexError) as e:
+                # Log apenas as primeiras linhas problemáticas para não spam
+                if line_num <= 10:
+                    console.print(f"[yellow]⚠️  Linha {line_num} inválida em {thr_bed_gz.name}: {str(e)[:50]}...[/yellow]")
+                    console.print(f"[dim]Conteúdo: {line[:80]}...[/dim]")
+                continue
+                
+    console.print(f"[cyan]📊 {thr_bed_gz.name}: {valid_lines:,} genes válidos de {line_num:,} linhas[/cyan]")
     return breadth
 
 def gene_presence_reports(dna_samples, min_mean_cov: float = 5.0, min_breadth_1x: float = 0.8, threads: int = 8):
@@ -3996,6 +4075,8 @@ def gene_presence_reports(dna_samples, min_mean_cov: float = 5.0, min_breadth_1x
             need_mosdepth = not (newer_regions and newer_thr)
 
         if need_mosdepth:
+            console.print(f"[cyan]🧬 Calculando cobertura por gene para {sample}...[/cyan]")
+            
             cmd = ["mosdepth","-t",str(threads),"--by",str(genes_bed),
                    "--thresholds","1,5,10",str(prefix), str(bam)]
             if bam.suffix == ".cram":
@@ -4003,7 +4084,25 @@ def gene_presence_reports(dna_samples, min_mean_cov: float = 5.0, min_breadth_1x
                 cmd = ["mosdepth","-t",str(threads),"--by",str(genes_bed),
                        "--thresholds","1,5,10","--fasta","refs/reference.fa",
                        str(prefix), str(bam)]
+            
+            # Mostra comando completo que será executado
+            console.print(f"[dim]💻 Comando mosdepth:[/dim]")
+            console.print(f"[dim]> {' '.join(cmd)}[/dim]")
+            
+            # Executa e aguarda conclusão
+            console.print(f"[cyan]⏳ Executando mosdepth (pode demorar 10-30min com {threads} threads)...[/cyan]")
             run(cmd)
+            console.print(f"[green]✅ mosdepth concluído para {sample}[/green]")
+        else:
+            console.print(f"[{sample}] mosdepth → [bold]SKIP[/bold] (cache)")
+        
+        # Verifica se arquivos foram criados corretamente antes de processar
+        if not regions_bed_gz.exists():
+            raise RuntimeError(f"mosdepth não criou arquivo regions: {regions_bed_gz}")
+        if not thr_bed_gz.exists():
+            raise RuntimeError(f"mosdepth não criou arquivo thresholds: {thr_bed_gz}")
+        
+        console.print(f"[cyan]📊 Processando resultados mosdepth para {sample}...[/cyan]")
 
         # parse dos outputs (como antes)
         import gzip
