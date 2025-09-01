@@ -4016,15 +4016,25 @@ def trio_denovo_report(dna_samples):
     
     console.print(f"[green]✅ Mapeamento trio: {child}→{mapped_child}, {p1}→{mapped_p1}, {p2}→{mapped_p2}[/green]")
 
-    # thresholds (como antes) - valores mais permissivos para dados reais
+    # thresholds - valores ajustados para dados reais (sobrescrever config se muito restritivo)
     g = cfg_global.get("general", {})
-    min_dp_child = int(g.get("trio_min_dp_child", 5))    # Reduzido de 15 para 5
-    min_dp_par   = int(g.get("trio_min_dp_parents", 5))  # Reduzido de 15 para 5  
+    config_dp_child = int(g.get("trio_min_dp_child", 5))
+    config_dp_par = int(g.get("trio_min_dp_parents", 5))
+    
+    # Usar valores mais baixos se o config for muito restritivo
+    min_dp_child = min(config_dp_child, 8)   # Máximo 8, mesmo se config for maior
+    min_dp_par   = min(config_dp_par, 8)     # Máximo 8, mesmo se config for maior
     min_gq       = int(g.get("trio_min_gq", 20))  # Não usado (GQ não disponível no VCF)
-    min_ab_het   = float(g.get("trio_min_ab_het", 0.20))  # Mais permissivo: 0.20-0.80
-    max_ab_het   = float(g.get("trio_max_ab_het", 0.80))
-    min_ab_hom   = float(g.get("trio_min_ab_hom", 0.85))  # Mais permissivo: 0.85
-    max_par_alt  = float(g.get("trio_max_parent_alt_frac", 0.05))  # Mais permissivo: 0.05
+    # Também sobrescrever outros filtros se muito restritivos
+    config_ab_het_min = float(g.get("trio_min_ab_het", 0.20))
+    config_ab_het_max = float(g.get("trio_max_ab_het", 0.80))
+    config_ab_hom = float(g.get("trio_min_ab_hom", 0.85))
+    config_par_alt = float(g.get("trio_max_parent_alt_frac", 0.05))
+    
+    min_ab_het   = min(config_ab_het_min, 0.20)  # Mais permissivo: mínimo 0.20
+    max_ab_het   = max(config_ab_het_max, 0.80)  # Mais permissivo: máximo 0.80
+    min_ab_hom   = min(config_ab_hom, 0.85)      # Mais permissivo: mínimo 0.85
+    max_par_alt  = max(config_par_alt, 0.05)     # Mais permissivo: máximo 0.05
     
     console.print(f"[yellow]⚠️  GQ (Genotype Quality) não disponível no VCF - filtros de qualidade baseados apenas em DP[/yellow]")
     console.print(f"[cyan]🔧 Filtros ajustados para dados reais: pais podem ser 0/0 ou missing, DP mínimo reduzido[/cyan]")
@@ -4141,6 +4151,17 @@ def trio_denovo_report(dna_samples):
         "parsing_error": 0
     }
     
+    # Contadores para debug de genótipos
+    gt_debug = {
+        "child_missing": 0,
+        "child_hom_ref": 0,
+        "child_het": 0,
+        "child_hom_alt": 0,
+        "parents_both_missing": 0,
+        "parents_both_hom_ref": 0,
+        "parents_mixed": 0
+    }
+    
     with open(out_tsv, "w") as out:
         out.write("chrom\tpos\tref\talt\tchild_GT\tchild_DP\tchild_GQ\tchild_AB\tp1_GT\tp1_DP\tp1_GQ\tp1_AB\tp2_GT\tp2_DP\tp2_GQ\tp2_AB\n")
         for line in q:
@@ -4167,10 +4188,27 @@ def trio_denovo_report(dna_samples):
 
             gt_c  = _parse_gt(cGT); gt_p1 = _parse_gt(p1GT); gt_p2 = _parse_gt(p2GT)
             _,_,ab_c  = _parse_ad(cAD);  _,_,ab_p1 = _parse_ad(p1AD);  _,_,ab_p2 = _parse_ad(p2AD)
+            
+            # Debug de genótipos
+            if gt_c is None:
+                gt_debug["child_missing"] += 1
+            elif _is_hom_ref(gt_c):
+                gt_debug["child_hom_ref"] += 1
+            elif len(set(gt_c)) > 1:
+                gt_debug["child_het"] += 1
+            else:
+                gt_debug["child_hom_alt"] += 1
+                
+            if gt_p1 is None and gt_p2 is None:
+                gt_debug["parents_both_missing"] += 1
+            elif _is_hom_ref(gt_p1) and _is_hom_ref(gt_p2):
+                gt_debug["parents_both_hom_ref"] += 1
+            else:
+                gt_debug["parents_mixed"] += 1
 
-            # pais - aceitar hom_ref (0/0) OU missing com DP adequado
-            p1_ok = _is_hom_ref(gt_p1) or (gt_p1 == ['.', '.'] and (p1DP is None or p1DP >= min_dp_par))
-            p2_ok = _is_hom_ref(gt_p2) or (gt_p2 == ['.', '.'] and (p2DP is None or p2DP >= min_dp_par))
+            # pais - aceitar hom_ref (0/0) OU missing (None)
+            p1_ok = _is_hom_ref(gt_p1) or gt_p1 is None
+            p2_ok = _is_hom_ref(gt_p2) or gt_p2 is None
             
             if not (p1_ok and p2_ok):
                 rejected_counts["parents_not_hom_ref"] += 1
@@ -4221,6 +4259,10 @@ def trio_denovo_report(dna_samples):
         fh.write(f"- TSV: `trio/{out_tsv.name}`\n- Merged VCF: `trio/{merged.name}`\n")
 
     # Relatório de diagnóstico
+    console.print(f"[cyan]📊 Diagnóstico de genótipos processados:[/cyan]")
+    console.print(f"[dim]   Filho - Missing: {gt_debug['child_missing']:,}, Hom_ref: {gt_debug['child_hom_ref']:,}, Het: {gt_debug['child_het']:,}, Hom_alt: {gt_debug['child_hom_alt']:,}[/dim]")
+    console.print(f"[dim]   Pais - Ambos missing: {gt_debug['parents_both_missing']:,}, Ambos hom_ref: {gt_debug['parents_both_hom_ref']:,}, Mistos: {gt_debug['parents_mixed']:,}[/dim]")
+    
     console.print(f"[cyan]📊 Diagnóstico de filtros trio de novo:[/cyan]")
     console.print(f"[dim]   Total processadas: {total:,}[/dim]")
     console.print(f"[dim]   Candidatos finais: {kept:,}[/dim]")
