@@ -4280,6 +4280,113 @@ def trio_denovo_report(dna_samples):
     console.print(f"[dim]   • AB hom min: {min_ab_hom}[/dim]")
     
     console.print(f"[bold cyan]Trio de novo[/bold cyan] → {out_tsv}  (n={kept})")
+    
+    # Relatório interpretativo detalhado
+    _print_trio_interpretation_report(total, kept, gt_debug, rejected_counts, 
+                                    min_dp_child, min_dp_par, max_par_alt, 
+                                    min_ab_het, max_ab_het, min_ab_hom)
+
+def _print_trio_interpretation_report(total, kept, gt_debug, rejected_counts, 
+                                     min_dp_child, min_dp_par, max_par_alt, 
+                                     min_ab_het, max_ab_het, min_ab_hom):
+    """Imprime relatório interpretativo detalhado dos resultados da análise trio de novo"""
+    
+    console.print("\n" + "="*100)
+    console.print(f"[bold blue]🧬 RELATÓRIO INTERPRETATIVO - ANÁLISE TRIO DE NOVO[/bold blue]")
+    console.print("="*100)
+    
+    # 1. Resumo dos resultados
+    console.print(f"\n[bold green]📊 RESUMO DOS RESULTADOS:[/bold green]")
+    console.print(f"[green]✅ Candidatos de novo identificados: {kept:,}[/green]")
+    console.print(f"[dim]   De um total de {total:,} variantes processadas[/dim]")
+    console.print(f"[dim]   Taxa de candidatos: {(kept/total*100):.2f}%[/dim]")
+    
+    # 2. Interpretação biológica
+    console.print(f"\n[bold yellow]🔬 INTERPRETAÇÃO BIOLÓGICA:[/bold yellow]")
+    if kept > 10000:
+        console.print(f"[yellow]⚠️  ALTO número de candidatos ({kept:,}) - provavelmente muitos falsos positivos[/yellow]")
+        console.print(f"[dim]   • Genomas humanos típicos: ~50-100 mutações de novo verdadeiras[/dim]")
+        console.print(f"[dim]   • Maioria dos candidatos resulta de dados missing nos pais[/dim]")
+        console.print(f"[dim]   • Recomenda-se filtros mais rigorosos para análise downstream[/dim]")
+    elif kept > 1000:
+        console.print(f"[yellow]⚠️  MODERADO número de candidatos ({kept:,}) - filtros adicionais recomendados[/yellow]")
+    elif kept > 100:
+        console.print(f"[green]✅ Número razoável de candidatos ({kept:,}) - compatível com dados reais[/green]")
+    else:
+        console.print(f"[blue]ℹ️  Poucos candidatos ({kept:,}) - filtros podem estar muito restritivos[/blue]")
+    
+    # 3. Análise da qualidade dos dados
+    console.print(f"\n[bold cyan]📈 QUALIDADE DOS DADOS:[/bold cyan]")
+    
+    # Análise do filho
+    child_total = sum(gt_debug[k] for k in gt_debug if k.startswith('child_'))
+    if child_total > 0:
+        child_missing_pct = (gt_debug['child_missing'] / child_total) * 100
+        child_het_pct = (gt_debug['child_het'] / child_total) * 100
+        child_hom_alt_pct = (gt_debug['child_hom_alt'] / child_total) * 100
+        
+        console.print(f"[cyan]👶 Filho (NA12878):[/cyan]")
+        console.print(f"[dim]   • Missing: {gt_debug['child_missing']:,} ({child_missing_pct:.1f}%) - {'Alto' if child_missing_pct > 40 else 'Normal' if child_missing_pct > 20 else 'Baixo'}[/dim]")
+        console.print(f"[dim]   • Heterozigotos: {gt_debug['child_het']:,} ({child_het_pct:.1f}%) - {'Normal' if 35 <= child_het_pct <= 45 else 'Fora do esperado'}[/dim]")
+        console.print(f"[dim]   • Homozigotos alt: {gt_debug['child_hom_alt']:,} ({child_hom_alt_pct:.1f}%)[/dim]")
+    
+    # Análise dos pais
+    parents_total = sum(gt_debug[k] for k in gt_debug if k.startswith('parents_'))
+    if parents_total > 0:
+        parents_missing_pct = (gt_debug['parents_both_missing'] / parents_total) * 100
+        parents_mixed_pct = (gt_debug['parents_mixed'] / parents_total) * 100
+        
+        console.print(f"[cyan]👨‍👩‍👧‍👦 Pais (NA12891 + NA12892):[/cyan]")
+        console.print(f"[dim]   • Ambos missing: {gt_debug['parents_both_missing']:,} ({parents_missing_pct:.1f}%)[/dim]")
+        console.print(f"[dim]   • Mistos (≥1 com variante): {gt_debug['parents_mixed']:,} ({parents_mixed_pct:.1f}%)[/dim]")
+        console.print(f"[dim]   • Ambos hom_ref: {gt_debug['parents_both_hom_ref']:,} (0.0%) - {'⚠️  Problemático' if gt_debug['parents_both_hom_ref'] == 0 else 'OK'}[/dim]")
+    
+    # 4. Análise dos filtros aplicados
+    console.print(f"\n[bold magenta]🔧 EFICÁCIA DOS FILTROS:[/bold magenta]")
+    total_rejected = sum(rejected_counts.values())
+    
+    for reason, count in rejected_counts.items():
+        if count > 0:
+            pct = (count / total) * 100
+            reason_pt = {
+                "parents_not_hom_ref": "Pais não são hom_ref/missing",
+                "parents_low_dp": "Baixa cobertura nos pais", 
+                "parents_high_alt_freq": "Alta freq. alternativa nos pais",
+                "child_not_nonref": "Filho não tem variante",
+                "child_low_dp": "Baixa cobertura no filho",
+                "child_bad_ab": "Frequências alélicas inadequadas",
+                "parsing_error": "Erros de parsing"
+            }.get(reason, reason)
+            
+            console.print(f"[dim]   • {reason_pt}: {count:,} ({pct:.1f}%)[/dim]")
+    
+    # 5. Recomendações
+    console.print(f"\n[bold green]💡 RECOMENDAÇÕES:[/bold green]")
+    
+    if kept > 10000:
+        console.print(f"[green]🔧 Para reduzir falsos positivos:[/green]")
+        console.print(f"[dim]   • Aumentar min_dp_child para 15-20 (atual: {min_dp_child})[/dim]")
+        console.print(f"[dim]   • Aumentar min_dp_parents para 10-15 (atual: {min_dp_par})[/dim]")
+        console.print(f"[dim]   • Exigir pelo menos um pai com genótipo 0/0 explícito[/dim]")
+    
+    console.print(f"[green]🧬 Para análise downstream:[/green]")
+    console.print(f"[dim]   • Priorizar variantes em genes codificantes[/dim]")
+    console.print(f"[dim]   • Filtrar por impacto funcional (VEP annotations)[/dim]")
+    console.print(f"[dim]   • Verificar contra bancos de dados (ClinVar, gnomAD)[/dim]")
+    console.print(f"[dim]   • Validar candidatos top por Sanger sequencing[/dim]")
+    
+    console.print(f"[green]🔍 Para validação:[/green]")
+    console.print(f"[dim]   • Inspecionar no IGV: variantes com alta cobertura[/dim]")
+    console.print(f"[dim]   • Verificar padrões de herança mendeliana[/dim]")
+    console.print(f"[dim]   • Considerar CNVs e rearranjos estruturais[/dim]")
+    
+    # 6. Arquivos gerados
+    console.print(f"\n[bold blue]📁 ARQUIVOS GERADOS:[/bold blue]")
+    console.print(f"[blue]   • trio/trio_denovo_candidates.tsv - {kept:,} candidatos[/blue]")
+    console.print(f"[blue]   • trio/trio_denovo_summary.md - Resumo em markdown[/blue]")
+    console.print(f"[blue]   • trio/trio_merged.vcf.gz - VCF trio original[/blue]")
+    
+    console.print("="*100 + "\n")
 
 # =================== Lista de genes ===================
 
