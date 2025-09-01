@@ -4095,6 +4095,13 @@ def trio_denovo_report(dna_samples):
         ).stdout.splitlines()
         console.print(f"[green]✅ Trio query concluído: {len(q):,} variantes extraídas[/green]")
         
+        # Mostra exemplo das primeiras variantes para debug
+        if len(q) > 0:
+            console.print(f"[dim]🔍 Exemplo das primeiras 3 variantes:[/dim]")
+            for i, line in enumerate(q[:3]):
+                if line.strip():
+                    console.print(f"[dim]   {i+1}: {line[:100]}{'...' if len(line) > 100 else ''}[/dim]")
+        
         if len(q) == 0:
             console.print(f"[yellow]⚠️  Query retornou 0 variantes - verificando possíveis causas:[/yellow]")
             console.print(f"[yellow]   • Total no arquivo: {total_count:,}[/yellow]")
@@ -4121,6 +4128,18 @@ def trio_denovo_report(dna_samples):
 
     out_tsv = Path("trio")/"trio_denovo_candidates.tsv"
     kept = 0; total = 0
+    
+    # Contadores de diagnóstico para entender onde as variantes são filtradas
+    rejected_counts = {
+        "parents_not_hom_ref": 0,
+        "parents_low_dp": 0, 
+        "parents_high_alt_freq": 0,
+        "child_not_nonref": 0,
+        "child_low_dp": 0,
+        "child_bad_ab": 0,
+        "parsing_error": 0
+    }
+    
     with open(out_tsv, "w") as out:
         out.write("chrom\tpos\tref\talt\tchild_GT\tchild_DP\tchild_GQ\tchild_AB\tp1_GT\tp1_DP\tp1_GQ\tp1_AB\tp2_GT\tp2_DP\tp2_GQ\tp2_AB\n")
         for line in q:
@@ -4128,6 +4147,7 @@ def trio_denovo_report(dna_samples):
             total += 1
             parts = line.rstrip("\n").split("\t")
             if len(parts) < 7:  # precisa ter 3 blocos de amostra
+                rejected_counts["parsing_error"] += 1
                 continue
             chrom, pos, ref, alt = parts[0], parts[1], parts[2], parts[3]
             sa, sb, sc = parts[4], parts[5], parts[6]
@@ -4148,21 +4168,37 @@ def trio_denovo_report(dna_samples):
             _,_,ab_c  = _parse_ad(cAD);  _,_,ab_p1 = _parse_ad(p1AD);  _,_,ab_p2 = _parse_ad(p2AD)
 
             # pais
-            if not _is_hom_ref(gt_p1) or not _is_hom_ref(gt_p2): continue
-            if (p1DP is not None and p1DP < min_dp_par) or (p2DP is not None and p2DP < min_dp_par): continue
+            if not _is_hom_ref(gt_p1) or not _is_hom_ref(gt_p2): 
+                rejected_counts["parents_not_hom_ref"] += 1
+                continue
+            if (p1DP is not None and p1DP < min_dp_par) or (p2DP is not None and p2DP < min_dp_par): 
+                rejected_counts["parents_low_dp"] += 1
+                continue
             # Removido filtro GQ para pais (não disponível no VCF)
-            if ab_p1 is not None and ab_p1 > max_par_alt: continue
-            if ab_p2 is not None and ab_p2 > max_par_alt: continue
+            if ab_p1 is not None and ab_p1 > max_par_alt: 
+                rejected_counts["parents_high_alt_freq"] += 1
+                continue
+            if ab_p2 is not None and ab_p2 > max_par_alt: 
+                rejected_counts["parents_high_alt_freq"] += 1
+                continue
 
             # filho
-            if not _is_nonref(gt_c): continue
-            if (cDP is not None and cDP < min_dp_child): continue
+            if not _is_nonref(gt_c): 
+                rejected_counts["child_not_nonref"] += 1
+                continue
+            if (cDP is not None and cDP < min_dp_child): 
+                rejected_counts["child_low_dp"] += 1
+                continue
             # Removido filtro GQ para filho (não disponível no VCF)
             if ab_c is not None:
                 if len(set(gt_c)) > 1:
-                    if not (min_ab_het <= ab_c <= max_ab_het): continue
+                    if not (min_ab_het <= ab_c <= max_ab_het): 
+                        rejected_counts["child_bad_ab"] += 1
+                        continue
                 else:
-                    if ab_c < min_ab_hom: continue
+                    if ab_c < min_ab_hom: 
+                        rejected_counts["child_bad_ab"] += 1
+                        continue
 
             out.write(f"{chrom}\t{pos}\t{ref}\t{alt}\t{cGT}\t{cDP}\t{cGQ}\t{ab_c if ab_c is not None else ''}"
                       f"\t{p1GT}\t{p1DP}\t{p1GQ}\t{ab_p1 if ab_p1 is not None else ''}"
@@ -4176,6 +4212,23 @@ def trio_denovo_report(dna_samples):
         fh.write(f"- Candidatos *de novo* após filtros: **{kept:,}**\n\n")
         fh.write(f"- TSV: `trio/{out_tsv.name}`\n- Merged VCF: `trio/{merged.name}`\n")
 
+    # Relatório de diagnóstico
+    console.print(f"[cyan]📊 Diagnóstico de filtros trio de novo:[/cyan]")
+    console.print(f"[dim]   Total processadas: {total:,}[/dim]")
+    console.print(f"[dim]   Candidatos finais: {kept:,}[/dim]")
+    console.print(f"[dim]   Rejeitadas por:[/dim]")
+    for reason, count in rejected_counts.items():
+        if count > 0:
+            console.print(f"[dim]     • {reason}: {count:,}[/dim]")
+    
+    # Mostra configuração dos filtros
+    console.print(f"[dim]📋 Configuração dos filtros:[/dim]")
+    console.print(f"[dim]   • min_dp_child: {min_dp_child}[/dim]")
+    console.print(f"[dim]   • min_dp_parents: {min_dp_par}[/dim]")
+    console.print(f"[dim]   • max_parent_alt_frac: {max_par_alt}[/dim]")
+    console.print(f"[dim]   • AB het range: {min_ab_het}-{max_ab_het}[/dim]")
+    console.print(f"[dim]   • AB hom min: {min_ab_hom}[/dim]")
+    
     console.print(f"[bold cyan]Trio de novo[/bold cyan] → {out_tsv}  (n={kept})")
 
 # =================== Lista de genes ===================
