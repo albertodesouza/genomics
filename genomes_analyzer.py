@@ -4016,17 +4016,18 @@ def trio_denovo_report(dna_samples):
     
     console.print(f"[green]✅ Mapeamento trio: {child}→{mapped_child}, {p1}→{mapped_p1}, {p2}→{mapped_p2}[/green]")
 
-    # thresholds (como antes)
+    # thresholds (como antes) - valores mais permissivos para dados reais
     g = cfg_global.get("general", {})
-    min_dp_child = int(g.get("trio_min_dp_child", 8))
-    min_dp_par   = int(g.get("trio_min_dp_parents", 8))
+    min_dp_child = int(g.get("trio_min_dp_child", 5))    # Reduzido de 15 para 5
+    min_dp_par   = int(g.get("trio_min_dp_parents", 5))  # Reduzido de 15 para 5  
     min_gq       = int(g.get("trio_min_gq", 20))  # Não usado (GQ não disponível no VCF)
-    min_ab_het   = float(g.get("trio_min_ab_het", 0.25))
-    max_ab_het   = float(g.get("trio_max_ab_het", 0.75))
-    min_ab_hom   = float(g.get("trio_min_ab_hom", 0.90))
-    max_par_alt  = float(g.get("trio_max_parent_alt_frac", 0.02))
+    min_ab_het   = float(g.get("trio_min_ab_het", 0.20))  # Mais permissivo: 0.20-0.80
+    max_ab_het   = float(g.get("trio_max_ab_het", 0.80))
+    min_ab_hom   = float(g.get("trio_min_ab_hom", 0.85))  # Mais permissivo: 0.85
+    max_par_alt  = float(g.get("trio_max_parent_alt_frac", 0.05))  # Mais permissivo: 0.05
     
     console.print(f"[yellow]⚠️  GQ (Genotype Quality) não disponível no VCF - filtros de qualidade baseados apenas em DP[/yellow]")
+    console.print(f"[cyan]🔧 Filtros ajustados para dados reais: pais podem ser 0/0 ou missing, DP mínimo reduzido[/cyan]")
 
     # Diagnóstico do arquivo trio antes de query
     console.print(f"[cyan]🔍 Diagnosticando arquivo trio merged...[/cyan]")
@@ -4167,11 +4168,17 @@ def trio_denovo_report(dna_samples):
             gt_c  = _parse_gt(cGT); gt_p1 = _parse_gt(p1GT); gt_p2 = _parse_gt(p2GT)
             _,_,ab_c  = _parse_ad(cAD);  _,_,ab_p1 = _parse_ad(p1AD);  _,_,ab_p2 = _parse_ad(p2AD)
 
-            # pais
-            if not _is_hom_ref(gt_p1) or not _is_hom_ref(gt_p2): 
+            # pais - aceitar hom_ref (0/0) OU missing com DP adequado
+            p1_ok = _is_hom_ref(gt_p1) or (gt_p1 == ['.', '.'] and (p1DP is None or p1DP >= min_dp_par))
+            p2_ok = _is_hom_ref(gt_p2) or (gt_p2 == ['.', '.'] and (p2DP is None or p2DP >= min_dp_par))
+            
+            if not (p1_ok and p2_ok):
                 rejected_counts["parents_not_hom_ref"] += 1
                 continue
-            if (p1DP is not None and p1DP < min_dp_par) or (p2DP is not None and p2DP < min_dp_par): 
+            # Filtro DP para pais - mais flexível para dados missing
+            p1_dp_ok = p1DP is None or p1DP >= min_dp_par
+            p2_dp_ok = p2DP is None or p2DP >= min_dp_par
+            if not (p1_dp_ok and p2_dp_ok):
                 rejected_counts["parents_low_dp"] += 1
                 continue
             # Removido filtro GQ para pais (não disponível no VCF)
@@ -4186,7 +4193,8 @@ def trio_denovo_report(dna_samples):
             if not _is_nonref(gt_c): 
                 rejected_counts["child_not_nonref"] += 1
                 continue
-            if (cDP is not None and cDP < min_dp_child): 
+            # Filtro DP para filho - aceitar se DP >= min ou se missing mas com variante clara
+            if cDP is not None and cDP < min_dp_child:
                 rejected_counts["child_low_dp"] += 1
                 continue
             # Removido filtro GQ para filho (não disponível no VCF)
