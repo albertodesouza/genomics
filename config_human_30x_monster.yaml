@@ -1,6 +1,6 @@
 # config_human_30x_monster.yaml - Configuração otimizada para máquina monster (128 cores + 256GB RAM)
 project:
-  name: human_30x_trio_latest_ref
+  name: human_30x_trio_top
   organism: homo_sapiens
   reference:
     # Referência GENCODE mais recente (2024)
@@ -113,9 +113,9 @@ params:
     - "114"                      # versão mais recente (era 88)
 
 storage:
-  base_dir: "/dados/GENOMICS_DATA/latest_ref"
-  work_dir: "/dados/GENOMICS_DATA/latest_ref/work"
-  temp_dir: "/dados/GENOMICS_DATA/latest_ref/tmp"
+  base_dir: "/dados/GENOMICS_DATA/top"
+  work_dir: "/dados/GENOMICS_DATA/top/work"
+  temp_dir: "/dados/GENOMICS_DATA/top/tmp"
   keep_intermediates: true   # útil para retomar e inspecionar
   # temp_dir: "/dados/tmp"   # ← seu disco rápido
 
