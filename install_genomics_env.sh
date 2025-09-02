@@ -20,7 +20,7 @@ conda activate "${ENV_NAME}"
 
 # Instalar pacotes principais, incluindo perl-dbi e ensembl-vep
 mamba install -y -c conda-forge -c bioconda --channel-priority flexible \
-  pyyaml rich tqdm humanfriendly psutil \
+  bcftools samtools htslib pyyaml rich tqdm humanfriendly psutil \
   sra-tools fastqc multiqc cutadapt \
   bwa bwa-mem2 minimap2 samtools picard gatk4 bedtools \
   gffread ensembl-vep bcftools \
