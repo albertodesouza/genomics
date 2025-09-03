@@ -208,16 +208,46 @@ test_vep_installation() {
     fi
 }
 
+# Função para mostrar uso
+show_usage() {
+    echo ""
+    echo "📖 Uso: $0 [versão]"
+    echo ""
+    echo "   versão: Versão específica do VEP para instalar (opcional)"
+    echo "           Exemplos: 114, release/114, main, v114"
+    echo ""
+    echo "   Se nenhuma versão for especificada, detecta automaticamente a última versão"
+    echo ""
+    echo "💡 Exemplos:"
+    echo "   $0                  # Instala a última versão disponível"
+    echo "   $0 114              # Instala a versão 114"
+    echo "   $0 release/114      # Instala o branch release/114"
+    echo "   $0 main             # Instala a versão de desenvolvimento"
+    echo ""
+}
+
 # Execução principal
 main() {
-    echo "🔍 Detectando última versão do VEP no GitHub..."
+    local target_version=""
     
-    # Detecta versão mais recente
-    LATEST_VERSION=$(detect_latest_vep_version)
+    # Verifica se foi passado parâmetro de ajuda
+    if [[ "$#" -gt 0 ]] && [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        show_usage
+        exit 0
+    fi
     
-    echo "✅ Versão detectada: $LATEST_VERSION"
+    # Verifica se foi passada uma versão como parâmetro
+    if [[ "$#" -gt 0 ]]; then
+        target_version="$1"
+        echo "🎯 Versão especificada pelo usuário: $target_version"
+    else
+        echo "🔍 Detectando última versão do VEP no GitHub..."
+        target_version=$(detect_latest_vep_version)
+        echo "✅ Versão detectada automaticamente: $target_version"
+    fi
+    
     echo ""
-    echo "🎯 Versão selecionada: $LATEST_VERSION"
+    echo "🎯 Versão selecionada para instalação: $target_version"
     echo ""
     
     # Pergunta confirmação
@@ -229,7 +259,7 @@ main() {
     fi
     
     # Instala VEP
-    install_vep_latest "$LATEST_VERSION"
+    install_vep_latest "$target_version"
     
     # Configura PATH
     setup_vep_path
@@ -242,7 +272,11 @@ main() {
         echo ""
         echo "🎉 Instalação do VEP concluída com sucesso!"
         echo "📋 Resumo:"
-        echo "   • Versão: $LATEST_VERSION (GitHub)"
+        if [[ "$#" -gt 0 ]]; then
+            echo "   • Versão: $target_version (especificada pelo usuário)"
+        else
+            echo "   • Versão: $target_version (detectada automaticamente)"
+        fi
         echo "   • Localização: $VEP_DIR"
         echo "   • Cache: $VEPCACHE"
         echo "   • Espécie: $SPECIES"
