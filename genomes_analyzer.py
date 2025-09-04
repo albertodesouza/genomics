@@ -279,9 +279,9 @@ def run_bcf_pipeline_with_heartbeat(cmd_str: str, label: str, out_watch: Path,
       - delta de I/O agregado (leituras/escritas) dos processos do pipeline
     """
     console.print(Panel.fit(Text(label, style="bold yellow"), border_style="yellow"))
-    console.print("[bold]>[/bold] bash -lc " + cmd_str, style="dim")
+    console.print("[bold]>[/bold] conda run -n genomics bash -lc " + cmd_str, style="dim")
 
-    proc = sp.Popen(["bash","-lc", cmd_str], text=False)
+    proc = sp.Popen(["conda", "run", "-n", "genomics", "bash","-lc", cmd_str], text=False)
     start = time.time()
     last = start
     last_r = last_w = 0
@@ -312,7 +312,7 @@ def run_bcf_pipeline_with_heartbeat(cmd_str: str, label: str, out_watch: Path,
         time.sleep(0.5)
 
     if proc.returncode != 0:
-        raise sp.CalledProcessError(proc.returncode, ["bash","-lc", cmd_str])
+        raise sp.CalledProcessError(proc.returncode, ["conda", "run", "-n", "genomics", "bash","-lc", cmd_str])
 
 def ensure_dirs():
     for d in ["refs","raw","fastq","fastq_ds","qc","trimmed","bam","vcf","vep","genes","rnaseq","logs"]:
@@ -330,7 +330,7 @@ def _du_bytes(path: Path) -> int:
     """Tamanho total em bytes (recursivo) de 'path' usando du -sb (rápido e robusto)."""
     try:
         out = sp.run(
-            ["bash","-lc", f"du -sb {shlex.quote(str(path))} 2>/dev/null | cut -f1"],
+            ["conda", "run", "-n", "genomics", "bash","-lc", f"du -sb {shlex.quote(str(path))} 2>/dev/null | cut -f1"],
             capture_output=True, text=True, check=True
         ).stdout.strip()
         return int(out) if out else 0
@@ -431,7 +431,7 @@ def prefetch_with_progress(acc: str, outdir: Path, interval_sec: float = 2.0, st
                     if rc != 0:
                         # Mostra o fim do log pra ajudar no debug
                         try:
-                            tail = sp.run(["bash","-lc", f"tail -n 50 {shlex.quote(str(log_path))}"],
+                            tail = sp.run(["conda", "run", "-n", "genomics", "bash","-lc", f"tail -n 50 {shlex.quote(str(log_path))}"],
                                           capture_output=True, text=True, check=True).stdout
                         except Exception:
                             tail = ""
@@ -473,7 +473,7 @@ def ena_get_fastq_urls(acc: str):
     Filtra apenas *_1.fastq.gz e *_2.fastq.gz.
     """
     fields = "fastq_http,fastq_ftp,fastq_md5"
-    cmd = ["bash","-lc",
+    cmd = ["conda", "run", "-n", "genomics", "bash","-lc",
            f"curl -fsSL 'https://www.ebi.ac.uk/ena/portal/api/filereport?accession={acc}&result=read_run&fields={fields}&format=tsv&download=false' | tail -n +2"]
     r = sp.run(cmd, capture_output=True, text=True)
     if r.returncode != 0 or not r.stdout.strip():
@@ -521,7 +521,7 @@ def ena_fetch_fastqs(acc: str, outdir: Path, threads: int = 8) -> bool:
 
         # Se já existe, valide antes de pular
         if dst.exists():
-            gz_ok = sp.run(["bash","-lc", f"gzip -t {shlex.quote(str(dst))} >/dev/null 2>&1"]).returncode == 0
+            gz_ok = sp.run(["conda", "run", "-n", "genomics", "bash","-lc", f"gzip -t {shlex.quote(str(dst))} >/dev/null 2>&1"]).returncode == 0
             if gz_ok:
                 console.print(f"{fname}: → [bold]SKIP (cache OK)[/bold]")
                 ok_any = True
@@ -530,16 +530,16 @@ def ena_fetch_fastqs(acc: str, outdir: Path, threads: int = 8) -> bool:
                 console.print(f"{fname}: corrompido, refazendo…", style="yellow")
                 dst.unlink(missing_ok=True)
 
-        run(["bash","-lc", f"wget -c -O {shlex.quote(str(dst))} {shlex.quote(url)}"])
+        run(["conda", "run", "-n", "genomics", "bash","-lc", f"wget -c -O {shlex.quote(str(dst))} {shlex.quote(url)}"])
 
         # Valida gzip
-        if sp.run(["bash","-lc", f"gzip -t {shlex.quote(str(dst))} >/dev/null 2>&1"]).returncode != 0:
+        if sp.run(["conda", "run", "-n", "genomics", "bash","-lc", f"gzip -t {shlex.quote(str(dst))} >/dev/null 2>&1"]).returncode != 0:
             console.print(f"[red]{fname}: gzip inválido[/red]")
             continue
 
         # Valida MD5 se fornecido pela API
         if i < len(md5s) and md5s[i]:
-            md5 = sp.run(["bash","-lc", f"md5sum {shlex.quote(str(dst))} | cut -d' ' -f1"],
+            md5 = sp.run(["conda", "run", "-n", "genomics", "bash","-lc", f"md5sum {shlex.quote(str(dst))} | cut -d' ' -f1"],
                          capture_output=True, text=True, check=True).stdout.strip()
             if md5 != md5s[i]:
                 console.print(f"[red]{fname}: MD5 não confere ({md5} != {md5s[i]})[/red]")
@@ -699,7 +699,7 @@ def fasterq_with_progress(source: str, acc: str, outdir: Path, threads: int = 8,
                         return True
                     if rc != 0:
                         try:
-                            tail = sp.run(["bash","-lc", f"tail -n 50 {shlex.quote(str(log_path))}"],
+                            tail = sp.run(["conda", "run", "-n", "genomics", "bash","-lc", f"tail -n 50 {shlex.quote(str(log_path))}"],
                                           capture_output=True, text=True, check=True).stdout
                         except Exception:
                             tail = ""
@@ -1143,12 +1143,12 @@ def _download_and_place(url: str, dst_plain: Path):
 
     # 1) Se for tar.gz (mesmo sem extensão), 'tar -tzf' retorna 0
     is_targz = sp.run(
-        ["bash", "-lc", f"tar -tzf {tmp} >/dev/null 2>&1"],
+        ["conda", "run", "-n", "genomics", "bash", "-lc", f"tar -tzf {tmp} >/dev/null 2>&1"],
         stdout=sp.DEVNULL, stderr=sp.DEVNULL
     ).returncode == 0
 
     if is_targz:
-        run(["bash","-lc", f"mkdir -p refs/_extracted && tar -xzf {tmp} -C refs/_extracted"])
+        run(["conda", "run", "-n", "genomics", "bash","-lc", f"mkdir -p refs/_extracted && tar -xzf {tmp} -C refs/_extracted"])
         fa_candidates = list(Path("refs/_extracted").rglob("*.fa")) + list(Path("refs/_extracted").rglob("*.fasta"))
         if not fa_candidates:
             raise RuntimeError("Nenhum FASTA (.fa/.fasta) encontrado dentro do tar.")
@@ -1161,16 +1161,16 @@ def _download_and_place(url: str, dst_plain: Path):
 
     # 2) Se for gzip simples (fa.gz), descompacta ignorando sufixo
     is_gzip = sp.run(
-        ["bash", "-lc", f"file -b --mime-type {tmp} | grep -qi 'gzip'"],
+        ["conda", "run", "-n", "genomics", "bash", "-lc", f"file -b --mime-type {tmp} | grep -qi 'gzip'"],
         stdout=sp.DEVNULL, stderr=sp.DEVNULL
     ).returncode == 0
     if is_gzip:
-        run(["bash","-lc", f"gzip -dc {tmp} > {dst_plain}"])
+        run(["conda", "run", "-n", "genomics", "bash","-lc", f"gzip -dc {tmp} > {dst_plain}"])
         tmp.unlink(missing_ok=True)
         return
 
     # 3) Caso contrário, mover como está (já é .fa descompactado)
-    run(["bash","-lc", f"mv {tmp} {dst_plain}"])
+    run(["conda", "run", "-n", "genomics", "bash","-lc", f"mv {tmp} {dst_plain}"])
 
 def download_refs(ref_fa_url, gtf_url, force=False):
     Path("refs").mkdir(exist_ok=True)
@@ -1277,14 +1277,14 @@ def install_prebuilt_bwa_index(bwa_tar_url: str, expect_md5: str = "", force: bo
 
     # ---------- Download (cache) ----------
     if force or not tar_path.exists():
-        run(["bash","-lc", f"wget -c -O {shlex.quote(str(tar_path))} {shlex.quote(bwa_tar_url)}"])
+        run(["conda", "run", "-n", "genomics", "bash","-lc", f"wget -c -O {shlex.quote(str(tar_path))} {shlex.quote(bwa_tar_url)}"])
     else:
         console.print(f"{tar_name} já presente → [bold]SKIP download[/bold]")
 
     # ---------- MD5 opcional ----------
     if expect_md5:
         md5 = sp.run(
-            ["bash","-lc", f"md5sum {shlex.quote(str(tar_path))} | cut -d' ' -f1"],
+            ["conda", "run", "-n", "genomics", "bash","-lc", f"md5sum {shlex.quote(str(tar_path))} | cut -d' ' -f1"],
             capture_output=True, text=True, check=True
         ).stdout.strip()
         if md5 != expect_md5:
@@ -1302,7 +1302,7 @@ def install_prebuilt_bwa_index(bwa_tar_url: str, expect_md5: str = "", force: bo
     if best_prefix is None:
         # (1) listar rapidamente os caminhos que queremos (uma vez só)
         lst = sp.run(
-            ["bash","-lc", f"tar -tzf {shlex.quote(str(tar_path))}"],
+            ["conda", "run", "-n", "genomics", "bash","-lc", f"tar -tzf {shlex.quote(str(tar_path))}"],
             capture_output=True, text=True, check=True
         ).stdout.splitlines()
         wanted = [x for x in lst if re.search(r"\.fa\.(amb|ann|bwt|pac|sa)$", x)]
@@ -1321,12 +1321,12 @@ def install_prebuilt_bwa_index(bwa_tar_url: str, expect_md5: str = "", force: bo
 
         # (2) extração só dos 5 arquivos (overwrite se preciso)
         rc = sp.run(
-            ["bash","-lc",
+            ["conda", "run", "-n", "genomics", "bash","-lc",
              f"tar -xzf {shlex.quote(str(tar_path))} -C {shlex.quote(str(index_dir))} --overwrite {names_quoted}"],
             stdout=sp.DEVNULL, stderr=sp.DEVNULL
         ).returncode
         if rc != 0:
-            run(["bash","-lc",
+            run(["conda", "run", "-n", "genomics", "bash","-lc",
                  f"tar -xzf {shlex.quote(str(tar_path))} -C {shlex.quote(str(index_dir))} {names_quoted}"])
         extracted = True
 
@@ -1366,7 +1366,7 @@ def install_prebuilt_bwa_index(bwa_tar_url: str, expect_md5: str = "", force: bo
 
     # permissões só quando houve extração (evita custo em cada run)
     if extracted:
-        run(["bash","-lc", f"chmod -R a+r {shlex.quote(str(index_dir))} || true"])
+        run(["conda", "run", "-n", "genomics", "bash","-lc", f"chmod -R a+r {shlex.quote(str(index_dir))} || true"])
 
     # ---------- Validação final + sumário ----------
     if not all(Path(str(ref_prefix)+e).exists() for e in exts):
@@ -1391,7 +1391,7 @@ def limit_reference_to_canonical_if_enabled():
     if not canon:
         console.print("[orange3]Aviso:[/orange3] Não foi possível detectar contigs canônicos.")
         return
-    run(["bash","-lc", f"samtools faidx refs/reference.fa {' '.join(canon)} > refs/reference.canonical.fa"])
+    run(["conda", "run", "-n", "genomics", "bash","-lc", f"samtools faidx refs/reference.fa {' '.join(canon)} > refs/reference.canonical.fa"])
     Path("refs/reference.fa").unlink(missing_ok=True)
     Path("refs/reference.fa").symlink_to(Path("refs/reference.canonical.fa").resolve())
     run(["samtools","faidx","refs/reference.fa"]) 
@@ -1892,13 +1892,13 @@ def stage_fastqs_from_local(fq1, fq2=None):
     Path("fastq").mkdir(exist_ok=True)
     dst1 = Path("fastq")/Path(fq1).name
     if not dst1.exists():
-        run(["bash","-lc",f"ln -s {Path(fq1).resolve()} {dst1} || cp {Path(fq1).resolve()} {dst1}"])
+        run(["conda", "run", "-n", "genomics", "bash","-lc",f"ln -s {Path(fq1).resolve()} {dst1} || cp {Path(fq1).resolve()} {dst1}"])
     else:
         console.print(f"{dst1.name}: → [bold]SKIP (cache)[/bold]")
     if fq2:
         dst2 = Path("fastq")/Path(fq2).name
         if not dst2.exists():
-            run(["bash","-lc",f"ln -s {Path(fq2).resolve()} {dst2} || cp {Path(fq2).resolve()} {dst2}"])
+            run(["conda", "run", "-n", "genomics", "bash","-lc",f"ln -s {Path(fq2).resolve()} {dst2} || cp {Path(fq2).resolve()} {dst2}"])
         else:
             console.print(f"{dst2.name}: → [bold]SKIP (cache)[/bold]")
     print_meta("FASTQs de entrada (locais)", [dst1] + ([dst2] if fq2 else []))
@@ -1921,15 +1921,15 @@ def downsample_fastqs(fraction: float, seed: int):
             if out1.exists() and out2.exists():
                 console.print(f"{base}: downsample → [bold]SKIP (cache)[/bold]")
                 continue
-            run(["bash","-lc", f"seqtk sample -s{seed} {r1} {fraction} | gzip > {out1}"])
-            run(["bash","-lc", f"seqtk sample -s{seed} {r2} {fraction} | gzip > {out2}"])
+            run(["conda", "run", "-n", "genomics", "bash","-lc", f"seqtk sample -s{seed} {r1} {fraction} | gzip > {out1}"])
+            run(["conda", "run", "-n", "genomics", "bash","-lc", f"seqtk sample -s{seed} {r2} {fraction} | gzip > {out2}"])
             print_meta(f"FASTQs downsample ({base})", [out1, out2])
         else:
             out1 = Path("fastq_ds")/f"{base}.ds.fastq.gz"
             if out1.exists():
                 console.print(f"{base}: downsample (single) → [bold]SKIP (cache)[/bold]")
                 continue
-            run(["bash","-lc", f"seqtk sample -s{seed} {r1} {fraction} | gzip > {out1}"])
+            run(["conda", "run", "-n", "genomics", "bash","-lc", f"seqtk sample -s{seed} {r1} {fraction} | gzip > {out1}"])
             print_meta(f"FASTQ downsample ({base})", [out1])
 
 # ==================== QC / Trimming ====================
@@ -2589,7 +2589,7 @@ bcftools mpileup -Ou -f refs/reference.fa -q {int(min_mapq)} -Q {int(min_baseq)}
 | bcftools norm -f refs/reference.fa {split_flag} -Ou \
 | bcftools view --threads {int(max(1,threads))} -Oz -o {shlex.quote(str(tmp))}
 """
-    run(["bash","-lc", script])
+    run(["conda", "run", "-n", "genomics", "bash","-lc", script])
     _atomic_rename(tmp, out_vcf)
     _ensure_tabix(out_vcf)
 
@@ -2809,7 +2809,7 @@ def call_variants(samples, threads, mem_gb):
             f"| bcftools norm -f refs/reference.fa --threads {io_threads} --multiallelics -both "
             f"-Oz -o {shlex.quote(str(tmp))}"
         )
-        return ["bash","-lc", sh]
+        return ["conda", "run", "-n", "genomics", "bash","-lc", sh]
 
     def _bcf_log_command_and_bed(sample: str, bed: Path, cmd: list[str]):
         """Mostra comando bcftools e cromossomos do BED para debug."""
@@ -2872,7 +2872,7 @@ def call_variants(samples, threads, mem_gb):
         if p.returncode != 0:
             # mostra tail do log p/ debug
             try:
-                tail = sp.run(["bash","-lc", f"tail -n 60 {shlex.quote(str(log_path))}"],
+                tail = sp.run(["conda", "run", "-n", "genomics", "bash","-lc", f"tail -n 60 {shlex.quote(str(log_path))}"],
                               capture_output=True, text=True, check=True).stdout
             except Exception:
                 tail = ""
@@ -2887,7 +2887,7 @@ def call_variants(samples, threads, mem_gb):
         # imprime resumo do log (linhas de estatística do bcftools, se houver)
         try:
             lines_line = sp.run(
-                ["bash","-lc", f"grep -E '^[Ll]ines\\s' -m1 {shlex.quote(str(log_path))} || true"],
+                ["conda", "run", "-n", "genomics", "bash","-lc", f"grep -E '^[Ll]ines\\s' -m1 {shlex.quote(str(log_path))} || true"],
                 capture_output=True, text=True, check=True
             ).stdout.strip()
         except Exception:
@@ -3124,7 +3124,7 @@ def call_variants(samples, threads, mem_gb):
                         
                         # tail do log
                         try:
-                            tail = sp.run(["bash","-lc", f"tail -n 60 {shlex.quote(str(st['log']))}"],
+                            tail = sp.run(["conda", "run", "-n", "genomics", "bash","-lc", f"tail -n 60 {shlex.quote(str(st['log']))}"],
                                           capture_output=True, text=True, check=True).stdout
                             if tail.strip():
                                 console.print(f"[red]📝 Log do erro (últimas 60 linhas):[/red]")
@@ -3146,7 +3146,7 @@ def call_variants(samples, threads, mem_gb):
                     # extrai a linha "Lines ..." do log, se existir
                     try:
                         lines_line = sp.run(
-                            ["bash","-lc", f"grep -E '^[Ll]ines\\s' -m1 {shlex.quote(str(st['log']))} || true"],
+                            ["conda", "run", "-n", "genomics", "bash","-lc", f"grep -E '^[Ll]ines\\s' -m1 {shlex.quote(str(st['log']))} || true"],
                             capture_output=True, text=True, check=True
                         ).stdout.strip()
                     except Exception:
@@ -4016,25 +4016,15 @@ def trio_denovo_report(dna_samples):
     
     console.print(f"[green]✅ Mapeamento trio: {child}→{mapped_child}, {p1}→{mapped_p1}, {p2}→{mapped_p2}[/green]")
 
-    # thresholds - valores ajustados para dados reais (sobrescrever config se muito restritivo)
+    # thresholds (como antes) - valores mais permissivos para dados reais
     g = cfg_global.get("general", {})
-    config_dp_child = int(g.get("trio_min_dp_child", 5))
-    config_dp_par = int(g.get("trio_min_dp_parents", 5))
-    
-    # Usar valores mais baixos se o config for muito restritivo
-    min_dp_child = min(config_dp_child, 8)   # Máximo 8, mesmo se config for maior
-    min_dp_par   = min(config_dp_par, 8)     # Máximo 8, mesmo se config for maior
+    min_dp_child = int(g.get("trio_min_dp_child", 5))    # Reduzido de 15 para 5
+    min_dp_par   = int(g.get("trio_min_dp_parents", 5))  # Reduzido de 15 para 5  
     min_gq       = int(g.get("trio_min_gq", 20))  # Não usado (GQ não disponível no VCF)
-    # Também sobrescrever outros filtros se muito restritivos
-    config_ab_het_min = float(g.get("trio_min_ab_het", 0.20))
-    config_ab_het_max = float(g.get("trio_max_ab_het", 0.80))
-    config_ab_hom = float(g.get("trio_min_ab_hom", 0.85))
-    config_par_alt = float(g.get("trio_max_parent_alt_frac", 0.05))
-    
-    min_ab_het   = min(config_ab_het_min, 0.20)  # Mais permissivo: mínimo 0.20
-    max_ab_het   = max(config_ab_het_max, 0.80)  # Mais permissivo: máximo 0.80
-    min_ab_hom   = min(config_ab_hom, 0.85)      # Mais permissivo: mínimo 0.85
-    max_par_alt  = max(config_par_alt, 0.05)     # Mais permissivo: máximo 0.05
+    min_ab_het   = float(g.get("trio_min_ab_het", 0.20))  # Mais permissivo: 0.20-0.80
+    max_ab_het   = float(g.get("trio_max_ab_het", 0.80))
+    min_ab_hom   = float(g.get("trio_min_ab_hom", 0.85))  # Mais permissivo: 0.85
+    max_par_alt  = float(g.get("trio_max_parent_alt_frac", 0.05))  # Mais permissivo: 0.05
     
     console.print(f"[yellow]⚠️  GQ (Genotype Quality) não disponível no VCF - filtros de qualidade baseados apenas em DP[/yellow]")
     console.print(f"[cyan]🔧 Filtros ajustados para dados reais: pais podem ser 0/0 ou missing, DP mínimo reduzido[/cyan]")
@@ -4101,7 +4091,7 @@ def trio_denovo_report(dna_samples):
     
     try:
         q = sp.run(
-            ["bash","-lc", trio_query_cmd],
+            ["conda", "run", "-n", "genomics", "bash","-lc", trio_query_cmd],
             capture_output=True, text=True, check=True
         ).stdout.splitlines()
         console.print(f"[green]✅ Trio query concluído: {len(q):,} variantes extraídas[/green]")
@@ -4124,7 +4114,7 @@ def trio_denovo_report(dna_samples):
             console.print(f"[dim]🔍 Debug query:[/dim]")
             console.print(f"[dim]> {debug_cmd}[/dim]")
             
-            debug_result = sp.run(["bash", "-lc", debug_cmd], capture_output=True, text=True, check=False)
+            debug_result = sp.run(["conda", "run", "-n", "genomics", "bash", "-lc", debug_cmd], capture_output=True, text=True, check=False)
             if debug_result.stdout.strip():
                 console.print(f"[dim]📋 Exemplo de dados no arquivo:[/dim]")
                 for line in debug_result.stdout.strip().split('\n')[:3]:
@@ -4149,17 +4139,6 @@ def trio_denovo_report(dna_samples):
         "child_low_dp": 0,
         "child_bad_ab": 0,
         "parsing_error": 0
-    }
-    
-    # Contadores para debug de genótipos
-    gt_debug = {
-        "child_missing": 0,
-        "child_hom_ref": 0,
-        "child_het": 0,
-        "child_hom_alt": 0,
-        "parents_both_missing": 0,
-        "parents_both_hom_ref": 0,
-        "parents_mixed": 0
     }
     
     with open(out_tsv, "w") as out:
@@ -4188,27 +4167,10 @@ def trio_denovo_report(dna_samples):
 
             gt_c  = _parse_gt(cGT); gt_p1 = _parse_gt(p1GT); gt_p2 = _parse_gt(p2GT)
             _,_,ab_c  = _parse_ad(cAD);  _,_,ab_p1 = _parse_ad(p1AD);  _,_,ab_p2 = _parse_ad(p2AD)
-            
-            # Debug de genótipos
-            if gt_c is None:
-                gt_debug["child_missing"] += 1
-            elif _is_hom_ref(gt_c):
-                gt_debug["child_hom_ref"] += 1
-            elif len(set(gt_c)) > 1:
-                gt_debug["child_het"] += 1
-            else:
-                gt_debug["child_hom_alt"] += 1
-                
-            if gt_p1 is None and gt_p2 is None:
-                gt_debug["parents_both_missing"] += 1
-            elif _is_hom_ref(gt_p1) and _is_hom_ref(gt_p2):
-                gt_debug["parents_both_hom_ref"] += 1
-            else:
-                gt_debug["parents_mixed"] += 1
 
-            # pais - aceitar hom_ref (0/0) OU missing (None)
-            p1_ok = _is_hom_ref(gt_p1) or gt_p1 is None
-            p2_ok = _is_hom_ref(gt_p2) or gt_p2 is None
+            # pais - aceitar hom_ref (0/0) OU missing com DP adequado
+            p1_ok = _is_hom_ref(gt_p1) or (gt_p1 == ['.', '.'] and (p1DP is None or p1DP >= min_dp_par))
+            p2_ok = _is_hom_ref(gt_p2) or (gt_p2 == ['.', '.'] and (p2DP is None or p2DP >= min_dp_par))
             
             if not (p1_ok and p2_ok):
                 rejected_counts["parents_not_hom_ref"] += 1
@@ -4259,10 +4221,6 @@ def trio_denovo_report(dna_samples):
         fh.write(f"- TSV: `trio/{out_tsv.name}`\n- Merged VCF: `trio/{merged.name}`\n")
 
     # Relatório de diagnóstico
-    console.print(f"[cyan]📊 Diagnóstico de genótipos processados:[/cyan]")
-    console.print(f"[dim]   Filho - Missing: {gt_debug['child_missing']:,}, Hom_ref: {gt_debug['child_hom_ref']:,}, Het: {gt_debug['child_het']:,}, Hom_alt: {gt_debug['child_hom_alt']:,}[/dim]")
-    console.print(f"[dim]   Pais - Ambos missing: {gt_debug['parents_both_missing']:,}, Ambos hom_ref: {gt_debug['parents_both_hom_ref']:,}, Mistos: {gt_debug['parents_mixed']:,}[/dim]")
-    
     console.print(f"[cyan]📊 Diagnóstico de filtros trio de novo:[/cyan]")
     console.print(f"[dim]   Total processadas: {total:,}[/dim]")
     console.print(f"[dim]   Candidatos finais: {kept:,}[/dim]")
@@ -4280,113 +4238,6 @@ def trio_denovo_report(dna_samples):
     console.print(f"[dim]   • AB hom min: {min_ab_hom}[/dim]")
     
     console.print(f"[bold cyan]Trio de novo[/bold cyan] → {out_tsv}  (n={kept})")
-    
-    # Relatório interpretativo detalhado
-    _print_trio_interpretation_report(total, kept, gt_debug, rejected_counts, 
-                                    min_dp_child, min_dp_par, max_par_alt, 
-                                    min_ab_het, max_ab_het, min_ab_hom)
-
-def _print_trio_interpretation_report(total, kept, gt_debug, rejected_counts, 
-                                     min_dp_child, min_dp_par, max_par_alt, 
-                                     min_ab_het, max_ab_het, min_ab_hom):
-    """Imprime relatório interpretativo detalhado dos resultados da análise trio de novo"""
-    
-    console.print("\n" + "="*100)
-    console.print(f"[bold blue]🧬 RELATÓRIO INTERPRETATIVO - ANÁLISE TRIO DE NOVO[/bold blue]")
-    console.print("="*100)
-    
-    # 1. Resumo dos resultados
-    console.print(f"\n[bold green]📊 RESUMO DOS RESULTADOS:[/bold green]")
-    console.print(f"[green]✅ Candidatos de novo identificados: {kept:,}[/green]")
-    console.print(f"[dim]   De um total de {total:,} variantes processadas[/dim]")
-    console.print(f"[dim]   Taxa de candidatos: {(kept/total*100):.2f}%[/dim]")
-    
-    # 2. Interpretação biológica
-    console.print(f"\n[bold yellow]🔬 INTERPRETAÇÃO BIOLÓGICA:[/bold yellow]")
-    if kept > 10000:
-        console.print(f"[yellow]⚠️  ALTO número de candidatos ({kept:,}) - provavelmente muitos falsos positivos[/yellow]")
-        console.print(f"[dim]   • Genomas humanos típicos: ~50-100 mutações de novo verdadeiras[/dim]")
-        console.print(f"[dim]   • Maioria dos candidatos resulta de dados missing nos pais[/dim]")
-        console.print(f"[dim]   • Recomenda-se filtros mais rigorosos para análise downstream[/dim]")
-    elif kept > 1000:
-        console.print(f"[yellow]⚠️  MODERADO número de candidatos ({kept:,}) - filtros adicionais recomendados[/yellow]")
-    elif kept > 100:
-        console.print(f"[green]✅ Número razoável de candidatos ({kept:,}) - compatível com dados reais[/green]")
-    else:
-        console.print(f"[blue]ℹ️  Poucos candidatos ({kept:,}) - filtros podem estar muito restritivos[/blue]")
-    
-    # 3. Análise da qualidade dos dados
-    console.print(f"\n[bold cyan]📈 QUALIDADE DOS DADOS:[/bold cyan]")
-    
-    # Análise do filho
-    child_total = sum(gt_debug[k] for k in gt_debug if k.startswith('child_'))
-    if child_total > 0:
-        child_missing_pct = (gt_debug['child_missing'] / child_total) * 100
-        child_het_pct = (gt_debug['child_het'] / child_total) * 100
-        child_hom_alt_pct = (gt_debug['child_hom_alt'] / child_total) * 100
-        
-        console.print(f"[cyan]👶 Filho (NA12878):[/cyan]")
-        console.print(f"[dim]   • Missing: {gt_debug['child_missing']:,} ({child_missing_pct:.1f}%) - {'Alto' if child_missing_pct > 40 else 'Normal' if child_missing_pct > 20 else 'Baixo'}[/dim]")
-        console.print(f"[dim]   • Heterozigotos: {gt_debug['child_het']:,} ({child_het_pct:.1f}%) - {'Normal' if 35 <= child_het_pct <= 45 else 'Fora do esperado'}[/dim]")
-        console.print(f"[dim]   • Homozigotos alt: {gt_debug['child_hom_alt']:,} ({child_hom_alt_pct:.1f}%)[/dim]")
-    
-    # Análise dos pais
-    parents_total = sum(gt_debug[k] for k in gt_debug if k.startswith('parents_'))
-    if parents_total > 0:
-        parents_missing_pct = (gt_debug['parents_both_missing'] / parents_total) * 100
-        parents_mixed_pct = (gt_debug['parents_mixed'] / parents_total) * 100
-        
-        console.print(f"[cyan]👨‍👩‍👧‍👦 Pais (NA12891 + NA12892):[/cyan]")
-        console.print(f"[dim]   • Ambos missing: {gt_debug['parents_both_missing']:,} ({parents_missing_pct:.1f}%)[/dim]")
-        console.print(f"[dim]   • Mistos (≥1 com variante): {gt_debug['parents_mixed']:,} ({parents_mixed_pct:.1f}%)[/dim]")
-        console.print(f"[dim]   • Ambos hom_ref: {gt_debug['parents_both_hom_ref']:,} (0.0%) - {'⚠️  Problemático' if gt_debug['parents_both_hom_ref'] == 0 else 'OK'}[/dim]")
-    
-    # 4. Análise dos filtros aplicados
-    console.print(f"\n[bold magenta]🔧 EFICÁCIA DOS FILTROS:[/bold magenta]")
-    total_rejected = sum(rejected_counts.values())
-    
-    for reason, count in rejected_counts.items():
-        if count > 0:
-            pct = (count / total) * 100
-            reason_pt = {
-                "parents_not_hom_ref": "Pais não são hom_ref/missing",
-                "parents_low_dp": "Baixa cobertura nos pais", 
-                "parents_high_alt_freq": "Alta freq. alternativa nos pais",
-                "child_not_nonref": "Filho não tem variante",
-                "child_low_dp": "Baixa cobertura no filho",
-                "child_bad_ab": "Frequências alélicas inadequadas",
-                "parsing_error": "Erros de parsing"
-            }.get(reason, reason)
-            
-            console.print(f"[dim]   • {reason_pt}: {count:,} ({pct:.1f}%)[/dim]")
-    
-    # 5. Recomendações
-    console.print(f"\n[bold green]💡 RECOMENDAÇÕES:[/bold green]")
-    
-    if kept > 10000:
-        console.print(f"[green]🔧 Para reduzir falsos positivos:[/green]")
-        console.print(f"[dim]   • Aumentar min_dp_child para 15-20 (atual: {min_dp_child})[/dim]")
-        console.print(f"[dim]   • Aumentar min_dp_parents para 10-15 (atual: {min_dp_par})[/dim]")
-        console.print(f"[dim]   • Exigir pelo menos um pai com genótipo 0/0 explícito[/dim]")
-    
-    console.print(f"[green]🧬 Para análise downstream:[/green]")
-    console.print(f"[dim]   • Priorizar variantes em genes codificantes[/dim]")
-    console.print(f"[dim]   • Filtrar por impacto funcional (VEP annotations)[/dim]")
-    console.print(f"[dim]   • Verificar contra bancos de dados (ClinVar, gnomAD)[/dim]")
-    console.print(f"[dim]   • Validar candidatos top por Sanger sequencing[/dim]")
-    
-    console.print(f"[green]🔍 Para validação:[/green]")
-    console.print(f"[dim]   • Inspecionar no IGV: variantes com alta cobertura[/dim]")
-    console.print(f"[dim]   • Verificar padrões de herança mendeliana[/dim]")
-    console.print(f"[dim]   • Considerar CNVs e rearranjos estruturais[/dim]")
-    
-    # 6. Arquivos gerados
-    console.print(f"\n[bold blue]📁 ARQUIVOS GERADOS:[/bold blue]")
-    console.print(f"[blue]   • trio/trio_denovo_candidates.tsv - {kept:,} candidatos[/blue]")
-    console.print(f"[blue]   • trio/trio_denovo_summary.md - Resumo em markdown[/blue]")
-    console.print(f"[blue]   • trio/trio_merged.vcf.gz - VCF trio original[/blue]")
-    
-    console.print("="*100 + "\n")
 
 # =================== Lista de genes ===================
 
@@ -4400,7 +4251,7 @@ def gene_list_from_gtf():
         print_meta("Lista de genes", [out])
         return
     cmd = r'''awk '$3=="gene"{print $0}' refs/genes.gtf | sed -n 's/.*gene_name "\([^"]*\)".*/\1/p' | sort -u > genes/gene_list.txt'''
-    run(["bash","-lc",cmd])
+    run(["conda", "run", "-n", "genomics", "bash","-lc",cmd])
     print_meta("Lista de genes", [out])
 
 # ============ Presença de genes por amostra (cobertura) ============
@@ -4433,7 +4284,7 @@ def _build_genes_bed_from_gtf(gtf: Path, out_bed: Path):
     console.print(f"[cyan]🧬 Extraindo genes do GTF...[/cyan]")
     console.print(f"[dim]💻 Comando GTF parsing:[/dim]")
     console.print(f"[dim]> {cmd}[/dim]")
-    run(["bash","-lc",cmd])
+    run(["conda", "run", "-n", "genomics", "bash","-lc",cmd])
     
     # Verifica se arquivo BED foi criado corretamente
     if not out_bed.exists():
