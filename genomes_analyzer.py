@@ -4049,7 +4049,7 @@ def _print_trio_interpretation_report(total, kept, gt_debug, rejected_counts,
     
     console.print("="*100 + "\n")
  
- def trio_denovo_report(dna_samples):
+def trio_denovo_report(dna_samples):
     child, p1, p2 = _infer_trio_ids(dna_samples)
     if not child:
         console.print("[orange3]Trio não identificado — pulando relatório de de novo.[/orange3]")
