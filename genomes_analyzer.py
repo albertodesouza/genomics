@@ -4242,6 +4242,17 @@ def trio_denovo_report(dna_samples):
         "parsing_error": 0
     }
     
+    # Contadores para debug de genótipos
+    gt_debug = {
+        "child_missing": 0,
+        "child_hom_ref": 0,
+        "child_het": 0,
+        "child_hom_alt": 0,
+        "parents_both_missing": 0,
+        "parents_both_hom_ref": 0,
+        "parents_mixed": 0
+    }
+    
     with open(out_tsv, "w") as out:
         out.write("chrom\tpos\tref\talt\tchild_GT\tchild_DP\tchild_GQ\tchild_AB\tp1_GT\tp1_DP\tp1_GQ\tp1_AB\tp2_GT\tp2_DP\tp2_GQ\tp2_AB\n")
         for line in q:
@@ -4268,10 +4279,27 @@ def trio_denovo_report(dna_samples):
 
             gt_c  = _parse_gt(cGT); gt_p1 = _parse_gt(p1GT); gt_p2 = _parse_gt(p2GT)
             _,_,ab_c  = _parse_ad(cAD);  _,_,ab_p1 = _parse_ad(p1AD);  _,_,ab_p2 = _parse_ad(p2AD)
+           
+            # Debug de genótipos
+            if gt_c is None:
+                gt_debug["child_missing"] += 1
+            elif _is_hom_ref(gt_c):
+                gt_debug["child_hom_ref"] += 1
+            elif len(set(gt_c)) > 1:
+                gt_debug["child_het"] += 1
+            else:
+                gt_debug["child_hom_alt"] += 1
+                
+            if gt_p1 is None and gt_p2 is None:
+                gt_debug["parents_both_missing"] += 1
+            elif _is_hom_ref(gt_p1) and _is_hom_ref(gt_p2):
+                gt_debug["parents_both_hom_ref"] += 1
+            else:
+                gt_debug["parents_mixed"] += 1
 
-            # pais - aceitar hom_ref (0/0) OU missing com DP adequado
-            p1_ok = _is_hom_ref(gt_p1) or (gt_p1 == ['.', '.'] and (p1DP is None or p1DP >= min_dp_par))
-            p2_ok = _is_hom_ref(gt_p2) or (gt_p2 == ['.', '.'] and (p2DP is None or p2DP >= min_dp_par))
+            # pais - aceitar hom_ref (0/0) OU missing (None)
+            p1_ok = _is_hom_ref(gt_p1) or gt_p1 is None
+            p2_ok = _is_hom_ref(gt_p2) or gt_p2 is None
             
             if not (p1_ok and p2_ok):
                 rejected_counts["parents_not_hom_ref"] += 1
@@ -4322,6 +4350,10 @@ def trio_denovo_report(dna_samples):
         fh.write(f"- TSV: `trio/{out_tsv.name}`\n- Merged VCF: `trio/{merged.name}`\n")
 
     # Relatório de diagnóstico
+    console.print(f"[cyan]������ Diagnóstico de genótipos processados:[/cyan]")
+    console.print(f"[dim]   Filho - Missing: {gt_debug['child_missing']:,}, Hom_ref: {gt_debug['child_hom_ref']:,}, Het: {gt_debug['child_het']:,}, Hom_alt: {gt_debug['child_hom_alt']:,}[/dim]")
+    console.print(f"[dim]   Pais - Ambos missing: {gt_debug['parents_both_missing']:,}, Ambos hom_ref: {gt_debug['parents_both_hom_ref']:,}, Mistos: {gt_debug['parents_mixed']:,}[/dim]")
+    
     console.print(f"[cyan]📊 Diagnóstico de filtros trio de novo:[/cyan]")
     console.print(f"[dim]   Total processadas: {total:,}[/dim]")
     console.print(f"[dim]   Candidatos finais: {kept:,}[/dim]")
