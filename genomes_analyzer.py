@@ -4350,7 +4350,7 @@ def trio_denovo_report(dna_samples):
         fh.write(f"- TSV: `trio/{out_tsv.name}`\n- Merged VCF: `trio/{merged.name}`\n")
 
     # Relatório de diagnóstico
-    console.print(f"[cyan]������ Diagnóstico de genótipos processados:[/cyan]")
+    console.print(f"[cyan]📊 Diagnóstico de genótipos processados:[/cyan]")
     console.print(f"[dim]   Filho - Missing: {gt_debug['child_missing']:,}, Hom_ref: {gt_debug['child_hom_ref']:,}, Het: {gt_debug['child_het']:,}, Hom_alt: {gt_debug['child_hom_alt']:,}[/dim]")
     console.print(f"[dim]   Pais - Ambos missing: {gt_debug['parents_both_missing']:,}, Ambos hom_ref: {gt_debug['parents_both_hom_ref']:,}, Mistos: {gt_debug['parents_mixed']:,}[/dim]")
     

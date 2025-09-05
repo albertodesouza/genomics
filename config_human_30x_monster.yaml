@@ -1,6 +1,6 @@
 # config_human_30x_monster.yaml - Configuração otimizada para máquina monster (128 cores + 256GB RAM)
 project:
-  name: human_30x_trio_top2
+  name: human_30x_trio_top3
   organism: homo_sapiens
   reference:
     # Referência GENCODE mais recente (2024)
@@ -41,7 +41,7 @@ params:
   target_gene_list: null   # ou caminho para um painel BED/genes de interesse
 
   variant_caller: bcftools       # bcftools escala melhor que GATK para muitos cores
-  filter_problematic_contigs: true  # filtra cromossomos virais/problemáticos automaticamente
+  filter_problematic_contigs: false  # filtra cromossomos virais/problemáticos automaticamente
 
   # BCFtools otimizado para 128 cores
   bcf_verbose: true
@@ -113,9 +113,9 @@ params:
     - "114"                      # versão mais recente (era 88)
 
 storage:
-  base_dir: "/dados/GENOMICS_DATA/top2"
-  work_dir: "/dados/GENOMICS_DATA/top2/work"
-  temp_dir: "/dados/GENOMICS_DATA/top2/tmp"
+  base_dir: "/dados/GENOMICS_DATA/top3"
+  work_dir: "/dados/GENOMICS_DATA/top3/work"
+  temp_dir: "/dados/GENOMICS_DATA/top3/tmp"
   keep_intermediates: true   # útil para retomar e inspecionar
   # temp_dir: "/dados/tmp"   # ← seu disco rápido
 
