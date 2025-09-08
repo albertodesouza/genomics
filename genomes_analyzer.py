@@ -12,6 +12,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 import re, shlex
+import math
 from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn, TimeElapsedColumn, TransferSpeedColumn
 
 # Detecta se está rodando em terminal interativo ou background/nohup
@@ -1098,6 +1099,14 @@ def normalize_config_schema(cfg_in: dict) -> dict:
         "temp_dir","sort_mem_mb","bwa_batch_k",
         # força / limpeza
         "force_refs","force_indexes","use_cram","cleanup",
+        # paternidade (análise de SNPs)
+        "paternity_prior","paternity_epsilon","paternity_require_pass","paternity_force_pass",
+        "paternity_use_vep_af","paternity_skip_all_hets",
+        # alinhamento e configurações adicionais
+        "aligner","bwa_prebuilt_url","limit_to_canonical","sort_threads",
+        "hc_threads_native","space_guard_gb_min","downsample_frac","downsample_seed",
+        # flags de execução
+        "call_variants","annotate_vars","rnaseq",
     ]
     for src in (execv, storage, cfg_in.get("general", {}), cfg_in):
         if isinstance(src, dict):
@@ -1105,11 +1114,15 @@ def normalize_config_schema(cfg_in: dict) -> dict:
                 if k in src:
                     general[k] = src[k]
 
+    # steps (controle de execução das fases)
+    steps_cfg = dict(cfg_in.get("steps", {})) if isinstance(cfg_in.get("steps", {}), dict) else {}
+
     return {
         "general": general,
         "dna_samples": dna_samples,
         "rna_samples": [],
-        "params": dict(params)  # <-- preserva o bloco params
+        "params": dict(params),
+        "steps": steps_cfg,
     }
 
 # ================ Estimativa de espaço =================
@@ -4377,6 +4390,456 @@ def trio_denovo_report(dna_samples):
                                     min_dp_child, min_dp_par, max_par_alt, 
                                     min_ab_het, max_ab_het, min_ab_hom)
 
+# =================== Paternidade (SNPs, trio) ===================
+
+def _gt_to_alt_count(gt_tuple) -> int | None:
+    # Converte tuple de alelos (0/1) para contagem de ALT (0..2)
+    if gt_tuple is None:
+        return None
+    return sum(1 for a in gt_tuple if a == 1)
+
+def _passes_qc_for_paternity(gt: str, dp: int|None, ad: tuple[int,int]|None, is_child: bool, g: dict) -> bool:
+    # Reaproveita thresholds do trio; AD=(ref,alt)
+    if not gt or gt == "." or gt.startswith("."):
+        return False
+    min_dp = int(g.get("trio_min_dp_child",5) if is_child else g.get("trio_min_dp_parents",5))
+    if dp is not None and dp < min_dp:
+        return False
+    # Se não houver AD, aceita — confiando no GT
+    if ad is None or (ad[0]+ad[1]) == 0:
+        return True
+    ab = ad[1] / max(1, ad[0]+ad[1])
+    min_ab_het = float(g.get("trio_min_ab_het",0.20))
+    max_ab_het = float(g.get("trio_max_ab_het",0.80))
+    min_ab_hom = float(g.get("trio_min_ab_hom",0.85))
+    parsed = _parse_gt(gt)
+    altc = _gt_to_alt_count(parsed)
+    if altc == 1:
+        return (min_ab_het <= ab <= max_ab_het)
+    if altc == 0:
+        return (ab <= (1.0 - min_ab_hom))
+    if altc == 2:
+        return (ab >= min_ab_hom)
+    return True
+
+def _clip_freq(q: float) -> float:
+    # Evita 0/1 exatos
+    q = max(1e-4, min(1.0-1e-4, q))
+    return q
+
+def _load_vep_csq_index(vep_vcf: Path) -> dict | None:
+    """Lê o header do VEP-VCF e retorna um mapa {field_name: index} da tag CSQ.
+    Procura por gnomADg_AF, gnomAD_AF, AF nessa ordem.
+    """
+    cmd = f"bcftools view -h {shlex.quote(str(vep_vcf))} | grep '^##INFO=<ID=CSQ' | tail -n1"
+    res = sp.run(["conda","run","-n","genomics","bash","-lc", cmd], stdout=sp.PIPE, stderr=sp.STDOUT, text=True, check=False)
+    if res.returncode != 0 or not res.stdout.strip():
+        return None
+    line = res.stdout.strip()
+    i = line.find("Format:")
+    if i == -1:
+        return None
+    fmt = line[i+7:].strip().strip('"').strip()
+    fields = [f.strip() for f in fmt.split('|')]
+    return {name: idx for idx, name in enumerate(fields)}
+
+def _build_af_map_from_vep(dna_samples) -> dict:
+    """Constrói um dicionário (chrom,pos,ref,alt) -> AF (gnomAD) a partir dos VEP-VCFs existentes.
+    Usa gnomADg_AF ou gnomAD_AF; se ambos ausentes, ignora.
+    """
+    af_map: dict[tuple[str,str,str,str], float] = {}
+    for s in dna_samples:
+        sid = s["id"]
+        # Tenta primeiro o caminho relativo, depois absoluto
+        vep_vcf = Path("vep")/f"{sid}.vep.vcf.gz"
+        if not vep_vcf.exists():
+            # Tenta caminho absoluto baseado no diretório de trabalho do config
+            base_dir = cfg_global.get("storage", {}).get("base_dir", ".")
+            vep_vcf = Path(base_dir) / "vep" / f"{sid}.vep.vcf.gz"
+        if not vep_vcf.exists():
+            continue
+        idx = _load_vep_csq_index(vep_vcf)
+        if not idx:
+            continue
+        key_candidates = [k for k in ("gnomADg_AF","gnomAD_AF","AF") if k in idx]
+        if not key_candidates:
+            continue
+        af_key = key_candidates[0]
+        # extrai CHROM,POS,REF,ALT,CSQ
+        cmd = ["conda","run","-n","genomics","bash","-lc",
+               f"bcftools query -f '%CHROM\t%POS\t%REF\t%ALT\t%INFO/CSQ\n' {shlex.quote(str(vep_vcf))}"]
+        proc = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
+        while True:
+            line = proc.stdout.readline()
+            if not line:
+                break
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) < 5:
+                continue
+            chrom, pos, ref, alt, csq = parts[0], parts[1], parts[2], parts[3], parts[4]
+            if not csq:
+                continue
+            best_af = None
+            for entry in csq.split(','):
+                cols = entry.split('|')
+                if len(cols) <= max(idx.values()):
+                    continue
+                allele = cols[0]
+                if allele != alt:
+                    continue
+                val = cols[idx[af_key]] if idx[af_key] < len(cols) else ""
+                try:
+                    if val and val != '.':
+                        af_val = float(val)
+                        best_af = max(best_af, af_val) if best_af is not None else af_val
+                except Exception:
+                    continue
+            if best_af is not None:
+                af_map[(chrom, pos, ref, alt)] = max(1e-4, min(1-1e-4, best_af))
+        proc.wait()
+    return af_map
+
+def _load_samples_from_vcf(vcf_path: Path) -> list[str]:
+    cmd = f"bcftools query -l {shlex.quote(str(vcf_path))}"
+    res = sp.run(["conda","run","-n","genomics","bash","-lc", cmd], stdout=sp.PIPE, stderr=sp.STDOUT, text=True, check=False)
+    if res.returncode != 0:
+        raise RuntimeError(f"bcftools query -l falhou: {res.stdout}")
+    return [x.strip() for x in res.stdout.strip().split("\n") if x.strip()]
+
+def _map_name(expected: str, avail: list[str]) -> str | None:
+    if expected in avail:
+        return expected
+    cand = [x for x in avail if expected.lower() in x.lower()]
+    if len(cand) == 1:
+        return cand[0]
+    return None
+
+def _parse_sample_field(tok: str) -> tuple[str|None, int|None, tuple[int,int]|None]:
+    # Espera "%GT:%DP:%AD"
+    gt, dp, ad = None, None, None
+    parts = tok.split(":")
+    if len(parts) >= 1 and parts[0]:
+        gt = parts[0]
+    if len(parts) >= 2 and parts[1] and parts[1] != ".":
+        try: dp = int(parts[1])
+        except: dp = None
+    if len(parts) >= 3 and parts[2] and parts[2] != ".":
+        try:
+            ad_parts = parts[2].split(",")
+            if len(ad_parts) >= 2:
+                ad = (int(ad_parts[0]), int(ad_parts[1]))
+        except:
+            ad = None
+    return gt, dp, ad
+
+def _estimate_af_from_trio(child_alt: int|None, mom_alt: int|None, ap_alt: int|None) -> float:
+    counts = [x for x in (child_alt, mom_alt, ap_alt) if x is not None]
+    if not counts:
+        return 0.5
+    alt = sum(counts)
+    an = 2 * len(counts)
+    return alt / max(1, an)
+
+def _mendel_child_prob(m_alt: int, f_alt: int, c_alt: int) -> float:
+    # Probabilidade do filho (ALT count) dado mãe/pai (ALT counts) sob Mendel simples
+    def dist(g):
+        if g == 0: return {0:1.0}
+        if g == 1: return {0:0.5, 1:0.5}
+        return {1:1.0}
+    dm, df = dist(m_alt), dist(f_alt)
+    p = 0.0
+    for tm, pm in dm.items():
+        for tf, pf in df.items():
+            if tm + tf == c_alt:
+                p += pm * pf
+    return p
+
+def _paternity_for_pair(merged: Path, child_name:str, mom_name:str, ap_name:str, g:dict, prior:float, eps:float, require_pass:bool) -> dict:
+    # Formato por-site com bloco por amostra; sem TAB extra ao final
+    # Não requer INFO/AF (nem sempre presente nos VCFs do pipeline)
+    fmt = "%CHROM\\t%POS\\t%REF\\t%ALT[\\t%GT:%DP:%AD]\\n"
+
+    def _run_and_collect(pass_only: bool):
+        if pass_only:
+            cmd_str = (
+                f"bcftools view -f PASS {shlex.quote(str(merged))} | "
+                f"bcftools query --force-samples -s {child_name},{mom_name},{ap_name} -f '{fmt}'"
+            )
+        else:
+            cmd_str = (
+                f"bcftools query --force-samples -s {child_name},{mom_name},{ap_name} -f '{fmt}' {shlex.quote(str(merged))}"
+            )
+        proc = sp.Popen(["conda","run","-n","genomics","bash","-lc", cmd_str], stdout=sp.PIPE, stderr=sp.PIPE, text=True)
+        return proc
+
+    # 1ª tentativa: com PASS (se configurado)
+    proc = _run_and_collect(require_pass)
+    log10_sum = 0.0
+    n_used = n_excluded = 0
+    rows = []
+    read_any = False
+    while True:
+        line = proc.stdout.readline()
+        if not line:
+            break
+        read_any = True
+        line = line.rstrip("\n")
+        cols = line.split("\t")
+        if len(cols) < 4:
+            continue
+        chrom, pos, ref, alt = cols[0], cols[1], cols[2], cols[3]
+        # Apenas SNP bialélico
+        if len(ref) != 1 or len(alt) != 1:
+            n_excluded += 1
+            continue
+        samp_toks = cols[4:]
+        if len(samp_toks) < 3:
+            continue
+        gt_c, dp_c, ad_c = _parse_sample_field(samp_toks[0].strip())
+        gt_m, dp_m, ad_m = _parse_sample_field(samp_toks[1].strip())
+        gt_f, dp_f, ad_f = _parse_sample_field(samp_toks[2].strip())
+        # QC
+        if (not _passes_qc_for_paternity(gt_c, dp_c, ad_c, True, g)) or (not _passes_qc_for_paternity(gt_m, dp_m, ad_m, False, g)) or (not _passes_qc_for_paternity(gt_f, dp_f, ad_f, False, g)):
+            n_excluded += 1
+            continue
+        c_alt = _gt_to_alt_count(_parse_gt(gt_c))
+        m_alt = _gt_to_alt_count(_parse_gt(gt_m))
+        f_alt = _gt_to_alt_count(_parse_gt(gt_f))
+        if c_alt is None or m_alt is None or f_alt is None:
+            n_excluded += 1
+            continue
+        # Filtro leve: ignorar trios todos heterozigotos (pouco informativos)
+        if bool(g.get("paternity_skip_all_hets", False)) and (c_alt == 1 and m_alt == 1 and f_alt == 1):
+            n_excluded += 1
+            continue
+        # AF: tenta VEP (gnomAD), senão estima a partir do trio
+        q = None
+        try:
+            key = (chrom, pos, ref, alt)
+            if "_paternity_af_map" in globals() and key in globals()["_paternity_af_map"]:
+                q = globals()["_paternity_af_map"][key]
+        except Exception:
+            q = None
+        if q is None:
+            q = _estimate_af_from_trio(c_alt, m_alt, f_alt)
+        q = _clip_freq(q); p = 1.0 - q
+        # P(C|H1) e P(C|H2)
+        p_h1 = _mendel_child_prob(m_alt, f_alt, c_alt)
+        if p_h1 == 0.0:
+            p_h1 = eps
+        geno_probs = {0: p*p, 1: 2*p*q, 2: q*q}
+        p_h2 = 0.0
+        for fa_alt, pg in geno_probs.items():
+            p_h2 += pg * _mendel_child_prob(m_alt, fa_alt, c_alt)
+        p_h2 = max(eps, p_h2)
+        pi = p_h1 / p_h2
+        log10_pi = math.log10(pi) if pi > 0 else math.log10(eps)
+        log10_sum += log10_pi
+        n_used += 1
+        rows.append((chrom,pos,ref,alt,gt_c,gt_m,gt_f,dp_c,dp_m,dp_f,
+                     ad_c[0] if ad_c else ".", ad_c[1] if ad_c else ".",
+                     ad_m[0] if ad_m else ".", ad_m[1] if ad_m else ".",
+                     ad_f[0] if ad_f else ".", ad_f[1] if ad_f else ".",
+                     f"{q:.6f}", f"{p_h1:.6g}", f"{p_h2:.6g}", f"{pi:.6g}", f"{log10_pi:.6g}"))
+    stderr = proc.stderr.read() if proc.stderr else ""
+    retcode = proc.wait()
+
+    # Fallback: se nada lido com PASS, tenta sem PASS
+    if require_pass and not read_any:
+        console.print("[yellow]⚠️  0 linhas com FILTER=PASS; tentando sem PASS...[/yellow]")
+        proc2 = _run_and_collect(False)
+        read_any = False
+        while True:
+            line = proc2.stdout.readline()
+            if not line:
+                break
+            read_any = True
+            line = line.rstrip("\n")
+            cols = line.split("\t")
+            if len(cols) < 4:
+                continue
+            chrom, pos, ref, alt = cols[0], cols[1], cols[2], cols[3]
+            if len(ref) != 1 or len(alt) != 1:
+                n_excluded += 1
+                continue
+            samp_toks = cols[4:]
+            if len(samp_toks) < 3:
+                continue
+            gt_c, dp_c, ad_c = _parse_sample_field(samp_toks[0].strip())
+            gt_m, dp_m, ad_m = _parse_sample_field(samp_toks[1].strip())
+            gt_f, dp_f, ad_f = _parse_sample_field(samp_toks[2].strip())
+            if (not _passes_qc_for_paternity(gt_c, dp_c, ad_c, True, g)) or (not _passes_qc_for_paternity(gt_m, dp_m, ad_m, False, g)) or (not _passes_qc_for_paternity(gt_f, dp_f, ad_f, False, g)):
+                n_excluded += 1
+                continue
+            c_alt = _gt_to_alt_count(_parse_gt(gt_c))
+            m_alt = _gt_to_alt_count(_parse_gt(gt_m))
+            f_alt = _gt_to_alt_count(_parse_gt(gt_f))
+            if c_alt is None or m_alt is None or f_alt is None:
+                n_excluded += 1
+                continue
+            if bool(g.get("paternity_skip_all_hets", False)) and (c_alt == 1 and m_alt == 1 and f_alt == 1):
+                n_excluded += 1
+                continue
+            # AF: tenta VEP (gnomAD), senão estima a partir do trio
+            q = None
+            try:
+                key = (chrom, pos, ref, alt)
+                if "_paternity_af_map" in globals() and key in globals()["_paternity_af_map"]:
+                    q = globals()["_paternity_af_map"][key]
+            except Exception:
+                q = None
+            if q is None:
+                q = _estimate_af_from_trio(c_alt, m_alt, f_alt)
+            q = _clip_freq(q); p = 1.0 - q
+            p_h1 = _mendel_child_prob(m_alt, f_alt, c_alt)
+            if p_h1 == 0.0:
+                p_h1 = eps
+            geno_probs = {0: p*p, 1: 2*p*q, 2: q*q}
+            p_h2 = 0.0
+            for fa_alt, pg in geno_probs.items():
+                p_h2 += pg * _mendel_child_prob(m_alt, fa_alt, c_alt)
+            p_h2 = max(eps, p_h2)
+            pi = p_h1 / p_h2
+            log10_pi = math.log10(pi) if pi > 0 else math.log10(eps)
+            log10_sum += log10_pi
+            n_used += 1
+            rows.append((chrom,pos,ref,alt,gt_c,gt_m,gt_f,dp_c,dp_m,dp_f,
+                         ad_c[0] if ad_c else ".", ad_c[1] if ad_c else ".",
+                         ad_m[0] if ad_m else ".", ad_m[1] if ad_m else ".",
+                         ad_f[0] if ad_f else ".", ad_f[1] if ad_f else ".",
+                         f"{q:.6f}", f"{p_h1:.6g}", f"{p_h2:.6g}", f"{pi:.6g}", f"{log10_pi:.6g}"))
+        stderr2 = proc2.stderr.read() if proc2.stderr else ""
+        proc2.wait()
+        if not read_any:
+            console.print("[yellow]⚠️  0 linhas mesmo sem PASS. Verifique trio_merged.vcf.gz.[/yellow]")
+            if stderr2:
+                console.print(f"[dim]{stderr2[:400]}[/dim]")
+    else:
+        if not read_any:
+            console.print("[yellow]⚠️  0 linhas lidas do bcftools.")
+            if stderr:
+                console.print(f"[dim]{stderr[:400]}[/dim]")
+
+    lr_log10 = log10_sum
+    lr = 10**lr_log10
+    posterior = (lr*prior)/(lr*prior + (1.0-prior))
+    return {
+        "n_used": n_used, "n_excluded": n_excluded,
+        "lr_log10": lr_log10, "lr": lr, "posterior": posterior,
+        "rows": rows
+    }
+
+def paternity_analysis(dna_samples, prior: float|None=None, eps: float|None=None, require_pass: bool|None=None):
+    g = cfg_global.get("general", {})
+    prior = float(g.get("paternity_prior", 0.5) if prior is None else prior)
+    eps = float(g.get("paternity_epsilon", 1e-3) if eps is None else eps)
+    require_pass = bool(g.get("paternity_require_pass", True) if require_pass is None else require_pass)
+
+    # Opcional: mapa de AFs populacionais via VEP (pode ser custoso). Controlado por YAML.
+    af_map = {}
+    use_vep_af = bool(g.get("paternity_use_vep_af", False))
+    if use_vep_af:
+        console.print("[cyan]Carregando AFs populacionais do VEP (pode consumir RAM/tempo)...[/cyan]")
+        af_map = _build_af_map_from_vep(dna_samples)
+        if len(af_map) > 0:
+            console.print(f"[green]✅ Carregadas {len(af_map):,} frequências do VEP/gnomAD[/green]")
+        else:
+            console.print("[yellow]⚠️ Nenhuma frequência VEP carregada! Usando estimativas do trio.[/yellow]")
+    else:
+        console.print("[dim]VEP AF desabilitado, usando estimativas do trio.[/dim]")
+
+    # Garante trio merged
+    vcfs = { s["id"]: Path("vcf")/f"{s['id']}.vcf.gz" for s in dna_samples }
+    ids = [s["id"] for s in dna_samples]
+    if len(ids) < 3:
+        console.print("[yellow]Menos de 3 amostras — paternidade requer trio.[/yellow]")
+        return
+    Path("trio").mkdir(exist_ok=True)
+    merged = Path("trio")/"trio_merged.vcf.gz"
+    need_merge = (not merged.exists()) or any(not _is_newer(merged, v) for v in vcfs.values())
+    if need_merge:
+        run(["bcftools","merge","-m","all","-Oz","-o",str(merged), *(str(vcfs[i]) for i in ids)])
+        run(["tabix","-p","vcf",str(merged)])
+    # Mapear nomes
+    avail = _load_samples_from_vcf(merged)
+    child_id, p1_id, p2_id = _infer_trio_ids(dna_samples)
+    mapped = {}
+    for wanted in (child_id, p1_id, p2_id):
+        got = _map_name(wanted, avail)
+        if not got:
+            console.print(f"[red]Não foi possível mapear {wanted} no trio merged.[/red]")
+            return
+        mapped[wanted] = got
+
+    # Todas as direções AP→Child (o terceiro é a mãe)
+    sids = [child_id, p1_id, p2_id]
+    triples = []
+    for i in range(3):
+        for j in range(3):
+            if i == j:
+                continue
+            k = 3 - i - j
+            ap, child, mom = sids[i], sids[j], sids[k]
+            triples.append((ap, child, mom))
+
+    # Checa rapidamente se há variantes PASS; respeita paternity_force_pass
+    require_pass_effective = require_pass
+    if require_pass and not bool(g.get("paternity_force_pass", False)):
+        check_cmd = ["conda","run","-n","genomics","bash","-lc",
+                     f"bcftools view -H -f PASS {shlex.quote(str(merged))} | head -1"]
+        chk = sp.run(check_cmd, stdout=sp.PIPE, stderr=sp.STDOUT, text=True, check=False)
+        if chk.returncode != 0 or (not chk.stdout.strip()):
+            require_pass_effective = False
+            console.print("[dim]Nenhuma variante com FILTER=PASS no trio; usando todas as variantes.[/dim]")
+
+    Path("paternity").mkdir(exist_ok=True)
+    summary_lines = []
+    results = []  # coleta resultados para sumarização
+    for ap, child, mom in triples:
+        ap_m = mapped[ap]; ch_m = mapped[child]; mo_m = mapped[mom]
+        console.print(f"[cyan]👨‍👩‍👧 Paternidade: AP={ap} → Child={child} (Mãe={mom})[/cyan]")
+        # Monkey-patch: injeta af_map via global temporário
+        globals()["_paternity_af_map"] = af_map
+        res = _paternity_for_pair(merged, ch_m, mo_m, ap_m, g, prior, eps, require_pass_effective)
+        # salvar TSV
+        tsv = Path("paternity")/f"{ap}_to_{child}.paternity.tsv"
+        with open(tsv, "w") as fh:
+            fh.write("CHROM\tPOS\tREF\tALT\tGT_child\tGT_mom\tGT_ap\tDP_child\tDP_mom\tDP_ap\tADc_ref\tADc_alt\tADm_ref\tADm_alt\tADf_ref\tADf_alt\tAF\tP_H1\tP_H2\tPI\tlog10_PI\n")
+            for r in res["rows"]:
+                fh.write("\t".join(map(str,r))+"\n")
+        # imprime resultado imediato deste trio
+        console.print(f"   → n={res['n_used']} | log10(LR)={res['lr_log10']:.3f} | posterior(prior={prior:.2f})={res['posterior']*100:.6f}% | excluídas={res['n_excluded']}\n")
+        summary_lines.append(f"- {ap} → {child} | n={res['n_used']}, excl={res['n_excluded']}, log10(LR)={res['lr_log10']:.3f}, Posterior(prior={prior:.2f})={res['posterior']*100:.6f}%")
+        results.append({
+            "ap": ap, "child": child, "mom": mom,
+            "n_used": res['n_used'], "n_excluded": res['n_excluded'],
+            "lr_log10": res['lr_log10'], "posterior": res['posterior']
+        })
+
+    md = Path("paternity")/"paternity_summary.md"
+    with open(md,"w") as fh:
+        fh.write("# Paternidade (SNP, trio, HWE)\n")
+        fh.write(f"- prior={prior}, epsilon={eps}, require_pass={require_pass_effective}\n")
+        for ln in summary_lines:
+            fh.write(ln+"\n")
+    console.print(f"[green]✅ Paternidade concluída. Resumo: paternity/paternity_summary.md[/green]")
+
+    # Impressão amigável no console
+    console.print("\n[bold cyan]Resumo paternidade (SNP/HWE)[/bold cyan]")
+    for ln in summary_lines:
+        console.print(ln)
+
+    # # Destaques por filho: melhor AP por LR
+    # by_child: dict[str, list[dict]] = {}
+    # for r in results:
+    #     by_child.setdefault(r["child"], []).append(r)
+    # for child, lst in by_child.items():
+    #     if not lst:
+    #         continue
+    #     best = max(lst, key=lambda x: x["lr_log10"])  # maior LR favorece paternidade
+    #     best_pct = best["posterior"]*100.0
+    #     console.print(f"[bold]Filho {child}[/bold]: melhor AP = {best['ap']} (mãe={best['mom']}) | log10(LR)={best['lr_log10']:.3f} | posterior={best_pct:.6f}% | n={best['n_used']}")
+
 # =================== Lista de genes ===================
 
 def gene_list_from_gtf():
@@ -4674,6 +5137,7 @@ def rnaseq_pipeline(rna_samples, threads, assembly_name):
 
 def main(cfg):
     g = cfg["general"]
+    steps = cfg.get("steps", {})
     
     # Reconfigura console com parâmetros do YAML
     _configure_console_for_mode(cfg.get("params", {}))
@@ -4693,101 +5157,116 @@ def main(cfg):
     ensure_dirs()
 
     # Referências e índices
-    stage_banner("1) Referências e Índices")
-    download_refs(g["ref_fa_url"], g["gtf_url"], force=g.get("force_refs", False))
-    limit_reference_to_canonical_if_enabled()
-    build_indexes(g.get("default_read_type","short"), g["assembly_name"],
-                  g.get("rnaseq",False) or bool(cfg.get("rna_samples",[])),
-                  g["threads"], force=g.get("force_indexes", False))
-    step_done("Referências/índices prontos")
+    if steps.get("refs_and_indexes", True):
+        stage_banner("1) Referências e Índices")
+        download_refs(g["ref_fa_url"], g["gtf_url"], force=g.get("force_refs", False))
+        limit_reference_to_canonical_if_enabled()
+        build_indexes(g.get("default_read_type","short"), g["assembly_name"],
+                      g.get("rnaseq",False) or bool(cfg.get("rna_samples",[])),
+                      g["threads"], force=g.get("force_indexes", False))
+        step_done("Referências/índices prontos")
 
     # Entrada DNA
-    stage_banner("2) Entrada de Leituras (FASTQ)", "SRA→FASTQ, cache e compressão")
     dna_samples = cfg.get("dna_samples", [])
-    for s in dna_samples:
-        if s["source"]=="sra":
-            stage_fastqs_from_sra(s["sra_ids"])
-        else:
-            stage_fastqs_from_local(s["fastq1"], s.get("fastq2"))
-    step_done("FASTQs prontos")
+    if steps.get("fetch_fastqs", True):
+        stage_banner("2) Entrada de Leituras (FASTQ)", "SRA→FASTQ, cache e compressão")
+        for s in dna_samples:
+            if s["source"]=="sra":
+                stage_fastqs_from_sra(s["sra_ids"])
+            else:
+                stage_fastqs_from_local(s["fastq1"], s.get("fastq2"))
+        step_done("FASTQs prontos")
 
     # Estimativa de espaço
-    stage_banner("3) Estimativa de Espaço")
-    fq_list = list(Path("fastq").glob("*.fastq.gz"))
-    estimate_outputs_and_warn(fq_list, base_dir, g.get("space_guard_gb_min", 100))
-    step_done("Estimativa impressa")
+    if steps.get("estimate_space", True):
+        stage_banner("3) Estimativa de Espaço")
+        fq_list = list(Path("fastq").glob("*.fastq.gz"))
+        estimate_outputs_and_warn(fq_list, base_dir, g.get("space_guard_gb_min", 100))
+        step_done("Estimativa impressa")
 
     # Downsample (opcional)
-    if g.get("downsample_frac", 0.0) > 0:
+    if steps.get("downsample", False) and (g.get("downsample_frac", 0.0) > 0):
         stage_banner("4) Downsample (opcional)")
         downsample_fastqs(g["downsample_frac"], g.get("downsample_seed", 123))
         step_done("Downsample concluído")
 
     # QC + trimming
-    stage_banner("5) QC e Trimming")
-    qc_and_trim(g["threads"], g["adapters"], g.get("default_read_type","short"),
-                use_ds=g.get("downsample_frac", 0.0) > 0)
-    step_done("QC + trimming concluídos")
+    if steps.get("qc_and_trimming", True):
+        stage_banner("5) QC e Trimming")
+        qc_and_trim(g["threads"], g["adapters"], g.get("default_read_type","short"),
+                    use_ds=g.get("downsample_frac", 0.0) > 0)
+        step_done("QC + trimming concluídos")
 
     # Alinhamento DNA
-    stage_banner("6) Alinhamento, Sort e Duplicatas")
-    align_dna_for_all(dna_samples, g["threads"], g.get("default_read_type","short"),
-                      cleanup=g.get("cleanup", {"remove_sorted_bam": True, "remove_bam_after_cram": True}),
-                      use_ds=g.get("downsample_frac", 0.0) > 0)
-    step_done("Alinhamento e marcação de duplicatas concluídos")
+    if steps.get("align_and_sort", True):
+        stage_banner("6) Alinhamento, Sort e Duplicatas")
+        align_dna_for_all(dna_samples, g["threads"], g.get("default_read_type","short"),
+                          cleanup=g.get("cleanup", {"remove_sorted_bam": True, "remove_bam_after_cram": True}),
+                          use_ds=g.get("downsample_frac", 0.0) > 0)
+        step_done("Alinhamento e marcação de duplicatas concluídos")
 
     # CRAM + Cobertura
-    stage_banner("7) CRAM e Cobertura (mosdepth)")
-    to_cram_and_coverage(g.get("use_cram", True), g["threads"])
-    # Remover BAM após CRAM
-    if g.get("use_cram", True) and g.get("cleanup", {}).get("remove_bam_after_cram", True):
-        for bam in Path("bam").glob("*.mkdup.bam"):
-            console.print(f"Removendo {bam.name} (CRAM mantido)", style="dim")
-            bam.unlink(missing_ok=True)
-            idx = Path(str(bam)+".bai"); idx.unlink(missing_ok=True)
-    step_done("CRAM/index e cobertura prontos")
+    if steps.get("cram_and_coverage", True):
+        stage_banner("7) CRAM e Cobertura (mosdepth)")
+        to_cram_and_coverage(g.get("use_cram", True), g["threads"])
+        # Remover BAM após CRAM
+        if g.get("use_cram", True) and g.get("cleanup", {}).get("remove_bam_after_cram", True):
+            for bam in Path("bam").glob("*.mkdup.bam"):
+                console.print(f"Removendo {bam.name} (CRAM mantido)", style="dim")
+                bam.unlink(missing_ok=True)
+                idx = Path(str(bam)+".bai"); idx.unlink(missing_ok=True)
+        step_done("CRAM/index e cobertura prontos")
 
     # Variantes e VEP
-    stage_banner("8) Chamadas de Variantes e Anotação")
-    if g.get("call_variants", True):
-        call_variants(dna_samples, g["threads"], g["mem_gb"])
-    if g.get("annotate_vars", True):
-        annotate_with_vep(dna_samples, g["threads"])
-    step_done("VCF e VEP-VCF gerados")
+    if steps.get("variants_and_vep", True):
+        stage_banner("8) Chamadas de Variantes e Anotação")
+        if g.get("call_variants", True):
+            call_variants(dna_samples, g["threads"], g["mem_gb"])
+        if g.get("annotate_vars", True):
+            annotate_with_vep(dna_samples, g["threads"])
+        step_done("VCF e VEP-VCF gerados")
 
     # Lista de genes (da referência)
-    stage_banner("9) Lista de Genes (Referência)")
-    gene_list_from_gtf()
-    step_done("Lista de genes da referência pronta")
+    if steps.get("gene_list", True):
+        stage_banner("9) Lista de Genes (Referência)")
+        gene_list_from_gtf()
+        step_done("Lista de genes da referência pronta")
 
     # Relatórios de presença de genes por amostra (cobertura por gene)
-    stage_banner("10) Presença de genes por amostra (cobertura por gene)")
-    gene_presence_reports(dna_samples,
-                          min_mean_cov=float(g.get("gene_presence_min_mean_cov", 5.0)),
-                          min_breadth_1x=float(g.get("gene_presence_min_breadth_1x", 0.8)),
-                          threads=g["threads"])
-    print_meta("Genes BED (alvos p/ cobertura)", [Path("genes/genes.bed")])
-    pres = sorted(Path("genes").glob("*_gene_presence.tsv"))
-    if pres:
-        print_meta("Presença de genes (por amostra)", pres)
-    step_done("Relatórios de presença de genes gerados")
+    if steps.get("gene_presence", True):
+        stage_banner("10) Presença de genes por amostra (cobertura por gene)")
+        gene_presence_reports(dna_samples,
+                              min_mean_cov=float(g.get("gene_presence_min_mean_cov", 5.0)),
+                              min_breadth_1x=float(g.get("gene_presence_min_breadth_1x", 0.8)),
+                              threads=g["threads"])
+        print_meta("Genes BED (alvos p/ cobertura)", [Path("genes/genes.bed")])
+        pres = sorted(Path("genes").glob("*_gene_presence.tsv"))
+        if pres:
+            print_meta("Presença de genes (por amostra)", pres)
+        step_done("Relatórios de presença de genes gerados")
 
     # Comparações par-a-par
-    stage_banner("11) Comparações par-a-par (vcf)")
-    pairwise_comparisons(dna_samples)
-    step_done("Relatórios de comparação gerados")
-
-    # Comparações par-a-par (você já chama pairwise_comparisons antes)
-    combine_pairwise_stats(dna_samples)
+    if steps.get("pairwise", True):
+        stage_banner("11) Comparações par-a-par (vcf)")
+        pairwise_comparisons(dna_samples)
+        step_done("Relatórios de comparação gerados")
+        combine_pairwise_stats(dna_samples)
 
     # Trio: potenciais de novo (filho ≠ pais)
-    stage_banner("12) Trio: candidatos de novo")
-    trio_denovo_report(dna_samples)
-    step_done("Relatório trio gerado")
+    if steps.get("trio_denovo", True):
+        stage_banner("12) Trio: candidatos de novo")
+        trio_denovo_report(dna_samples)
+        step_done("Relatório trio gerado")
+
+    # Paternidade (LR + Posterior)
+    if steps.get("paternity", True):
+        stage_banner("13) Paternidade (trio, SNPs)")
+        paternity_analysis(dna_samples)
+        step_done("Paternidade concluída")
 
     # RNA-seq (opcional)
-    if g.get("rnaseq", False):
-        stage_banner("13) RNA-seq (opcional)")
+    if steps.get("rnaseq", False) and g.get("rnaseq", False):
+        stage_banner("14) RNA-seq (opcional)")
         rnaseq_pipeline(cfg.get("rna_samples", []), g["threads"], g["assembly_name"])
         step_done("RNA-seq concluído")
 

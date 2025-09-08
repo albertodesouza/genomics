@@ -1,6 +1,6 @@
 # config_human_30x_monster.yaml - Configuração otimizada para máquina monster (128 cores + 256GB RAM)
 project:
-  name: human_30x_trio_top3
+  name: human_30x_trio_top2
   organism: homo_sapiens
   reference:
     # Referência GENCODE mais recente (2024)
@@ -11,6 +11,30 @@ project:
     gtf_url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/gencode.v46.primary_assembly.annotation.gtf.gz"
     # NÃO usar índice pré-construído do GDC (versão diferente)
 
+storage:
+  base_dir: "/dados/GENOMICS_DATA/top2"
+  work_dir: "/dados/GENOMICS_DATA/top2/work"
+  temp_dir: "/dados/GENOMICS_DATA/top2/tmp"
+  keep_intermediates: true   # útil para retomar e inspecionar
+  # temp_dir: "/dados/tmp"   # ← seu disco rápido
+
+download:
+  tool: sra_toolkit
+  use_ascp: false                 # usar Aspera se disponível para downloads mais rápidos
+  threads: 32                    # muito mais threads para download
+  prefetch_retries: 3
+
+execution:
+  verbose: true
+  resume: true
+  skip_existing: true
+  progress_interval_sec: 60      # updates mais frequentes
+  stall_warn_min: 5              # alertas mais rápidos
+  stall_fail_min: 50             # timeout mais agressivo
+  ena_fallback: true
+  cancel_on_convert_stall: false
+  prefer_ena_fastq: false         # preferir FASTQs prontos para velocidade
+  
 general:
   # Para máquina monster: usar bwa-mem2 e force_indexes para criar índices otimizados
   force_indexes: false
@@ -32,6 +56,14 @@ general:
   trio_max_ab_het: 0.75
   trio_min_ab_hom: 0.90
   trio_max_parent_alt_frac: 0.02
+
+  # Parâmetros da análise de paternidade (usados no passo 13)
+  paternity_prior: 0.5             # prior neutro para paternidade
+  paternity_epsilon: 0.001         # taxa de erro/mutação mínima para evitar PI=0 duro (aumentado para diagnóstico)
+  paternity_require_pass: true     # considerar apenas variantes com FILTER=PASS
+  paternity_force_pass: true       # se true, não desativa PASS mesmo se ausente
+  paternity_use_vep_af: true       # usar AF do VEP (gnomAD) para PI (mais preciso que estimativa do trio, mas lento e caro em memória)
+  paternity_skip_all_hets: true    # NÃO pular SNPs informativos 
 
 # Parâmetros otimizados para 128 cores
 params:
@@ -112,30 +144,6 @@ params:
     - "--cache_version"          # usar cache mais eficientemente  
     - "114"                      # versão mais recente (era 88)
 
-storage:
-  base_dir: "/dados/GENOMICS_DATA/top3"
-  work_dir: "/dados/GENOMICS_DATA/top3/work"
-  temp_dir: "/dados/GENOMICS_DATA/top3/tmp"
-  keep_intermediates: true   # útil para retomar e inspecionar
-  # temp_dir: "/dados/tmp"   # ← seu disco rápido
-
-download:
-  tool: sra_toolkit
-  use_ascp: false                 # usar Aspera se disponível para downloads mais rápidos
-  threads: 32                    # muito mais threads para download
-  prefetch_retries: 3
-
-execution:
-  verbose: true
-  resume: true
-  skip_existing: true
-  progress_interval_sec: 60      # updates mais frequentes
-  stall_warn_min: 5              # alertas mais rápidos
-  stall_fail_min: 50             # timeout mais agressivo
-  ena_fallback: true
-  cancel_on_convert_stall: false
-  prefer_ena_fastq: false         # preferir FASTQs prontos para velocidade
-  
 size_control:
   downsample:
     enabled: true               # DESABILITADO - usar dados completos 30×
@@ -163,13 +171,20 @@ samples:
       - ERR3989342               # ENA fornece FASTQ gerado para este run
     notes: "CRAM 'final': ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR398/ERR3989342/NA12892.final.cram"
 
-# Etapas do pipeline (ajuste conforme seu script)
+# Controle de etapas (true = executar, false = pular)
 steps:
-  - fetch_fastqs          # prefetch/fasterq-dump; respeita skip_existing/resume
-  - qc_reads              # FastQC/MultiQC (se configurados)
-  - align_and_sort        # BWA-MEM/BWA-MEM2 + samtools
-  - mark_duplicates       # GATK MarkDuplicatesSpark/picard
-  - bqsr                  # GATK BaseRecalibrator/applyBQSR (opcional)
-  - call_genes            # sua extração/varredura de genes (exons/introns) e comparação
-  - summarize             # relatórios e métricas
+  refs_and_indexes: true          # 1) preparar referências e índices
+  fetch_fastqs: true              # 2) baixar/preparar FASTQs
+  estimate_space: true            # 3) estimar espaço em disco
+  downsample: true                # 4) downsample opcional
+  qc_and_trimming: true           # 5) QC + trimming
+  align_and_sort: true            # 6) alinhamento + duplicatas
+  cram_and_coverage: true         # 7) CRAM + cobertura
+  variants_and_vep: true          # 8) chamadas de variantes + VEP
+  gene_list: true                 # 9) construir lista de genes da referência
+  gene_presence: true             # 10) presença de genes por amostra
+  pairwise: true                  # 11) comparações par-a-par
+  trio_denovo: true               # 12) trio: candidatos de novo
+  paternity: true                 # 13) paternidade (SNP/HWE)
+  rnaseq: false                   # 14) RNA-seq (opcional)
 
