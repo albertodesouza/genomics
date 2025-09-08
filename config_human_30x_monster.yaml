@@ -173,18 +173,50 @@ samples:
 
 # Controle de etapas (true = executar, false = pular)
 steps:
-  refs_and_indexes: true          # 1) preparar referências e índices
-  fetch_fastqs: true              # 2) baixar/preparar FASTQs
-  estimate_space: true            # 3) estimar espaço em disco
-  downsample: true                # 4) downsample opcional
-  qc_and_trimming: true           # 5) QC + trimming
-  align_and_sort: true            # 6) alinhamento + duplicatas
-  cram_and_coverage: true         # 7) CRAM + cobertura
-  variants_and_vep: true          # 8) chamadas de variantes + VEP
-  gene_list: true                 # 9) construir lista de genes da referência
-  gene_presence: true             # 10) presença de genes por amostra
-  pairwise: true                  # 11) comparações par-a-par
-  trio_denovo: true               # 12) trio: candidatos de novo
-  paternity: true                 # 13) paternidade (SNP/HWE)
-  rnaseq: false                   # 14) RNA-seq (opcional)
+  refs_and_indexes: false          # 1) preparar referências e índices
+  fetch_fastqs: false              # 2) baixar/preparar FASTQs
+  estimate_space: false            # 3) estimar espaço em disco
+  downsample: false                # 4) downsample opcional
+  qc_and_trimming: false           # 5) QC + trimming
+  align_and_sort: false            # 6) alinhamento + duplicatas
+  cram_and_coverage: false         # 7) CRAM + cobertura
+  variants_and_vep: false          # 8) chamadas de variantes + VEP
+  gene_list: false                 # 9) construir lista de genes da referência
+  gene_presence: false             # 10) presença de genes por amostra
+  pairwise: false                  # 11) comparações par-a-par
+  trio_denovo: false               # 12) trio: candidatos de novo
+  paternity: false                 # 13) paternidade (SNP/HWE)
+  ancestry: true                 # 14) ancestralidade (ADMIXTURE supervisionado)
+  rnaseq: false                   # 15) RNA-seq (opcional)
 
+
+ancestry:
+  method: "admixture_supervised"
+  k: 5
+  threads: 32
+  tools:
+    plink: "plink"
+    plink2: "plink2"
+    admixture: "admixture"
+  qc:
+    maf: 0.01
+    geno_missing: 0.05
+    indep_pairwise: [200, 50, 0.2]
+  reference:
+    plink_tar_url: "https://zenodo.org/records/14286454/files/HGDP+1KG_SNPData.tar.gz?download=1"
+    sample_info_url: "https://zenodo.org/records/14286454/files/hgdp_1kg_sample_info.unrelateds.pca_outliers_removed.with_project.tsv?download=1"
+    docs:
+      - name: "gnomAD HGDP+1KG (v3.1.2)"
+        url: "https://gnomad.broadinstitute.org/news/2021-07-gnomad-v3-1-new-content-methods-annotations-and-data-availability/"
+      - name: "PLINK 2 resources (1KG hg38)"
+        url: "https://www.cog-genomics.org/plink/2.0/resources"
+  categories:
+    europeu:   ["eur"]                 # Europeu (superpopulação)
+    africano:  ["afr"]                 # Africano (superpopulação)
+    americano: ["amr"]                 # Americano/Indígena (superpopulação)
+    asiatico:  ["eas","csa"]           # Asiático Oriental e Sul-Asiático
+  collapse:
+    europeu: ["europeu"]
+    africano: ["africano"]
+    indigena_americano: ["americano"]
+    asiatico: ["asiatico"]

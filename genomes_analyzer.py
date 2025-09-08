@@ -11,7 +11,7 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.text import Text
 
-import re, shlex
+import re, shlex, csv
 import math
 from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn, TimeElapsedColumn, TransferSpeedColumn
 
@@ -81,8 +81,15 @@ def print_meta(title: str, paths: List[Path]):
     console.print(tbl)
 
 def run(cmd: List[str], cwd: Optional[str]=None, env=None, check=True):
-    console.print(f"[bold]>[/bold] {' '.join(cmd)}", style="dim")
+    console.print(f"[bold cyan]>[/bold cyan] {' '.join(cmd)}")
     sp.run(cmd, cwd=cwd, env=env, check=check)
+
+def print_cmd(cmd):
+    """Função auxiliar para imprimir comandos antes da execução."""
+    if isinstance(cmd, list):
+        console.print(f"[bold cyan]>[/bold cyan] {' '.join(cmd)}")
+    else:
+        console.print(f"[bold cyan]>[/bold cyan] {cmd}")
 
 def run_long_stream_pipeline(
     cmd_list: List[List[str]],
@@ -567,7 +574,6 @@ def _proc_io(pid: int):
         return m.get("read_bytes", 0), m.get("write_bytes", 0)
     except Exception:
         return None
-
 def fasterq_with_progress(source: str, acc: str, outdir: Path, threads: int = 8, tmp_dir: Path = Path("tmp"),
                           interval_sec: float = 2.0, stall_warn_min: int = 10, stall_fail_min: int = 45) -> bool:
     """
@@ -970,7 +976,7 @@ def normalize_config_schema(cfg_in: dict) -> dict:
     if download_tool != "sra_toolkit":
         console.print(f"[orange3]Aviso:[/orange3] download.tool='{download_tool}' ainda não é suportado; usando sra-tools.", style="italic")
 
-    # threads “globais” (download, fastqc, multiqc, mosdepth, etc.)
+    # threads "globais" (download, fastqc, multiqc, mosdepth, etc.)
     # Mantemos a precedência antiga p/ compat: execution.threads > download.threads > (fallback 16)
     threads_global = int(execv.get("threads") or download.get("threads") or 16)
 
@@ -1123,6 +1129,7 @@ def normalize_config_schema(cfg_in: dict) -> dict:
         "rna_samples": [],
         "params": dict(params),
         "steps": steps_cfg,
+        "ancestry": dict(cfg_in.get("ancestry", {})),
     }
 
 # ================ Estimativa de espaço =================
@@ -1206,7 +1213,6 @@ def download_refs(ref_fa_url, gtf_url, force=False):
         run(["gatk","CreateSequenceDictionary","-R","refs/reference.fa","-O","refs/reference.dict"])
 
     print_meta("Referências", [fa, gtf])
-
 def _bwa_index_ready(prefix: Path) -> bool:
     """Verifica se os 5 arquivos do índice BWA existem (e se symlinks apontam para arquivos reais)."""
     exts = [".amb",".ann",".bwt",".pac",".sa"]
@@ -1794,7 +1800,6 @@ def build_indexes(default_read_type, assembly_name, need_rna_index, threads, for
             run(["hisat2-build","-p",str(threads), str(ref_prefix), str(ht2_base)])
         else:
             console.print("Índice HISAT2 → [bold]SKIP[/bold]", style="dim")
-
 # ================== Entrada SRA / FASTQ ===================
 
 def stage_fastqs_from_sra(sra_ids: List[str]):
@@ -2412,7 +2417,6 @@ def align_dna_for_all(dna_samples, threads, default_read_type, cleanup, use_ds):
     outs = sorted(Path("bam").glob("*.mkdup.bam")) + sorted(Path("bam").glob("*.mkdup.cram"))
     if outs:
         print_meta("Alinhados (mkdup)", outs)
-
 # ============== CRAM + Cobertura (mosdepth) ==============
 
 def to_cram_and_coverage(use_cram: bool, threads: int):
@@ -3014,7 +3018,6 @@ def call_variants(samples, threads, mem_gb):
 
     vcfs_final = []
     fai_order = _fai_order_dict()
-
     for bam in aln:
         sample = bam.name.replace(".mkdup.cram","").replace(".mkdup.bam","")
         final_vcf = Path("vcf")/f"{sample}.vcf.gz"
@@ -3308,10 +3311,11 @@ def annotate_with_vep(samples, threads: int):
                 str(vcf_in)
             ]
             
-            console.print(f"[dim]Executando: {' '.join(cmd_filter)}[/dim]")
+            print_cmd(cmd_filter)
             sp.run(cmd_filter, check=True)
             
             # Indexa VCF filtrado
+            print_cmd(["tabix", "-p", "vcf", str(vcf_filtered)])
             sp.run(["tabix", "-p", "vcf", str(vcf_filtered)], check=True)
             
             console.print(f"[green]✅ VCF filtrado criado: {vcf_filtered.name}[/green]")
@@ -3465,6 +3469,7 @@ def annotate_with_vep(samples, threads: int):
             if fai_path.exists():
                 fai_path.unlink()
             console.print("[cyan]📇 Recriando índice .fai...[/cyan]")
+            print_cmd(["samtools", "faidx", str(ref_fa)])
             sp.run(["samtools", "faidx", str(ref_fa)], check=True)
             
             console.print("[green]✅ FASTA reformatado e indexado com sucesso![/green]")
@@ -3544,7 +3549,6 @@ def annotate_with_vep(samples, threads: int):
             f"  vep_install -a cf -s {vep_species} -y {vep_assembly} -c {vep_dir_cache} --NO_BIOPERL"
         )
         raise SystemExit(1)
-
     # --------------- Execução por amostra ---------------
     annotated = []
     for sample in samples:
@@ -3591,7 +3595,9 @@ def annotate_with_vep(samples, threads: int):
                             # Comprime e move para arquivo final
                             console.print(f"[cyan]📦 Comprimindo arquivo recuperado...[/cyan]")
                             with open(out_vep, 'wb') as f:
+                                print_cmd(["bgzip", "-c", str(tmp_vep)])
                                 sp.run(["bgzip", "-c", str(tmp_vep)], stdout=f, check=True)
+                            print_cmd(["tabix", "-p", "vcf", str(out_vep)])
                             sp.run(["tabix", "-p", "vcf", str(out_vep)], check=True)
                             
                             # Remove temporário após sucesso
@@ -3626,6 +3632,7 @@ def annotate_with_vep(samples, threads: int):
         fai_path = ref_fa.with_suffix('.fa.fai')
         if ref_fa.exists() and not fai_path.exists():
             console.print(f"[cyan]📇 Criando índice .fai para {ref_fa.name}...[/cyan]")
+            print_cmd(["samtools", "faidx", str(ref_fa)])
             sp.run(["samtools", "faidx", str(ref_fa)], check=True)
             console.print(f"[green]✅ Índice criado: {fai_path.name}[/green]")
         
@@ -4061,7 +4068,6 @@ def _print_trio_interpretation_report(total, kept, gt_debug, rejected_counts,
     console.print(f"[blue]   • trio/trio_merged.vcf.gz - VCF trio original[/blue]")
     
     console.print("="*100 + "\n")
- 
 def trio_denovo_report(dna_samples):
     child, p1, p2 = _infer_trio_ids(dna_samples)
     if not child:
@@ -4553,7 +4559,6 @@ def _mendel_child_prob(m_alt: int, f_alt: int, c_alt: int) -> float:
             if tm + tf == c_alt:
                 p += pm * pf
     return p
-
 def _paternity_for_pair(merged: Path, child_name:str, mom_name:str, ap_name:str, g:dict, prior:float, eps:float, require_pass:bool) -> dict:
     # Formato por-site com bloco por amostra; sem TAB extra ao final
     # Não requer INFO/AF (nem sempre presente nos VCFs do pipeline)
@@ -4840,6 +4845,338 @@ def paternity_analysis(dna_samples, prior: float|None=None, eps: float|None=None
     #     best_pct = best["posterior"]*100.0
     #     console.print(f"[bold]Filho {child}[/bold]: melhor AP = {best['ap']} (mãe={best['mom']}) | log10(LR)={best['lr_log10']:.3f} | posterior={best_pct:.6f}% | n={best['n_used']}")
 
+# =================== Ancestralidade (ADMIXTURE supervisionado) ===================
+
+def _ensure_ancestry_refs(anc_cfg):
+    """Baixa e prepara o painel HGDP+1KG em PLINK (refs/ancestry)."""
+    ref_dir = Path("refs/ancestry"); ref_dir.mkdir(parents=True, exist_ok=True)
+    tar_url = anc_cfg["reference"]["plink_tar_url"]
+    tsv_url = anc_cfg["reference"]["sample_info_url"]
+    tar_path = ref_dir/"HGDP+1KG_SNPData.tar.gz"
+    tsv_path = ref_dir/"hgdp_1kg_sample_info.tsv"
+    
+    # Download do tar se não existir
+    if not tar_path.exists():
+        console.print(f"[yellow]Baixando dados de referência HGDP+1KG...[/yellow]")
+        run(["conda", "run", "-n", "genomics", "bash", "-lc", f"curl -L --retry 5 -o {tar_path} '{tar_url}'"])
+    
+    # Download do TSV se não existir
+    if not tsv_path.exists():
+        console.print(f"[yellow]Baixando informações das amostras...[/yellow]")
+        run(["conda", "run", "-n", "genomics", "bash", "-lc", f"curl -L --retry 5 -o {tsv_path} '{tsv_url}'"])
+    
+    out_dir = ref_dir/"hgdp1kg"
+    
+    # Verificar se já foi extraído corretamente procurando qualquer arquivo .fam
+    fam_files = list(out_dir.glob("*.fam")) if out_dir.exists() else []
+    
+    if not fam_files:
+        console.print(f"[yellow]Extraindo dados de referência...[/yellow]")
+        # Limpar diretório se existir e estiver vazio ou corrompido
+        if out_dir.exists():
+            import shutil
+            shutil.rmtree(out_dir)
+        out_dir.mkdir(exist_ok=True)
+        
+        # Extrair usando conda run para garantir ambiente correto
+        run(["conda", "run", "-n", "genomics", "bash", "-lc", 
+             f"tar -xzf {tar_path} -C {out_dir}"])
+        
+        # Verificar se a extração foi bem-sucedida
+        fam_files = list(out_dir.glob("*.fam"))
+        if not fam_files:
+            raise RuntimeError(f"Falha na extração do tar. Nenhum arquivo .fam encontrado em {out_dir}.")
+        console.print(f"[green]Extração concluída. Encontrados {len(fam_files)} arquivos .fam[/green]")
+    
+    return out_dir, tsv_path
+
+def _make_ref_subset_and_popfile(ref_dir: Path, sample_info_tsv: Path, anc_cfg):
+    """
+    Cria subpainel PLINK com as populações desejadas e gera:
+      - ref_sub.{bed,bim,fam}
+      - ref.pop (categoria por indivíduo de referência na mesma ordem)
+    """
+    plink = (anc_cfg.get("tools") or {}).get("plink","plink")
+    categories = list(anc_cfg["categories"].keys())
+    cat_to_pops = anc_cfg["categories"]
+    pop_to_cat = {p.lower():cat for cat, pops in cat_to_pops.items() for p in pops}
+
+    # Verificar se o subpainel já foi criado (idempotência)
+    ref_sub_bed = ref_dir/"ref_sub.bed"
+    ref_pop_file = ref_dir/"ref.pop"
+    
+    if ref_sub_bed.exists() and ref_pop_file.exists():
+        console.print("[bold]Subpainel de referência → SKIP (já existe)[/bold]")
+        return ref_dir/"ref_sub", ref_pop_file, categories
+
+    # === NOVO: detectar automaticamente o prefixo dos arquivos PLINK extraídos ===
+    fam_list = sorted(ref_dir.glob("*.fam"))
+    if not fam_list:
+        raise RuntimeError(f"Nenhum .fam encontrado em {ref_dir}. Verifique a extração do tar.")
+    # preferir nomes que contenham 'hgdp' ou '1kg', senão pega o primeiro
+    preferred = [p for p in fam_list if ("hgdp" in p.stem.lower() or "1kg" in p.stem.lower())]
+    fam_path = preferred[0] if preferred else fam_list[0]
+    ref_prefix = fam_path.with_suffix("")  # caminho sem extensão para --bfile
+
+    # Carregar IDs presentes no .fam (Family ID e Individual ID)
+    fam_data = []
+    with open(fam_path) as f:
+        for ln in f:
+            parts = ln.split()
+            if len(parts) >= 2:
+                fam_id, ind_id = parts[0], parts[1]
+                fam_data.append((fam_id, ind_id))
+    
+    # Criar um mapeamento de Individual ID para Family ID
+    ind_to_fam = {ind_id: fam_id for fam_id, ind_id in fam_data}
+    fam_ids = [ind_id for fam_id, ind_id in fam_data]
+    possible_id_cols = ["s","sample","sample_id","Sample","ID","iid","IID"]
+    possible_pop_cols= ["pop","population","Population","research_population","SuperPop"]
+
+    rows=[]
+    with open(sample_info_tsv,"r") as fh:
+        rd = csv.reader(fh, delimiter="\t")
+        header = next(rd)
+        id_idx = next((i for i,h in enumerate(header) if h in possible_id_cols), None)
+        pop_idx= next((i for i,h in enumerate(header) if h in possible_pop_cols), None)
+        if id_idx is None or pop_idx is None:
+            raise RuntimeError("Não encontrei colunas de ID/pop em sample_info TSV.")
+        for r in rd:
+            rows.append((r[id_idx], r[pop_idx].lower()))
+
+    keep=[]
+    fam_set=set(fam_ids)
+    for iid,pop in rows:
+        if iid in fam_set and pop in pop_to_cat:
+            keep.append((iid, pop_to_cat[pop]))
+    if not keep:
+        raise RuntimeError("Nenhuma amostra do painel corresponde às populações pedidas.")
+
+    keep_path = ref_dir/"keep.ids"
+    pop_path  = ref_dir/"ref.pop"
+    with open(keep_path,"w") as fh, open(pop_path,"w") as ph:
+        for iid,cat in keep:
+            # Usar Family ID e Individual ID do arquivo .fam
+            fam_id = ind_to_fam.get(iid, iid)  # fallback para o próprio ID se não encontrar
+            fh.write(f"{fam_id} {iid}\n")
+            ph.write(f"{cat}\n")
+
+    # usar o prefixo detectado e conda run
+    console.print(f"[yellow]Criando subpainel de referência com {len(keep)} amostras...[/yellow]")
+    run(["conda", "run", "-n", "genomics", plink, "--bfile", str(ref_prefix), "--keep", str(keep_path),
+                 "--make-bed", "--out", str(ref_dir/"ref_sub")])
+
+    return ref_dir/"ref_sub", pop_path, categories
+
+def _convert_vcf_to_bed(vcf: Path, out_prefix: Path, anc_cfg):
+    """Converte VCF para formato PLINK BED com idempotência."""
+    bed_file = out_prefix.with_suffix(".bed")
+    
+    if bed_file.exists():
+        console.print(f"[bold]Conversão VCF→BED {out_prefix.name} → SKIP (já existe)[/bold]")
+        return
+        
+    plink2 = anc_cfg["tools"].get("plink2","plink2")
+    console.print(f"[yellow]Convertendo {vcf.name} para formato PLINK...[/yellow]")
+    
+    # Primeira conversão: apenas filtros básicos
+    temp_prefix = out_prefix.with_name(out_prefix.stem + ".temp")
+    run(["conda", "run", "-n", "genomics", plink2, "--vcf", str(vcf), "--double-id", "--snps-only", "just-acgt",
+                 "--max-alleles", "2", "--chr", "1-22", "--make-bed", "--out", str(temp_prefix)])
+    
+    # Segunda etapa: normalizar IDs usando PLINK1 com contador sequencial
+    plink = anc_cfg["tools"].get("plink","plink")
+    console.print(f"[yellow]Normalizando IDs das variantes...[/yellow]")
+    run(["conda", "run", "-n", "genomics", plink, "--bfile", str(temp_prefix), 
+                 "--set-missing-var-ids", "@:#_\\$1_\\$2", "--make-bed", "--out", str(out_prefix)])
+    
+    # Limpar apenas arquivos temporários (com .temp no nome)
+    for suf in [".bed", ".bim", ".fam", ".log", ".nosex"]:
+        temp_file = temp_prefix.with_suffix(suf)
+        if temp_file.exists() and ".temp" in temp_file.name:
+            temp_file.unlink()
+
+def _merge_and_prune(ref_prefix: Path, samp_prefix: Path, anc_cfg):
+    """Merge dados de referência com amostra e aplica QC com idempotência."""
+    final_bed = samp_prefix.with_name(samp_prefix.stem + ".pruned.bed")
+    
+    if final_bed.exists():
+        console.print(f"[bold]Merge e QC {samp_prefix.name} → SKIP (já existe)[/bold]")
+        return samp_prefix.with_name(samp_prefix.stem + ".pruned")
+    
+    plink = anc_cfg["tools"].get("plink","plink")
+    qc = anc_cfg["qc"]; maf = str(qc.get("maf",0.01)); geno = str(qc.get("geno_missing",0.05))
+    w,s,r2 = map(str, qc.get("indep_pairwise",[200,50,0.2]))
+    
+    console.print(f"[yellow]Fazendo merge e QC para {samp_prefix.name}...[/yellow]")
+    
+    # Merge (com tratamento de inconsistências de strand)
+    merge_cmd = ["conda", "run", "-n", "genomics", plink, "--bfile", str(ref_prefix), "--bmerge", f"{samp_prefix}.bed", f"{samp_prefix}.bim", f"{samp_prefix}.fam",
+                 "--make-bed", "--out", f"{samp_prefix}.merged"]
+    
+    try:
+        run(merge_cmd)
+    except sp.CalledProcessError:
+        # Se o merge falhar, aplicar estratégia de correção
+        console.print(f"[yellow]Merge falhou. Aplicando correções de compatibilidade...[/yellow]")
+        flip_file = f"{samp_prefix}.merged-merge.missnp"
+        
+        if Path(flip_file).exists():
+            # Tentar flip nos dados originais
+            try:
+                run(["conda", "run", "-n", "genomics", plink, "--bfile", f"{samp_prefix}", "--flip", flip_file,
+                             "--make-bed", "--out", f"{samp_prefix}.flipped"])
+                # Merge com dados flipped
+                run(["conda", "run", "-n", "genomics", plink, "--bfile", str(ref_prefix), "--bmerge", f"{samp_prefix}.flipped.bed", f"{samp_prefix}.flipped.bim", f"{samp_prefix}.flipped.fam",
+                             "--make-bed", "--out", f"{samp_prefix}.merged"])
+            except sp.CalledProcessError:
+                # Fallback: excluir SNPs problemáticos
+                console.print(f"[yellow]Flip falhou. Excluindo SNPs problemáticos de ambos os painéis...[/yellow]")
+                run(["conda", "run", "-n", "genomics", plink, "--bfile", f"{samp_prefix}", "--exclude", flip_file,
+                             "--make-bed", "--out", f"{samp_prefix}.clean"])
+                run(["conda", "run", "-n", "genomics", plink, "--bfile", str(ref_prefix), "--exclude", flip_file,
+                             "--make-bed", "--out", f"{ref_prefix}.clean"])
+                run(["conda", "run", "-n", "genomics", plink, "--bfile", f"{ref_prefix}.clean", "--bmerge", f"{samp_prefix}.clean.bed", f"{samp_prefix}.clean.bim", f"{samp_prefix}.clean.fam",
+                             "--make-bed", "--out", f"{samp_prefix}.merged"])
+        else:
+            raise RuntimeError(f"Merge falhou e arquivo de flip {flip_file} não foi gerado")
+    
+    # Filtros de QC
+    run(["conda", "run", "-n", "genomics", plink, "--bfile", f"{samp_prefix}.merged", "--maf", maf, "--geno", geno,
+                 "--make-bed", "--out", f"{samp_prefix}.flt"])
+    
+    # Pruning
+    run(["conda", "run", "-n", "genomics", plink, "--bfile", f"{samp_prefix}.flt", "--indep-pairwise", w, s, r2, "--out", f"{samp_prefix}.flt"])
+    run(["conda", "run", "-n", "genomics", plink, "--bfile", f"{samp_prefix}.flt", "--extract", f"{samp_prefix}.flt.prune.in",
+                 "--make-bed", "--out", f"{samp_prefix}.pruned"])
+    
+    # Filtro adicional: remover amostras com muitos genótipos faltantes (>95%)
+    console.print(f"[yellow]Aplicando filtro de qualidade das amostras...[/yellow]")
+    run(["conda", "run", "-n", "genomics", plink, "--bfile", f"{samp_prefix}.pruned", "--mind", "0.95",
+                 "--make-bed", "--out", f"{samp_prefix}.pruned"])
+    
+    return samp_prefix.with_name(samp_prefix.stem + ".pruned")
+
+def _map_columns_to_categories(q_lines, popfile_path: Path, categories):
+    """Mapeia colunas do Q para categorias usando médias nas amostras de referência."""
+    pop_labels=[ln.strip() for ln in open(popfile_path) if ln.strip()]
+    n_ref=len(pop_labels)
+    Qref=[[float(x) for x in q_lines[i].split()] for i in range(n_ref)]
+    K=len(Qref[0])
+    means={cat:[0.0]*K for cat in categories}
+    counts={cat:0 for cat in categories}
+    for row,cat in zip(Qref, pop_labels):
+        if cat in means:
+            counts[cat]+=1
+            for j,v in enumerate(row): means[cat][j]+=v
+    for cat in categories:
+        if counts[cat]>0: means[cat]=[v/counts[cat] for v in means[cat]]
+    # atribuição gulosa coluna↔categoria
+    used=set(); mapping={}
+    prefs=[]
+    for cat in categories:
+        order=sorted(range(K), key=lambda j: means[cat][j], reverse=True)
+        prefs.extend((cat,j,means[cat][j]) for j in order)
+    prefs.sort(key=lambda t:t[2], reverse=True)
+    for cat,j,_ in prefs:
+        if cat in mapping or j in used: continue
+        mapping[cat]=j; used.add(j)
+        if len(mapping)==K: break
+    for cat in categories:
+        if cat not in mapping:
+            for j in range(K):
+                if j not in used: mapping[cat]=j; used.add(j); break
+    return [mapping[cat] for cat in categories]
+
+def ancestry_admixture_step(cfg):
+    if not cfg["steps"].get("ancestry", False): return
+    anc = cfg.get("ancestry", {})
+    threads = int(anc.get("threads", 8))
+    admixture = anc["tools"].get("admixture","admixture")
+    categories = list(anc.get("categories", {}).keys())
+    K = int(anc.get("k", max(2, len(categories) + 1)))  # +1 para amostra desconhecida
+    
+    Path("ancestry").mkdir(exist_ok=True)
+    
+    # Verificar se os resultados finais já existem (idempotência completa)
+    out_k = Path("ancestry")/f"ancestry_summary_K{K}.tsv"
+    collapse = anc.get("collapse", None)
+    out_col = Path("ancestry")/"ancestry_summary_collapsed.tsv" if collapse else None
+    
+    all_outputs_exist = out_k.exists() and (out_col is None or out_col.exists())
+    
+    if all_outputs_exist:
+        console.print("[bold]Ancestralidade → SKIP (resultados já existem)[/bold]")
+        outs = [out_k]
+        if out_col: outs.append(out_col)
+        print_meta(f"Ancestralidade (ADMIXTURE K={K})", outs)
+        return
+    
+    ref_dir, sample_info_tsv = _ensure_ancestry_refs(anc)
+    ref_sub, ref_pop, categories = _make_ref_subset_and_popfile(ref_dir, sample_info_tsv, anc)
+    
+    samples = [s["id"] for s in cfg["dna_samples"]]
+    header_k = ["sample"] + categories
+    lines_k = ["\t".join(header_k)]
+    lines_col = ["\t".join(["sample"] + list(collapse.keys()))] if isinstance(collapse, dict) else None
+    
+    for sid in samples:
+        vcf = Path("vcf")/f"{sid}.vcf.gz"
+        if not vcf.exists():
+            console.print(f"[yellow]VCF da amostra {sid} não encontrado (pulando).[/yellow]")
+            continue
+            
+        # Verificar se os resultados já existem para esta amostra
+        outpfx = Path("ancestry")/sid
+        qfile_expected = outpfx.with_name(outpfx.stem + f".pruned.{K}.Q")
+        
+        if qfile_expected.exists():
+            console.print(f"[bold]ADMIXTURE {sid} → SKIP (resultado já existe)[/bold]")
+        else:
+            _convert_vcf_to_bed(vcf, outpfx, anc)
+            merged = _merge_and_prune(ref_sub, outpfx, anc)
+            popfile = merged.with_suffix(".pop")
+            
+            # Criar arquivo .pop para ADMIXTURE
+            with open(ref_pop,"r") as rp, open(popfile,"w") as ph:
+                for ln in rp: ph.write(ln)
+                ph.write("0\n")  # categoria 0 para amostra desconhecida
+            
+            console.print(f"[yellow]Executando ADMIXTURE supervisionado para {sid}...[/yellow]")
+            run(["conda", "run", "-n", "genomics", admixture, "--supervised", f"-j{threads}", 
+                 str(merged) + ".bed", str(K)])
+        
+        # Processar resultados
+        qfile = qfile_expected
+        if qfile.exists():
+            q_lines=[l.strip() for l in open(qfile) if l.strip()]
+            col_order = _map_columns_to_categories(q_lines, qfile.parent/(qfile.stem.replace(f".{K}", "") + ".pop"), categories)
+            sample_vec=[float(x) for x in q_lines[-1].split()]
+            vec_ord=[sample_vec[j] for j in col_order]
+            lines_k.append("\t".join([sid] + [f"{100.0*v:.2f}" for v in vec_ord]))
+            
+            if lines_col is not None:
+                cat_val={cat:val for cat,val in zip(categories, vec_ord)}
+                collapse_vals=[]
+                for grp, cats in collapse.items():
+                    s=sum(cat_val.get(c,0.0) for c in cats)
+                    collapse_vals.append(f"{100.0*s:.2f}")
+                lines_col.append("\t".join([sid]+collapse_vals))
+            
+            console.print(f"[green]→ {sid}: " + ", ".join([f"{cat} {100.0*v:.1f}%" for cat,v in zip(categories, vec_ord)]) + "[/green]")
+        else:
+            console.print(f"[red]Erro: arquivo de resultados {qfile} não foi gerado para {sid}[/red]")
+    
+    # Salvar resultados finais
+    with open(out_k,"w") as fh: fh.write("\n".join(lines_k)+"\n")
+    outs=[out_k]
+    
+    if lines_col is not None:
+        with open(out_col,"w") as fh: fh.write("\n".join(lines_col)+"\n")
+        outs.append(out_col)
+    
+    print_meta(f"Ancestralidade (ADMIXTURE K={K})", outs)
+
 # =================== Lista de genes ===================
 
 def gene_list_from_gtf():
@@ -4854,7 +5191,6 @@ def gene_list_from_gtf():
     cmd = r'''awk '$3=="gene"{print $0}' refs/genes.gtf | sed -n 's/.*gene_name "\([^"]*\)".*/\1/p' | sort -u > genes/gene_list.txt'''
     run(["conda", "run", "-n", "genomics", "bash","-lc",cmd])
     print_meta("Lista de genes", [out])
-
 # ============ Presença de genes por amostra (cobertura) ============
 
 def _build_genes_bed_from_gtf(gtf: Path, out_bed: Path):
@@ -5264,9 +5600,15 @@ def main(cfg):
         paternity_analysis(dna_samples)
         step_done("Paternidade concluída")
 
+    # Ancestralidade (opcional)
+    if steps.get("ancestry", False):
+        stage_banner("14) Ancestralidade (ADMIXTURE supervisionado)")
+        ancestry_admixture_step(cfg)
+        step_done("Ancestralidade concluída")
+
     # RNA-seq (opcional)
     if steps.get("rnaseq", False) and g.get("rnaseq", False):
-        stage_banner("14) RNA-seq (opcional)")
+        stage_banner("15) RNA-seq (opcional)")
         rnaseq_pipeline(cfg.get("rna_samples", []), g["threads"], g["assembly_name"])
         step_done("RNA-seq concluído")
 
@@ -5282,4 +5624,3 @@ if __name__=="__main__":
     cfg_global = cfg
     console.print(Panel.fit(f"[bold]YAML normalizado[/bold]\nChaves topo: {list(cfg.keys())}\nGeneral → {', '.join(sorted(list(cfg['general'].keys()))[:12])}...", border_style="cyan"))
     main(cfg)
-

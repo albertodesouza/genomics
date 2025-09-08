@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# set -euo pipefail
 
 ENV_NAME="genomics"
 PYTHON_VERSION="3.10"
@@ -26,7 +26,8 @@ mamba install -y -c conda-forge -c bioconda --channel-priority flexible \
   gffread ensembl-vep bcftools \
   hisat2 stringtie gffcompare wget \
   mosdepth seqtk pigz \
-  perl-dbi perl-app-cpanminus
+  perl-dbi perl-app-cpanminus \
+  admixture plink plink2
 
 # Instalar módulo Perl DBI atualizado via cpanminus para evitar erro de versão
 cpanm DBI
