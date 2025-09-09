@@ -5006,6 +5006,7 @@ def _merge_and_prune(ref_prefix: Path, samp_prefix: Path, anc_cfg):
     
     plink = anc_cfg["tools"].get("plink","plink")
     qc = anc_cfg["qc"]; maf = str(qc.get("maf",0.01)); geno = str(qc.get("geno_missing",0.05))
+    mind = str(qc.get("mind",0.99))
     w,s,r2 = map(str, qc.get("indep_pairwise",[200,50,0.2]))
     
     console.print(f"[yellow]Fazendo merge e QC para {samp_prefix.name}...[/yellow]")
@@ -5050,10 +5051,18 @@ def _merge_and_prune(ref_prefix: Path, samp_prefix: Path, anc_cfg):
     run(["conda", "run", "-n", "genomics", plink, "--bfile", f"{samp_prefix}.flt", "--extract", f"{samp_prefix}.flt.prune.in",
                  "--make-bed", "--out", f"{samp_prefix}.pruned"])
     
-    # Filtro adicional: remover amostras com muitos genótipos faltantes (>95%)
-    console.print(f"[yellow]Aplicando filtro de qualidade das amostras...[/yellow]")
-    run(["conda", "run", "-n", "genomics", plink, "--bfile", f"{samp_prefix}.pruned", "--mind", "0.95",
+    # Filtro adicional: remover amostras com muitos genótipos faltantes
+    console.print(f"[yellow]Aplicando filtro de qualidade das amostras (mind={mind})...[/yellow]")
+    run(["conda", "run", "-n", "genomics", plink, "--bfile", f"{samp_prefix}.pruned", "--mind", mind,
                  "--make-bed", "--out", f"{samp_prefix}.pruned"])
+    
+    # Copiar arquivo .pop para corresponder aos dados pruned
+    base_pop = f"{samp_prefix}.pop"  # arquivo .pop original (antes do merge)
+    pruned_pop = f"{samp_prefix}.pruned.pop"
+    if Path(base_pop).exists():
+        console.print(f"[yellow]Copiando arquivo .pop para dados pruned...[/yellow]")
+        import shutil
+        shutil.copy2(base_pop, pruned_pop)
     
     return samp_prefix.with_name(samp_prefix.stem + ".pruned")
 
@@ -5094,7 +5103,7 @@ def ancestry_admixture_step(cfg):
     threads = int(anc.get("threads", 8))
     admixture = anc["tools"].get("admixture","admixture")
     categories = list(anc.get("categories", {}).keys())
-    K = int(anc.get("k", max(2, len(categories) + 1)))  # +1 para amostra desconhecida
+    K = int(anc.get("k", max(2, len(categories))))  # K = populações de referência apenas
     
     Path("ancestry").mkdir(exist_ok=True)
     
@@ -5134,17 +5143,20 @@ def ancestry_admixture_step(cfg):
             console.print(f"[bold]ADMIXTURE {sid} → SKIP (resultado já existe)[/bold]")
         else:
             _convert_vcf_to_bed(vcf, outpfx, anc)
+            
+            # Criar arquivo .pop para ADMIXTURE ANTES do merge/prune
+            temp_popfile = outpfx.with_suffix(".pop")
+            with open(ref_pop,"r") as rp, open(temp_popfile,"w") as ph:
+                for ln in rp: ph.write(ln)
+                # NÃO adicionar "0" - ADMIXTURE supervisionado não precisa
+            
             merged = _merge_and_prune(ref_sub, outpfx, anc)
             popfile = merged.with_suffix(".pop")
             
-            # Criar arquivo .pop para ADMIXTURE
-            with open(ref_pop,"r") as rp, open(popfile,"w") as ph:
-                for ln in rp: ph.write(ln)
-                ph.write("0\n")  # categoria 0 para amostra desconhecida
-            
             console.print(f"[yellow]Executando ADMIXTURE supervisionado para {sid}...[/yellow]")
-            run(["conda", "run", "-n", "genomics", admixture, "--supervised", f"-j{threads}", 
-                 str(merged) + ".bed", str(K)])
+            # ADMIXTURE deve executar no diretório ancestry/ para gerar arquivos no local correto
+            run(["conda", "run", "-n", "genomics", "bash", "-lc", 
+                 f"cd ancestry && admixture --supervised -j{threads} {merged.name}.bed {K}"])
         
         # Processar resultados
         qfile = qfile_expected
