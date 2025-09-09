@@ -5,8 +5,10 @@ _A technical-scientific guide to `genomes_analyzer.py`_
 ## Index
 - [Abstract](#abstract)
 - [Introduction](#introduction)
+- [What's new](#whats-new)
 - [Genomes Analyzer Pipeline](#genomes-analyzer-pipeline)
 - [How to Use the Genomes Analyzer](#how-to-use-the-genomes-analyzer)
+- [Background execution & monitoring](#background-execution--monitoring)
 - [Conclusion](#conclusion)
 - [Appendix 1 — Tools & typical usage](#appendix-1--tools--typical-usage)
 
@@ -28,6 +30,20 @@ This document introduces the pipeline to readers **without assuming prior genomi
 - You need to **choose between** GATK and BCFtools callers without rewriting your workflow.
 - You want robust **parallel sharding** of the reference genome to utilize multi-core CPUs.
 - You value **clear logging**—what is running, on which intervals, and how progress looks over time.
+
+---
+
+## What's new
+
+Recent updates expanded the pipeline, improved resilience, and enriched the YAML configuration. Highlights:
+
+- Paternity analysis: likelihood-based SNP evaluation with configurable thresholds and optional use of VEP allele frequencies.
+- Ancestry (ADMIXTURE supervised): supervised ADMIXTURE using HGDP+1KG reference, with QC, pruning and category collapsing.
+- Idempotent ancestry pipeline: reuses existing outputs, checks for prepared references and intermediate PLINK files.
+- More robust bcftools execution: all heavy commands run via `conda run -n genomics bash -lc` for consistent environments.
+- Background-friendly logging: optional wider logs, emojis, and colors when running detached.
+- New config profiles: low memory, latest reference (GENCODE r46), and a “monster” profile for 128 cores/256 GB.
+- Universal environment bootstrap: `start_genomics_universal.sh` auto-detects Conda locations and activates `genomics`.
 
 ### Key inputs and outputs
 
@@ -59,6 +75,8 @@ FASTQ
   ├── Final VCF quality control
   ├── Gene list & per-sample coverage
   ├── Pairwise & trio comparisons
+  ├── Paternity analysis (likelihood-based)
+  ├── Ancestry (ADMIXTURE supervised)
   └── [Optional] RNA-seq module
 ```
 
@@ -201,7 +219,19 @@ For cohorts or family trios, the pipeline can compare VCFs pairwise and flag can
 
 *Outputs*: reports in `comparisons/` and `trio/` directories.
 
-### 14. Optional RNA-seq Module
+### 14. Paternity Analysis
+
+Calculates per-candidate paternity likelihoods based on trios of genotypes (child, mother, alleged parent). Applies coverage (DP), genotype quality heuristics, and optional VEP allele frequencies to compute a per-site Paternity Index and overall likelihood ratio.
+
+*Outputs*: TSVs per pair in `paternity/` and a summary `paternity/paternity_summary.md`.
+
+### 15. Ancestry (ADMIXTURE supervised)
+
+Runs supervised ADMIXTURE using HGDP+1KG as reference, with QC filters (MAF, missingness), LD pruning and optional category collapsing. Fully idempotent: reuses prepared PLINK references and skips if final summary exists.
+
+*Outputs*: results in `ancestry/`, including `ancestry_summary_K{K}.tsv` and optional `ancestry_summary_collapsed.tsv`.
+
+### 16. Optional RNA-seq Module
 
 If RNA-seq samples are defined in the YAML, a lightweight expression pipeline (HISAT2 → StringTie → gffcompare) is executed after DNA analysis.
 
@@ -246,7 +276,12 @@ fi
 
 conda activate
 ./install_genomics_env.sh
-source vep_install.sh
+# VEP: escolha um instalador
+# Opção padrão e resiliente:
+source vep_install_smart.sh
+# Alternativas:
+# source vep_install_latest.sh
+# source vep_install_fixed.sh
 ```
 
 ### Starting the environment
@@ -255,7 +290,10 @@ Leave any active conda environment and initialize the session:
 
 ```bash
 conda deactivate
-source start_genomics.sh
+# Método universal (auto‑detecta conda):
+source start_genomics_universal.sh
+# Alternativa simples, se seu conda está em ~/miniforge3:
+# source start_genomics.sh
 ```
 
 ### Running the pipeline
@@ -266,13 +304,20 @@ Execute the workflow by pointing the script to your YAML file:
 conda deactivate
 source start_genomics.sh
 ./genomes_analyzer.py --config config_human_30x_low_memory.yaml
+
+# Perfis prontos:
+#  - config_human_30x.yaml              (trio 30×, ENA/1000G)
+#  - config_human_30x_low_memory.yaml   (downsample 25%, footprint reduzido)
+#  - config_human_30x_latest_ref.yaml   (GENCODE r46, GRCh38 primary)
+#  - config_human_30x_monster.yaml      (128 cores / 256 GB, K=4 ancestry, VEP rápido)
+#  - config_human_30x_filtered.yaml     (exemplo com filtros mais restritos)
 ```
 
 The console prints progress panels, including per-shard heartbeats when variant calling is parallelized.
 
-### YAML Configuration: `config_human_30x_low_memory.yaml`
+### YAML Configuration (updated)
 
-`genomes_analyzer.py` is driven by a YAML file. The example `config_human_30x_low_memory.yaml` targets a human trio at ~30× coverage using memory‑efficient settings. Important sections are summarized below.
+`genomes_analyzer.py` is driven by a YAML file. The examples provided target human trios at ~30× and include multiple profiles. Important sections are summarized below and extended with new analysis modules.
 
 #### project
 
@@ -293,6 +338,18 @@ The console prints progress panels, including per-shard heartbeats when variant 
 | `bwa_batch_k` | Reads per batch for BWA; smaller uses less RAM. | `20000000` |
 | `aln_threads` | Threads for alignment. | `16` |
 | `gene_presence_min_mean_cov` | Minimum average coverage to consider a gene present. | `5.0` |
+| `gene_presence_min_breadth_1x` | Minimum breadth at 1× to consider present. | `0.8` |
+| `trio_child_id` / `trio_parent_ids` | Trio IDs used by trio/paternity analyses. | `NA12878` / `[NA12891, NA12892]` |
+| `trio_min_dp_child` / `trio_min_dp_parents` | Minimum depth for trio filters. | `15` / `15` |
+| `trio_min_gq` | Minimum genotype quality for trio filters. | `30` |
+| `trio_min_ab_het` / `trio_max_ab_het` | Allelic balance range for hets. | `0.25` / `0.75` |
+| `trio_min_ab_hom` | Minimum alt fraction for hom‐alt. | `0.90` |
+| `trio_max_parent_alt_frac` | Max alt fraction tolerated in parents at de novo sites. | `0.02` |
+| `paternity_prior` | Prior for paternity before evidence. | `0.5` |
+| `paternity_epsilon` | Small error rate to avoid degenerate likelihoods. | `0.001` |
+| `paternity_require_pass` / `paternity_force_pass` | Use only FILTER=PASS variants; force if tag missing. | `true` / `true` |
+| `paternity_use_vep_af` | Use VEP allele frequencies in likelihoods. | `true/false` |
+| `paternity_skip_all_hets` | Skip sites where trio is all heterozygous. | `true/false` |
 
 #### params
 
@@ -305,6 +362,10 @@ Alignment and variant-calling options.
 | `bcf_mapq` / `bcf_baseq` | Minimum mapping/base quality in `mpileup`. | `20` |
 | `bcf_scatter_parts` | Number of BED shards for parallel calling. | `16` |
 | `hc_java_mem_gb` | Heap size for GATK HaplotypeCaller. | `24` |
+| `bcf_mapq` / `bcf_baseq` / `bcf_max_depth` | bcftools mpileup quality and depth caps. | `20/20/500` |
+| `bcf_scatter_parts` / `bcf_max_parallel` | Shards and parallelism for calling. | `16..64` / `N cores` |
+| `bwa_index_*` | BWA index tuning for high‑RAM hosts. | see monster config |
+| `vep_*` / `annotate_with_vep` | VEP tuning and cache settings. | see monster config |
 
 #### storage
 
@@ -355,7 +416,87 @@ Defines the biological samples to process.
 
 #### steps
 
-Ordered list of pipeline actions. Typical values include `fetch_fastqs`, `qc_reads`, `align_and_sort`, `mark_duplicates`, `bqsr`, `call_genes`, and `summarize`.
+Two equivalent ways are supported:
+
+1) Ordered list (legacy):
+
+```yaml
+steps:
+  - fetch_fastqs
+  - qc_reads
+  - align_and_sort
+  - mark_duplicates
+  - bqsr
+  - call_genes
+  - summarize
+```
+
+2) Boolean map (recommended, clearer with new modules):
+
+```yaml
+steps:
+  refs_and_indexes: true
+  fetch_fastqs: true
+  estimate_space: true
+  downsample: true
+  qc_and_trimming: true
+  align_and_sort: true
+  cram_and_coverage: true
+  variants_and_vep: true
+  gene_list: true
+  gene_presence: true
+  pairwise: true
+  trio_denovo: true
+  paternity: true
+  ancestry: true
+  rnaseq: false
+```
+
+If both forms are present, the boolean map takes precedence.
+
+#### ancestry
+
+Controls the supervised ADMIXTURE module.
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `method` | Currently `admixture_supervised`. | `admixture_supervised` |
+| `k` | Number of ancestral populations (K). | `4` |
+| `threads` | Threads for ADMIXTURE/PLINK. | `32` |
+| `tools.plink` / `tools.plink2` / `tools.admixture` | Executable names. | `plink` / `plink2` / `admixture` |
+| `qc.maf` | Minor allele frequency filter. | `0.01` |
+| `qc.geno_missing` | Genotype missingness per SNP (max). | `0.05` |
+| `qc.mind` | Sample missingness (remove if > threshold). | `0.99999` |
+| `qc.indep_pairwise` | LD pruning window/step/r2. | `[200, 50, 0.2]` |
+| `reference.plink_tar_url` | HGDP+1KG PLINK tarball. | URL |
+| `reference.sample_info_url` | Sample metadata for reference. | URL |
+| `categories` | Map from labels to superpop codes. | `{europeu: [eur], ...}` |
+| `collapse` | Optional collapsing of categories. | `{europeu: [europeu], ...}` |
+
+---
+
+## Background execution & monitoring
+
+Run detached and monitor long jobs on shared servers or high‑core workstations:
+
+```bash
+# Executar em background (logs com formatação otimizada)
+./run_in_background.sh --config config_human_30x_latest_ref.yaml
+
+# Perfis dedicados
+./run_monster_background.sh --config config_human_30x_monster.yaml
+./run_atena_background.sh   --config config_human_30x_atena.yaml
+
+# Monitores auxiliares
+./monitor_monster.sh
+./monitor_bwa_index.sh
+```
+
+Diagnostics and recovery:
+
+- `diagnose_bcftools_error.sh`: troubleshooting for zero‑variant situations; reproduces bcftools pipelines via `conda run -n genomics` with extra logging.
+- `fix_reference_mismatch.sh`: safeguards and guidance for reference read‑group mismatches.
+- Steps are idempotent; ancestry and heavy bcftools/ADMIXTURE stages check for expected outputs before recomputing.
 
 ---
 
