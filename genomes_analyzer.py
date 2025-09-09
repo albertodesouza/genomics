@@ -286,25 +286,65 @@ def run_bcf_pipeline_with_heartbeat(cmd_str: str, label: str, out_watch: Path,
       - tamanho atual de 'out_watch' (arquivo BGZF sendo escrito)
       - delta de I/O agregado (leituras/escritas) dos processos do pipeline
     """
+    import threading
+    import queue
+    
     console.print(Panel.fit(Text(label, style="bold yellow"), border_style="yellow"))
     console.print("[bold]>[/bold] conda run -n genomics bash -lc " + cmd_str, style="dim")
 
-    proc = sp.Popen(["conda", "run", "-n", "genomics", "bash","-lc", cmd_str], text=False)
+    # Captura stderr para evitar bloqueio com WARNINGs
+    proc = sp.Popen(
+        ["conda", "run", "-n", "genomics", "bash", "-lc", cmd_str], 
+        stdout=sp.PIPE, 
+        stderr=sp.PIPE, 
+        text=True,
+        bufsize=1
+    )
+    
     start = time.time()
     last = start
     last_r = last_w = 0
+    
+    # Thread para consumir stderr e evitar bloqueio
+    stderr_queue = queue.Queue()
+    def stderr_reader():
+        try:
+            while True:
+                line = proc.stderr.readline()
+                if not line:
+                    break
+                stderr_queue.put(line)
+        except Exception:
+            pass
+    
+    stderr_thread = threading.Thread(target=stderr_reader, daemon=True)
+    stderr_thread.start()
 
     while True:
         rc = proc.poll()
         now = time.time()
 
+        # Processa mensagens de stderr sem bloqueio
+        while not stderr_queue.empty():
+            try:
+                stderr_line = stderr_queue.get_nowait().strip()
+                if stderr_line and ("WARNING" in stderr_line or "ERROR" in stderr_line):
+                    # Mostra apenas WARNINGs/ERRORs importantes, truncados
+                    console.print(f"[yellow]⚠️  {stderr_line[:120]}{'...' if len(stderr_line) > 120 else ''}[/yellow]")
+            except queue.Empty:
+                break
+
         if now - last >= heartbeat_sec:
             # tamanho atual do arquivo de saída (se já existir)
             out_bytes = out_watch.stat().st_size if Path(out_watch).exists() else 0
             # I/O agregado da árvore de processos
-            r_tot, w_tot = _sum_proc_io_tree(proc.pid)
-            d_r = max(0, r_tot - last_r); d_w = max(0, w_tot - last_w)
-            last_r, last_w = r_tot, w_tot
+            try:
+                r_tot, w_tot = _sum_proc_io_tree(proc.pid)
+                d_r = max(0, r_tot - last_r); d_w = max(0, w_tot - last_w)
+                last_r, last_w = r_tot, w_tot
+            except Exception:
+                # Se falhar ao ler I/O, continua sem mostrar delta
+                d_r = d_w = 0
 
             elapsed = int(now - start)
             console.print(
@@ -319,8 +359,30 @@ def run_bcf_pipeline_with_heartbeat(cmd_str: str, label: str, out_watch: Path,
             break
         time.sleep(0.5)
 
+    # Aguarda thread de stderr terminar
+    stderr_thread.join(timeout=1.0)
+    
+    # Processa stderr restante
+    remaining_stderr = []
+    while not stderr_queue.empty():
+        try:
+            remaining_stderr.append(stderr_queue.get_nowait().strip())
+        except queue.Empty:
+            break
+    
     if proc.returncode != 0:
+        # Mostra stderr completo em caso de erro
+        if remaining_stderr:
+            console.print(f"[red]❌ Stderr final:[/red]")
+            for line in remaining_stderr[-10:]:  # últimas 10 linhas
+                if line:
+                    console.print(f"[dim]{line}[/dim]")
         raise sp.CalledProcessError(proc.returncode, ["conda", "run", "-n", "genomics", "bash","-lc", cmd_str])
+    elif remaining_stderr:
+        # Mostra resumo de WARNINGs em caso de sucesso
+        warnings = [line for line in remaining_stderr if "WARNING" in line]
+        if warnings:
+            console.print(f"[yellow]⚠️  {len(warnings)} warning(s) gerados (comando executou com sucesso)[/yellow]")
 
 def ensure_dirs():
     for d in ["refs","raw","fastq","fastq_ds","qc","trimmed","bam","vcf","vep","genes","rnaseq","logs"]:
@@ -1486,11 +1548,41 @@ def _build_bwa_index_optimized(ref_prefix: Path, label: str = "BWA"):
     console.print(f"[cyan]🚀 Iniciando criação do índice BWA...[/cyan]")
     
     # Executa em background para monitorar
-    proc = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
+    import threading
+    import queue
+    
+    proc = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.PIPE, text=True, bufsize=1)
+    
+    # Thread para consumir stderr e evitar bloqueio
+    stderr_queue = queue.Queue()
+    stderr_lines = []
+    
+    def stderr_reader():
+        try:
+            while True:
+                line = proc.stderr.readline()
+                if not line:
+                    break
+                stderr_queue.put(line)
+                stderr_lines.append(line)  # Guarda para debug se necessário
+        except Exception:
+            pass
+    
+    stderr_thread = threading.Thread(target=stderr_reader, daemon=True)
+    stderr_thread.start()
     
     while True:
         rc = proc.poll()
         current_time = time.time()
+        
+        # Processa mensagens de stderr sem bloqueio
+        while not stderr_queue.empty():
+            try:
+                stderr_line = stderr_queue.get_nowait().strip()
+                if stderr_line and ("WARNING" in stderr_line or "ERROR" in stderr_line):
+                    console.print(f"[yellow]⚠️  BWA: {stderr_line[:100]}{'...' if len(stderr_line) > 100 else ''}[/yellow]")
+            except queue.Empty:
+                break
         
         # Progress heartbeat
         if current_time - last_progress >= bwa_index_progress_sec:
@@ -1535,13 +1627,24 @@ def _build_bwa_index_optimized(ref_prefix: Path, label: str = "BWA"):
             
         time.sleep(5)
     
+    # Aguarda thread de stderr terminar
+    stderr_thread.join(timeout=2.0)
+    
     # Verifica resultado
     if proc.returncode != 0:
-        stdout, stderr = proc.communicate()
         console.print(f"[red]❌ BWA index falhou com código {proc.returncode}[/red]")
-        if stderr:
-            console.print(f"[red]Erro:[/red] {stderr}")
+        # Mostra últimas linhas de stderr se disponível
+        if stderr_lines:
+            console.print(f"[red]Últimas mensagens de erro:[/red]")
+            for line in stderr_lines[-5:]:
+                if line.strip():
+                    console.print(f"[dim]{line.strip()}[/dim]")
         raise sp.CalledProcessError(proc.returncode, cmd)
+    elif stderr_lines:
+        # Mostra resumo de warnings em caso de sucesso
+        warnings = [line for line in stderr_lines if "WARNING" in line]
+        if warnings:
+            console.print(f"[yellow]⚠️  BWA index concluído com {len(warnings)} warning(s)[/yellow]")
     
     # Relatório final
     elapsed = int(time.time() - start_time)
@@ -1600,11 +1703,41 @@ def _build_bwa_mem2_index_optimized(ref_prefix: Path, label: str = "BWA-MEM2"):
     console.print(f"[green]🚀 Iniciando criação do índice BWA-MEM2...[/green]")
     
     # Executa em background para monitorar
-    proc = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
+    import threading
+    import queue
+    
+    proc = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.PIPE, text=True, bufsize=1)
+    
+    # Thread para consumir stderr e evitar bloqueio
+    stderr_queue = queue.Queue()
+    stderr_lines = []
+    
+    def stderr_reader():
+        try:
+            while True:
+                line = proc.stderr.readline()
+                if not line:
+                    break
+                stderr_queue.put(line)
+                stderr_lines.append(line)  # Guarda para debug se necessário
+        except Exception:
+            pass
+    
+    stderr_thread = threading.Thread(target=stderr_reader, daemon=True)
+    stderr_thread.start()
     
     while True:
         rc = proc.poll()
         current_time = time.time()
+        
+        # Processa mensagens de stderr sem bloqueio
+        while not stderr_queue.empty():
+            try:
+                stderr_line = stderr_queue.get_nowait().strip()
+                if stderr_line and ("WARNING" in stderr_line or "ERROR" in stderr_line):
+                    console.print(f"[yellow]⚠️  BWA-MEM2: {stderr_line[:100]}{'...' if len(stderr_line) > 100 else ''}[/yellow]")
+            except queue.Empty:
+                break
         
         # Progress heartbeat
         if current_time - last_progress >= bwa_mem2_progress_sec:
@@ -1650,13 +1783,24 @@ def _build_bwa_mem2_index_optimized(ref_prefix: Path, label: str = "BWA-MEM2"):
             
         time.sleep(5)
     
+    # Aguarda thread de stderr terminar
+    stderr_thread.join(timeout=2.0)
+    
     # Verifica resultado
     if proc.returncode != 0:
-        stdout, stderr = proc.communicate()
         console.print(f"[red]❌ BWA-MEM2 index falhou com código {proc.returncode}[/red]")
-        if stderr:
-            console.print(f"[red]Erro:[/red] {stderr}")
+        # Mostra últimas linhas de stderr se disponível
+        if stderr_lines:
+            console.print(f"[red]Últimas mensagens de erro:[/red]")
+            for line in stderr_lines[-5:]:
+                if line.strip():
+                    console.print(f"[dim]{line.strip()}[/dim]")
         raise sp.CalledProcessError(proc.returncode, cmd)
+    elif stderr_lines:
+        # Mostra resumo de warnings em caso de sucesso
+        warnings = [line for line in stderr_lines if "WARNING" in line]
+        if warnings:
+            console.print(f"[yellow]⚠️  BWA-MEM2 index concluído com {len(warnings)} warning(s)[/yellow]")
     
     # Relatório final
     elapsed = int(time.time() - start_time)
@@ -3346,12 +3490,42 @@ def annotate_with_vep(samples, threads: int):
         last_size = 0
         
         # Executa VEP em background
-        proc = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
+        import threading
+        import queue
+        
+        proc = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.PIPE, text=True, bufsize=1)
+        
+        # Thread para consumir stderr e evitar bloqueio
+        stderr_queue = queue.Queue()
+        stderr_lines = []
+        
+        def stderr_reader():
+            try:
+                while True:
+                    line = proc.stderr.readline()
+                    if not line:
+                        break
+                    stderr_queue.put(line)
+                    stderr_lines.append(line)  # Guarda para debug se necessário
+            except Exception:
+                pass
+        
+        stderr_thread = threading.Thread(target=stderr_reader, daemon=True)
+        stderr_thread.start()
         
         while True:
             # Verifica se o processo terminou
             rc = proc.poll()
             current_time = time.time()
+            
+            # Processa mensagens de stderr sem bloqueio
+            while not stderr_queue.empty():
+                try:
+                    stderr_line = stderr_queue.get_nowait().strip()
+                    if stderr_line and ("WARNING" in stderr_line or "ERROR" in stderr_line):
+                        console.print(f"[yellow]⚠️  VEP: {stderr_line[:120]}{'...' if len(stderr_line) > 120 else ''}[/yellow]")
+                except queue.Empty:
+                    break
             
             # Heartbeat periódico
             if current_time - last_heartbeat >= heartbeat_sec:
@@ -3387,15 +3561,24 @@ def annotate_with_vep(samples, threads: int):
                 
             time.sleep(1)
         
+        # Aguarda thread de stderr terminar
+        stderr_thread.join(timeout=2.0)
+        
         # Verifica se houve erro
         if proc.returncode != 0:
-            stdout, stderr = proc.communicate()
             console.print(f"[red]❌ VEP falhou com código {proc.returncode}[/red]")
-            if stderr and stderr.strip():
-                console.print(f"[red]Erro VEP:[/red]\n{stderr.strip()}")
-            if stdout and stdout.strip():
-                console.print(f"[dim]Saída VEP:[/dim]\n{stdout.strip()}")
+            # Mostra últimas linhas de stderr se disponível
+            if stderr_lines:
+                console.print(f"[red]Últimas mensagens de erro VEP:[/red]")
+                for line in stderr_lines[-10:]:
+                    if line.strip():
+                        console.print(f"[dim]{line.strip()}[/dim]")
             raise sp.CalledProcessError(proc.returncode, cmd)
+        elif stderr_lines:
+            # Mostra resumo de warnings em caso de sucesso
+            warnings = [line for line in stderr_lines if "WARNING" in line]
+            if warnings:
+                console.print(f"[yellow]⚠️  VEP concluído com {len(warnings)} warning(s)[/yellow]")
         
         # Relatório final
         elapsed = int(time.time() - start_time)
