@@ -5371,6 +5371,7 @@ def ancestry_admixture_step(cfg):
             
             console.print(f"[yellow]Executando ADMIXTURE supervisionado para {sid}...[/yellow]")
             # ADMIXTURE deve executar no diretório ancestry/ para gerar arquivos no local correto
+            current_dir = os.getcwd()
             ancestry_dir = os.path.join(current_dir, "ancestry")
             run(["conda", "run", "-n", "genomics", admixture, "--supervised", f"-j{threads}", 
                  f"{merged.name}.bed", str(K)], cwd=ancestry_dir)
