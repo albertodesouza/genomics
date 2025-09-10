@@ -377,7 +377,7 @@ def run_bcf_pipeline_with_heartbeat(cmd_str: str, label: str, out_watch: Path,
             for line in remaining_stderr[-10:]:  # últimas 10 linhas
                 if line:
                     console.print(f"[dim]{line}[/dim]")
-        raise sp.CalledProcessError(proc.returncode, ["conda", "run", "-n", "genomics",  cmd_str])
+        raise sp.CalledProcessError(proc.returncode, ["conda", "run", "-n", "genomics", "bash","-lc", cmd_str])
     elif remaining_stderr:
         # Mostra resumo de WARNINGs em caso de sucesso
         warnings = [line for line in remaining_stderr if "WARNING" in line]
@@ -400,7 +400,7 @@ def _du_bytes(path: Path) -> int:
     """Tamanho total em bytes (recursivo) de 'path' usando du -sb (rápido e robusto)."""
     try:
         out = sp.run(
-            ["conda", "run", "-n", "genomics",  f"du -sb {shlex.quote(str(path))} 2>/dev/null | cut -f1"],
+            ["conda", "run", "-n", "genomics", "bash","-lc", f"du -sb {shlex.quote(str(path))} 2>/dev/null | cut -f1"],
             capture_output=True, text=True, check=True
         ).stdout.strip()
         return int(out) if out else 0
@@ -501,7 +501,7 @@ def prefetch_with_progress(acc: str, outdir: Path, interval_sec: float = 2.0, st
                     if rc != 0:
                         # Mostra o fim do log pra ajudar no debug
                         try:
-                            tail = sp.run(["conda", "run", "-n", "genomics",  f"tail -n 50 {shlex.quote(str(log_path))}"],
+                            tail = sp.run(["conda", "run", "-n", "genomics", "bash","-lc", f"tail -n 50 {shlex.quote(str(log_path))}"],
                                           capture_output=True, text=True, check=True).stdout
                         except Exception:
                             tail = ""
@@ -543,7 +543,7 @@ def ena_get_fastq_urls(acc: str):
     Filtra apenas *_1.fastq.gz e *_2.fastq.gz.
     """
     fields = "fastq_http,fastq_ftp,fastq_md5"
-    cmd = ["conda", "run", "-n", "genomics", 
+    cmd = ["conda", "run", "-n", "genomics", "bash","-lc",
            f"curl -fsSL 'https://www.ebi.ac.uk/ena/portal/api/filereport?accession={acc}&result=read_run&fields={fields}&format=tsv&download=false' | tail -n +2"]
     r = sp.run(cmd, capture_output=True, text=True)
     if r.returncode != 0 or not r.stdout.strip():
@@ -591,7 +591,7 @@ def ena_fetch_fastqs(acc: str, outdir: Path, threads: int = 8) -> bool:
 
         # Se já existe, valide antes de pular
         if dst.exists():
-            gz_ok = sp.run(["conda", "run", "-n", "genomics",  f"gzip -t {shlex.quote(str(dst))} >/dev/null 2>&1"]).returncode == 0
+            gz_ok = sp.run(["conda", "run", "-n", "genomics", "bash","-lc", f"gzip -t {shlex.quote(str(dst))} >/dev/null 2>&1"]).returncode == 0
             if gz_ok:
                 console.print(f"{fname}: → [bold]SKIP (cache OK)[/bold]")
                 ok_any = True
@@ -600,16 +600,16 @@ def ena_fetch_fastqs(acc: str, outdir: Path, threads: int = 8) -> bool:
                 console.print(f"{fname}: corrompido, refazendo…", style="yellow")
                 dst.unlink(missing_ok=True)
 
-        run(["conda", "run", "-n", "genomics",  f"wget -c -O {shlex.quote(str(dst))} {shlex.quote(url)}"])
+        run(["conda", "run", "-n", "genomics", "bash","-lc", f"wget -c -O {shlex.quote(str(dst))} {shlex.quote(url)}"])
 
         # Valida gzip
-        if sp.run(["conda", "run", "-n", "genomics",  f"gzip -t {shlex.quote(str(dst))} >/dev/null 2>&1"]).returncode != 0:
+        if sp.run(["conda", "run", "-n", "genomics", "bash","-lc", f"gzip -t {shlex.quote(str(dst))} >/dev/null 2>&1"]).returncode != 0:
             console.print(f"[red]{fname}: gzip inválido[/red]")
             continue
 
         # Valida MD5 se fornecido pela API
         if i < len(md5s) and md5s[i]:
-            md5 = sp.run(["conda", "run", "-n", "genomics",  f"md5sum {shlex.quote(str(dst))} | cut -d' ' -f1"],
+            md5 = sp.run(["conda", "run", "-n", "genomics", "bash","-lc", f"md5sum {shlex.quote(str(dst))} | cut -d' ' -f1"],
                          capture_output=True, text=True, check=True).stdout.strip()
             if md5 != md5s[i]:
                 console.print(f"[red]{fname}: MD5 não confere ({md5} != {md5s[i]})[/red]")
@@ -768,7 +768,7 @@ def fasterq_with_progress(source: str, acc: str, outdir: Path, threads: int = 8,
                         return True
                     if rc != 0:
                         try:
-                            tail = sp.run(["conda", "run", "-n", "genomics",  f"tail -n 50 {shlex.quote(str(log_path))}"],
+                            tail = sp.run(["conda", "run", "-n", "genomics", "bash","-lc", f"tail -n 50 {shlex.quote(str(log_path))}"],
                                           capture_output=True, text=True, check=True).stdout
                         except Exception:
                             tail = ""
@@ -1230,7 +1230,7 @@ def _download_and_place(url: str, dst_plain: Path):
     ).returncode == 0
 
     if is_targz:
-        run(["conda", "run", "-n", "genomics",  f"mkdir -p refs/_extracted && tar -xzf {tmp} -C refs/_extracted"])
+        run(["conda", "run", "-n", "genomics", "bash","-lc", f"mkdir -p refs/_extracted && tar -xzf {tmp} -C refs/_extracted"])
         fa_candidates = list(Path("refs/_extracted").rglob("*.fa")) + list(Path("refs/_extracted").rglob("*.fasta"))
         if not fa_candidates:
             raise RuntimeError("Nenhum FASTA (.fa/.fasta) encontrado dentro do tar.")
@@ -1247,12 +1247,12 @@ def _download_and_place(url: str, dst_plain: Path):
         stdout=sp.DEVNULL, stderr=sp.DEVNULL
     ).returncode == 0
     if is_gzip:
-        run(["conda", "run", "-n", "genomics",  f"gzip -dc {tmp} > {dst_plain}"])
+        run(["conda", "run", "-n", "genomics", "bash","-lc", f"gzip -dc {tmp} > {dst_plain}"])
         tmp.unlink(missing_ok=True)
         return
 
     # 3) Caso contrário, mover como está (já é .fa descompactado)
-    run(["conda", "run", "-n", "genomics",  f"mv {tmp} {dst_plain}"])
+    run(["conda", "run", "-n", "genomics", "bash","-lc", f"mv {tmp} {dst_plain}"])
 
 def download_refs(ref_fa_url, gtf_url, force=False):
     Path("refs").mkdir(exist_ok=True)
@@ -1358,14 +1358,14 @@ def install_prebuilt_bwa_index(bwa_tar_url: str, expect_md5: str = "", force: bo
 
     # ---------- Download (cache) ----------
     if force or not tar_path.exists():
-        run(["conda", "run", "-n", "genomics",  f"wget -c -O {shlex.quote(str(tar_path))} {shlex.quote(bwa_tar_url)}"])
+        run(["conda", "run", "-n", "genomics", "bash","-lc", f"wget -c -O {shlex.quote(str(tar_path))} {shlex.quote(bwa_tar_url)}"])
     else:
         console.print(f"{tar_name} já presente → [bold]SKIP download[/bold]")
 
     # ---------- MD5 opcional ----------
     if expect_md5:
         md5 = sp.run(
-            ["conda", "run", "-n", "genomics",  f"md5sum {shlex.quote(str(tar_path))} | cut -d' ' -f1"],
+            ["conda", "run", "-n", "genomics", "bash","-lc", f"md5sum {shlex.quote(str(tar_path))} | cut -d' ' -f1"],
             capture_output=True, text=True, check=True
         ).stdout.strip()
         if md5 != expect_md5:
@@ -1383,7 +1383,7 @@ def install_prebuilt_bwa_index(bwa_tar_url: str, expect_md5: str = "", force: bo
     if best_prefix is None:
         # (1) listar rapidamente os caminhos que queremos (uma vez só)
         lst = sp.run(
-            ["conda", "run", "-n", "genomics",  f"tar -tzf {shlex.quote(str(tar_path))}"],
+            ["conda", "run", "-n", "genomics", "bash","-lc", f"tar -tzf {shlex.quote(str(tar_path))}"],
             capture_output=True, text=True, check=True
         ).stdout.splitlines()
         wanted = [x for x in lst if re.search(r"\.fa\.(amb|ann|bwt|pac|sa)$", x)]
@@ -1402,12 +1402,12 @@ def install_prebuilt_bwa_index(bwa_tar_url: str, expect_md5: str = "", force: bo
 
         # (2) extração só dos 5 arquivos (overwrite se preciso)
         rc = sp.run(
-            ["conda", "run", "-n", "genomics", 
+            ["conda", "run", "-n", "genomics", "bash","-lc",
              f"tar -xzf {shlex.quote(str(tar_path))} -C {shlex.quote(str(index_dir))} --overwrite {names_quoted}"],
             stdout=sp.DEVNULL, stderr=sp.DEVNULL
         ).returncode
         if rc != 0:
-            run(["conda", "run", "-n", "genomics", 
+            run(["conda", "run", "-n", "genomics", "bash","-lc",
                  f"tar -xzf {shlex.quote(str(tar_path))} -C {shlex.quote(str(index_dir))} {names_quoted}"])
         extracted = True
 
@@ -1447,7 +1447,7 @@ def install_prebuilt_bwa_index(bwa_tar_url: str, expect_md5: str = "", force: bo
 
     # permissões só quando houve extração (evita custo em cada run)
     if extracted:
-        run(["conda", "run", "-n", "genomics",  f"chmod -R a+r {shlex.quote(str(index_dir))} || true"])
+        run(["conda", "run", "-n", "genomics", "bash","-lc", f"chmod -R a+r {shlex.quote(str(index_dir))} || true"])
 
     # ---------- Validação final + sumário ----------
     if not all(Path(str(ref_prefix)+e).exists() for e in exts):
@@ -1472,8 +1472,7 @@ def limit_reference_to_canonical_if_enabled():
     if not canon:
         console.print("[orange3]Aviso:[/orange3] Não foi possível detectar contigs canônicos.")
         return
-    #run(["conda", "run", "-n", "genomics", "bash","-lc", f"samtools faidx refs/reference.fa {' '.join(canon)} > refs/reference.canonical.fa"])
-    run(["conda", "run", "-n", "genomics", samtools, f"faidx refs/reference.fa {' '.join(canon)} > refs/reference.canonical.fa"])
+    run(["conda", "run", "-n", "genomics", "bash","-lc", f"samtools faidx refs/reference.fa {' '.join(canon)} > refs/reference.canonical.fa"])
     Path("refs/reference.fa").unlink(missing_ok=True)
     Path("refs/reference.fa").symlink_to(Path("refs/reference.canonical.fa").resolve())
     run(["samtools","faidx","refs/reference.fa"]) 
@@ -2055,13 +2054,13 @@ def stage_fastqs_from_local(fq1, fq2=None):
     Path("fastq").mkdir(exist_ok=True)
     dst1 = Path("fastq")/Path(fq1).name
     if not dst1.exists():
-        run(["conda", "run", "-n", "genomics", f"ln -s {Path(fq1).resolve()} {dst1} || cp {Path(fq1).resolve()} {dst1}"])
+        run(["conda", "run", "-n", "genomics", "bash","-lc",f"ln -s {Path(fq1).resolve()} {dst1} || cp {Path(fq1).resolve()} {dst1}"])
     else:
         console.print(f"{dst1.name}: → [bold]SKIP (cache)[/bold]")
     if fq2:
         dst2 = Path("fastq")/Path(fq2).name
         if not dst2.exists():
-            run(["conda", "run", "-n", "genomics", f"ln -s {Path(fq2).resolve()} {dst2} || cp {Path(fq2).resolve()} {dst2}"])
+            run(["conda", "run", "-n", "genomics", "bash","-lc",f"ln -s {Path(fq2).resolve()} {dst2} || cp {Path(fq2).resolve()} {dst2}"])
         else:
             console.print(f"{dst2.name}: → [bold]SKIP (cache)[/bold]")
     print_meta("FASTQs de entrada (locais)", [dst1] + ([dst2] if fq2 else []))
@@ -2084,15 +2083,15 @@ def downsample_fastqs(fraction: float, seed: int):
             if out1.exists() and out2.exists():
                 console.print(f"{base}: downsample → [bold]SKIP (cache)[/bold]")
                 continue
-            run(["conda", "run", "-n", "genomics", seqtk, f"sample -s{seed} {r1} {fraction} | gzip > {out1}"])
-            run(["conda", "run", "-n", "genomics", seqtk, f"sample -s{seed} {r2} {fraction} | gzip > {out2}"])
+            run(["conda", "run", "-n", "genomics", "bash","-lc", f"seqtk sample -s{seed} {r1} {fraction} | gzip > {out1}"])
+            run(["conda", "run", "-n", "genomics", "bash","-lc", f"seqtk sample -s{seed} {r2} {fraction} | gzip > {out2}"])
             print_meta(f"FASTQs downsample ({base})", [out1, out2])
         else:
             out1 = Path("fastq_ds")/f"{base}.ds.fastq.gz"
             if out1.exists():
                 console.print(f"{base}: downsample (single) → [bold]SKIP (cache)[/bold]")
                 continue
-            run(["conda", "run", "-n", "genomics", seqtk, f"sample -s{seed} {r1} {fraction} | gzip > {out1}"])
+            run(["conda", "run", "-n", "genomics", "bash","-lc", f"seqtk sample -s{seed} {r1} {fraction} | gzip > {out1}"])
             print_meta(f"FASTQ downsample ({base})", [out1])
 
 # ==================== QC / Trimming ====================
@@ -2751,7 +2750,7 @@ bcftools mpileup -Ou -f refs/reference.fa -q {int(min_mapq)} -Q {int(min_baseq)}
 | bcftools norm -f refs/reference.fa {split_flag} -Ou \
 | bcftools view --threads {int(max(1,threads))} -Oz -o {shlex.quote(str(tmp))}
 """
-    run(["conda", "run", "-n", "genomics", script])
+    run(["conda", "run", "-n", "genomics", "bash","-lc", script])
     _atomic_rename(tmp, out_vcf)
     _ensure_tabix(out_vcf)
 
@@ -2971,7 +2970,7 @@ def call_variants(samples, threads, mem_gb):
             f"| bcftools norm -f refs/reference.fa --threads {io_threads} --multiallelics -both "
             f"-Oz -o {shlex.quote(str(tmp))}"
         )
-        return ["conda", "run", "-n", "genomics", sh]
+        return ["conda", "run", "-n", "genomics", "bash","-lc", sh]
 
     def _bcf_log_command_and_bed(sample: str, bed: Path, cmd: list[str]):
         """Mostra comando bcftools e cromossomos do BED para debug."""
@@ -3034,7 +3033,7 @@ def call_variants(samples, threads, mem_gb):
         if p.returncode != 0:
             # mostra tail do log p/ debug
             try:
-                tail = sp.run(["conda", "run", "-n", "genomics",  f"tail -n 60 {shlex.quote(str(log_path))}"],
+                tail = sp.run(["conda", "run", "-n", "genomics", "bash","-lc", f"tail -n 60 {shlex.quote(str(log_path))}"],
                               capture_output=True, text=True, check=True).stdout
             except Exception:
                 tail = ""
@@ -3049,7 +3048,7 @@ def call_variants(samples, threads, mem_gb):
         # imprime resumo do log (linhas de estatística do bcftools, se houver)
         try:
             lines_line = sp.run(
-                ["conda", "run", "-n", "genomics",  f"grep -E '^[Ll]ines\\s' -m1 {shlex.quote(str(log_path))} || true"],
+                ["conda", "run", "-n", "genomics", "bash","-lc", f"grep -E '^[Ll]ines\\s' -m1 {shlex.quote(str(log_path))} || true"],
                 capture_output=True, text=True, check=True
             ).stdout.strip()
         except Exception:
@@ -3285,7 +3284,7 @@ def call_variants(samples, threads, mem_gb):
                         
                         # tail do log
                         try:
-                            tail = sp.run(["conda", "run", "-n", "genomics",  f"tail -n 60 {shlex.quote(str(st['log']))}"],
+                            tail = sp.run(["conda", "run", "-n", "genomics", "bash","-lc", f"tail -n 60 {shlex.quote(str(st['log']))}"],
                                           capture_output=True, text=True, check=True).stdout
                             if tail.strip():
                                 console.print(f"[red]📝 Log do erro (últimas 60 linhas):[/red]")
@@ -3307,7 +3306,7 @@ def call_variants(samples, threads, mem_gb):
                     # extrai a linha "Lines ..." do log, se existir
                     try:
                         lines_line = sp.run(
-                            ["conda", "run", "-n", "genomics",  f"grep -E '^[Ll]ines\\s' -m1 {shlex.quote(str(st['log']))} || true"],
+                            ["conda", "run", "-n", "genomics", "bash","-lc", f"grep -E '^[Ll]ines\\s' -m1 {shlex.quote(str(st['log']))} || true"],
                             capture_output=True, text=True, check=True
                         ).stdout.strip()
                     except Exception:
@@ -4395,7 +4394,7 @@ def trio_denovo_report(dna_samples):
     
     try:
         q = sp.run(
-            ["conda", "run", "-n", "genomics",  trio_query_cmd],
+            ["conda", "run", "-n", "genomics", "bash","-lc", trio_query_cmd],
             capture_output=True, text=True, check=True
         ).stdout.splitlines()
         console.print(f"[green]✅ Trio query concluído: {len(q):,} variantes extraídas[/green]")
@@ -4622,7 +4621,7 @@ def _load_vep_csq_index(vep_vcf: Path) -> dict | None:
     Procura por gnomADg_AF, gnomAD_AF, AF nessa ordem.
     """
     cmd = f"bcftools view -h {shlex.quote(str(vep_vcf))} | grep '^##INFO=<ID=CSQ' | tail -n1"
-    res = sp.run(["conda","run","-n","genomics", cmd], stdout=sp.PIPE, stderr=sp.STDOUT, text=True, check=False)
+    res = sp.run(["conda","run","-n","genomics","bash","-lc", cmd], stdout=sp.PIPE, stderr=sp.STDOUT, text=True, check=False)
     if res.returncode != 0 or not res.stdout.strip():
         return None
     line = res.stdout.strip()
@@ -4656,7 +4655,7 @@ def _build_af_map_from_vep(dna_samples) -> dict:
             continue
         af_key = key_candidates[0]
         # extrai CHROM,POS,REF,ALT,CSQ
-        cmd = ["conda","run","-n","genomics",
+        cmd = ["conda","run","-n","genomics","bash","-lc",
                f"bcftools query -f '%CHROM\t%POS\t%REF\t%ALT\t%INFO/CSQ\n' {shlex.quote(str(vep_vcf))}"]
         proc = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
         while True:
@@ -4691,7 +4690,7 @@ def _build_af_map_from_vep(dna_samples) -> dict:
 
 def _load_samples_from_vcf(vcf_path: Path) -> list[str]:
     cmd = f"bcftools query -l {shlex.quote(str(vcf_path))}"
-    res = sp.run(["conda","run","-n","genomics", cmd], stdout=sp.PIPE, stderr=sp.STDOUT, text=True, check=False)
+    res = sp.run(["conda","run","-n","genomics","bash","-lc", cmd], stdout=sp.PIPE, stderr=sp.STDOUT, text=True, check=False)
     if res.returncode != 0:
         raise RuntimeError(f"bcftools query -l falhou: {res.stdout}")
     return [x.strip() for x in res.stdout.strip().split("\n") if x.strip()]
@@ -4758,7 +4757,7 @@ def _paternity_for_pair(merged: Path, child_name:str, mom_name:str, ap_name:str,
             cmd_str = (
                 f"bcftools query --force-samples -s {child_name},{mom_name},{ap_name} -f '{fmt}' {shlex.quote(str(merged))}"
             )
-        proc = sp.Popen(["conda","run","-n","genomics", cmd_str], stdout=sp.PIPE, stderr=sp.PIPE, text=True)
+        proc = sp.Popen(["conda","run","-n","genomics","bash","-lc", cmd_str], stdout=sp.PIPE, stderr=sp.PIPE, text=True)
         return proc
 
     # 1ª tentativa: com PASS (se configurado)
@@ -5006,7 +5005,7 @@ def paternity_analysis(dna_samples, prior: float|None=None, eps: float|None=None
     # Checa rapidamente se há variantes PASS; respeita paternity_force_pass
     require_pass_effective = require_pass
     if require_pass and not bool(g.get("paternity_force_pass", False)):
-        check_cmd = ["conda","run","-n","genomics",
+        check_cmd = ["conda","run","-n","genomics","bash","-lc",
                      f"bcftools view -H -f PASS {shlex.quote(str(merged))} | head -1"]
         chk = sp.run(check_cmd, stdout=sp.PIPE, stderr=sp.STDOUT, text=True, check=False)
         if chk.returncode != 0 or (not chk.stdout.strip()):
@@ -5419,7 +5418,7 @@ def gene_list_from_gtf():
         print_meta("Lista de genes", [out])
         return
     cmd = r'''awk '$3=="gene"{print $0}' refs/genes.gtf | sed -n 's/.*gene_name "\([^"]*\)".*/\1/p' | sort -u > genes/gene_list.txt'''
-    run(["conda", "run", "-n", "genomics", cmd])
+    run(["conda", "run", "-n", "genomics", "bash","-lc",cmd])
     print_meta("Lista de genes", [out])
 # ============ Presença de genes por amostra (cobertura) ============
 
@@ -5451,7 +5450,7 @@ def _build_genes_bed_from_gtf(gtf: Path, out_bed: Path):
     console.print(f"[cyan]🧬 Extraindo genes do GTF...[/cyan]")
     console.print(f"[dim]💻 Comando GTF parsing:[/dim]")
     console.print(f"[dim]> {cmd}[/dim]")
-    run(["conda", "run", "-n", "genomics", cmd])
+    run(["conda", "run", "-n", "genomics", "bash","-lc",cmd])
     
     # Verifica se arquivo BED foi criado corretamente
     if not out_bed.exists():
