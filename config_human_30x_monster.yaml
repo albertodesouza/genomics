@@ -1,6 +1,6 @@
 # config_human_30x_monster.yaml - Configuração otimizada para máquina monster (128 cores + 256GB RAM)
 project:
-  name: human_30x_trio_top3
+  name: human_30x_trio_top2
   organism: homo_sapiens
   reference:
     # Referência GENCODE mais recente (2024)
@@ -12,9 +12,9 @@ project:
     # NÃO usar índice pré-construído do GDC (versão diferente)
 
 storage:
-  base_dir: "/dados/GENOMICS_DATA/top3"
-  work_dir: "/dados/GENOMICS_DATA/top3/work"
-  temp_dir: "/dados/GENOMICS_DATA/top3/tmp"
+  base_dir: "/dados/GENOMICS_DATA/top2"
+  work_dir: "/dados/GENOMICS_DATA/top2/work"
+  temp_dir: "/dados/GENOMICS_DATA/top2/tmp"
   keep_intermediates: true   # útil para retomar e inspecionar
   # temp_dir: "/dados/tmp"   # ← seu disco rápido
 
@@ -173,20 +173,20 @@ samples:
 
 # Controle de etapas (true = executar, false = pular)
 steps:
-  refs_and_indexes: false          # 1) preparar referências e índices
-  fetch_fastqs: false              # 2) baixar/preparar FASTQs
-  estimate_space: false            # 3) estimar espaço em disco
-  downsample: false                # 4) downsample opcional
-  qc_and_trimming: false           # 5) QC + trimming
-  align_and_sort: false            # 6) alinhamento + duplicatas
-  cram_and_coverage: false         # 7) CRAM + cobertura
-  variants_and_vep: false          # 8) chamadas de variantes + VEP
-  gene_list: false                 # 9) construir lista de genes da referência
-  gene_presence: false             # 10) presença de genes por amostra
-  pairwise: false                  # 11) comparações par-a-par
-  trio_denovo: false               # 12) trio: candidatos de novo
+  refs_and_indexes: true          # 1) preparar referências e índices
+  fetch_fastqs: true              # 2) baixar/preparar FASTQs
+  estimate_space: true            # 3) estimar espaço em disco
+  downsample: true                # 4) downsample opcional
+  qc_and_trimming: true           # 5) QC + trimming
+  align_and_sort: true            # 6) alinhamento + duplicatas
+  cram_and_coverage: true         # 7) CRAM + cobertura
+  variants_and_vep: true          # 8) chamadas de variantes + VEP
+  gene_list: true                 # 9) construir lista de genes da referência
+  gene_presence: true             # 10) presença de genes por amostra
+  pairwise: true                  # 11) comparações par-a-par
+  trio_denovo: true               # 12) trio: candidatos de novo
   paternity: true                 # 13) paternidade (SNP/HWE)
-  ancestry: true                 # 14) ancestralidade (ADMIXTURE supervisionado)
+  ancestry: true                  # 14) ancestralidade (ADMIXTURE supervisionado)
   rnaseq: false                   # 15) RNA-seq (opcional)
 
 
