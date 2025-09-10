@@ -4909,8 +4909,40 @@ def _paternity_for_pair(merged: Path, child_name:str, mom_name:str, ap_name:str,
                 console.print(f"[dim]{stderr[:400]}[/dim]")
 
     lr_log10 = log10_sum
-    lr = 10**lr_log10
-    posterior = (lr*prior)/(lr*prior + (1.0-prior))
+    
+    # Cálculo numericamente estável do posterior para evitar overflow/underflow
+    # Fórmula original: posterior = (LR * prior) / (LR * prior + (1-prior))
+    # Versão estável: posterior = 1 / (1 + (1-prior)/(LR * prior))
+    #                           = 1 / (1 + (1-prior) * 10^(-lr_log10) / prior)
+    
+    if lr_log10 > 100:  # LR muito grande (evidência forte para paternidade)
+        posterior = 1.0  # Praticamente 100%
+        lr = float('inf')  # Representa LR infinito
+    elif lr_log10 < -100:  # LR muito pequeno (evidência forte contra paternidade)
+        posterior = 0.0  # Praticamente 0%
+        lr = 0.0
+    else:
+        # Caso intermediário: usa cálculo logarítmico estável
+        # log(posterior) = log(LR * prior) - log(LR * prior + (1-prior))
+        # Para evitar overflow, reescrevemos como:
+        # posterior = 1 / (1 + (1-prior)/(LR * prior))
+        #           = 1 / (1 + (1-prior)/prior * 10^(-lr_log10))
+        
+        log10_term = -lr_log10 + math.log10((1.0 - prior) / prior)
+        
+        if log10_term < -15:  # Termo desprezível
+            posterior = 1.0
+        elif log10_term > 15:  # Termo dominante
+            posterior = 0.0
+        else:
+            term = 10**log10_term
+            posterior = 1.0 / (1.0 + term)
+        
+        # Calcula LR apenas se necessário e seguro
+        if abs(lr_log10) < 300:  # Limite seguro para double precision
+            lr = 10**lr_log10
+        else:
+            lr = float('inf') if lr_log10 > 0 else 0.0
     return {
         "n_used": n_used, "n_excluded": n_excluded,
         "lr_log10": lr_log10, "lr": lr, "posterior": posterior,
