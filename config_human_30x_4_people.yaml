@@ -46,7 +46,8 @@ general:
   gene_presence_min_breadth_1x: 0.8
 
   trio_child_id: NA12878
-  trio_parent_ids: [NA12891, NA12892]
+#  trio_parent_ids: [NA12891, NA12892]
+  trio_parent_ids: [NA12889, NA12892]
 
   # filtros para de novo (ajustados para 30× completo)
   trio_min_dp_child: 15
