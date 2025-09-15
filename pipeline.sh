@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#set -euo pipefail
+# set -euo pipefail
 
 #############################
 # CONFIGURAÇÃO (AJUSTE AQUI)
@@ -19,11 +19,19 @@ OUT_PREFIX=ERR3239334_R1
 # Para DNA-seq deixe STRANDED=0.
 STRANDED=0
 
+# ----- Parâmetros para chamada/consenso -----
+# Limiar de qualidade mínima da variante (QUAL) e cobertura mínima (DP) para filtrar
+MIN_QUAL=30
+MIN_DP=10
+# Cobertura mínima por posição para NÃO mascarar (posições com cobertura <COVERAGE_MASK viram N)
+COVERAGE_MASK=8
+# -------------------------------------------
+
 #############################
 # CHECAGENS
 #############################
 need() { command -v "$1" >/dev/null 2>&1 || { echo "ERRO: '$1' não encontrado no PATH." >&2; exit 1; }; }
-need bwa; need samtools; need bedtools; need awk; need sort; need grep; need cut; need comm
+need bwa; need samtools; need bedtools; need awk; need sort; need grep; need cut; need comm; need bcftools
 
 [[ -f "$REF" ]] || { echo "ERRO: REF não existe: $REF" >&2; exit 1; }
 [[ -f "$GTF" ]] || { echo "ERRO: GTF não existe: $GTF" >&2; exit 1; }
@@ -163,6 +171,39 @@ cut -f6 "$BEST_TSV" | sort | uniq -c \
 # colunas: gene_id \t n_reads
 
 #############################
+# 7) CONSENSO FASTA (VCF -> FASTA com IUPAC e máscara por baixa cobertura)
+#############################
+RAW_BCF="${OUT_PREFIX}.raw.bcf"
+NORM_BCF="${OUT_PREFIX}.norm.bcf"
+FLT_BCF="${OUT_PREFIX}.flt.bcf"
+LOWCOV_BED="${OUT_PREFIX}.lowcov.bed"
+CONSENSUS_FA="${OUT_PREFIX}.consensus.fa"
+
+echo "[INFO] (7.1) Chamando variantes (bcftools mpileup+call) ..."
+# Gera BCF bruto com anotações de DP/AD no formato
+bcftools mpileup -f "$REF" -Ou -a FORMAT/DP,FORMAT/AD "$BAM" \
+  | bcftools call -mv -Ob -o "$RAW_BCF"
+bcftools index "$RAW_BCF"
+
+echo "[INFO] (7.2) Normalizando e split de multialélicos ..."
+bcftools norm -f "$REF" -Ob -o "$NORM_BCF" "$RAW_BCF"
+bcftools index "$NORM_BCF"
+
+echo "[INFO] (7.3) Filtrando variantes (QUAL>=${MIN_QUAL}, DP>=${MIN_DP}) ..."
+bcftools filter -s LOWQUAL -e "QUAL<${MIN_QUAL} || DP<${MIN_DP}" \
+  -Ob -o "$FLT_BCF" "$NORM_BCF"
+bcftools index "$FLT_BCF"
+
+echo "[INFO] (7.4) Gerando máscara de baixa cobertura (<${COVERAGE_MASK}x) ..."
+bedtools genomecov -ibam "$BAM" -bga \
+  | awk -v COV="${COVERAGE_MASK}" '$4<COV{print $1"\t"$2"\t"$3}' \
+  > "$LOWCOV_BED"
+
+echo "[INFO] (7.5) Construindo FASTA consenso (IUPAC p/ heterozigose) ..."
+# -I: usa códigos IUPAC para heterozigose; -m: mascara baixa cobertura como N
+bcftools consensus -f "$REF" -m "$LOWCOV_BED" -I -o "$CONSENSUS_FA" "$FLT_BCF"
+
+#############################
 # RESUMO
 #############################
 echo "================= RESUMO ================="
@@ -173,6 +214,12 @@ echo "Genes (BED):             $GENES_BED"
 echo "Read→Gene (melhor):      $BEST_TSV"
 echo "Intergênicas (ids):      $INTERGENIC_IDS"
 echo "Contagem por gene:       $GENE_COUNTS"
+echo "------ Consenso FASTA ------"
+echo "Raw BCF:                 $RAW_BCF"
+echo "Norm BCF:                $NORM_BCF"
+echo "Filt BCF (QUAL>=${MIN_QUAL},DP>=${MIN_DP}): $FLT_BCF"
+echo "Máscara baixa cobertura: $LOWCOV_BED (cov<${COVERAGE_MASK})"
+echo "FASTA consenso (IUPAC):  $CONSENSUS_FA"
 echo "Stranded (0/1/2):        $STRANDED (aplicado no intersect)"
 echo "Threads:                 $THREADS"
 echo "=========================================="
