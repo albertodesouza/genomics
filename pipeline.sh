@@ -12,7 +12,7 @@ GTF=/dados/GENOMICS_DATA/top3/refs/genes.gtf
 R1=/dados/GENOMICS_DATA/top3/fastq_ds/ERR3239334_1.ds.fastq.gz
 
 # Threads e prefixo de saída
-THREADS=16
+THREADS=128
 OUT_PREFIX=ERR3239334_R1
 
 # Strandedness para RNA-seq (bedtools). Opções: 0=desligado, 1=mesmo sentido, 2=oposto
