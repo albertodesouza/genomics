@@ -1,6 +1,6 @@
 # config_human_30x_monster.yaml - Configuração otimizada para máquina monster (128 cores + 256GB RAM)
 project:
-  name: human_30x_trio_latest_ref
+  name: human_30x_trio_top4
   organism: homo_sapiens
   reference:
     # Referência GENCODE mais recente (2024)
@@ -11,6 +11,30 @@ project:
     gtf_url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/gencode.v46.primary_assembly.annotation.gtf.gz"
     # NÃO usar índice pré-construído do GDC (versão diferente)
 
+storage:
+  base_dir: "/dados/GENOMICS_DATA/top4"
+  work_dir: "/dados/GENOMICS_DATA/top4/work"
+  temp_dir: "/dados/GENOMICS_DATA/top4/tmp"
+  keep_intermediates: true   # útil para retomar e inspecionar
+  # temp_dir: "/dados/tmp"   # ← seu disco rápido
+
+download:
+  tool: sra_toolkit
+  use_ascp: false                 # usar Aspera se disponível para downloads mais rápidos
+  threads: 32                    # muito mais threads para download
+  prefetch_retries: 3
+
+execution:
+  verbose: true
+  resume: true
+  skip_existing: true
+  progress_interval_sec: 60      # updates mais frequentes
+  stall_warn_min: 5              # alertas mais rápidos
+  stall_fail_min: 50             # timeout mais agressivo
+  ena_fallback: true
+  cancel_on_convert_stall: false
+  prefer_ena_fastq: false         # preferir FASTQs prontos para velocidade
+  
 general:
   # Para máquina monster: usar bwa-mem2 e force_indexes para criar índices otimizados
   force_indexes: false
@@ -21,8 +45,8 @@ general:
   gene_presence_min_mean_cov: 5.0
   gene_presence_min_breadth_1x: 0.8
 
-  trio_child_id: NA12878
-  trio_parent_ids: [NA12891, NA12892]
+  trio_child_id: NA19240
+  trio_parent_ids: [NA19238, NA19239]
 
   # filtros para de novo (ajustados para 30× completo)
   trio_min_dp_child: 15
@@ -33,6 +57,14 @@ general:
   trio_min_ab_hom: 0.90
   trio_max_parent_alt_frac: 0.02
 
+  # Parâmetros da análise de paternidade (usados no passo 13)
+  paternity_prior: 0.5             # prior neutro para paternidade
+  paternity_epsilon: 0.001         # taxa de erro/mutação mínima para evitar PI=0 duro (aumentado para diagnóstico)
+  paternity_require_pass: true     # considerar apenas variantes com FILTER=PASS
+  paternity_force_pass: true       # se true, não desativa PASS mesmo se ausente
+  paternity_use_vep_af: true       # usar AF do VEP (gnomAD) para PI (mais preciso que estimativa do trio, mas lento e caro em memória)
+  paternity_skip_all_hets: true    # NÃO pular SNPs informativos 
+
 # Parâmetros otimizados para 128 cores
 params:
   aligner: bwa-mem2
@@ -41,7 +73,7 @@ params:
   target_gene_list: null   # ou caminho para um painel BED/genes de interesse
 
   variant_caller: bcftools       # bcftools escala melhor que GATK para muitos cores
-  filter_problematic_contigs: true  # filtra cromossomos virais/problemáticos automaticamente
+  filter_problematic_contigs: false  # filtra cromossomos virais/problemáticos automaticamente
 
   # BCFtools otimizado para 128 cores
   bcf_verbose: true
@@ -112,30 +144,6 @@ params:
     - "--cache_version"          # usar cache mais eficientemente  
     - "114"                      # versão mais recente (era 88)
 
-storage:
-  base_dir: "/dados/GENOMICS_DATA/latest_ref"
-  work_dir: "/dados/GENOMICS_DATA/latest_ref/work"
-  temp_dir: "/dados/GENOMICS_DATA/latest_ref/tmp"
-  keep_intermediates: true   # útil para retomar e inspecionar
-  # temp_dir: "/dados/tmp"   # ← seu disco rápido
-
-download:
-  tool: sra_toolkit
-  use_ascp: false                 # usar Aspera se disponível para downloads mais rápidos
-  threads: 32                    # muito mais threads para download
-  prefetch_retries: 3
-
-execution:
-  verbose: true
-  resume: true
-  skip_existing: true
-  progress_interval_sec: 60      # updates mais frequentes
-  stall_warn_min: 5              # alertas mais rápidos
-  stall_fail_min: 50             # timeout mais agressivo
-  ena_fallback: true
-  cancel_on_convert_stall: false
-  prefer_ena_fastq: false         # preferir FASTQs prontos para velocidade
-  
 size_control:
   downsample:
     enabled: true               # DESABILITADO - usar dados completos 30×
@@ -145,31 +153,71 @@ size_control:
 limit_to_canonical: false
 
 samples:
-  - sample_id: NA12878           # filha (HG001 / GM12878)
-    study: PRJEB31736            # 1000G 30× (lote principal)
-    runs:
-      - ERR3239334            # FASTQs gerados pelo ENA: ERR3239334_1.fastq.gz / _2.fastq.gz
-    notes: "CRAM 'final' disponível: ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR323/ERR3239334/NA12878.final.cram"
-
-  - sample_id: NA12891           # pai
-    study: PRJEB36890            # 1000G 30× (trios adicionais)
-    runs:
-      - ERR3989341               # ENA fornece FASTQ gerado para este run
-    notes: "CRAM 'final': ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR398/ERR3989341/NA12891.final.cram"
-
-  - sample_id: NA12892           # mãe
+  - sample_id: NA19240           # filha (YRI)
     study: PRJEB36890
     runs:
-      - ERR3989342               # ENA fornece FASTQ gerado para este run
-    notes: "CRAM 'final': ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR398/ERR3989342/NA12892.final.cram"
+      - ERR3989403               # exemplo de run ENA para NA19240
+    notes: "CRAM final: ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR398/ERR3989403/NA19240.final.cram"
 
-# Etapas do pipeline (ajuste conforme seu script)
+  - sample_id: NA19238           # pai (YRI)
+    study: PRJEB36890
+    runs:
+      - ERR3989401
+    notes: "CRAM final: ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR398/ERR3989401/NA19238.final.cram"
+
+  - sample_id: NA19239           # mãe (YRI)
+    study: PRJEB36890
+    runs:
+      - ERR3989402
+    notes: "CRAM final: ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR398/ERR3989402/NA19239.final.cram"
+
+# Controle de etapas (true = executar, false = pular)
 steps:
-  - fetch_fastqs          # prefetch/fasterq-dump; respeita skip_existing/resume
-  - qc_reads              # FastQC/MultiQC (se configurados)
-  - align_and_sort        # BWA-MEM/BWA-MEM2 + samtools
-  - mark_duplicates       # GATK MarkDuplicatesSpark/picard
-  - bqsr                  # GATK BaseRecalibrator/applyBQSR (opcional)
-  - call_genes            # sua extração/varredura de genes (exons/introns) e comparação
-  - summarize             # relatórios e métricas
+  refs_and_indexes: true          # 1) preparar referências e índices
+  fetch_fastqs: true              # 2) baixar/preparar FASTQs
+  estimate_space: true            # 3) estimar espaço em disco
+  downsample: true                # 4) downsample opcional
+  qc_and_trimming: true           # 5) QC + trimming
+  align_and_sort: true            # 6) alinhamento + duplicatas
+  cram_and_coverage: true         # 7) CRAM + cobertura
+  variants_and_vep: true          # 8) chamadas de variantes + VEP
+  gene_list: true                 # 9) construir lista de genes da referência
+  gene_presence: true             # 10) presença de genes por amostra
+  pairwise: true                  # 11) comparações par-a-par
+  trio_denovo: true               # 12) trio: candidatos de novo
+  paternity: true                 # 13) paternidade (SNP/HWE)
+  ancestry: true                  # 14) ancestralidade (ADMIXTURE supervisionado)
+  rnaseq: false                   # 15) RNA-seq (opcional)
 
+
+ancestry:
+  method: "admixture_supervised"
+  k: 4
+  threads: 32
+  tools:
+    plink: "plink"
+    plink2: "plink2"
+    admixture: "admixture"
+  qc:
+    maf: 0.01
+    geno_missing: 0.05
+    mind: 0.99999                      # filtro de amostras (>99% missing = remove)
+    indep_pairwise: [200, 50, 0.2]
+  reference:
+    plink_tar_url: "https://zenodo.org/records/14286454/files/HGDP+1KG_SNPData.tar.gz?download=1"
+    sample_info_url: "https://zenodo.org/records/14286454/files/hgdp_1kg_sample_info.unrelateds.pca_outliers_removed.with_project.tsv?download=1"
+    docs:
+      - name: "gnomAD HGDP+1KG (v3.1.2)"
+        url: "https://gnomad.broadinstitute.org/news/2021-07-gnomad-v3-1-new-content-methods-annotations-and-data-availability/"
+      - name: "PLINK 2 resources (1KG hg38)"
+        url: "https://www.cog-genomics.org/plink/2.0/resources"
+  categories:
+    europeu:   ["eur"]                 # Europeu (superpopulação)
+    africano:  ["afr"]                 # Africano (superpopulação)
+    americano: ["amr"]                 # Americano/Indígena (superpopulação)
+    asiatico:  ["eas","csa"]           # Asiático Oriental e Sul-Asiático
+  collapse:
+    europeu: ["europeu"]
+    africano: ["africano"]
+    indigena_americano: ["americano"]
+    asiatico: ["asiatico"]
