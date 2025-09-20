@@ -13,7 +13,8 @@
 #include <omp.h>
 
 // Configurações
-const std::string IN_PAI = "fasta/NA12891.genes.consensus.fa";
+//const std::string IN_PAI = "fasta/NA12891.genes.consensus.fa";
+const std::string IN_PAI = "../top4/fasta/NA19238.genes.consensus.fa";
 const std::string IN_MAE = "fasta/NA12892.genes.consensus.fa";
 const std::string IN_FILHA = "fasta/NA12878.genes.consensus.fa";
 const std::string OUT_CSV = "fasta/family_pairwise_differences.csv";
