@@ -4,8 +4,10 @@ set -euo pipefail
 # ------------------------------
 # Configuração
 # ------------------------------
-ROOT="/dados/GENOMICS_DATA/top3"
-YAML="/home/lume2/genomics/config_human_30x_monster.yaml"
+#ROOT="/dados/GENOMICS_DATA/top3"
+#YAML="/home/lume2/genomics/config_human_30x_monster.yaml"
+ROOT="/dados/GENOMICS_DATA/top4"
+YAML="/home/alberto/genomics/config_human_30x_atena.yaml"
 REF="${ROOT}/refs/reference.fa"
 OUT="${ROOT}/fasta"
 TMP="${OUT}/tmp"
