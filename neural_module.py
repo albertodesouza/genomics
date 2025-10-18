@@ -49,6 +49,9 @@ DEFAULT_CONFIG = {
     'plot_resolution': 300,  # DPI
     'plot_width': 15,  # polegadas
     'plot_height': 10,  # polegadas
+    'use_advanced_viz': True,  # Visualizações avançadas habilitadas por padrão
+    'show_ontology_info': True,  # Mostrar informações de ontologia por padrão
+    'save_metadata': True,  # Salvar metadados de ontologia por padrão
 }
 
 # ====================== Parse de FASTA ======================
@@ -264,7 +267,8 @@ class AlphaGenomeAnalyzer:
                        ref_base: str,
                        alt_base: str,
                        chromosome: str = 'chr1',
-                       start: int = 1000000) -> Optional[Dict]:
+                       start: int = 1000000,
+                       ontology_terms: List[str] = None) -> Optional[Dict]:
         """
         Prediz o efeito de uma variante.
         
@@ -276,6 +280,7 @@ class AlphaGenomeAnalyzer:
             alt_base: Base alternativa
             chromosome: Cromossomo
             start: Posição inicial
+            ontology_terms: Lista de termos de ontologia UBERON (opcional)
             
         Returns:
             Dicionário com predições para referência e alternativa
@@ -304,9 +309,15 @@ class AlphaGenomeAnalyzer:
             
             console.print(f"[cyan]Analisando variante {ref_base}>{alt_base} na posição {variant_position}...[/cyan]")
             
+            # Ontology terms (tecidos/tipos celulares)
+            if ontology_terms is None:
+                # Usar termos padrão: cérebro, fígado, coração
+                ontology_terms = ['UBERON:0000955', 'UBERON:0002107', 'UBERON:0000948']
+            
             outputs = self.model.predict_variant(
                 interval=interval,
                 variant=variant,
+                ontology_terms=ontology_terms,
                 requested_outputs=[self.dna_client.OutputType.RNA_SEQ]
             )
             
@@ -320,6 +331,145 @@ class AlphaGenomeAnalyzer:
         except Exception as e:
             console.print(f"[red]✗ Erro ao analisar variante: {e}[/red]")
             return None
+
+
+# ====================== Informações de Ontologia ======================
+
+def display_ontology_info(ontology_terms: List[str] = None):
+    """
+    Exibe informações sobre os termos de ontologia usados na análise.
+    
+    Args:
+        ontology_terms: Lista de termos UBERON
+    """
+    # Dicionário de termos comuns
+    ontology_dict = {
+        'UBERON:0000955': 'Brain (Cérebro)',
+        'UBERON:0002107': 'Liver (Fígado)',
+        'UBERON:0000948': 'Heart (Coração)',
+        'UBERON:0002048': 'Lung (Pulmão)',
+        'UBERON:0000178': 'Blood (Sangue)',
+        'UBERON:0002113': 'Kidney (Rim)',
+        'UBERON:0002106': 'Spleen (Baço)',
+        'UBERON:0000970': 'Eye (Olho)',
+        'UBERON:0001723': 'Tongue (Língua)',
+        'UBERON:0001255': 'Urinary bladder (Bexiga)',
+        'UBERON:0002367': 'Prostate gland (Próstata)',
+        'UBERON:0000473': 'Testis (Testículo)',
+        'UBERON:0000992': 'Ovary (Ovário)',
+        'UBERON:0001264': 'Pancreas (Pâncreas)',
+        'UBERON:0002097': 'Skin of body (Pele)',
+        'UBERON:0002371': 'Bone marrow (Medula óssea)',
+        'UBERON:0002240': 'Spinal cord (Medula espinhal)',
+        'UBERON:0000945': 'Stomach (Estômago)',
+        'UBERON:0002110': 'Gall bladder (Vesícula biliar)',
+    }
+    
+    if ontology_terms is None:
+        ontology_terms = ['UBERON:0000955', 'UBERON:0002107', 'UBERON:0000948']
+    
+    table = Table(title="🧬 Contextos Biológicos (Ontologia UBERON)", 
+                  box=box.ROUNDED, 
+                  header_style="bold cyan")
+    table.add_column("Termo UBERON", style="cyan")
+    table.add_column("Tecido/Órgão", style="green")
+    table.add_column("Descrição", style="white")
+    
+    descriptions = {
+        'UBERON:0000955': 'Tecido neural - expressão em neurônios e glia',
+        'UBERON:0002107': 'Tecido hepático - metabolismo e detoxificação',
+        'UBERON:0000948': 'Tecido cardíaco - função cardiovascular'
+    }
+    
+    for term in ontology_terms:
+        tissue_name = ontology_dict.get(term, 'Desconhecido')
+        desc = descriptions.get(term, 'Contexto tecido-específico')
+        table.add_row(term, tissue_name, desc)
+    
+    console.print("\n")
+    console.print(table)
+    console.print("\n[dim]ℹ️  AlphaGenome usa esses contextos para predizer padrões tecido-específicos[/dim]")
+    console.print("[dim]   As visualizações mostram como cada output varia entre esses tecidos[/dim]\n")
+
+
+def save_metadata_to_file(results: Dict, output_dir: Path):
+    """
+    Extrai e salva metadados de ontologia dos outputs.
+    
+    Args:
+        results: Resultados das predições com outputs
+        output_dir: Diretório para salvar metadados
+    """
+    try:
+        import pandas as pd
+        
+        seq_id = results['sequence_id']
+        outputs = results['outputs']
+        
+        console.print(f"\n[cyan]Extraindo metadados de ontologia para {seq_id}...[/cyan]")
+        
+        metadata_found = False
+        
+        # Para cada output, extrair metadata
+        for output_name in results['requested_outputs']:
+            output_data = getattr(outputs, output_name.lower(), None)
+            
+            if output_data is None:
+                continue
+            
+            # Verificar se tem metadata
+            if hasattr(output_data, 'metadata') and output_data.metadata is not None:
+                metadata_found = True
+                metadata_df = output_data.metadata
+                
+                # Salvar como CSV
+                csv_file = output_dir / f"{seq_id}_{output_name}_metadata.csv"
+                metadata_df.to_csv(csv_file, index=False)
+                console.print(f"[green]  ✓ Metadados salvos: {csv_file.name}[/green]")
+                
+                # Salvar como JSON (mais legível)
+                json_file = output_dir / f"{seq_id}_{output_name}_metadata.json"
+                metadata_df.to_json(json_file, orient='records', indent=2)
+                console.print(f"[green]  ✓ Metadados JSON salvos: {json_file.name}[/green]")
+                
+                # Exibir resumo no terminal
+                console.print(f"\n[bold cyan]Metadados de {output_name}:[/bold cyan]")
+                
+                # Criar tabela com principais informações
+                metadata_table = Table(show_header=True, header_style="bold cyan", box=box.ROUNDED)
+                
+                # Adicionar colunas relevantes
+                relevant_cols = ['biosample_name', 'strand', 'Assay title', 'File accession']
+                available_cols = [col for col in relevant_cols if col in metadata_df.columns]
+                
+                if not available_cols:
+                    available_cols = metadata_df.columns[:5].tolist()  # Primeiras 5 colunas
+                
+                for col in available_cols:
+                    metadata_table.add_column(col, overflow='fold')
+                
+                # Adicionar linhas (máximo 10 tracks)
+                for idx, row in metadata_df.head(10).iterrows():
+                    values = [str(row[col])[:30] for col in available_cols]  # Limitar tamanho
+                    metadata_table.add_row(*values)
+                
+                if len(metadata_df) > 10:
+                    console.print(f"[dim]  (Mostrando 10 de {len(metadata_df)} tracks)[/dim]")
+                
+                console.print(metadata_table)
+                console.print("")
+            else:
+                console.print(f"[yellow]  ⚠ {output_name}: Sem metadados disponíveis[/yellow]")
+        
+        if not metadata_found:
+            console.print("[yellow]  ⚠ Nenhum metadado de ontologia encontrado nos outputs[/yellow]")
+    
+    except ImportError as ie:
+        console.print(f"[yellow]⚠ Biblioteca pandas necessária para salvar metadados: {ie}[/yellow]")
+    except Exception as e:
+        console.print(f"[yellow]⚠ Erro ao salvar metadados: {e}[/yellow]")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
 
 
 # ====================== Visualização ======================
@@ -623,8 +773,10 @@ Para obter uma API key: https://www.alphagenomedocs.com/
                        help='Resolução dos gráficos (padrão: 300)')
     parser.add_argument('--no-plots', action='store_true',
                        help='Não gerar gráficos (apenas análise)')
-    parser.add_argument('--advanced-viz', action='store_true',
-                       help='Usar visualizações avançadas (heatmaps, dashboards, comparações)')
+    parser.add_argument('--save-metadata', action='store_true',
+                       help='Salvar metadados de ontologia em CSV/JSON (padrão: ativado)')
+    parser.add_argument('--no-metadata', action='store_true',
+                       help='Não salvar metadados de ontologia')
     
     args = parser.parse_args()
     
@@ -648,7 +800,14 @@ Para obter uma API key: https://www.alphagenomedocs.com/
     config = DEFAULT_CONFIG.copy()
     config['output_formats'] = args.formats
     config['plot_resolution'] = args.dpi
-    config['use_advanced_viz'] = args.advanced_viz
+    # use_advanced_viz e show_ontology_info já estão definidos em DEFAULT_CONFIG como True
+    # Controlar save_metadata
+    if args.no_metadata:
+        config['save_metadata'] = False
+    elif args.save_metadata:
+        config['save_metadata'] = True
+    # else: usa o valor de DEFAULT_CONFIG (True)
+    
     if args.outputs:
         config['default_outputs'] = args.outputs
     
@@ -682,6 +841,10 @@ Para obter uma API key: https://www.alphagenomedocs.com/
     if not analyzer.initialize():
         sys.exit(1)
     
+    # Mostrar informações de ontologia se configurado
+    if config.get('show_ontology_info', True):
+        display_ontology_info()
+    
     # Processar sequências
     console.print("\n[bold cyan]Processando sequências...[/bold cyan]")
     results = []
@@ -713,6 +876,10 @@ Para obter uma API key: https://www.alphagenomedocs.com/
                 
                 if result and not args.no_plots:
                     create_variant_visualization(result, args.output, config)
+                
+                # Salvar metadados se configurado
+                if result and config.get('save_metadata', True):
+                    save_metadata_to_file(result, args.output)
             else:
                 result = analyzer.predict_sequence(
                     sequence=seq['sequence'],
@@ -724,6 +891,10 @@ Para obter uma API key: https://www.alphagenomedocs.com/
                 
                 if result and not args.no_plots:
                     create_visualizations(result, args.output, config)
+                
+                # Salvar metadados se configurado
+                if result and config.get('save_metadata', True):
+                    save_metadata_to_file(result, args.output)
             
             results.append(result)
             progress.update(task, advance=1)
