@@ -7,6 +7,7 @@ _A technical-scientific guide to `genomes_analyzer.py`_
 - [Introduction](#introduction)
 - [What's new](#whats-new)
 - [Genomes Analyzer Pipeline](#genomes-analyzer-pipeline)
+- [Neural Module — AI-powered DNA Analysis](#neural-module--ai-powered-dna-analysis)
 - [How to Use the Genomes Analyzer](#how-to-use-the-genomes-analyzer)
 - [Background execution & monitoring](#background-execution--monitoring)
 - [Conclusion](#conclusion)
@@ -37,12 +38,13 @@ This document introduces the pipeline to readers **without assuming prior genomi
 
 Recent updates expanded the pipeline, improved resilience, and enriched the YAML configuration. Highlights:
 
+- **Neural Module**: AI-powered DNA analysis using Google DeepMind's AlphaGenome for functional predictions (gene expression, epigenetics, chromatin accessibility, variant effects). See [NEURAL_MODULE.md](NEURAL_MODULE.md).
 - Paternity analysis: likelihood-based SNP evaluation with configurable thresholds and optional use of VEP allele frequencies.
 - Ancestry (ADMIXTURE supervised): supervised ADMIXTURE using HGDP+1KG reference, with QC, pruning and category collapsing.
 - Idempotent ancestry pipeline: reuses existing outputs, checks for prepared references and intermediate PLINK files.
 - More robust bcftools execution: all heavy commands run via `conda run -n genomics bash -lc` for consistent environments.
 - Background-friendly logging: optional wider logs, emojis, and colors when running detached.
-- New config profiles: low memory, latest reference (GENCODE r46), and a “monster” profile for 128 cores/256 GB.
+- New config profiles: low memory, latest reference (GENCODE r46), and a "monster" profile for 128 cores/256 GB.
 - Universal environment bootstrap: `start_genomics_universal.sh` auto-detects Conda locations and activates `genomics`.
 
 ### Key inputs and outputs
@@ -248,6 +250,67 @@ If RNA-seq samples are defined in the YAML, a lightweight expression pipeline (H
 | `vcf/<sample>.vcf.gz` | VCF | Final, genome-wide variant calls |
 | `genes/<sample>_gene_presence.tsv` | TSV | Per-gene coverage report |
 | `qc/<sample>_R1_fastqc.html` | HTML | Read quality report |
+
+---
+
+## Neural Module — AI-powered DNA Analysis
+
+In addition to traditional variant calling, this repository includes **Neural Module** (`neural_module.py`), an AI-powered tool that uses [AlphaGenome](https://github.com/google-deepmind/alphagenome) from Google DeepMind to predict functional genomic features directly from DNA sequences.
+
+### What is Neural Module?
+
+Neural Module leverages deep learning to predict:
+- 🧬 **Gene Expression** (RNA-seq, CAGE, PRO-cap)
+- 🔬 **Chromatin Accessibility** (ATAC-seq, DNase-seq)
+- ⚛️ **Epigenetic Markers** (Histone modifications: H3K27AC, H3K4ME3, H3K27ME3, etc.)
+- 🔗 **Transcription Factors** (CTCF and other binding sites)
+- 🧩 **3D Structure** (Contact Maps)
+- ✂️ **Splicing** (Junction sites, site usage)
+
+### Key Features
+
+✅ **11 Analysis Types** supported by AlphaGenome  
+✅ **Advanced Visualizations** (heatmaps, dashboards, multi-output comparison)  
+✅ **Variant Effect Prediction** with 3-panel comparison  
+✅ **Ontology Metadata Export** (tissue/cell-type information in CSV/JSON)  
+✅ **Real Sequence Download Guide** (Ensembl, UCSC, NCBI, samtools)  
+✅ **Complete Documentation** in Portuguese and English  
+
+### Quick Example
+
+```bash
+# Download a real genomic sequence (HBB gene, 2048 bp)
+curl 'https://rest.ensembl.org/sequence/region/human/11:5227002..5229049?coord_system_version=GRCh38' \
+  -H 'Content-type:text/x-fasta' > HBB_gene.fasta
+
+# Analyze with AlphaGenome
+python neural_module.py \
+  -i HBB_gene.fasta \
+  -k YOUR_API_KEY \
+  -o results/
+
+# Analyze variant (e.g., Sickle Cell Anemia mutation)
+python neural_module.py \
+  -i HBB_gene.fasta \
+  -k YOUR_API_KEY \
+  -o sickle_cell/ \
+  --variant 1024 A T
+```
+
+### Documentation
+
+📚 **Complete Neural Module Documentation**: [NEURAL_MODULE.md](NEURAL_MODULE.md)
+
+Key guides:
+- 🚀 [Installation Guide](INSTALL_NEURAL.md)
+- 📥 [Download Real Sequences](DOWNLOAD_SEQUENCES.md)
+- 💡 [Usage Guide](USAGE_NEURAL.md)
+- 📊 [Interpreting Results](RESULTS_NEURAL.md)
+- 🎨 [Advanced Visualizations](VISUALIZACOES_AVANCADAS.md)
+
+### Integration with Genomes Analyzer
+
+Neural Module can be used standalone or integrated with the main pipeline to analyze specific genomic regions identified by variant calling. See [neural_integration.py](neural_integration.py) for programmatic integration examples.
 
 ---
 
