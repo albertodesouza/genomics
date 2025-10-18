@@ -1,0 +1,89 @@
+# Configuração para Neural Module
+# Este arquivo pode ser usado para armazenar configurações do AlphaGenome
+
+alphagenome:
+  # Obtenha sua API key em: https://www.alphagenomedocs.com/
+  # NUNCA compartilhe sua API key ou faça commit dela em repositórios públicos!
+  api_key: "YOUR_API_KEY_HERE"
+  
+  # Tipos de output padrão
+  default_outputs:
+    - RNA_SEQ
+    - CAGE
+    - ATAC
+    - H3K27AC
+    - H3K4ME3
+  
+  # Configurações de visualização
+  visualization:
+    formats:
+      - png
+      - pdf
+    dpi: 300
+    width: 15  # polegadas
+    height: 10  # polegadas
+  
+  # Limites de sequência
+  sequence:
+    min_length: 100
+    max_length: 1000000  # 1 Mbp
+  
+  # Contexto genômico padrão
+  genomic_context:
+    default_chromosome: chr1
+    default_start: 1000000
+
+# Configurações de processamento
+processing:
+  # Criar backup antes de processar
+  create_backup: true
+  
+  # Diretório de saída padrão
+  default_output_dir: "neural_results"
+  
+  # Verbosidade
+  verbose: true
+  
+  # Salvar resultados intermediários
+  save_intermediate: true
+
+# Tipos de análise disponíveis
+analysis_types:
+  rna_seq:
+    name: "RNA-seq"
+    description: "Predição de expressão gênica"
+    enabled: true
+  
+  cage:
+    name: "CAGE"
+    description: "Cap Analysis of Gene Expression"
+    enabled: true
+  
+  atac:
+    name: "ATAC-seq"
+    description: "Acessibilidade de cromatina"
+    enabled: true
+  
+  histone_marks:
+    - H3K27AC  # Elementos regulatórios ativos
+    - H3K4ME3  # Promotores ativos
+    - H3K27ME3 # Repressão gênica
+    - H3K36ME3 # Corpos gênicos ativos
+    - H3K9ME3  # Heterocromatina
+  
+  transcription_factors:
+    - CTCF  # Fator de ligação de insulador
+
+# Notas de uso
+notes: |
+  Para usar este arquivo de configuração:
+  1. Substitua YOUR_API_KEY_HERE pela sua chave real da API
+  2. Ajuste os outputs e formatos desejados
+  3. Configure os parâmetros de visualização conforme necessário
+  
+  Exemplo de uso programático:
+    import yaml
+    with open('neural_config.yaml') as f:
+        config = yaml.safe_load(f)
+    api_key = config['alphagenome']['api_key']
+
