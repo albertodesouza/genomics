@@ -60,14 +60,12 @@ curl 'https://rest.ensembl.org/sequence/id/ENSG00000012048?type=genomic;coord_sy
 ### Via Linha de Comando (com twoBitToFa)
 
 ```bash
-# Instalar ferramenta
-wget http://hgdownload.cse.ucsc.edu/admin/exe/linux.x86_64/twoBitToFa
+# Instalar ferramenta (Ubuntu 20.04, ver http://hgdownload.cse.ucsc.edu/admin/exe/ para outros sistemas)
+wget http://hgdownload.cse.ucsc.edu/admin/exe/linux.x86_64.v479/twoBitToFa
 chmod +x twoBitToFa
 
 # Baixar sequência
-./twoBitToFa \
-  http://hgdownload.cse.ucsc.edu/goldenPath/hg38/bigZips/hg38.2bit:chr11:5227002-5229049 \
-  HBB_gene.fasta
+./twoBitToFa http://hgdownload.cse.ucsc.edu/goldenPath/hg38/bigZips/hg38.2bit:chr11:5227002-5229049 HBB_gene.fasta
 ```
 
 ---
