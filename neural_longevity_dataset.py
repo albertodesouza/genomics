@@ -280,20 +280,25 @@ class LongevityDatasetBuilder:
         """
         console.print("\n[bold cyan]Passo 1: Download de Amostras[/bold cyan]")
         
-        if self.config['debug']['dry_run']:
+        is_dry_run = self.config['debug']['dry_run']
+        
+        if is_dry_run:
             console.print("[yellow]⚠ Modo dry-run: simulando downloads[/yellow]")
-            return
         
         # Obter lista de amostras
         samples_file = self.output_dir / "samples_list.txt"
         
         if not samples_file.exists():
-            console.print("[cyan]Baixando lista de amostras do 1000 Genomes...[/cyan]")
+            if not is_dry_run:
+                console.print("[cyan]Baixando lista de amostras do 1000 Genomes...[/cyan]")
             self._download_samples_list(samples_file)
         
-        # Ler lista
+        # Ler lista (filtrar comentários e linhas vazias)
         with open(samples_file) as f:
-            all_samples = [line.strip() for line in f if line.strip()]
+            all_samples = [
+                line.strip() for line in f 
+                if line.strip() and not line.startswith('#')
+            ]
         
         console.print(f"[green]✓ {len(all_samples)} amostras disponíveis[/green]")
         
@@ -307,13 +312,16 @@ class LongevityDatasetBuilder:
         console.print(f"[cyan]Amostras longevas: {len(longevous_samples)}[/cyan]")
         console.print(f"[cyan]Amostras não-longevas: {len(non_longevous_samples)}[/cyan]")
         
-        # Salvar listas
+        # Salvar listas (mesmo em dry-run, para próximos passos)
         (self.output_dir / "longevous_samples.txt").write_text('\n'.join(longevous_samples))
         (self.output_dir / "non_longevous_samples.txt").write_text('\n'.join(non_longevous_samples))
         
         # Baixar VCFs (placeholder - implementação depende de acesso real)
-        self._download_vcfs(longevous_samples, label="longevous")
-        self._download_vcfs(non_longevous_samples, label="non_longevous")
+        if not is_dry_run:
+            self._download_vcfs(longevous_samples, label="longevous")
+            self._download_vcfs(non_longevous_samples, label="non_longevous")
+        else:
+            console.print("[yellow]⚠ Dry-run: pulando download de VCFs[/yellow]")
         
         console.print("[green]✓ Download de amostras concluído[/green]")
     
@@ -323,9 +331,33 @@ class LongevityDatasetBuilder:
         samples_url = "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/1000G_2504_high_coverage.sequence.index"
         
         try:
-            cmd = ['wget', '-O', str(output_file), samples_url]
+            # Baixar arquivo temporário
+            temp_file = output_file.parent / "samples_raw.tsv"
+            cmd = ['wget', '-O', str(temp_file), samples_url]
             sp.run(cmd, check=True, capture_output=True)
-            console.print(f"[green]✓ Lista de amostras baixada[/green]")
+            
+            # Parsear TSV e extrair IDs de amostra (coluna 9: SAMPLE_NAME)
+            sample_ids = set()  # Usar set para evitar duplicatas
+            with open(temp_file, 'r') as f:
+                for line in f:
+                    if line.startswith('#'):
+                        continue
+                    fields = line.strip().split('\t')
+                    if len(fields) > 9:  # Garantir que tem colunas suficientes
+                        sample_id = fields[9].strip()  # Coluna SAMPLE_NAME (índice 9)
+                        if sample_id and sample_id != 'SAMPLE_NAME':  # Pular header
+                            sample_ids.add(sample_id)
+            
+            # Salvar lista limpa de IDs únicos
+            sorted_ids = sorted(sample_ids)
+            output_file.write_text('\n'.join(sorted_ids))
+            
+            # Remover arquivo temporário
+            temp_file.unlink()
+            
+            console.print(f"[green]✓ Lista de amostras baixada e processada[/green]")
+            console.print(f"[green]  {len(sorted_ids)} IDs únicos extraídos[/green]")
+            
         except Exception as e:
             console.print(f"[yellow]⚠ Erro ao baixar lista: {e}[/yellow]")
             # Criar lista simulada para desenvolvimento
@@ -334,8 +366,10 @@ class LongevityDatasetBuilder:
     def _create_simulated_samples_list(self, output_file: Path):
         """Cria lista simulada de amostras para desenvolvimento."""
         console.print("[yellow]Criando lista simulada de amostras...[/yellow]")
+        # Criar IDs de amostras simuladas (sem comentários)
         samples = [f"SAMPLE_{i:04d}" for i in range(1000)]
         output_file.write_text('\n'.join(samples))
+        console.print(f"[green]✓ {len(samples)} amostras simuladas criadas[/green]")
     
     def _download_vcfs(self, samples: List[str], label: str):
         """Baixa VCFs das amostras (placeholder)."""
@@ -455,6 +489,13 @@ class LongevityDatasetBuilder:
         if strategy == "first_longevous_sample":
             # Obter primeira amostra longeva
             longevous_samples_file = self.output_dir / "longevous_samples.txt"
+            
+            # Verificar se arquivo existe (pode não existir em dry-run)
+            if not longevous_samples_file.exists():
+                console.print(f"[yellow]⚠ Arquivo não encontrado: {longevous_samples_file}[/yellow]")
+                console.print(f"[yellow]  Criando pontos centrais simulados...[/yellow]")
+                return self._create_simulated_central_points(n_points)
+            
             with open(longevous_samples_file) as f:
                 first_sample = f.readline().strip()
             
@@ -559,6 +600,11 @@ class LongevityDatasetBuilder:
             Lista de registros de sequência
         """
         console.print("\n[bold cyan]Passo 4: Extração de Sequências FASTA[/bold cyan]")
+        
+        if self.config['debug']['dry_run']:
+            console.print("[yellow]⚠ Modo dry-run: simulando extração de sequências[/yellow]")
+            console.print(f"[cyan]Seria extraído: {len(central_points)} pontos centrais × N amostras[/cyan]")
+            return []
         
         window_size = self.config['sequence_extraction']['window_size']
         ref_fasta = Path(self.config['data_sources']['reference']['fasta'])
@@ -672,6 +718,11 @@ class LongevityDatasetBuilder:
         """
         console.print("\n[bold cyan]Passo 5: Processamento com AlphaGenome[/bold cyan]")
         
+        if self.config['debug']['dry_run']:
+            console.print("[yellow]⚠ Modo dry-run: simulando processamento com AlphaGenome[/yellow]")
+            console.print(f"[cyan]Seria processado: {len(records)} sequências[/cyan]")
+            return []
+        
         api_key = self.config['alphagenome']['api_key']
         if not api_key:
             console.print("[red]✗ API key do AlphaGenome não configurada![/red]")
@@ -755,6 +806,11 @@ class LongevityDatasetBuilder:
             results: Resultados do AlphaGenome
         """
         console.print("\n[bold cyan]Passo 6: Construção do Dataset PyTorch[/bold cyan]")
+        
+        if self.config['debug']['dry_run']:
+            console.print("[yellow]⚠ Modo dry-run: simulando construção do dataset[/yellow]")
+            console.print(f"[cyan]Seria criado: train.pkl, val.pkl, test.pkl[/cyan]")
+            return
         
         # TODO: Implementar construção completa
         console.print("[yellow]⚠ Construção de dataset em desenvolvimento...[/yellow]")
