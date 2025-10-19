@@ -1,0 +1,213 @@
+# ═══════════════════════════════════════════════════════════════════
+# Configuração: IA Neuro-Simbólica para Longevidade
+# ═══════════════════════════════════════════════════════════════════
+
+project:
+  name: "longevity_markers"
+  description: "Descoberta de Marcadores Genéticos e Epigenéticos de Longevidade"
+  output_dir: "longevity_dataset"
+  
+# ═══════════════════════════════════════════════════════════════════
+# Dados de Entrada
+# ═══════════════════════════════════════════════════════════════════
+
+data_sources:
+  # Genoma de referência
+  reference:
+    fasta: "refs/GRCh38.d1.vd1.fa"
+    name: "GRCh38"
+  
+  # Dados de pessoas longevas (temporariamente do 1000 Genomes)
+  longevous:
+    source: "1000genomes_30x_grch38"
+    url_base: "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV"
+    # Simulação: primeiras 30 pessoas
+    sample_range: [0, 30]
+    n_samples: 30
+    label: 1  # Classe para longevos
+  
+  # Dados de pessoas não longevas (temporariamente do 1000 Genomes)
+  non_longevous:
+    source: "1000genomes_30x_grch38"
+    url_base: "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV"
+    # Simulação: 30 pessoas a partir da posição 500
+    sample_range: [500, 530]
+    n_samples: 30
+    label: 0  # Classe para não-longevos
+
+# ═══════════════════════════════════════════════════════════════════
+# Seleção de Pontos Centrais (Variantes)
+# ═══════════════════════════════════════════════════════════════════
+
+variant_selection:
+  # Estratégia inicial: selecionar variantes da primeira pessoa longeva
+  initial_strategy: "first_longevous_sample"
+  
+  # Número de pontos centrais a extrair
+  n_central_points: 10
+  
+  # Filtros de qualidade para variantes
+  filters:
+    min_quality: 30
+    min_depth: 10
+    filter_pass_only: true
+    exclude_common: true  # Excluir variantes muito comuns (AF > 0.5)
+    max_allele_frequency: 0.5
+  
+  # Estratégia de refinamento (após análise inicial)
+  refinement:
+    enabled: false  # Desabilitado inicialmente
+    method: "importance_ranking"  # Será implementado após primeira análise
+    top_k: 50  # Selecionar top K pontos mais relevantes
+
+# ═══════════════════════════════════════════════════════════════════
+# Extração de Sequências FASTA
+# ═══════════════════════════════════════════════════════════════════
+
+sequence_extraction:
+  # Tamanho da janela ao redor do ponto central (em bases)
+  # Deve ser um dos tamanhos suportados pelo AlphaGenome
+  window_size: 2048  # Opções: 2048, 16384, 131072, 524288, 1048576
+  
+  # Centrar janela na variante
+  center_on_variant: true
+  
+  # Se True, extrai sequência alternativa (com variante)
+  # Se False, extrai sequência de referência
+  use_alternate_allele: true
+
+# ═══════════════════════════════════════════════════════════════════
+# AlphaGenome
+# ═══════════════════════════════════════════════════════════════════
+
+alphagenome:
+  api_key: ""  # Preencher com sua API key
+  
+  # Outputs a serem preditos
+  outputs:
+    - "RNA_SEQ"
+    - "CAGE"
+    - "ATAC"
+    - "CHIP_HISTONE"
+    - "CHIP_TF"
+    - "DNASE"
+    - "PROCAP"
+  
+  # Contextos de ontologia (tecidos/células)
+  ontology_terms:
+    - "UBERON:0000955"  # Brain
+    - "UBERON:0002107"  # Liver
+    - "UBERON:0000948"  # Heart
+    - "UBERON:0002048"  # Lung
+    - "UBERON:0002113"  # Kidney
+  
+  # Cache de resultados
+  cache_results: true
+  cache_dir: "longevity_dataset/alphagenome_cache"
+  
+  # Processamento em lote
+  batch_size: 10
+  max_retries: 3
+  retry_delay: 5  # segundos
+
+# ═══════════════════════════════════════════════════════════════════
+# Dataset PyTorch
+# ═══════════════════════════════════════════════════════════════════
+
+dataset:
+  # Splits para treino/validação/teste
+  splits:
+    train: 0.6
+    validation: 0.2
+    test: 0.2
+  
+  # Balanceamento de classes
+  balance_classes: true  # Igual número de longevos e não-longevos em cada split
+  
+  # Semente para reprodutibilidade
+  random_seed: 42
+  
+  # Formato de saída
+  format: "pytorch"  # Opções: pytorch, hdf5, tfrecord
+  
+  # Estrutura dos dados
+  features:
+    # Sequência DNA (one-hot encoded)
+    sequence:
+      enabled: true
+      encoding: "one_hot"  # A, C, G, T -> [1,0,0,0], [0,1,0,0], etc.
+    
+    # Posição no genoma
+    position:
+      enabled: true
+      normalize: true  # Normalizar posições para [0, 1]
+    
+    # Predições AlphaGenome
+    alphagenome_predictions:
+      enabled: true
+      # Cada output gera um array de features
+      aggregation: "statistics"  # Opções: raw, statistics, embeddings
+      statistics: ["mean", "std", "min", "max", "median"]
+    
+    # Metadados
+    metadata:
+      enabled: true
+      fields:
+        - "sample_id"
+        - "chromosome"
+        - "position"
+        - "ref_allele"
+        - "alt_allele"
+        - "variant_type"
+  
+  # Transformações/augmentação
+  transforms:
+    enabled: false  # Para análise genômica, augmentação deve ser cuidadosa
+    methods: []
+
+# ═══════════════════════════════════════════════════════════════════
+# Pipeline de Processamento
+# ═══════════════════════════════════════════════════════════════════
+
+pipeline:
+  # Etapas a executar
+  steps:
+    download_samples: true
+    extract_variants: true
+    select_central_points: true
+    extract_sequences: true
+    run_alphagenome: true
+    build_dataset: true
+  
+  # Processamento paralelo
+  parallel:
+    enabled: true
+    n_workers: 4
+  
+  # Resumo de execução
+  resume_from_checkpoint: true
+  checkpoint_frequency: 10  # Salvar checkpoint a cada N amostras
+
+# ═══════════════════════════════════════════════════════════════════
+# Recursos Computacionais
+# ═══════════════════════════════════════════════════════════════════
+
+resources:
+  max_memory_gb: 32
+  max_disk_gb: 100
+  temp_dir: "/tmp/longevity_processing"
+  
+# ═══════════════════════════════════════════════════════════════════
+# Logging e Debug
+# ═══════════════════════════════════════════════════════════════════
+
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  log_file: "longevity_dataset/processing.log"
+  console_output: true
+  
+debug:
+  dry_run: false  # Se true, não executa, apenas simula
+  limit_samples: null  # Limitar número de amostras (para testes rápidos)
+  save_intermediate: true  # Salvar arquivos intermediários
+

@@ -1,0 +1,32 @@
+# Configuração de Treinamento - Marcadores de Longevidade
+
+data:
+  train_file: "longevity_dataset/train.pkl"
+  val_file: "longevity_dataset/val.pkl"
+  test_file: "longevity_dataset/test.pkl"
+
+model:
+  architecture: "LongevityCNN"
+  sequence_length: 2048  # Deve corresponder ao window_size do dataset
+  alphagenome_features: 35  # 5 features (mean, std, min, max, median) × 7 outputs
+
+training:
+  epochs: 100
+  batch_size: 32
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  num_workers: 4
+  
+  # Early stopping
+  patience: 15
+  min_delta: 0.001
+
+output:
+  model_dir: "longevity_models/"
+  tensorboard_dir: "longevity_models/tensorboard/"
+  checkpoints_dir: "longevity_models/checkpoints/"
+
+# Recursos
+device: "cuda"  # cuda ou cpu
+mixed_precision: false  # AMP para GPUs mais rápidas
+
