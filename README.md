@@ -310,7 +310,26 @@ Key guides:
 
 ### Integration with Genomes Analyzer
 
-Neural Module can be used standalone or integrated with the main pipeline to analyze specific genomic regions identified by variant calling. See [neural_integration.py](neural_integration.py) for programmatic integration examples.
+Neural Module can be used standalone or integrated with the main pipeline to analyze specific genomic regions identified by variant calling.
+
+📖 **Complete Integration Guide**: [NEURAL_INTEGRATION.md](NEURAL_INTEGRATION.md)
+
+The integration tool (`neural_integration.py`) provides:
+- **Automated extraction** of sequences from VCF, BED, or gene lists
+- **Neural analysis** of variants and genomic regions
+- **Correlation** of traditional variant calls with AI predictions
+- **4 operation modes**: integrated analysis, VCF extraction, BED extraction, gene extraction
+
+Quick example:
+```bash
+# Extract variants from pipeline VCF and analyze with AlphaGenome
+python neural_integration.py \
+  --integrated \
+  --vcf vcf/sample.vcf.gz \
+  --ref refs/GRCh38.fa \
+  --api-key YOUR_API_KEY \
+  --output integrated_analysis/
+```
 
 ---
 

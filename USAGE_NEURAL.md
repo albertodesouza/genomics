@@ -276,6 +276,19 @@ Ver exemplos completos: [neural_example.py](neural_example.py)
 
 ## 🔗 Integração com Pipeline
 
+Para integrar o Neural Module com o `genomes_analyzer.py` e analisar variantes automaticamente:
+
+### Análise Integrada Completa
+
+```bash
+python neural_integration.py \
+    --integrated \
+    --vcf vcf/sample.vcf.gz \
+    --ref refs/GRCh38.fa \
+    --api-key YOUR_API_KEY \
+    --output integrated_results/
+```
+
 ### Extrair Sequências de VCF
 
 ```bash
@@ -286,18 +299,25 @@ python neural_integration.py \
     --output extracted.fasta
 ```
 
-### Análise Integrada Completa
+### Extrair Genes Específicos
 
 ```bash
 python neural_integration.py \
-    --integrated \
-    --vcf variants.vcf \
-    --ref genome.fa \
-    --api-key API_KEY \
-    --output integrated_results/
+    --extract-genes \
+    --genes BRCA1 TP53 HBB \
+    --gtf refs/gencode.gtf.gz \
+    --ref refs/GRCh38.fa \
+    --output genes.fasta \
+    --flank 10000
 ```
 
-Ver mais: [neural_integration.py](neural_integration.py)
+📖 **Guia Completo de Integração**: [NEURAL_INTEGRATION.md](NEURAL_INTEGRATION.md)
+
+O guia de integração inclui:
+- 4 modos de operação detalhados
+- Casos de uso práticos
+- Fluxo completo pipeline → neural
+- Interpretação de resultados correlacionados
 
 ---
 

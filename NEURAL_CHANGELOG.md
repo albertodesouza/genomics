@@ -201,6 +201,15 @@ python neural_module.py \
   - Tipo de experimento (`Assay title`)
   - Identificadores de arquivo
 
+### 🔗 Documentação de Integração Completa
+- **NEURAL_INTEGRATION.md** criado (guia completo de 500+ linhas)
+- Explica o que é `neural_integration.py` e como usá-lo
+- 4 modos de operação documentados com exemplos
+- Casos de uso práticos detalhados
+- Fluxo de trabalho integrado completo (DNA → Variantes → Predições)
+- FAQ e troubleshooting
+- Atualização de referências em todos os documentos
+
 ## ✅ Checklist de Validação
 
 - [x] Documentação reorganizada
@@ -209,10 +218,13 @@ python neural_module.py \
 - [x] USAGE_NEURAL.md criado
 - [x] RESULTS_NEURAL.md criado
 - [x] DOWNLOAD_SEQUENCES.md criado
+- [x] NEURAL_INTEGRATION.md criado (novo!)
 - [x] example_sequence.fasta com gene HBB (2048 bp exatos)
 - [x] advanced-viz agora padrão
 - [x] Ontologia exibida automaticamente
 - [x] Metadados de ontologia salvos automaticamente
+- [x] Integração documentada completamente
+- [x] README.md atualizado com seção Neural Module
 - [x] Sem erros de lint
 - [x] Pronto para commit
 

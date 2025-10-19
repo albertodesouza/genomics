@@ -40,7 +40,7 @@ O **Neural Module** é uma implementação completa para análise de DNA usando 
 ### 🔧 Recursos Avançados
 - **[Visualizações Avançadas](VISUALIZACOES_AVANCADAS.md)** - Guia de visualizações
 - **[Uso Programático](neural_example.py)** - Exemplos de código Python
-- **[Integração com Pipeline](neural_integration.py)** - Ponte com genomes_analyzer
+- **[Integração com Pipeline](NEURAL_INTEGRATION.md)** - Ponte com genomes_analyzer
 
 ### 🐛 Troubleshooting
 - **[Correções Aplicadas](CORRECOES_APLICADAS.md)** - Problemas resolvidos
