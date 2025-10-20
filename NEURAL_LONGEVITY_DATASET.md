@@ -54,13 +54,13 @@ project:
 
 data_sources:
   reference:
-    fasta: "references/GRCh38.fa"   # relative to the YAML file directory
+    fasta: "refs/reference.fa"      # relative to the YAML file directory
   longevous:
     ena_project: "PRJEB31736"
-    sample_range: [0, 5]
+    sample_range: [0, 10]
   non_longevous:
     ena_project: "PRJEB31736"
-    sample_range: [5, 10]
+    sample_range: [10, 20]
 
 sequence_extraction:
   window_size: 1000
@@ -113,7 +113,7 @@ debug:
    ```
 3. Execute the builder, pointing to the YAML stored in the repo:
    ```bash
-   python ~/genomics/neural_longevity_dataset.py \
+   python3 ~/genomics/neural_longevity_dataset.py \
      --config ~/genomics/longevity_config.yaml
    ```
 4. Monitor the Rich progress panels. On completion, review the outputs under `/dados/GENOMICS_DATA/top3/<output_dir>/`.
@@ -123,7 +123,7 @@ debug:
 Use `--steps` to run a subset of the pipeline:
 
 ```bash
-python ~/genomics/neural_longevity_dataset.py \
+python3 ~/genomics/neural_longevity_dataset.py \
   --config ~/genomics/longevity_config.yaml \
   --steps download_samples extract_sequences
 ```

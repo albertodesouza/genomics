@@ -21,7 +21,7 @@ Uso rápido
    ``samtools``, AlphaGenome CLI, PyTorch, etc.).
 3. Execute:
 
-   ``python neural_longevity_dataset.py --config longevity_config.yaml``
+   ``python3 neural_longevity_dataset.py --config longevity_config.yaml``
 
    O programa respeita as etapas definidas em ``pipeline.steps`` dentro do YAML.
 
@@ -30,7 +30,7 @@ Selecionando etapas específicas
 Você pode rodar etapas isoladas informando ``--steps`` (ex.: apenas download e
 extração de sequências):
 
-``python neural_longevity_dataset.py --config longevity_config.yaml \
+``python3 neural_longevity_dataset.py --config longevity_config.yaml \
     --steps download_samples extract_sequences``
 
 O argumento ``--dry-run`` mostra o que seria executado sem alterar arquivos.
@@ -912,6 +912,19 @@ class LongevityDatasetBuilder:
 
                 cram_path = cram_dir / f"{sample_id}.cram"
                 crai_path = cram_dir / f"{sample_id}.cram.crai"
+                existing_vcf = vcf_dir / f"{sample_id}.vcf.gz"
+                existing_vcf_index = existing_vcf.with_suffix('.vcf.gz.tbi')
+
+                if (
+                    sample_id in processed
+                    and cram_path.exists()
+                    and crai_path.exists()
+                    and existing_vcf.exists()
+                    and existing_vcf_index.exists()
+                ):
+                    self._update_sample_state(record, cram_path, crai_path, existing_vcf)
+                    progress.advance(task)
+                    continue
 
                 if sample_id not in processed:
                     cram_ok = self._download_file(record['cram_url'], cram_path)
