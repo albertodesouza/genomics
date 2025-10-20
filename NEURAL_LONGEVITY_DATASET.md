@@ -54,7 +54,7 @@ project:
 
 data_sources:
   reference:
-    fasta: "refs/reference.fa"      # relative to the YAML file directory
+    fasta: "refs/reference.fa"      # resolved first relative to /dados/GENOMICS_DATA/top3/
   longevous:
     ena_project: "PRJEB31736"
     sample_range: [0, 10]
@@ -145,7 +145,8 @@ Additional logs: `checkpoint.json`, per-step runtime metrics, and state caches f
 ## 8. Troubleshooting
 
 - **RuntimeError: must be executed from /dados/GENOMICS_DATA/top3** – change directory to that path before launching the script.
-- **Reference not found** – verify `data_sources.reference.fasta` resolves correctly relative to the YAML file.
+- **Reference not found** – ensure `refs/reference.fa` (or the configured path) exists under `/dados/GENOMICS_DATA/top3/`; the
+  CLI also falls back to paths relative to the YAML file and current working directory.
 - **AlphaGenome authentication errors** – confirm the CLI is installed and `alphagenome.api_key` is valid.
 - **Permissions denied when creating directories** – adjust file-system permissions on `/dados/GENOMICS_DATA/top3/` or run with sufficient privileges.
 

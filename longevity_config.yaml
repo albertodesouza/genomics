@@ -12,9 +12,9 @@ project:
 # ═══════════════════════════════════════════════════════════════════
 
 data_sources:
-  # Reference genome (path resolved relative to this YAML file)
+  # Reference genome (first resolved relative to /dados/GENOMICS_DATA/top3/)
   reference:
-    fasta: "refs/reference.fa"   # resolved relative to this YAML directory
+    fasta: "refs/reference.fa"   # falls back to this YAML directory/current cwd if needed
     name: "GRCh38"
 
   # Longevous cohort (temporarily reusing 1000 Genomes high-coverage data)

@@ -523,17 +523,26 @@ class LongevityDatasetBuilder:
     def _get_reference_fasta(self) -> Optional[Path]:
         """Retorna caminho absoluto do FASTA de referência."""
         ref_path = Path(self.config['data_sources']['reference']['fasta'])
-        if not ref_path.is_absolute():
-            ref_fasta = (self.config_dir / ref_path).resolve()
+
+        candidates: List[Path] = []
+        if ref_path.is_absolute():
+            candidates.append(ref_path)
         else:
-            ref_fasta = ref_path
+            # 1) Caminho relativo ao diretório obrigatório de dados
+            candidates.append((DATA_ROOT / ref_path).resolve())
+            # 2) Caminho relativo ao diretório do arquivo de configuração
+            candidates.append((self.config_dir / ref_path).resolve())
+            # 3) Caminho relativo ao diretório de trabalho atual (por segurança)
+            candidates.append((Path.cwd() / ref_path).resolve())
 
-        if not ref_fasta.exists():
-            console.print(f"[red]✗ Referência não encontrada: {ref_fasta}[/red]")
-            return None
+        for candidate in candidates:
+            if candidate.exists():
+                self._ensure_reference_indices(candidate)
+                return candidate
 
-        self._ensure_reference_indices(ref_fasta)
-        return ref_fasta
+        tried_paths = "\n".join(str(path) for path in candidates) if candidates else str(ref_path)
+        console.print("[red]✗ Referência não encontrada. Caminhos verificados:[/red]\n" + tried_paths)
+        return None
 
     def _generate_vcf_for_sample(self, sample_id: str, cram_path: Path, vcf_dir: Path, ref_fasta: Path) -> Optional[Path]:
         """Executa bcftools mpileup+call para gerar VCF."""
