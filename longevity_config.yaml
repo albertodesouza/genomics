@@ -81,7 +81,7 @@ sequence_extraction:
 # ═══════════════════════════════════════════════════════════════════
 
 alphagenome:
-  api_key: ""  # Preencher com sua API key
+  api_key: "AIzaSyAUFoZHUsU9Qc-wQ6IIEPM3FqDJDCDWvkY"  # Preencher com sua API key
   
   # Outputs a serem preditos
   outputs:
