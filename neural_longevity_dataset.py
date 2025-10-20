@@ -410,14 +410,22 @@ class LongevityDatasetBuilder:
     # ───────────────────────────────────────────────────────────────
 
     def _normalize_ena_url(self, url: str) -> str:
-        """Converte URLs FTP do ENA para HTTPS."""
+        """Normaliza URLs do ENA para um esquema HTTPS utilizável."""
         if not url:
             return url
-        if url.startswith('ftp://'):
-            return url.replace('ftp://', 'https://', 1)
-        if url.startswith('http://'):
-            return url.replace('http://', 'https://', 1)
-        return url
+
+        cleaned = url.strip()
+
+        if cleaned.startswith('ftp://'):
+            return cleaned.replace('ftp://', 'https://', 1)
+        if cleaned.startswith('http://'):
+            return cleaned.replace('http://', 'https://', 1)
+        if cleaned.startswith('https://'):
+            return cleaned
+
+        # Muitos registros "submitted_ftp" retornam sem esquema (ex.: ftp.sra...).
+        # Nesses casos, forçamos HTTPS explícito.
+        return f"https://{cleaned}"
 
     def _get_processed_samples(self) -> set:
         """Retorna conjunto com IDs já processados."""
