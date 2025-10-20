@@ -8,6 +8,7 @@ _A technical-scientific guide to `genomes_analyzer.py`_
 - [What's new](#whats-new)
 - [Genomes Analyzer Pipeline](#genomes-analyzer-pipeline)
 - [Neural Module — AI-powered DNA Analysis](#neural-module--ai-powered-dna-analysis)
+- [Neural Longevity Dataset Builder](#neural-longevity-dataset-builder)
 - [How to Use the Genomes Analyzer](#how-to-use-the-genomes-analyzer)
 - [Background execution & monitoring](#background-execution--monitoring)
 - [Conclusion](#conclusion)
@@ -330,6 +331,14 @@ python neural_integration.py \
   --api-key YOUR_API_KEY \
   --output integrated_analysis/
 ```
+
+---
+
+## Neural Longevity Dataset Builder
+
+`neural_longevity_dataset.py` automates the creation of AlphaGenome-ready training data by downloading 1000 Genomes High Coverage CRAMs, calling variants, extracting alternate-allele FASTA windows, and assembling PyTorch splits under `/dados/GENOMICS_DATA/top3/`. Run the script from that directory so every download, cache, and dataset artifact stays grouped per cohort.
+
+📘 **Detailed usage guide**: [NEURAL_LONGEVITY_DATASET.md](NEURAL_LONGEVITY_DATASET.md)
 
 ---
 
