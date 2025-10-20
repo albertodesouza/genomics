@@ -81,6 +81,10 @@ from rich import print as rprint
 console = Console()
 
 
+# Diretório raiz obrigatório para dados persistentes do projeto
+DATA_ROOT = Path("/dados/GENOMICS_DATA/top3").resolve()
+
+
 # ═══════════════════════════════════════════════════════════════════
 # Data Classes
 # ═══════════════════════════════════════════════════════════════════
@@ -293,22 +297,44 @@ class LongevityDatasetBuilder:
         # Carregar configuração
         with open(config_path) as f:
             self.config = yaml.safe_load(f)
+
+        self.config_dir = self.config_path.parent.resolve()
         
-        # Diretórios (usar diretório de execução atual)
-        # output_dir é relativo ao diretório onde o comando é executado
-        self.work_dir = Path.cwd()  # Diretório de execução
-        self.output_dir = self.work_dir / self.config['project']['output_dir']
+        # Diretórios: execução deve ocorrer dentro de DATA_ROOT
+        self.work_dir = Path.cwd().resolve()
+        self.data_root = DATA_ROOT
+
+        if not self.data_root.exists():
+            self.data_root.mkdir(parents=True, exist_ok=True)
+
+        if self.work_dir != self.data_root:
+            raise RuntimeError(
+                "neural_longevity_dataset.py must be executed from /dados/GENOMICS_DATA/top3. "
+                f"Current working directory: {self.work_dir}"
+            )
+
+        output_cfg = Path(self.config['project']['output_dir'])
+        if output_cfg.is_absolute():
+            output_resolved = output_cfg.resolve()
+            if not str(output_resolved).startswith(str(self.data_root)):
+                raise ValueError(
+                    "project.output_dir must be inside /dados/GENOMICS_DATA/top3"
+                )
+            self.output_dir = output_resolved
+        else:
+            self.output_dir = (self.data_root / output_cfg).resolve()
+
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         console.print(f"[cyan]Diretório de trabalho: {self.work_dir}[/cyan]")
         console.print(f"[cyan]Saída em: {self.output_dir}[/cyan]")
-        
+
         # Cache dir também relativo ao work_dir se for caminho relativo
         cache_path = Path(self.config['alphagenome']['cache_dir'])
         if cache_path.is_absolute():
             self.cache_dir = cache_path
         else:
-            self.cache_dir = self.work_dir / cache_path
+            self.cache_dir = self.data_root / cache_path
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         
         # Estado do processamento

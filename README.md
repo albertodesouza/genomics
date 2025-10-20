@@ -8,6 +8,7 @@ _A technical-scientific guide to `genomes_analyzer.py`_
 - [What's new](#whats-new)
 - [Genomes Analyzer Pipeline](#genomes-analyzer-pipeline)
 - [Neural Module — AI-powered DNA Analysis](#neural-module--ai-powered-dna-analysis)
+- [Neural Longevity Dataset Builder](NEURAL_LONGEVITY_DATASET.md)
 - [How to Use the Genomes Analyzer](#how-to-use-the-genomes-analyzer)
 - [Background execution & monitoring](#background-execution--monitoring)
 - [Conclusion](#conclusion)
