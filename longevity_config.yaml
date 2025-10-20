@@ -12,34 +12,44 @@ project:
 # ═══════════════════════════════════════════════════════════════════
 
 data_sources:
+  # Reference genome (path resolved relative to this YAML file)
   reference:
     fasta: "refs/reference.fa"   # resolved relative to this YAML directory
     name: "GRCh38"
 
+  # Longevous cohort (temporarily reusing 1000 Genomes high-coverage data)
   longevous:
     ena_project: "PRJEB31736"
-    sample_range: [0, 10]
-    label: 1
+    sample_range: [0, 10]        # inclusive start, exclusive end
+    label: 1                     # class label for longevous individuals
 
+  # Non-longevous cohort (placeholder range within the same project)
   non_longevous:
     ena_project: "PRJEB31736"
-    sample_range: [10, 20]
-    label: 0
+    sample_range: [10, 20]       # inclusive start, exclusive end
+    label: 0                     # class label for non-longevous individuals
 
 # ═══════════════════════════════════════════════════════════════════
 # Variant Selection
 # ═══════════════════════════════════════════════════════════════════
 
 variant_selection:
+  # Initial strategy: use the first longevous individual to seed central points
   initial_strategy: "first_longevous_sample"
+  # Number of loci to extract around the seed variants
   n_central_points: 10
   filters:
+    # Minimum QUAL accepted for a variant
     min_quality: 30
+    # Minimum depth (DP) required at the variant site
     min_depth: 10
+    # Only retain variants marked as PASS in the FILTER column
     filter_pass_only: true
+    # Skip variants with high population allele frequency
     exclude_common: true
     max_allele_frequency: 0.5
   refinement:
+    # Post-processing refinement is disabled by default
     enabled: false
     method: "importance_ranking"
     top_k: 50
@@ -49,8 +59,11 @@ variant_selection:
 # ═══════════════════════════════════════════════════════════════════
 
 sequence_extraction:
+  # Window length around each central point (must match AlphaGenome supported sizes)
   window_size: 2048
+  # Ensure the variant is positioned in the middle of the window
   center_on_variant: true
+  # Replace the reference allele with the alternate allele in the FASTA sequence
   use_alternate_allele: true
 
 # ═══════════════════════════════════════════════════════════════════
@@ -58,6 +71,7 @@ sequence_extraction:
 # ═══════════════════════════════════════════════════════════════════
 
 alphagenome:
+  # API token expected in the environment (or override in CI)
   api_key: "${ALPHAGENOME_API_KEY}"
   outputs:
     - "RNA_SEQ"
@@ -73,8 +87,10 @@ alphagenome:
     - "UBERON:0000948"  # Heart
     - "UBERON:0002048"  # Lung
     - "UBERON:0002113"  # Kidney
+  # Cache AlphaGenome responses to avoid repeated network calls
   cache_results: true
   cache_dir: "alphagenome_cache"
+  # Batch prediction parameters and retry policy
   batch_size: 10
   max_retries: 3
   retry_delay: 5
@@ -84,24 +100,31 @@ alphagenome:
 # ═══════════════════════════════════════════════════════════════════
 
 dataset:
+  # Proportions used when generating train/validation/test splits
   splits:
     train: 0.6
     validation: 0.2
     test: 0.2
+  # Enforce balanced class counts per split
   balance_classes: true
+  # Seed to ensure reproducible shuffling and splits
   random_seed: 42
   features:
     sequence:
+      # Encode nucleotide sequences as one-hot tensors
       enabled: true
       encoding: "one_hot"
     position:
+      # Include normalized genomic coordinates as features
       enabled: true
       normalize: true
     alphagenome_predictions:
+      # Summaries derived from AlphaGenome predictions
       enabled: true
       aggregation: "statistics"
       statistics: ["mean", "std", "min", "max", "median"]
     metadata:
+      # Additional contextual information stored alongside each example
       enabled: true
       fields:
         - "sample_id"
@@ -113,6 +136,7 @@ dataset:
         - "genotype"
         - "allele_used"
   transforms:
+    # Data augmentation hooks (disabled by default for genomics)
     enabled: false
     methods: []
 
@@ -121,6 +145,7 @@ dataset:
 # ═══════════════════════════════════════════════════════════════════
 
 pipeline:
+  # High-level pipeline toggles (disable steps to resume from mid-process)
   steps:
     download_samples: true
     select_central_points: true
@@ -128,9 +153,12 @@ pipeline:
     run_alphagenome: true
     build_dataset: true
   parallel:
+    # Worker pool used for CPU-bound steps (downloads, variant parsing)
     enabled: true
     n_workers: 4
+  # Allow reruns to pick up from the last saved state
   resume_from_checkpoint: true
+  # Persist progress every N processed samples
   checkpoint_frequency: 10
 
 # ═══════════════════════════════════════════════════════════════════
@@ -138,6 +166,7 @@ pipeline:
 # ═══════════════════════════════════════════════════════════════════
 
 resources:
+  # Soft limits for local resource planners
   max_memory_gb: 32
   max_disk_gb: 100
   temp_dir: "/tmp/longevity_processing"
@@ -147,11 +176,13 @@ resources:
 # ═══════════════════════════════════════════════════════════════════
 
 logging:
+  # Log verbosity and destinations
   level: "INFO"
   log_file: "longevity_dataset/processing.log"
   console_output: true
 
 debug:
+  # Developer conveniences for partial or exploratory runs
   dry_run: false
   limit_samples: null
   save_intermediate: true
