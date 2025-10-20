@@ -1,79 +1,69 @@
 # ═══════════════════════════════════════════════════════════════════
-# Configuração: IA Neuro-Simbólica para Longevidade
+# Configuration — Neural Longevity Dataset Builder
 # ═══════════════════════════════════════════════════════════════════
 
 project:
   name: "longevity_markers"
-  description: "Descoberta de Marcadores Genéticos e Epigenéticos de Longevidade"
+  description: "Discovery of longevity-associated genetic and epigenetic markers"
   output_dir: "longevity_dataset"
-  
+
 # ═══════════════════════════════════════════════════════════════════
-# Dados de Entrada
+# Data Sources
 # ═══════════════════════════════════════════════════════════════════
 
 data_sources:
-  # Genoma de referência
+  # Reference genome (first resolved relative to /dados/GENOMICS_DATA/top3/)
   reference:
-    fasta: "refs/GRCh38.d1.vd1.fa"
+    fasta: "refs/reference.fa"   # falls back to this YAML directory/current cwd if needed
     name: "GRCh38"
-  
-  # Dados de pessoas longevas (temporariamente do 1000 Genomes)
+
+  # Longevous cohort (temporarily reusing 1000 Genomes high-coverage data)
   longevous:
-    source: "1000genomes_30x_grch38"
-    url_base: "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV"
-    # Simulação: primeiras 30 pessoas
-    sample_range: [0, 30]
-    n_samples: 30
-    label: 1  # Classe para longevos
-  
-  # Dados de pessoas não longevas (temporariamente do 1000 Genomes)
+    ena_project: "PRJEB31736"
+    sample_range: [0, 10]        # inclusive start, exclusive end
+    label: 1                     # class label for longevous individuals
+
+  # Non-longevous cohort (placeholder range within the same project)
   non_longevous:
-    source: "1000genomes_30x_grch38"
-    url_base: "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV"
-    # Simulação: 30 pessoas a partir da posição 500
-    sample_range: [500, 530]
-    n_samples: 30
-    label: 0  # Classe para não-longevos
+    ena_project: "PRJEB31736"
+    sample_range: [10, 20]       # inclusive start, exclusive end
+    label: 0                     # class label for non-longevous individuals
 
 # ═══════════════════════════════════════════════════════════════════
-# Seleção de Pontos Centrais (Variantes)
+# Variant Selection
 # ═══════════════════════════════════════════════════════════════════
 
 variant_selection:
-  # Estratégia inicial: selecionar variantes da primeira pessoa longeva
+  # Initial strategy: use the first longevous individual to seed central points
   initial_strategy: "first_longevous_sample"
-  
-  # Número de pontos centrais a extrair
+  # Number of loci to extract around the seed variants
   n_central_points: 10
-  
-  # Filtros de qualidade para variantes
   filters:
+    # Minimum QUAL accepted for a variant
     min_quality: 30
+    # Minimum depth (DP) required at the variant site
     min_depth: 10
+    # Only retain variants marked as PASS in the FILTER column
     filter_pass_only: true
-    exclude_common: true  # Excluir variantes muito comuns (AF > 0.5)
+    # Skip variants with high population allele frequency
+    exclude_common: true
     max_allele_frequency: 0.5
-  
-  # Estratégia de refinamento (após análise inicial)
   refinement:
-    enabled: false  # Desabilitado inicialmente
-    method: "importance_ranking"  # Será implementado após primeira análise
-    top_k: 50  # Selecionar top K pontos mais relevantes
+    # Post-processing refinement is disabled by default
+    enabled: false
+    method: "importance_ranking"
+    top_k: 50
 
 # ═══════════════════════════════════════════════════════════════════
-# Extração de Sequências FASTA
+# Sequence Extraction
 # ═══════════════════════════════════════════════════════════════════
 
 sequence_extraction:
-  # Tamanho da janela ao redor do ponto central (em bases)
-  # Deve ser um dos tamanhos suportados pelo AlphaGenome
-  window_size: 2048  # Opções: 2048, 16384, 131072, 524288, 1048576
-  
-  # Centrar janela na variante
+  # Window length around each central point (must match AlphaGenome supported sizes)
+  window_size: 2048
+  # Ensure the variant is positioned in the middle of the window
   center_on_variant: true
-  
-  # Se True, extrai sequência alternativa (com variante)
-  # Se False, extrai sequência de referência
+  # Replace the reference allele with the alternate allele in the FASTA sequence
   use_alternate_allele: true
 
 # ═══════════════════════════════════════════════════════════════════
@@ -81,9 +71,8 @@ sequence_extraction:
 # ═══════════════════════════════════════════════════════════════════
 
 alphagenome:
-  api_key: "AIzaSyAUFoZHUsU9Qc-wQ6IIEPM3FqDJDCDWvkY"  # Preencher com sua API key
-  
-  # Outputs a serem preditos
+  # API token expected in the environment (or override in CI)
+  api_key: "${ALPHAGENOME_API_KEY}"
   outputs:
     - "RNA_SEQ"
     - "CAGE"
@@ -92,65 +81,50 @@ alphagenome:
     - "CHIP_TF"
     - "DNASE"
     - "PROCAP"
-  
-  # Contextos de ontologia (tecidos/células)
   ontology_terms:
     - "UBERON:0000955"  # Brain
     - "UBERON:0002107"  # Liver
     - "UBERON:0000948"  # Heart
     - "UBERON:0002048"  # Lung
     - "UBERON:0002113"  # Kidney
-  
-  # Cache de resultados
+  # Cache AlphaGenome responses to avoid repeated network calls
   cache_results: true
-  cache_dir: "longevity_dataset/alphagenome_cache"
-  
-  # Processamento em lote
+  cache_dir: "alphagenome_cache"
+  # Batch prediction parameters and retry policy
   batch_size: 10
   max_retries: 3
-  retry_delay: 5  # segundos
+  retry_delay: 5
 
 # ═══════════════════════════════════════════════════════════════════
-# Dataset PyTorch
+# Dataset Assembly
 # ═══════════════════════════════════════════════════════════════════
 
 dataset:
-  # Splits para treino/validação/teste
+  # Proportions used when generating train/validation/test splits
   splits:
     train: 0.6
     validation: 0.2
     test: 0.2
-  
-  # Balanceamento de classes
-  balance_classes: true  # Igual número de longevos e não-longevos em cada split
-  
-  # Semente para reprodutibilidade
+  # Enforce balanced class counts per split
+  balance_classes: true
+  # Seed to ensure reproducible shuffling and splits
   random_seed: 42
-  
-  # Formato de saída
-  format: "pytorch"  # Opções: pytorch, hdf5, tfrecord
-  
-  # Estrutura dos dados
   features:
-    # Sequência DNA (one-hot encoded)
     sequence:
+      # Encode nucleotide sequences as one-hot tensors
       enabled: true
-      encoding: "one_hot"  # A, C, G, T -> [1,0,0,0], [0,1,0,0], etc.
-    
-    # Posição no genoma
+      encoding: "one_hot"
     position:
+      # Include normalized genomic coordinates as features
       enabled: true
-      normalize: true  # Normalizar posições para [0, 1]
-    
-    # Predições AlphaGenome
+      normalize: true
     alphagenome_predictions:
+      # Summaries derived from AlphaGenome predictions
       enabled: true
-      # Cada output gera um array de features
-      aggregation: "statistics"  # Opções: raw, statistics, embeddings
+      aggregation: "statistics"
       statistics: ["mean", "std", "min", "max", "median"]
-    
-    # Metadados
     metadata:
+      # Additional contextual information stored alongside each example
       enabled: true
       fields:
         - "sample_id"
@@ -159,55 +133,56 @@ dataset:
         - "ref_allele"
         - "alt_allele"
         - "variant_type"
-  
-  # Transformações/augmentação
+        - "genotype"
+        - "allele_used"
   transforms:
-    enabled: false  # Para análise genômica, augmentação deve ser cuidadosa
+    # Data augmentation hooks (disabled by default for genomics)
+    enabled: false
     methods: []
 
 # ═══════════════════════════════════════════════════════════════════
-# Pipeline de Processamento
+# Pipeline Execution
 # ═══════════════════════════════════════════════════════════════════
 
 pipeline:
-  # Etapas a executar
+  # High-level pipeline toggles (disable steps to resume from mid-process)
   steps:
     download_samples: true
-    extract_variants: true
     select_central_points: true
     extract_sequences: true
     run_alphagenome: true
     build_dataset: true
-  
-  # Processamento paralelo
   parallel:
+    # Worker pool used for CPU-bound steps (downloads, variant parsing)
     enabled: true
     n_workers: 4
-  
-  # Resumo de execução
+  # Allow reruns to pick up from the last saved state
   resume_from_checkpoint: true
-  checkpoint_frequency: 10  # Salvar checkpoint a cada N amostras
+  # Persist progress every N processed samples
+  checkpoint_frequency: 10
 
 # ═══════════════════════════════════════════════════════════════════
-# Recursos Computacionais
+# Resource Management
 # ═══════════════════════════════════════════════════════════════════
 
 resources:
+  # Soft limits for local resource planners
   max_memory_gb: 32
   max_disk_gb: 100
   temp_dir: "/tmp/longevity_processing"
-  
+
 # ═══════════════════════════════════════════════════════════════════
-# Logging e Debug
+# Logging & Debug
 # ═══════════════════════════════════════════════════════════════════
 
 logging:
-  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  # Log verbosity and destinations
+  level: "INFO"
   log_file: "longevity_dataset/processing.log"
   console_output: true
-  
-debug:
-  dry_run: false  # Se true, não executa, apenas simula
-  limit_samples: null  # Limitar número de amostras (para testes rápidos)
-  save_intermediate: true  # Salvar arquivos intermediários
 
+debug:
+  # Developer conveniences for partial or exploratory runs
+  dry_run: false
+  limit_samples: null
+  save_intermediate: true
