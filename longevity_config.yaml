@@ -148,10 +148,10 @@ pipeline:
   # High-level pipeline toggles (disable steps to resume from mid-process)
   steps:
     download_samples: true
-    select_central_points: true
-    extract_sequences: true
-    run_alphagenome: true
-    build_dataset: true
+    select_central_points: false
+    extract_sequences: false
+    run_alphagenome: false
+    build_dataset: false
   parallel:
     # Worker pool used for CPU-bound steps (downloads, variant parsing)
     enabled: true
