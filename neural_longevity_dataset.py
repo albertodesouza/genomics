@@ -1,18 +1,48 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Neural Longevity Dataset Builder
+"""Neural Longevity Dataset Builder
+===================================
 
-Módulo para construção de dataset de marcadores genéticos e epigenéticos
-de longevidade usando AlphaGenome e PyTorch.
+Ferramenta de linha de comando para montar datasets de marcadores de
+longevidade a partir de genomas individuais, executando o pipeline:
 
-Pipeline:
-1. Download de genomas (1000 Genomes ou outras fontes)
-2. Identificação de variantes vs referência
-3. Seleção de pontos centrais (variantes)
-4. Extração de sequências FASTA
-5. Processamento com AlphaGenome
-6. Construção de dataset PyTorch
+1. Download de genomas (ex.: 1000 Genomes High Coverage) a partir do ENA
+2. Chamada de variantes contra uma referência (GRCh38) com *bcftools*
+3. Seleção dos pontos centrais (variantes) que serão usados no dataset
+4. Extração de janelas FASTA centradas nessas variantes, aplicando o alelo ALT
+5. Processamento das sequências com o AlphaGenome para gerar *features*
+6. Consolidação de um dataset PyTorch balanceado em *train/val/test*
+
+Uso rápido
+----------
+1. Prepare um arquivo YAML de configuração (ex.: ``longevity_config.yaml``)
+   contendo caminhos de saída, opções de AlphaGenome e parâmetros do dataset.
+2. Garanta que as dependências de sistema estejam instaladas (``bcftools``,
+   ``samtools``, AlphaGenome CLI, PyTorch, etc.).
+3. Execute:
+
+   ``python neural_longevity_dataset.py --config longevity_config.yaml``
+
+   O programa respeita as etapas definidas em ``pipeline.steps`` dentro do YAML.
+
+Selecionando etapas específicas
+-------------------------------
+Você pode rodar etapas isoladas informando ``--steps`` (ex.: apenas download e
+extração de sequências):
+
+``python neural_longevity_dataset.py --config longevity_config.yaml \
+    --steps download_samples extract_sequences``
+
+O argumento ``--dry-run`` mostra o que seria executado sem alterar arquivos.
+
+Estrutura de saída
+------------------
+- ``cram/``: CRAM/CRAI baixados do ENA
+- ``vcf/``: VCFs gerados via *bcftools*
+- ``windows/``: FASTAs centrados nas variantes, com metadados por amostra
+- ``alphagenome/``: caches das predições e estatísticas agregadas
+- ``dataset/``: arquivos ``train.pkl``, ``validation.pkl`` e ``test.pkl``
+  acompanhados de ``samples.csv`` para inspeção manual
 
 Autor: IA Neuro-Simbólica para Longevidade
 Data: Outubro 2025
