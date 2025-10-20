@@ -20,13 +20,13 @@ data_sources:
   # Longevous cohort (temporarily reusing 1000 Genomes high-coverage data)
   longevous:
     ena_project: "PRJEB31736"
-    sample_range: [0, 10]        # inclusive start, exclusive end
+    sample_range: [0, 4]         # inclusive start, exclusive end
     label: 1                     # class label for longevous individuals
 
   # Non-longevous cohort (placeholder range within the same project)
   non_longevous:
     ena_project: "PRJEB31736"
-    sample_range: [10, 20]       # inclusive start, exclusive end
+    sample_range: [10, 14]       # inclusive start, exclusive end
     label: 0                     # class label for non-longevous individuals
 
 # ═══════════════════════════════════════════════════════════════════
