@@ -61,7 +61,7 @@ import json
 import pickle
 import random
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional, Any
+from typing import List, Dict, Tuple, Optional, Any, Sequence
 from dataclasses import dataclass, field
 import subprocess as sp
 import hashlib
@@ -169,6 +169,49 @@ class SequenceRecord:
             'depth': self.depth,
             'allele_frequency': self.allele_frequency
         }
+
+    @staticmethod
+    def from_dict(data: Dict[str, Any]) -> "SequenceRecord":
+        variant_dict = data.get('variant', {})
+        variant = GenomicVariant(
+            chromosome=variant_dict.get('chromosome'),
+            position=variant_dict.get('position'),
+            ref_allele=variant_dict.get('ref_allele'),
+            alt_allele=variant_dict.get('alt_allele'),
+            quality=variant_dict.get('quality', 0.0),
+            depth=variant_dict.get('depth', 0),
+            allele_frequency=variant_dict.get('allele_frequency', 0.0),
+            filter_status=variant_dict.get('filter_status', 'PASS'),
+            variant_type=variant_dict.get('variant_type', 'SNV')
+        )
+
+        central_point = CentralPoint(
+            variant=variant,
+            importance_score=data.get('importance_score', 0.0),
+            selected_for_dataset=data.get('selected', True)
+        )
+
+        vcf_path = data.get('vcf_path')
+        fasta_path = data.get('fasta_file')
+        if not fasta_path:
+            raise ValueError('sequence record missing fasta_file path')
+        if not data.get('sample_id'):
+            raise ValueError('sequence record missing sample_id')
+
+        return SequenceRecord(
+            sample_id=data.get('sample_id'),
+            central_point=central_point,
+            sequence=data.get('sequence', ''),
+            fasta_file=Path(fasta_path),
+            label=data.get('label', 0),
+            genotype=data.get('genotype', '0/0'),
+            variant_present=data.get('variant_present', False),
+            allele_used=data.get('allele_used', 'REF'),
+            vcf_path=Path(vcf_path) if vcf_path else None,
+            quality=data.get('quality'),
+            depth=data.get('depth'),
+            allele_frequency=data.get('allele_frequency')
+        )
 
 
 @dataclass
@@ -352,6 +395,15 @@ class LongevityDatasetBuilder:
             self.cache_dir = self.data_root / cache_path
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         
+        # Lista ordenada das etapas do pipeline
+        self._step_order = [
+            'download_samples',
+            'select_central_points',
+            'extract_sequences',
+            'run_alphagenome',
+            'build_dataset'
+        ]
+
         # Estado do processamento
         self.checkpoint_file = self.output_dir / "checkpoint.json"
         self.state = self._load_checkpoint()
@@ -384,6 +436,38 @@ class LongevityDatasetBuilder:
         """Salva checkpoint."""
         with open(self.checkpoint_file, 'w') as f:
             json.dump(self.state, f, indent=2)
+
+    # ───────────────────────────────────────────────────────────────
+    # Configuração de etapas
+    # ───────────────────────────────────────────────────────────────
+
+    def override_steps(self, requested_steps: Sequence[str]):
+        """Sobrescreve as etapas do pipeline conforme argumento CLI."""
+
+        if not requested_steps:
+            return
+
+        valid_steps = set(self._step_order)
+        normalized: List[str] = []
+        for step in requested_steps:
+            step_name = step.strip()
+            if step_name not in valid_steps:
+                valid_list = ', '.join(sorted(valid_steps))
+                raise ValueError(
+                    f"Invalid step '{step_name}'. Valid options: {valid_list}"
+                )
+            normalized.append(step_name)
+
+        steps_cfg = self.config.setdefault('pipeline', {}).setdefault('steps', {})
+
+        for step_name in self._step_order:
+            steps_cfg[step_name] = False
+        for step_name in normalized:
+            steps_cfg[step_name] = True
+
+        console.print(
+            "[cyan]Executing subset of steps:[/cyan] " + ", ".join(normalized)
+        )
 
     def _ensure_state_keys(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Garante que o estado contenha todas as chaves necessárias."""
@@ -1388,7 +1472,14 @@ class LongevityDatasetBuilder:
     def _save_sequence_index(self, records: List[SequenceRecord]):
         """Salva índice de sequências extraídas."""
         index_file = self.output_dir / "sequences_index.json"
-        data = [rec.to_dict() | {'fasta_file': str(rec.fasta_file)} for rec in records]
+        data = []
+        for rec in records:
+            base = rec.to_dict()
+            base['fasta_file'] = str(rec.fasta_file)
+            base['vcf_path'] = str(rec.vcf_path) if rec.vcf_path else None
+            base['importance_score'] = rec.central_point.importance_score
+            base['selected'] = rec.central_point.selected_for_dataset
+            data.append(base)
         with open(index_file, 'w') as f:
             json.dump(data, f, indent=2)
         console.print(f"[green]✓ Índice de sequências salvo: {index_file}[/green]")
@@ -1690,39 +1781,69 @@ class LongevityDatasetBuilder:
     def run_pipeline(self):
         """Executa pipeline completo."""
         console.print("\n[bold green]Iniciando Pipeline de Construção do Dataset[/bold green]\n")
-        
+
         steps = self.config['pipeline']['steps']
-        
+        active_steps = [step for step in self._step_order if steps.get(step)]
+
         try:
             # Passo 1: Download
             if steps['download_samples']:
                 self.download_samples()
-            
+            else:
+                console.print("[yellow]⏭ Passo 1 ignorado (download_samples desativado)[/yellow]")
+
             # Passo 2: Seleção de pontos centrais
             if steps['select_central_points']:
                 central_points = self.select_central_points()
+            elif any(steps.get(step) for step in ('extract_sequences', 'run_alphagenome', 'build_dataset')):
+                points_file = self.output_dir / "central_points.json"
+                if points_file.exists():
+                    central_points = self._load_central_points()
+                    console.print("[yellow]⏭ Passo 2 ignorado (utilizando pontos centrais existentes)[/yellow]")
+                else:
+                    raise RuntimeError(
+                        "Central points not available. Run the select_central_points step first."
+                    )
             else:
-                central_points = self._load_central_points()
-            
+                central_points = []
+                console.print("[yellow]⏭ Passo 2 ignorado (não requerido pelas etapas selecionadas)[/yellow]")
+
             # Passo 3: Extração de sequências
             if steps['extract_sequences']:
                 records = self.extract_sequences(central_points)
+            elif any(steps.get(step) for step in ('run_alphagenome', 'build_dataset')):
+                index_file = self.output_dir / "sequences_index.json"
+                if index_file.exists():
+                    with open(index_file) as f:
+                        records_data = json.load(f)
+                    records = [SequenceRecord.from_dict(item) for item in records_data]
+                    console.print("[yellow]⏭ Passo 3 ignorado (reutilizando sequências existentes)[/yellow]")
+                else:
+                    raise RuntimeError(
+                        "Sequences not available. Run the extract_sequences step first."
+                    )
             else:
-                # Carregar de índice
                 records = []
-            
+                console.print("[yellow]⏭ Passo 3 ignorado (não requerido pelas etapas selecionadas)[/yellow]")
+
             # Passo 4: AlphaGenome
             if steps['run_alphagenome']:
                 results = self.run_alphagenome(records)
             else:
                 results = []
-            
+                console.print("[yellow]⏭ Passo 4 ignorado (run_alphagenome desativado)[/yellow]")
+
             # Passo 5: Build dataset
             if steps['build_dataset']:
                 self.build_dataset(results)
-            
-            console.print("\n[bold green]✓ Pipeline concluído com sucesso![/bold green]")
-        
+            else:
+                console.print("[yellow]⏭ Passo 5 ignorado (build_dataset desativado)[/yellow]")
+
+            if active_steps:
+                console.print("\n[bold green]✓ Pipeline concluído com sucesso![/bold green]")
+            else:
+                console.print("\n[yellow]⚠ Nenhuma etapa foi selecionada para execução.[/yellow]")
+
         except KeyboardInterrupt:
             console.print("\n[yellow]⚠ Pipeline interrompido pelo usuário[/yellow]")
             self._save_checkpoint()
@@ -1764,11 +1885,14 @@ Exemplos:
     
     # Criar builder
     builder = LongevityDatasetBuilder(args.config)
-    
+
+    # Sobrescrever etapas específicas, se fornecido
+    builder.override_steps(args.steps)
+
     # Dry-run
     if args.dry_run:
         builder.config['debug']['dry_run'] = True
-    
+
     # Executar pipeline
     builder.run_pipeline()
 

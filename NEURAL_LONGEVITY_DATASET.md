@@ -128,6 +128,11 @@ python3 ~/genomics/neural_longevity_dataset.py \
   --steps download_samples extract_sequences
 ```
 
+When you target a single step (for example `--steps download_samples`) the
+builder skips the remaining phases and leaves previously generated artifacts in
+place. If later steps are requested and existing outputs are detected, they are
+loaded instead of being recomputed.
+
 Use `--dry-run` to preview actions without creating/modifying files.
 
 ## 7. Output Artifacts
