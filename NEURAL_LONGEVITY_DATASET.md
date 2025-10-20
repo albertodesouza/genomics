@@ -116,7 +116,7 @@ debug:
    python3 ~/genomics/neural_longevity_dataset.py \
      --config ~/genomics/longevity_config.yaml
    ```
-4. Monitor the Rich progress panels. On completion, review the outputs under `/dados/GENOMICS_DATA/top3/<output_dir>/`.
+4. Monitor the Rich progress panels. During downloads the CLI announces every CRAM/CRAI file with its source URL, size, and live transfer metrics. On completion, review the outputs under `/dados/GENOMICS_DATA/top3/<output_dir>/`.
 
 ## 6. Running Specific Steps
 

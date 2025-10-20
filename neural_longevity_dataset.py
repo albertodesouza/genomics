@@ -79,7 +79,16 @@ from torch.utils.data import Dataset, DataLoader, random_split
 
 # Rich para terminal
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    BarColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+    DownloadColumn,
+    TransferSpeedColumn,
+)
 from rich.table import Table
 from rich.panel import Panel
 from rich import print as rprint
@@ -497,15 +506,69 @@ class LongevityDatasetBuilder:
         return records
 
     def _download_file(self, url: str, destination: Path) -> bool:
-        """Baixa arquivo com wget (idempotente)."""
+        """Baixa arquivo exibindo progresso detalhado (idempotente)."""
         destination.parent.mkdir(parents=True, exist_ok=True)
 
         if destination.exists() and destination.stat().st_size > 0:
+            console.print(
+                f"[green]• Reutilizando download existente:[/green] "
+                f"{destination.name} ({destination.stat().st_size / (1024**2):.1f} MB)"
+            )
             return True
 
+        console.print(
+            f"[cyan]⇣ Baixando {destination.name}[/cyan]\n"
+            f"    Origem: {url}\n"
+            f"    Destino: {destination}"
+        )
+
         try:
-            cmd = ['wget', '-q', '-O', str(destination), url]
-            sp.run(cmd, check=True)
+            from urllib.request import urlopen
+        except Exception as exc:  # pragma: no cover - fallback improvável
+            console.print(
+                "[yellow]⚠ urllib indisponível, tentando wget clássico (sem progresso)[/yellow]"
+            )
+            try:
+                sp.run(['wget', '-O', str(destination), url], check=True)
+                return True
+            except Exception as wget_exc:
+                console.print(f"[yellow]⚠ Falha ao baixar {url}: {wget_exc}[/yellow]")
+                if destination.exists():
+                    destination.unlink(missing_ok=True)
+                return False
+
+        try:
+            response = urlopen(url)
+            total = int(response.headers.get('Content-Length', 0)) or None
+        except Exception as exc:
+            console.print(f"[yellow]⚠ Falha ao iniciar download de {url}: {exc}[/yellow]")
+            return False
+
+        chunk_size = 1024 * 1024  # 1 MiB
+
+        try:
+            with response, open(destination, 'wb') as fh, Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                DownloadColumn(),
+                TransferSpeedColumn(),
+                TimeRemainingColumn(),
+                console=console,
+            ) as progress:
+                task_description = f"Baixando {destination.name}"
+                task = progress.add_task(task_description, total=total)
+
+                while True:
+                    chunk = response.read(chunk_size)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+                    progress.update(task, advance=len(chunk))
+
+            # Rich Progress garante flush na conclusão; informar tamanho final
+            size_mb = destination.stat().st_size / (1024 ** 2)
+            console.print(f"[green]✓ Download concluído:[/green] {destination.name} ({size_mb:.1f} MB)")
             return True
         except Exception as exc:
             console.print(f"[yellow]⚠ Falha ao baixar {url}: {exc}[/yellow]")
