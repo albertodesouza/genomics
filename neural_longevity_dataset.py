@@ -44,6 +44,12 @@ Estrutura de saída
 - ``dataset/``: arquivos ``train.pkl``, ``validation.pkl`` e ``test.pkl``
   acompanhados de ``samples.csv`` para inspeção manual
 
+**Importante**: Este script **deve** ser executado a partir do diretório
+``/dados/GENOMICS_DATA/top3``. Todos os dados baixados ou gerados são
+armazenados em subdiretórios dessa pasta. Use caminhos absolutos para
+referenciar arquivos de configuração localizados no repositório em
+``~/genomics``.
+
 Autor: IA Neuro-Simbólica para Longevidade
 Data: Outubro 2025
 """
@@ -518,7 +524,7 @@ class LongevityDatasetBuilder:
         """Retorna caminho absoluto do FASTA de referência."""
         ref_path = Path(self.config['data_sources']['reference']['fasta'])
         if not ref_path.is_absolute():
-            ref_fasta = self.work_dir / ref_path
+            ref_fasta = (self.config_dir / ref_path).resolve()
         else:
             ref_fasta = ref_path
 
