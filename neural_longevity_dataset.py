@@ -1164,14 +1164,34 @@ class LongevityDatasetBuilder:
         filters = self.config['variant_selection']['filters']
         
         try:
+            # Montar filtros dinamicamente (nem todo VCF possui FORMAT/DP)
+            filter_conditions: List[str] = []
+
+            min_qual = filters.get('min_quality', 0)
+            if min_qual:
+                filter_conditions.append(f'QUAL>={min_qual}')
+
+            min_depth = filters.get('min_depth', 0)
+            if min_depth:
+                if self._vcf_has_format_field(vcf_path, 'DP'):
+                    filter_conditions.append(f'FMT/DP>={min_depth}')
+                else:
+                    console.print(
+                        f"[yellow]⚠ FORMAT/DP ausente no header de {vcf_path}. "
+                        "Ignorando filtro por profundidade.[/yellow]"
+                    )
+
             # Usar bcftools para extrair variantes
-            cmd = [
-                'bcftools', 'view',
-                '-f', 'PASS' if filters['filter_pass_only'] else '.',
-                '-i', f'QUAL>={filters["min_quality"]} && FORMAT/DP>={filters["min_depth"]}',
-                str(vcf_path)
-            ]
-            
+            cmd = ['bcftools', 'view']
+
+            if filters.get('filter_pass_only', False):
+                cmd.extend(['-f', 'PASS'])
+
+            if filter_conditions:
+                cmd.extend(['-i', ' && '.join(filter_conditions)])
+
+            cmd.append(str(vcf_path))
+
             result = sp.run(cmd, capture_output=True, text=True, check=True)
             
             # Parse VCF
@@ -1226,10 +1246,34 @@ class LongevityDatasetBuilder:
                 
                 variants.append(variant)
         
+        except sp.CalledProcessError as e:
+            stderr = e.stderr.strip() if e.stderr else str(e)
+            console.print(
+                f"[red]✗ Erro ao extrair variantes de {vcf_path}: {stderr}[/red]"
+            )
         except Exception as e:
-            console.print(f"[red]✗ Erro ao extrair variantes de {vcf_path}: {e}[/red]")
-        
+            console.print(
+                f"[red]✗ Erro inesperado ao extrair variantes de {vcf_path}: {e}[/red]"
+            )
+
         return variants
+
+    def _vcf_has_format_field(self, vcf_path: Path, field_id: str) -> bool:
+        """Verifica se o VCF declara um campo FORMAT específico no header."""
+
+        opener = gzip.open if vcf_path.suffix.endswith('gz') else open
+        try:
+            with opener(vcf_path, 'rt') as handle:
+                for line in handle:
+                    if not line.startswith('##'):
+                        break
+                    if line.startswith('##FORMAT=') and f'ID={field_id}' in line:
+                        return True
+        except OSError:
+            # Caso não seja possível ler, deixe o bcftools reportar o problema
+            return False
+
+        return False
     
     # ───────────────────────────────────────────────────────────────
     # Passo 3: Seleção de Pontos Centrais
