@@ -713,10 +713,45 @@ class LongevityDatasetBuilder:
             mpileup_cmd = ['bcftools', 'mpileup', '-Ou', '-f', str(ref_fasta), str(cram_path)]
             call_cmd = ['bcftools', 'call', '-mv', '-Oz', '-o', str(vcf_path)]
 
-            with sp.Popen(mpileup_cmd, stdout=sp.PIPE) as mpileup_proc:
-                with sp.Popen(call_cmd, stdin=mpileup_proc.stdout) as call_proc:
+            mpileup_stderr = ''
+            call_stderr = ''
+
+            with sp.Popen(
+                mpileup_cmd,
+                stdout=sp.PIPE,
+                stderr=sp.PIPE,
+                text=True,
+            ) as mpileup_proc:
+                with sp.Popen(
+                    call_cmd,
+                    stdin=mpileup_proc.stdout,
+                    stdout=sp.PIPE,
+                    stderr=sp.PIPE,
+                    text=True,
+                ) as call_proc:
                     mpileup_proc.stdout.close()
-                    call_proc.communicate()
+                    _, call_stderr = call_proc.communicate()
+                    mpileup_stderr = mpileup_proc.stderr.read()
+                    mpileup_return = mpileup_proc.wait()
+                    call_return = call_proc.returncode
+
+            if mpileup_stderr and mpileup_stderr.strip():
+                console.print(
+                    f"\n[yellow]⚠ bcftools mpileup warnings for {sample_id}:[/yellow]\n"
+                    f"{mpileup_stderr.strip()}\n"
+                )
+
+            if call_stderr and call_stderr.strip():
+                console.print(
+                    f"\n[yellow]⚠ bcftools call warnings for {sample_id}:[/yellow]\n"
+                    f"{call_stderr.strip()}\n"
+                )
+
+            if mpileup_return != 0 or call_return != 0:
+                raise RuntimeError(
+                    f"bcftools pipeline failed (mpileup exit {mpileup_return}, "
+                    f"call exit {call_return})"
+                )
 
             sp.run(['tabix', '-p', 'vcf', str(vcf_path)], check=True)
             return vcf_path
