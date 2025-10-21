@@ -145,6 +145,7 @@ data_sources:
 
 variant_selection:
   initial_strategy: "first_longevous_sample"
+  random_seed: 42
   n_central_points: 10
   filters:
     min_quality: 30
@@ -172,6 +173,13 @@ dataset:
   balance_classes: true
   random_seed: 42
 ```
+
+---
+
+### Estratégias de Seleção de Pontos Centrais
+
+- `first_longevous_sample`: usa apenas a primeira amostra longeva disponível como fonte para ordenar as variantes por QUAL e selecionar as `n_central_points` mais altas.
+- `random_rotation_longevous_samples`: rotaciona todas as amostras longevas disponíveis. A cada iteração escolhe um longevo aleatório, seleciona uma variante elegível desse indivíduo **sem reposição** e incrementa o contador até atingir `n_central_points`. Caso alguma amostra não possua VCF ou variantes válidas, ela é descartada da rotação. O campo opcional `variant_selection.random_seed` garante reprodutibilidade dessa estratégia.
 
 ---
 
