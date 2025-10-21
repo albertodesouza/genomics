@@ -68,6 +68,7 @@ import hashlib
 from collections import defaultdict
 import gzip
 from urllib.parse import quote
+import shlex
 
 import numpy as np
 import pandas as pd
@@ -98,6 +99,12 @@ console = Console()
 
 # Diretório raiz obrigatório para dados persistentes do projeto
 DATA_ROOT = Path("/dados/GENOMICS_DATA/top3").resolve()
+
+
+def _format_command(command: Sequence[Any]) -> str:
+    """Formata uma lista de argumentos para exibição em shell."""
+
+    return " ".join(shlex.quote(str(arg)) for arg in command)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1192,6 +1199,9 @@ class LongevityDatasetBuilder:
 
             cmd.append(str(vcf_path))
 
+            command_str = _format_command(cmd)
+            console.print(f"[blue]$ {command_str}[/blue]")
+
             result = sp.run(cmd, capture_output=True, text=True, check=True)
             
             # Parse VCF
@@ -1251,6 +1261,7 @@ class LongevityDatasetBuilder:
             console.print(
                 f"[red]✗ Erro ao extrair variantes de {vcf_path}: {stderr}[/red]"
             )
+            console.print(f"[red]  Comando executado: {_format_command(cmd)}[/red]")
         except Exception as e:
             console.print(
                 f"[red]✗ Erro inesperado ao extrair variantes de {vcf_path}: {e}[/red]"
