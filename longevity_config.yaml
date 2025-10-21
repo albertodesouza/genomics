@@ -147,8 +147,8 @@ dataset:
 pipeline:
   # High-level pipeline toggles (disable steps to resume from mid-process)
   steps:
-    download_samples: true
-    select_central_points: false
+    download_samples: false
+    select_central_points: true
     extract_sequences: false
     run_alphagenome: false
     build_dataset: false
