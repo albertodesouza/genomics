@@ -84,7 +84,7 @@ import json
 import pickle
 import random
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional, Any, Sequence
+from typing import List, Dict, Tuple, Optional, Any, Sequence, Set
 from dataclasses import dataclass, field
 import subprocess as sp
 import hashlib
@@ -1404,7 +1404,7 @@ class LongevityDatasetBuilder:
         if strategy == "first_longevous_sample":
             # Obter primeira amostra longeva
             longevous_samples_file = self.output_dir / "longevous_samples.txt"
-            
+
             # Verificar se arquivo existe (pode não existir em dry-run)
             if not longevous_samples_file.exists():
                 console.print(f"[yellow]⚠ Arquivo não encontrado: {longevous_samples_file}[/yellow]")
@@ -1446,9 +1446,99 @@ class LongevityDatasetBuilder:
             self._save_central_points(central_points)
             
             console.print(f"[green]✓ {len(central_points)} pontos centrais selecionados[/green]")
-            
+
             return central_points
-        
+
+        elif strategy == "random_rotation_longevous_samples":
+            longevous_samples_file = self.output_dir / "longevous_samples.txt"
+
+            if not longevous_samples_file.exists():
+                console.print(f"[yellow]⚠ Arquivo não encontrado: {longevous_samples_file}[/yellow]")
+                console.print(f"[yellow]  Criando pontos centrais simulados...[/yellow]")
+                return self._create_simulated_central_points(n_points)
+
+            with open(longevous_samples_file) as f:
+                longevous_samples = [line.strip() for line in f if line.strip()]
+
+            if not longevous_samples:
+                console.print("[yellow]⚠ Nenhuma amostra longeva listada para rotação aleatória[/yellow]")
+                console.print(f"[yellow]  Criando pontos centrais simulados...[/yellow]")
+                return self._create_simulated_central_points(n_points)
+
+            console.print(
+                f"[cyan]Selecionando variantes aleatórias entre {len(longevous_samples)} longevos[/cyan]"
+            )
+
+            rng_seed = self.config['variant_selection'].get('random_seed')
+            rng = random.Random(rng_seed)
+
+            sample_variants_pool: Dict[str, List[GenomicVariant]] = {}
+            exhausted_samples: Set[str] = set()
+            central_points: List[CentralPoint] = []
+
+            while len(central_points) < n_points:
+                candidates = [s for s in longevous_samples if s not in exhausted_samples]
+                if not candidates:
+                    break
+
+                sample_id = rng.choice(candidates)
+
+                if sample_id not in sample_variants_pool:
+                    vcf_path_str = self.state['vcf_paths'].get(sample_id)
+                    if vcf_path_str:
+                        vcf_path = Path(vcf_path_str)
+                    else:
+                        vcf_path = self.output_dir / f"vcf/longevous/{sample_id}.vcf.gz"
+
+                    if not vcf_path.exists():
+                        console.print(
+                            f"[yellow]⚠ VCF não encontrado para {sample_id}: {vcf_path}[/yellow]"
+                        )
+                        exhausted_samples.add(sample_id)
+                        continue
+
+                    variants = self.extract_variants(sample_id, vcf_path)
+                    if not variants:
+                        console.print(
+                            f"[yellow]⚠ Nenhuma variante elegível para {sample_id}[/yellow]"
+                        )
+                        exhausted_samples.add(sample_id)
+                        continue
+
+                    rng.shuffle(variants)
+                    sample_variants_pool[sample_id] = variants
+
+                variants_pool = sample_variants_pool.get(sample_id, [])
+                if not variants_pool:
+                    exhausted_samples.add(sample_id)
+                    continue
+
+                variant = variants_pool.pop()
+                central_points.append(
+                    CentralPoint(
+                        variant=variant,
+                        importance_score=variant.quality,
+                        selected_for_dataset=True,
+                    )
+                )
+
+                if not variants_pool:
+                    exhausted_samples.add(sample_id)
+
+            if len(central_points) < n_points:
+                remaining = n_points - len(central_points)
+                console.print(
+                    f"[yellow]⚠ Apenas {len(central_points)} pontos centrais reais selecionados."
+                    f" Completando com {remaining} pontos simulados.[/yellow]"
+                )
+                central_points.extend(self._create_simulated_central_points(remaining))
+
+            self._save_central_points(central_points)
+
+            console.print(f"[green]✓ {len(central_points)} pontos centrais selecionados[/green]")
+
+            return central_points
+
         else:
             raise NotImplementedError(f"Estratégia '{strategy}' não implementada")
     

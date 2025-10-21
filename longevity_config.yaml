@@ -34,8 +34,10 @@ data_sources:
 # ═══════════════════════════════════════════════════════════════════
 
 variant_selection:
-  # Initial strategy: use the first longevous individual to seed central points
+  # Strategy used to seed central points. Options: first_longevous_sample, random_rotation_longevous_samples
   initial_strategy: "first_longevous_sample"
+  # Optional seed for strategies that rely on randomness (e.g., random_rotation_longevous_samples)
+  random_seed: 42
   # Number of loci to extract around the seed variants
   n_central_points: 10
   filters:
