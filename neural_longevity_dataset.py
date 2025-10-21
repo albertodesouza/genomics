@@ -39,10 +39,33 @@ Estrutura de saída
 ------------------
 - ``cram/``: CRAM/CRAI baixados do ENA
 - ``vcf/``: VCFs gerados via *bcftools*
-- ``windows/``: FASTAs centrados nas variantes, com metadados por amostra
+- ``sequences/``: FASTAs centrados nas variantes com alelo aplicado por amostra
 - ``alphagenome/``: caches das predições e estatísticas agregadas
-- ``dataset/``: arquivos ``train.pkl``, ``validation.pkl`` e ``test.pkl``
-  acompanhados de ``samples.csv`` para inspeção manual
+- ``sequences_index.json``: índice consolidado das sequências extraídas e seus metadados
+- ``central_points.json``: pontos centrais selecionados para o dataset
+- ``torch_dataset/``: arquivos ``train.pkl``, ``validation.pkl`` e ``test.pkl``
+  acompanhados de ``samples.csv`` com um resumo tabular das amostras
+
+Metadados dos pontos centrais
+-----------------------------
+O arquivo ``central_points.json`` é gravado diretamente em ``project.output_dir``
+(por exemplo, ``/dados/GENOMICS_DATA/top3/<nome_do_projeto>/central_points.json``)
+logo após a etapa ``select_central_points``. Cada elemento da lista possui a
+seguinte estrutura:
+
+``variant``
+    Objeto com as informações da variante genômica que origina o ponto central,
+    contendo ``chromosome`` (cromossomo), ``position`` (posição 1-indexada),
+    ``ref_allele`` e ``alt_allele`` (alelos de referência e alternativo), além de
+    métricas opcionais como ``quality`` (QUAL do VCF), ``depth`` (profundidade de
+    leitura), ``allele_frequency`` (frequência estimada), ``filter_status``
+    (status da coluna FILTER) e ``variant_type`` (SNV, INSERTION ou DELETION).
+``importance_score``
+    Pontuação calculada ou simulada que representa a relevância da variante
+    durante a seleção, usada em ordenações e filtros posteriores.
+``selected``
+    Flag booleana indicando se o ponto central foi efetivamente escolhido para
+    compor o dataset balanceado.
 
 **Importante**: Este script **deve** ser executado a partir do diretório
 ``/dados/GENOMICS_DATA/top3``. Todos os dados baixados ou gerados são

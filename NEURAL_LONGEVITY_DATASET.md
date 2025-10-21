@@ -2,6 +2,22 @@
 
 Comprehensive usage guide for `neural_longevity_dataset.py`, the CLI pipeline that assembles training-ready datasets for longevity studies by combining public genomes, AlphaGenome predictions, and PyTorch-friendly serialization.
 
+## Índice
+
+- [1. Overview](#1-overview)
+- [2. Prerequisites](#2-prerequisites)
+- [3. Directory Layout Requirement](#3-directory-layout-requirement)
+- [4. Configuration File](#4-configuration-file)
+  - [Path Resolution Rules](#path-resolution-rules)
+- [5. Quickstart](#5-quickstart)
+- [6. Running Specific Steps](#6-running-specific-steps)
+- [7. Output Artifacts](#7-output-artifacts)
+  - [Detalhes sobre `central_points.json`](#detalhes-sobre-central_pointsjson)
+- [8. Troubleshooting](#8-troubleshooting)
+- [9. Updating the Dataset](#9-updating-the-dataset)
+- [10. Integration with PyTorch](#10-integration-with-pytorch)
+- [11. Maintenance Notes](#11-maintenance-notes)
+
 ## 1. Overview
 
 `neural_longevity_dataset.py` automates the following stages:
@@ -137,15 +153,36 @@ Use `--dry-run` to preview actions without creating/modifying files.
 
 ## 7. Output Artifacts
 
-| Directory | Contents |
-|-----------|----------|
-| `cram/` | Downloaded CRAM/CRAI pairs from ENA. |
-| `vcf/` | Variant calls per sample (`.vcf.gz` + `.tbi`). |
-| `windows/` | FASTA windows, metadata CSVs, and sequence index. |
-| `alphagenome/` | Cached AlphaGenome predictions (`.pkl`, JSON). |
-| `torch_dataset/` | `train.pkl`, `val.pkl`, `test.pkl`, plus `samples.csv` summary. |
+| Directory/Arquivo | Conteúdo |
+|-------------------|----------|
+| `cram/` | Pares CRAM/CRAI baixados do ENA. |
+| `vcf/` | Chamadas de variantes por amostra (`.vcf.gz` + `.tbi`). |
+| `windows/` | Janelas FASTA por amostra contendo a sequência com o alelo ALT aplicado e metadados auxiliares em CSV. |
+| `sequences/` | FASTAs centrados nas variantes (um por ponto central × amostra) salvos individualmente. |
+| `alphagenome/` | Predições do AlphaGenome e estatísticas agregadas em formatos `.pkl` e JSON. |
+| `torch_dataset/` | `train.pkl`, `val.pkl`, `test.pkl` e `samples.csv` com resumo tabular das amostras. |
+| `sequences_index.json` | Índice consolidado das sequências extraídas apontando para o FASTA correspondente, amostra de origem e metainformações de janela. |
+| `central_points.json` | Lista dos pontos centrais selecionados (variantes) usados nas demais etapas. |
 
 Additional logs: `checkpoint.json`, per-step runtime metrics, and state caches for resumable execution.
+
+### Detalhes sobre `central_points.json`
+
+O arquivo `central_points.json` é gravado diretamente dentro de `project.output_dir`, por exemplo em `/dados/GENOMICS_DATA/top3/<nome_do_projeto>/central_points.json`, imediatamente após a conclusão da etapa `select_central_points`. Cada item da lista descreve um ponto central e possui os seguintes campos:
+
+- `variant`: Objeto com as informações originais da variante no VCF.
+  - `chromosome`: Cromossomo de referência (`"1"`, `"X"`, etc.).
+  - `position`: Posição 1-indexada no cromossomo.
+  - `ref_allele` / `alt_allele`: Alelos de referência e alternativo aplicados na geração da janela FASTA.
+  - `quality`: Valor da coluna QUAL no VCF.
+  - `depth`: Profundidade de leitura (DP) utilizada na seleção.
+  - `allele_frequency`: Frequência alélica estimada (quando disponível, caso contrário `0.0`).
+  - `filter_status`: Conteúdo da coluna FILTER do VCF (`"PASS"`, `"q10"`, etc.).
+  - `variant_type`: Classificação inferida (`"SNV"`, `"INSERTION"` ou `"DELETION"`).
+- `importance_score`: Pontuação (real ou simulada) que representa a relevância da variante para ordenações/filtragens posteriores.
+- `selected`: Valor booleano indicando se o ponto entrou no subconjunto final utilizado nas etapas seguintes do pipeline.
+
+Esse arquivo é consumido diretamente pelas fases `extract_sequences` e `build_dataset`: ele dita quais variantes terão janelas FASTA geradas, quais sequências receberão inferências no AlphaGenome e quais instâncias comporão os splits PyTorch.
 
 ## 8. Troubleshooting
 
