@@ -67,6 +67,8 @@ import subprocess as sp
 import hashlib
 from collections import defaultdict
 import gzip
+import tempfile
+import shutil
 from urllib.parse import quote
 import shlex
 
@@ -1192,7 +1194,10 @@ class LongevityDatasetBuilder:
             cmd = ['bcftools', 'view']
 
             if filters.get('filter_pass_only', False):
-                cmd.extend(['-f', 'PASS'])
+                # Muitos VCFs gerados via mpileup não anotam FILTER=PASS explicitamente,
+                # mantendo o campo como '.' (não filtrado). Para contemplar esse caso,
+                # aceitamos tanto PASS quanto '.' ao aplicar o filtro.
+                cmd.extend(['-f', '.,PASS'])
 
             if filter_conditions:
                 cmd.extend(['-i', ' && '.join(filter_conditions)])
@@ -1202,7 +1207,29 @@ class LongevityDatasetBuilder:
             command_str = _format_command(cmd)
             console.print(f"[blue]$ {command_str}[/blue]")
 
-            result = sp.run(cmd, capture_output=True, text=True, check=True)
+            repair_attempted = False
+            while True:
+                try:
+                    result = sp.run(cmd, capture_output=True, text=True, check=True)
+                    break
+                except sp.CalledProcessError as e:
+                    stderr = e.stderr.strip() if e.stderr else str(e)
+                    if (
+                        not repair_attempted
+                        and 'No BGZF EOF marker' in stderr
+                    ):
+                        repair_attempted = True
+                        console.print(
+                            "[yellow]⚠ bcftools detectou EOF ausente em BGZF. "
+                            "Tentando recompactar o VCF automaticamente...[/yellow]"
+                        )
+                        fixed_path = self._repair_truncated_bgzf(vcf_path)
+                        if fixed_path and fixed_path != vcf_path:
+                            vcf_path = fixed_path
+                        if fixed_path:
+                            cmd[-1] = str(vcf_path)
+                            continue
+                    raise
             
             # Parse VCF
             for line in result.stdout.split('\n'):
@@ -1285,6 +1312,53 @@ class LongevityDatasetBuilder:
             return False
 
         return False
+
+    def _repair_truncated_bgzf(self, vcf_path: Path) -> Optional[Path]:
+        """Tenta recompactar um VCF que está sem o marcador EOF do BGZF."""
+
+        if not vcf_path.exists():
+            return None
+
+        temp_plain: Optional[Path] = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                delete=False,
+                suffix='.vcf',
+                dir=str(vcf_path.parent)
+            ) as tmp_handle:
+                temp_plain = Path(tmp_handle.name)
+                with gzip.open(vcf_path, 'rb') as src:
+                    shutil.copyfileobj(src, tmp_handle)
+
+            bgzip_cmd = ['bgzip', '-f', str(temp_plain)]
+            sp.run(bgzip_cmd, check=True)
+
+            recompressed_path = temp_plain.with_suffix(temp_plain.suffix + '.gz')
+
+            if self.config.get('debug', {}).get('save_intermediate', False):
+                backup_path = vcf_path.with_name(vcf_path.name + '.broken')
+                try:
+                    shutil.move(str(vcf_path), str(backup_path))
+                except Exception:
+                    vcf_path.unlink(missing_ok=True)
+            else:
+                vcf_path.unlink(missing_ok=True)
+
+            shutil.move(str(recompressed_path), str(vcf_path))
+
+            try:
+                sp.run(['tabix', '-f', '-p', 'vcf', str(vcf_path)], check=False)
+            except FileNotFoundError:
+                pass
+
+            console.print(f"[green]✓ VCF reparado: {vcf_path.name}[/green]")
+            return vcf_path
+        except Exception as exc:
+            console.print(f"[red]✗ Falha ao recompactar {vcf_path}: {exc}[/red]")
+            return None
+        finally:
+            if temp_plain and temp_plain.exists():
+                temp_plain.unlink(missing_ok=True)
     
     # ───────────────────────────────────────────────────────────────
     # Passo 3: Seleção de Pontos Centrais
