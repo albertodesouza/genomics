@@ -2,6 +2,22 @@
 
 Comprehensive usage guide for `neural_longevity_dataset.py`, the CLI pipeline that assembles training-ready datasets for longevity studies by combining public genomes, AlphaGenome predictions, and PyTorch-friendly serialization.
 
+## Índice
+
+- [1. Overview](#1-overview)
+- [2. Prerequisites](#2-prerequisites)
+- [3. Directory Layout Requirement](#3-directory-layout-requirement)
+- [4. Configuration File](#4-configuration-file)
+  - [Path Resolution Rules](#path-resolution-rules)
+- [5. Quickstart](#5-quickstart)
+- [6. Running Specific Steps](#6-running-specific-steps)
+- [7. Output Artifacts](#7-output-artifacts)
+  - [Detalhes sobre `central_points.json`](#detalhes-sobre-central_pointsjson)
+- [8. Troubleshooting](#8-troubleshooting)
+- [9. Updating the Dataset](#9-updating-the-dataset)
+- [10. Integration with PyTorch](#10-integration-with-pytorch)
+- [11. Maintenance Notes](#11-maintenance-notes)
+
 ## 1. Overview
 
 `neural_longevity_dataset.py` automates the following stages:
