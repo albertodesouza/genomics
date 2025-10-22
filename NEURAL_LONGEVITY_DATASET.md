@@ -179,7 +179,7 @@ O arquivo `central_points.json` é gravado diretamente dentro de `project.output
   - `allele_frequency`: Frequência alélica estimada (quando disponível, caso contrário `0.0`).
   - `filter_status`: Conteúdo da coluna FILTER do VCF (`"PASS"`, `"q10"`, etc.).
   - `variant_type`: Classificação inferida (`"SNV"`, `"INSERTION"` ou `"DELETION"`).
-- `importance_score`: Pontuação (real ou simulada) que representa a relevância da variante para ordenações/filtragens posteriores.
+  - `source_sample_id`: Identificador da amostra longeva de origem (ou `null` para pontos simulados).
 - `selected`: Valor booleano indicando se o ponto entrou no subconjunto final utilizado nas etapas seguintes do pipeline.
 
 Esse arquivo é consumido diretamente pelas fases `extract_sequences` e `build_dataset`: ele dita quais variantes terão janelas FASTA geradas, quais sequências receberão inferências no AlphaGenome e quais instâncias comporão os splits PyTorch.
