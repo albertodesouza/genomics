@@ -66,6 +66,9 @@ seguinte estrutura:
 ``selected``
     Flag booleana indicando se o ponto central foi efetivamente escolhido para
     compor o dataset balanceado.
+``source_sample_id``
+    Identificador da amostra de onde a variante foi obtida. Para pontos
+    simulados esse campo fica como ``null``.
 
 **Importante**: Este script **deve** ser executado a partir do diretório
 ``/dados/GENOMICS_DATA/top3``. Todos os dados baixados ou gerados são
@@ -84,7 +87,7 @@ import json
 import pickle
 import random
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional, Any, Sequence
+from typing import List, Dict, Tuple, Optional, Any, Sequence, Set
 from dataclasses import dataclass, field
 import subprocess as sp
 import hashlib
@@ -169,6 +172,37 @@ class CentralPoint:
     variant: GenomicVariant
     importance_score: float = 0.0
     selected_for_dataset: bool = False
+    source_sample_id: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'variant': self.variant.to_dict(),
+            'importance_score': self.importance_score,
+            'selected': self.selected_for_dataset,
+            'source_sample_id': self.source_sample_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "CentralPoint":
+        variant_data = data.get('variant', {})
+        variant = GenomicVariant(
+            chromosome=variant_data.get('chromosome'),
+            position=variant_data.get('position'),
+            ref_allele=variant_data.get('ref_allele'),
+            alt_allele=variant_data.get('alt_allele'),
+            quality=variant_data.get('quality', 0.0),
+            depth=variant_data.get('depth', 0),
+            allele_frequency=variant_data.get('allele_frequency', 0.0),
+            filter_status=variant_data.get('filter_status', 'PASS'),
+            variant_type=variant_data.get('variant_type', 'SNV'),
+        )
+
+        return cls(
+            variant=variant,
+            importance_score=data.get('importance_score', 0.0),
+            selected_for_dataset=data.get('selected', False),
+            source_sample_id=data.get('source_sample_id'),
+        )
 
 
 @dataclass
@@ -199,29 +233,20 @@ class SequenceRecord:
             'allele_used': self.allele_used,
             'quality': self.quality,
             'depth': self.depth,
-            'allele_frequency': self.allele_frequency
+            'allele_frequency': self.allele_frequency,
+            'central_point_source_sample_id': self.central_point.source_sample_id,
         }
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> "SequenceRecord":
-        variant_dict = data.get('variant', {})
-        variant = GenomicVariant(
-            chromosome=variant_dict.get('chromosome'),
-            position=variant_dict.get('position'),
-            ref_allele=variant_dict.get('ref_allele'),
-            alt_allele=variant_dict.get('alt_allele'),
-            quality=variant_dict.get('quality', 0.0),
-            depth=variant_dict.get('depth', 0),
-            allele_frequency=variant_dict.get('allele_frequency', 0.0),
-            filter_status=variant_dict.get('filter_status', 'PASS'),
-            variant_type=variant_dict.get('variant_type', 'SNV')
-        )
+        central_point_data = {
+            'variant': data.get('variant', {}),
+            'importance_score': data.get('importance_score', 0.0),
+            'selected': data.get('selected', True),
+            'source_sample_id': data.get('central_point_source_sample_id'),
+        }
 
-        central_point = CentralPoint(
-            variant=variant,
-            importance_score=data.get('importance_score', 0.0),
-            selected_for_dataset=data.get('selected', True)
-        )
+        central_point = CentralPoint.from_dict(central_point_data)
 
         vcf_path = data.get('vcf_path')
         fasta_path = data.get('fasta_file')
@@ -1404,7 +1429,7 @@ class LongevityDatasetBuilder:
         if strategy == "first_longevous_sample":
             # Obter primeira amostra longeva
             longevous_samples_file = self.output_dir / "longevous_samples.txt"
-            
+
             # Verificar se arquivo existe (pode não existir em dry-run)
             if not longevous_samples_file.exists():
                 console.print(f"[yellow]⚠ Arquivo não encontrado: {longevous_samples_file}[/yellow]")
@@ -1438,7 +1463,12 @@ class LongevityDatasetBuilder:
             selected_variants = variants_sorted[:n_points]
             
             central_points = [
-                CentralPoint(variant=v, importance_score=v.quality, selected_for_dataset=True)
+                CentralPoint(
+                    variant=v,
+                    importance_score=v.quality,
+                    selected_for_dataset=True,
+                    source_sample_id=first_sample,
+                )
                 for v in selected_variants
             ]
             
@@ -1446,9 +1476,100 @@ class LongevityDatasetBuilder:
             self._save_central_points(central_points)
             
             console.print(f"[green]✓ {len(central_points)} pontos centrais selecionados[/green]")
-            
+
             return central_points
-        
+
+        elif strategy == "random_rotation_longevous_samples":
+            longevous_samples_file = self.output_dir / "longevous_samples.txt"
+
+            if not longevous_samples_file.exists():
+                console.print(f"[yellow]⚠ Arquivo não encontrado: {longevous_samples_file}[/yellow]")
+                console.print(f"[yellow]  Criando pontos centrais simulados...[/yellow]")
+                return self._create_simulated_central_points(n_points)
+
+            with open(longevous_samples_file) as f:
+                longevous_samples = [line.strip() for line in f if line.strip()]
+
+            if not longevous_samples:
+                console.print("[yellow]⚠ Nenhuma amostra longeva listada para rotação aleatória[/yellow]")
+                console.print(f"[yellow]  Criando pontos centrais simulados...[/yellow]")
+                return self._create_simulated_central_points(n_points)
+
+            console.print(
+                f"[cyan]Selecionando variantes aleatórias entre {len(longevous_samples)} longevos[/cyan]"
+            )
+
+            rng_seed = self.config['variant_selection'].get('random_seed')
+            rng = random.Random(rng_seed)
+
+            sample_variants_pool: Dict[str, List[GenomicVariant]] = {}
+            exhausted_samples: Set[str] = set()
+            central_points: List[CentralPoint] = []
+
+            while len(central_points) < n_points:
+                candidates = [s for s in longevous_samples if s not in exhausted_samples]
+                if not candidates:
+                    break
+
+                sample_id = rng.choice(candidates)
+
+                if sample_id not in sample_variants_pool:
+                    vcf_path_str = self.state['vcf_paths'].get(sample_id)
+                    if vcf_path_str:
+                        vcf_path = Path(vcf_path_str)
+                    else:
+                        vcf_path = self.output_dir / f"vcf/longevous/{sample_id}.vcf.gz"
+
+                    if not vcf_path.exists():
+                        console.print(
+                            f"[yellow]⚠ VCF não encontrado para {sample_id}: {vcf_path}[/yellow]"
+                        )
+                        exhausted_samples.add(sample_id)
+                        continue
+
+                    variants = self.extract_variants(sample_id, vcf_path)
+                    if not variants:
+                        console.print(
+                            f"[yellow]⚠ Nenhuma variante elegível para {sample_id}[/yellow]"
+                        )
+                        exhausted_samples.add(sample_id)
+                        continue
+
+                    rng.shuffle(variants)
+                    sample_variants_pool[sample_id] = variants
+
+                variants_pool = sample_variants_pool.get(sample_id, [])
+                if not variants_pool:
+                    exhausted_samples.add(sample_id)
+                    continue
+
+                variant = variants_pool.pop()
+                central_points.append(
+                    CentralPoint(
+                        variant=variant,
+                        importance_score=variant.quality,
+                        selected_for_dataset=True,
+                        source_sample_id=sample_id,
+                    )
+                )
+
+                if not variants_pool:
+                    exhausted_samples.add(sample_id)
+
+            if len(central_points) < n_points:
+                remaining = n_points - len(central_points)
+                console.print(
+                    f"[yellow]⚠ Apenas {len(central_points)} pontos centrais reais selecionados."
+                    f" Completando com {remaining} pontos simulados.[/yellow]"
+                )
+                central_points.extend(self._create_simulated_central_points(remaining))
+
+            self._save_central_points(central_points)
+
+            console.print(f"[green]✓ {len(central_points)} pontos centrais selecionados[/green]")
+
+            return central_points
+
         else:
             raise NotImplementedError(f"Estratégia '{strategy}' não implementada")
     
@@ -1466,44 +1587,35 @@ class LongevityDatasetBuilder:
                 allele_frequency=0.1
             )
             central_points.append(
-                CentralPoint(variant=variant, importance_score=1.0, selected_for_dataset=True)
+                CentralPoint(
+                    variant=variant,
+                    importance_score=1.0,
+                    selected_for_dataset=True,
+                    source_sample_id=None,
+                )
             )
         return central_points
-    
+
     def _save_central_points(self, points: List[CentralPoint]):
         """Salva pontos centrais em arquivo."""
         output_file = self.output_dir / "central_points.json"
-        data = [
-            {
-                'variant': p.variant.to_dict(),
-                'importance_score': p.importance_score,
-                'selected': p.selected_for_dataset
-            }
-            for p in points
-        ]
+        data = [p.to_dict() for p in points]
         with open(output_file, 'w') as f:
             json.dump(data, f, indent=2)
         console.print(f"[green]✓ Pontos centrais salvos em: {output_file}[/green]")
         self.state['central_points_selected'] = True
         self._save_checkpoint()
-    
+
     def _load_central_points(self) -> List[CentralPoint]:
         """Carrega pontos centrais de arquivo."""
         input_file = self.output_dir / "central_points.json"
         with open(input_file) as f:
             data = json.load(f)
-        
+
         points = []
         for item in data:
-            var_dict = item['variant']
-            variant = GenomicVariant(**var_dict)
-            point = CentralPoint(
-                variant=variant,
-                importance_score=item['importance_score'],
-                selected_for_dataset=item['selected']
-            )
-            points.append(point)
-        
+            points.append(CentralPoint.from_dict(item))
+
         return points
     
     # ───────────────────────────────────────────────────────────────
