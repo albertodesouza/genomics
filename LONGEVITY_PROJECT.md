@@ -183,7 +183,7 @@ dataset:
 ### Estratégias de Seleção de Pontos Centrais
 
 - `first_longevous_sample`: usa apenas a primeira amostra longeva disponível como fonte para ordenar as variantes por QUAL e selecionar as `n_central_points` mais altas.
-- `random_rotation_longevous_samples`: percorre ciclicamente a lista de longevos disponível. Para cada longevo da sequência, seleciona uma variante elegível desse indivíduo **sem reposição** (ordem aleatória definida por `variant_selection.random_seed`) e incrementa o contador até atingir `n_central_points`. Caso alguma amostra não possua VCF ou variantes válidas, ela é descartada da rotação e o algoritmo segue para o próximo longevo.
+- `random_rotation_longevous_samples`: percorre ciclicamente a lista de longevos disponível. Para cada longevo da sequência, seleciona uma variante elegível desse indivíduo **sem reposição** (ordem aleatória definida por `variant_selection.random_seed`) usando amostragem verdadeira a cada iteração. Caso alguma amostra não possua VCF ou variantes válidas, ela é descartada da rotação e o algoritmo segue para o próximo longevo.
 
 ---
 

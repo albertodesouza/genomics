@@ -180,7 +180,6 @@ O arquivo `central_points.json` é gravado diretamente dentro de `project.output
   - `filter_status`: Conteúdo da coluna FILTER do VCF (`"PASS"`, `"q10"`, etc.).
   - `variant_type`: Classificação inferida (`"SNV"`, `"INSERTION"` ou `"DELETION"`).
   - `source_sample_id`: Identificador da amostra longeva de origem (ou `null` para pontos simulados).
-- `importance_score`: Pontuação (real ou simulada) que representa a relevância da variante para ordenações/filtragens posteriores.
 - `selected`: Valor booleano indicando se o ponto entrou no subconjunto final utilizado nas etapas seguintes do pipeline.
 - `source_sample_id`: Identificador da amostra de onde a variante foi selecionada. Quando o ponto for simulado, o campo fica como `null`.
 

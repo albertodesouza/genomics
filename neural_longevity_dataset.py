@@ -60,9 +60,6 @@ seguinte estrutura:
     métricas opcionais como ``quality`` (QUAL do VCF), ``depth`` (profundidade de
     leitura), ``allele_frequency`` (frequência estimada), ``filter_status``
     (status da coluna FILTER) e ``variant_type`` (SNV, INSERTION ou DELETION).
-``importance_score``
-    Pontuação calculada ou simulada que representa a relevância da variante
-    durante a seleção, usada em ordenações e filtros posteriores.
 ``selected``
     Flag booleana indicando se o ponto central foi efetivamente escolhido para
     compor o dataset balanceado.
@@ -172,9 +169,9 @@ class GenomicVariant:
 class CentralPoint:
     """Ponto central para extração de sequência."""
     variant: GenomicVariant
-    importance_score: float = 0.0
     selected_for_dataset: bool = False
     source_sample_id: Optional[str] = None
+    importance_score: Optional[float] = None
 
     def __post_init__(self):
         if self.source_sample_id and not self.variant.source_sample_id:
@@ -187,11 +184,15 @@ class CentralPoint:
         if self.source_sample_id and not variant_payload.get('source_sample_id'):
             variant_payload['source_sample_id'] = self.source_sample_id
 
-        return {
+        payload: Dict[str, Any] = {
             'variant': variant_payload,
-            'importance_score': self.importance_score,
             'selected': self.selected_for_dataset,
         }
+
+        if self.importance_score is not None:
+            payload['importance_score'] = self.importance_score
+
+        return payload
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CentralPoint":
@@ -211,9 +212,9 @@ class CentralPoint:
 
         return cls(
             variant=variant,
-            importance_score=data.get('importance_score', 0.0),
             selected_for_dataset=data.get('selected', False),
             source_sample_id=data.get('source_sample_id', variant.source_sample_id),
+            importance_score=data.get('importance_score'),
         )
 
 
@@ -253,7 +254,6 @@ class SequenceRecord:
     def from_dict(data: Dict[str, Any]) -> "SequenceRecord":
         central_point_data = {
             'variant': data.get('variant', {}),
-            'importance_score': data.get('importance_score', 0.0),
             'selected': data.get('selected', True),
             'source_sample_id': data.get(
                 'central_point_source_sample_id',
@@ -1481,7 +1481,6 @@ class LongevityDatasetBuilder:
             central_points = [
                 CentralPoint(
                     variant=v,
-                    importance_score=v.quality,
                     selected_for_dataset=True,
                     source_sample_id=first_sample,
                 )
@@ -1566,7 +1565,6 @@ class LongevityDatasetBuilder:
                         sample_index = (sample_index + 1) % total_samples
                         continue
 
-                    rng.shuffle(variants)
                     sample_variants_pool[sample_id] = variants
 
                 variants_pool = sample_variants_pool.get(sample_id, [])
@@ -1575,11 +1573,11 @@ class LongevityDatasetBuilder:
                     sample_index = (sample_index + 1) % total_samples
                     continue
 
-                variant = variants_pool.pop()
+                variant_index = rng.randrange(len(variants_pool))
+                variant = variants_pool.pop(variant_index)
                 central_points.append(
                     CentralPoint(
                         variant=variant,
-                        importance_score=variant.quality,
                         selected_for_dataset=True,
                         source_sample_id=sample_id,
                     )
@@ -1625,7 +1623,6 @@ class LongevityDatasetBuilder:
             central_points.append(
                 CentralPoint(
                     variant=variant,
-                    importance_score=1.0,
                     selected_for_dataset=True,
                     source_sample_id=None,
                 )
@@ -1812,7 +1809,6 @@ class LongevityDatasetBuilder:
             base = rec.to_dict()
             base['fasta_file'] = str(rec.fasta_file)
             base['vcf_path'] = str(rec.vcf_path) if rec.vcf_path else None
-            base['importance_score'] = rec.central_point.importance_score
             base['selected'] = rec.central_point.selected_for_dataset
             data.append(base)
         with open(index_file, 'w') as f:
