@@ -181,6 +181,7 @@ O arquivo `central_points.json` é gravado diretamente dentro de `project.output
   - `variant_type`: Classificação inferida (`"SNV"`, `"INSERTION"` ou `"DELETION"`).
   - `source_sample_id`: Identificador da amostra longeva de origem (ou `null` para pontos simulados).
 - `selected`: Valor booleano indicando se o ponto entrou no subconjunto final utilizado nas etapas seguintes do pipeline.
+- `source_sample_id`: Identificador da amostra de onde a variante foi selecionada. Quando o ponto for simulado, o campo fica como `null`.
 
 Esse arquivo é consumido diretamente pelas fases `extract_sequences` e `build_dataset`: ele dita quais variantes terão janelas FASTA geradas, quais sequências receberão inferências no AlphaGenome e quais instâncias comporão os splits PyTorch.
 
