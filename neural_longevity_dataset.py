@@ -83,6 +83,7 @@ import yaml
 import json
 import pickle
 import random
+import re
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional, Any, Sequence, Set
 from dataclasses import dataclass, field
@@ -482,6 +483,7 @@ class LongevityDatasetBuilder:
         self._variant_cache_runtime: Dict[str, Dict[Tuple[str, int], Dict[str, Any]]] = {}
         self._alphagenome_client = None
         self._chrom_lengths: Optional[Dict[str, int]] = None
+        self._remote_size_cache: Dict[str, Optional[int]] = {}
         
         console.print(Panel.fit(
             f"[bold cyan]{self.config['project']['name']}[/bold cyan]\n"
@@ -583,6 +585,144 @@ class LongevityDatasetBuilder:
         # Nesses casos, forçamos HTTPS explícito.
         return f"https://{cleaned}"
 
+    def _group_cram_crai_pairs(self, urls: Sequence[str]) -> List[Dict[str, str]]:
+        """Agrupa URLs por par CRAM/CRAI compartilhando o mesmo basename."""
+
+        groups: Dict[str, Dict[str, str]] = {}
+        order: List[str] = []
+
+        for url in urls:
+            lowered = url.lower()
+            if lowered.endswith('.cram'):
+                base_key = url[:-5]
+                if base_key not in groups:
+                    groups[base_key] = {'basename': base_key.rsplit('/', 1)[-1]}
+                    order.append(base_key)
+                groups[base_key]['cram_url'] = url
+            elif lowered.endswith('.crai'):
+                base_key = url[:-5]
+                if base_key not in groups:
+                    groups[base_key] = {'basename': base_key.rsplit('/', 1)[-1]}
+                    order.append(base_key)
+                groups[base_key]['crai_url'] = url
+
+        pairs: List[Dict[str, str]] = []
+        for base_key in order:
+            entry = groups.get(base_key, {})
+            cram = entry.get('cram_url')
+            crai = entry.get('crai_url')
+            if cram and crai:
+                pairs.append({
+                    'basename': entry.get('basename', base_key.rsplit('/', 1)[-1]),
+                    'cram_url': cram,
+                    'crai_url': crai,
+                })
+
+        return pairs
+
+    def _is_chromosomal_shard(self, basename: str) -> bool:
+        """Detecta shards por cromossomo a partir do nome base do arquivo."""
+
+        lower = basename.lower()
+        chromosome_patterns = [
+            r'(?:^|[_.-])chr(?:[0-9]{1,2}|[xy]|mt|m)(?:[_.-]|$)',
+            r'(?:^|[_.-])chrom(?:osome)?[_.-]?(?:[0-9]{1,2}|[xy]|mt)(?:[_.-]|$)',
+            r'(?:^|[_.-])chr(?:un|random)(?:[_.-]|$)'
+        ]
+
+        for pattern in chromosome_patterns:
+            if re.search(pattern, lower):
+                return True
+
+        return False
+
+    def _fetch_remote_size(self, url: str) -> Optional[int]:
+        """Obtém tamanho remoto via HEAD, com cache em memória."""
+
+        if url in self._remote_size_cache:
+            return self._remote_size_cache[url]
+
+        try:
+            from urllib.request import Request, urlopen
+        except Exception:  # pragma: no cover - fallback improvável
+            self._remote_size_cache[url] = None
+            return None
+
+        try:
+            try:
+                request = Request(url, method='HEAD')
+            except TypeError:  # Python < 3.8 compat
+                request = Request(url)
+
+                def _get_method():
+                    return 'HEAD'
+
+                request.get_method = _get_method  # type: ignore[attr-defined]
+
+            with urlopen(request) as response:  # type: ignore[call-arg]
+                length = response.headers.get('Content-Length')
+        except Exception:
+            self._remote_size_cache[url] = None
+            return None
+
+        if not length:
+            self._remote_size_cache[url] = None
+            return None
+
+        try:
+            size = int(length)
+        except (TypeError, ValueError):
+            self._remote_size_cache[url] = None
+            return None
+
+        self._remote_size_cache[url] = size
+        return size
+
+    def _select_cram_crai_pair(
+        self,
+        pairs: Sequence[Dict[str, str]],
+    ) -> Tuple[Optional[Dict[str, str]], bool]:
+        """Seleciona o melhor par CRAM/CRAI disponível.
+
+        Retorna uma tupla com o par selecionado e um sinalizador indicando se
+        apenas shards por cromossomo estavam disponíveis.
+        """
+
+        if not pairs:
+            return None, False
+
+        whole_genome: List[Dict[str, str]] = []
+        chrom_shards: List[Dict[str, str]] = []
+
+        for pair in pairs:
+            basename = pair.get('basename', '')
+            if self._is_chromosomal_shard(basename):
+                chrom_shards.append(pair)
+            else:
+                whole_genome.append(pair)
+
+        def choose_best(candidates: Sequence[Dict[str, str]]) -> Dict[str, str]:
+            if len(candidates) == 1:
+                return candidates[0]
+
+            selected = candidates[0]
+            best_size = self._fetch_remote_size(selected['cram_url'])
+
+            for candidate in candidates[1:]:
+                size = self._fetch_remote_size(candidate['cram_url'])
+                if size is None:
+                    continue
+                if best_size is None or size > best_size:
+                    selected = candidate
+                    best_size = size
+
+            return selected
+
+        if whole_genome:
+            return choose_best(whole_genome), False
+
+        return choose_best(chrom_shards or pairs), True
+
     def _get_processed_samples(self) -> set:
         """Retorna conjunto com IDs já processados."""
         processed = set()
@@ -653,18 +793,26 @@ class LongevityDatasetBuilder:
                 continue
 
             urls = [self._normalize_ena_url(part.strip()) for part in submitted.split(';') if part.strip()]
-            cram_url = next((u for u in urls if u.endswith('.cram')), None)
-            crai_url = next((u for u in urls if u.endswith('.crai')), None)
+            pairs = self._group_cram_crai_pairs(urls)
+            selected_pair, only_shards = self._select_cram_crai_pair(pairs)
 
-            if not cram_url or not crai_url:
+            if not selected_pair:
                 continue
+
+            if only_shards:
+                run_accession = str(row.get('run_accession', '')).strip()
+                chosen_name = selected_pair.get('basename', 'desconhecido')
+                console.print(
+                    "[yellow]⚠ Nenhum CRAM de genoma completo para amostra"
+                    f" {sample_alias} (run {run_accession}). Utilizando shard {chosen_name}.[/yellow]"
+                )
 
             records.append({
                 'sample_id': sample_alias,
                 'run_accession': str(row.get('run_accession', '')).strip(),
                 'label': label,
-                'cram_url': cram_url,
-                'crai_url': crai_url
+                'cram_url': selected_pair['cram_url'],
+                'crai_url': selected_pair['crai_url']
             })
 
         return records
