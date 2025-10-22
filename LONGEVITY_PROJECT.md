@@ -119,9 +119,9 @@ genomics/
 └── genomes_analyzer.py             # Pipeline genômico
 ```
 
-> 💡 **Dica**: o arquivo `central_points.json` inclui o campo
-> `source_sample_id`, indicando de qual indivíduo longevo cada variante foi
-> selecionada (ou `null` quando o ponto é simulado).
+> 💡 **Dica**: em `central_points.json` o campo `variant.source_sample_id`
+> indica de qual indivíduo longevo cada variante foi selecionada (ou `null`
+> quando o ponto é simulado).
 
 ---
 
@@ -183,7 +183,7 @@ dataset:
 ### Estratégias de Seleção de Pontos Centrais
 
 - `first_longevous_sample`: usa apenas a primeira amostra longeva disponível como fonte para ordenar as variantes por QUAL e selecionar as `n_central_points` mais altas.
-- `random_rotation_longevous_samples`: rotaciona todas as amostras longevas disponíveis. A cada iteração escolhe um longevo aleatório, seleciona uma variante elegível desse indivíduo **sem reposição** e incrementa o contador até atingir `n_central_points`. Caso alguma amostra não possua VCF ou variantes válidas, ela é descartada da rotação. O campo opcional `variant_selection.random_seed` garante reprodutibilidade dessa estratégia.
+- `random_rotation_longevous_samples`: percorre ciclicamente a lista de longevos disponível. Para cada longevo da sequência, seleciona uma variante elegível desse indivíduo **sem reposição** (ordem aleatória definida por `variant_selection.random_seed`) e incrementa o contador até atingir `n_central_points`. Caso alguma amostra não possua VCF ou variantes válidas, ela é descartada da rotação e o algoritmo segue para o próximo longevo.
 
 ---
 

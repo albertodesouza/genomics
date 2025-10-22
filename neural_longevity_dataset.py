@@ -151,7 +151,8 @@ class GenomicVariant:
     allele_frequency: float = 0.0
     filter_status: str = "PASS"
     variant_type: str = "SNV"  # SNV, INSERTION, DELETION
-    
+    source_sample_id: Optional[str] = None
+
     def to_dict(self) -> Dict:
         return {
             'chromosome': self.chromosome,
@@ -162,7 +163,8 @@ class GenomicVariant:
             'depth': self.depth,
             'allele_frequency': self.allele_frequency,
             'filter_status': self.filter_status,
-            'variant_type': self.variant_type
+            'variant_type': self.variant_type,
+            'source_sample_id': self.source_sample_id,
         }
 
 
@@ -174,12 +176,21 @@ class CentralPoint:
     selected_for_dataset: bool = False
     source_sample_id: Optional[str] = None
 
+    def __post_init__(self):
+        if self.source_sample_id and not self.variant.source_sample_id:
+            self.variant.source_sample_id = self.source_sample_id
+        elif not self.source_sample_id and self.variant.source_sample_id:
+            self.source_sample_id = self.variant.source_sample_id
+
     def to_dict(self) -> Dict[str, Any]:
+        variant_payload = self.variant.to_dict()
+        if self.source_sample_id and not variant_payload.get('source_sample_id'):
+            variant_payload['source_sample_id'] = self.source_sample_id
+
         return {
-            'variant': self.variant.to_dict(),
+            'variant': variant_payload,
             'importance_score': self.importance_score,
             'selected': self.selected_for_dataset,
-            'source_sample_id': self.source_sample_id,
         }
 
     @classmethod
@@ -195,13 +206,14 @@ class CentralPoint:
             allele_frequency=variant_data.get('allele_frequency', 0.0),
             filter_status=variant_data.get('filter_status', 'PASS'),
             variant_type=variant_data.get('variant_type', 'SNV'),
+            source_sample_id=variant_data.get('source_sample_id'),
         )
 
         return cls(
             variant=variant,
             importance_score=data.get('importance_score', 0.0),
             selected_for_dataset=data.get('selected', False),
-            source_sample_id=data.get('source_sample_id'),
+            source_sample_id=data.get('source_sample_id', variant.source_sample_id),
         )
 
 
@@ -243,7 +255,10 @@ class SequenceRecord:
             'variant': data.get('variant', {}),
             'importance_score': data.get('importance_score', 0.0),
             'selected': data.get('selected', True),
-            'source_sample_id': data.get('central_point_source_sample_id'),
+            'source_sample_id': data.get(
+                'central_point_source_sample_id',
+                data.get('variant', {}).get('source_sample_id'),
+            ),
         }
 
         central_point = CentralPoint.from_dict(central_point_data)
@@ -1326,9 +1341,10 @@ class LongevityDatasetBuilder:
                     depth=dp,
                     allele_frequency=af,
                     filter_status=filter_status,
-                    variant_type=var_type
+                    variant_type=var_type,
+                    source_sample_id=sample_id,
                 )
-                
+
                 variants.append(variant)
         
         except sp.CalledProcessError as e:
@@ -1506,12 +1522,25 @@ class LongevityDatasetBuilder:
             exhausted_samples: Set[str] = set()
             central_points: List[CentralPoint] = []
 
-            while len(central_points) < n_points:
-                candidates = [s for s in longevous_samples if s not in exhausted_samples]
-                if not candidates:
+            total_samples = len(longevous_samples)
+            sample_index = 0
+            central_points_counter = 0
+
+            while central_points_counter < n_points:
+                if len(exhausted_samples) == total_samples:
                     break
 
-                sample_id = rng.choice(candidates)
+                sample_id = longevous_samples[sample_index]
+
+                # Avança até encontrar um longevo ainda disponível
+                cycle_advance = 0
+                while sample_id in exhausted_samples and cycle_advance < total_samples:
+                    sample_index = (sample_index + 1) % total_samples
+                    sample_id = longevous_samples[sample_index]
+                    cycle_advance += 1
+
+                if cycle_advance >= total_samples and sample_id in exhausted_samples:
+                    break
 
                 if sample_id not in sample_variants_pool:
                     vcf_path_str = self.state['vcf_paths'].get(sample_id)
@@ -1525,6 +1554,7 @@ class LongevityDatasetBuilder:
                             f"[yellow]⚠ VCF não encontrado para {sample_id}: {vcf_path}[/yellow]"
                         )
                         exhausted_samples.add(sample_id)
+                        sample_index = (sample_index + 1) % total_samples
                         continue
 
                     variants = self.extract_variants(sample_id, vcf_path)
@@ -1533,6 +1563,7 @@ class LongevityDatasetBuilder:
                             f"[yellow]⚠ Nenhuma variante elegível para {sample_id}[/yellow]"
                         )
                         exhausted_samples.add(sample_id)
+                        sample_index = (sample_index + 1) % total_samples
                         continue
 
                     rng.shuffle(variants)
@@ -1541,6 +1572,7 @@ class LongevityDatasetBuilder:
                 variants_pool = sample_variants_pool.get(sample_id, [])
                 if not variants_pool:
                     exhausted_samples.add(sample_id)
+                    sample_index = (sample_index + 1) % total_samples
                     continue
 
                 variant = variants_pool.pop()
@@ -1553,13 +1585,17 @@ class LongevityDatasetBuilder:
                     )
                 )
 
+                central_points_counter += 1
+
                 if not variants_pool:
                     exhausted_samples.add(sample_id)
 
-            if len(central_points) < n_points:
-                remaining = n_points - len(central_points)
+                sample_index = (sample_index + 1) % total_samples
+
+            if central_points_counter < n_points:
+                remaining = n_points - central_points_counter
                 console.print(
-                    f"[yellow]⚠ Apenas {len(central_points)} pontos centrais reais selecionados."
+                    f"[yellow]⚠ Apenas {central_points_counter} pontos centrais reais selecionados."
                     f" Completando com {remaining} pontos simulados.[/yellow]"
                 )
                 central_points.extend(self._create_simulated_central_points(remaining))
