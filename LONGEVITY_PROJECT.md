@@ -119,6 +119,10 @@ genomics/
 └── genomes_analyzer.py             # Pipeline genômico
 ```
 
+> 💡 **Dica**: o arquivo `central_points.json` inclui o campo
+> `source_sample_id`, indicando de qual indivíduo longevo cada variante foi
+> selecionada (ou `null` quando o ponto é simulado).
+
 ---
 
 ## ⚙️ Configuração
