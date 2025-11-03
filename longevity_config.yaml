@@ -14,18 +14,79 @@ project:
 data_sources:
   # Reference genome (first resolved relative to /dados/GENOMICS_DATA/top3/)
   reference:
-    fasta: "refs/reference.fa"   # falls back to this YAML directory/current cwd if needed
+    # fasta: "refs/reference.fa"   # falls back to this YAML directory/current cwd if needed
+    fasta: "refs/GRCh38_full_analysis_set_plus_decoy_hla.fa"   # Correct reference for 1000 Genomes VCFs
     name: "GRCh38"
 
-  # Longevous cohort (temporarily reusing 1000 Genomes high-coverage data)
-  longevous:
+  # Download mode: "vcf_multisample" (cromossomos completos, RECOMENDADO) ou "cram" (indivíduos)
+  download_mode: "vcf_multisample"  # DEFAULT - usa VCFs filtrados por cromossomo (3,202 amostras)
+  
+  # VCF multi-sample source (usado quando download_mode = "vcf_multisample")
+  vcf_multisample_source:
+    # IGSR 1000 Genomes High Coverage - VCFs filtrados e faseados por cromossomo
+    base_url: "http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV/"
+    # Padrão de nome dos arquivos por cromossomo (Nota: chrX tem .v2 - tratado automaticamente)
+    filename_pattern: "1kGP_high_coverage_Illumina.{chrom}.filtered.SNV_INDEL_SV_phased_panel.vcf.gz"
+    # Cromossomos a baixar (para teste, use apenas chr21, chr22 que são menores)
+    # chromosomes: ["chr21", "chr22"]  # Teste com cromossomos pequenos
+    chromosomes: ["chr1",  "chr2",  "chr3",  "chr4",  "chr5",  "chr6",  "chr7",  "chr8",  "chr9",  "chr10", 
+                  "chr11", "chr12", "chr13", "chr14", "chr15", "chr16", "chr17", "chr18", "chr19", "chr20", 
+                  "chr21", "chr22", "chrX"]  # Todos
+    # Para produção, use todos: ["chr1", "chr2", ..., "chr22", "chrX"]
+  
+  # Configuração de amostragem de variantes (modo vcf_multisample)
+  variant_sampling:
+    # Número de variantes a extrair por cromossomo
+    n_variants_per_chromosome: 3
+    # Método de seleção: "sequential" (primeiras N - RÁPIDO) ou "random" (aleatórias - LENTO)
+    selection_method: "sequential"  # Recomendado: sequential é instantâneo
+    # Seed para reprodutibilidade (quando random)
+    random_seed: 42
+    # Mostrar contagem de variantes por cromossomo (lento: ~1-2 min para 23 cromossomos)
+    show_variant_counts: false  # Default: false (pula contagem para ser mais rápido)
+    # Variantes Disponíveis por Cromossomo:
+    # ──────────────────────────────────────────────────────────────────────
+    #    chr1:    5.759.060 variantes  █████████████████████████████████████
+    #    chr2:    6.088.598 variantes  ████████████████████████████████████████
+    #    chr3:    4.983.185 variantes  ████████████████████████████████
+    #    chr4:    4.875.465 variantes  ████████████████████████████████
+    #    chr5:    4.536.819 variantes  █████████████████████████████
+    #    chr6:    4.315.217 variantes  ████████████████████████████
+    #    chr7:    4.137.254 variantes  ███████████████████████████
+    #    chr8:    3.886.222 variantes  █████████████████████████
+    #    chr9:    3.165.513 variantes  ████████████████████
+    #   chr10:    3.495.473 variantes  ██████████████████████
+    #   chr11:    3.423.341 variantes  ██████████████████████
+    #   chr12:    3.332.788 variantes  █████████████████████
+    #   chr13:    2.509.179 variantes  ████████████████
+    #   chr14:    2.290.400 variantes  ███████████████
+    #   chr15:    2.109.285 variantes  █████████████
+    #   chr16:    2.362.361 variantes  ███████████████
+    #   chr17:    2.073.624 variantes  █████████████
+    #   chr18:    1.963.845 variantes  ████████████
+    #   chr19:    1.670.692 variantes  ██████████
+    #   chr20:    1.644.384 variantes  ██████████
+    #   chr21:    1.002.753 variantes  ██████
+    #   chr22:    1.066.557 variantes  ███████
+    #    chrX:    2.862.781 variantes  ██████████████████
+    # ──────────────────────────────────────────────────────────────────────
+    # TOTAL:   73.554.796 variantes
+
+    # Filtros de qualidade (não usados - VCFs já filtrados)
+    min_quality: 30
+    only_pass: true
+  
+  # CRAM source (usado quando download_mode = "cram")
+  cram_source:
     ena_project: "PRJEB31736"
+    # ENA API será consultada para CRAM URLs
+
+  # Configuração de indivíduos (usado apenas no modo CRAM)
+  longevous:
     sample_range: [0, 4]         # inclusive start, exclusive end
     label: 1                     # class label for longevous individuals
 
-  # Non-longevous cohort (placeholder range within the same project)
   non_longevous:
-    ena_project: "PRJEB31736"
     sample_range: [10, 14]       # inclusive start, exclusive end
     label: 0                     # class label for non-longevous individuals
 
@@ -35,9 +96,9 @@ data_sources:
 
 variant_selection:
   # Strategy used to seed central points. Options: first_longevous_sample, random_rotation_longevous_samples
-  initial_strategy: "first_longevous_sample"
+  initial_strategy: "random_rotation_longevous_samples"
   # Optional seed for strategies that rely on randomness (e.g., random_rotation_longevous_samples)
-  random_seed: 42
+  random_seed: 13
   # Number of loci to extract around the seed variants
   n_central_points: 10
   filters:
@@ -149,9 +210,9 @@ dataset:
 pipeline:
   # High-level pipeline toggles (disable steps to resume from mid-process)
   steps:
-    download_samples: false
+    download_samples: true
     select_central_points: true
-    extract_sequences: false
+    extract_sequences: true
     run_alphagenome: false
     build_dataset: false
   parallel:

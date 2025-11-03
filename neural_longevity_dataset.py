@@ -93,7 +93,7 @@ from collections import defaultdict
 import gzip
 import tempfile
 import shutil
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 import shlex
 
 import numpy as np
@@ -225,30 +225,23 @@ class SequenceRecord:
     sample_id: str
     central_point: CentralPoint
     sequence: str
+    GRCh38_s: str  # Sequência original de referência (mesmo tamanho que sequence)
     fasta_file: Path
     label: int  # 1=longevo, 0=não-longevo
     genotype: str = "0/0"
     variant_present: bool = False
-    allele_used: str = "REF"
-    vcf_path: Optional[Path] = None
-    quality: Optional[float] = None
-    depth: Optional[int] = None
-    allele_frequency: Optional[float] = None
 
     def to_dict(self) -> Dict:
         return {
             'sample_id': self.sample_id,
             'variant': self.central_point.variant.to_dict(),
             'sequence': self.sequence,
+            'GRCh38_s': self.GRCh38_s,
             'sequence_length': len(self.sequence),
             'label': self.label,
             'genotype': self.genotype,
             'variant_present': self.variant_present,
-            'allele_used': self.allele_used,
-            'quality': self.quality,
-            'depth': self.depth,
-            'allele_frequency': self.allele_frequency,
-            'central_point_source_sample_id': self.central_point.source_sample_id,
+            'fasta_file': str(self.fasta_file),
         }
 
     @staticmethod
@@ -264,7 +257,6 @@ class SequenceRecord:
 
         central_point = CentralPoint.from_dict(central_point_data)
 
-        vcf_path = data.get('vcf_path')
         fasta_path = data.get('fasta_file')
         if not fasta_path:
             raise ValueError('sequence record missing fasta_file path')
@@ -275,15 +267,11 @@ class SequenceRecord:
             sample_id=data.get('sample_id'),
             central_point=central_point,
             sequence=data.get('sequence', ''),
+            GRCh38_s=data.get('GRCh38_s', ''),
             fasta_file=Path(fasta_path),
             label=data.get('label', 0),
             genotype=data.get('genotype', '0/0'),
-            variant_present=data.get('variant_present', False),
-            allele_used=data.get('allele_used', 'REF'),
-            vcf_path=Path(vcf_path) if vcf_path else None,
-            quality=data.get('quality'),
-            depth=data.get('depth'),
-            allele_frequency=data.get('allele_frequency')
+            variant_present=data.get('variant_present', False)
         )
 
 
@@ -554,7 +542,9 @@ class LongevityDatasetBuilder:
             'dataset_built': False,
             'sample_metadata': {},
             'vcf_paths': {},
-            'variant_cache': {}
+            'variant_cache': {},
+            'downloaded_chromosomes': [],  # NOVO: cromossomos baixados no modo multisample
+            'vcf_chromosome_dir': None  # NOVO: diretório dos VCFs por cromossomo
         }
 
         for key, value in defaults.items():
@@ -590,17 +580,28 @@ class LongevityDatasetBuilder:
 
         groups: Dict[str, Dict[str, str]] = {}
         order: List[str] = []
-
+        
         for url in urls:
             lowered = url.lower()
-            if lowered.endswith('.cram'):
+            
+            # Verificar primeiro se termina com .cram.crai (arquivo de índice)
+            if lowered.endswith('.cram.crai'):
+                # Remover .crai (5 caracteres), deixando .cram no final
                 base_key = url[:-5]
+                if base_key not in groups:
+                    groups[base_key] = {'basename': base_key.rsplit('/', 1)[-1]}
+                    order.append(base_key)
+                groups[base_key]['crai_url'] = url
+            elif lowered.endswith('.cram'):
+                # Arquivo CRAM
+                base_key = url  # Manter .cram no base_key
                 if base_key not in groups:
                     groups[base_key] = {'basename': base_key.rsplit('/', 1)[-1]}
                     order.append(base_key)
                 groups[base_key]['cram_url'] = url
             elif lowered.endswith('.crai'):
-                base_key = url[:-5]
+                # Arquivo .crai sem .cram antes (caso raro)
+                base_key = url[:-1] + 'm'  # Trocar .crai por .cram
                 if base_key not in groups:
                     groups[base_key] = {'basename': base_key.rsplit('/', 1)[-1]}
                     order.append(base_key)
@@ -739,6 +740,8 @@ class LongevityDatasetBuilder:
         collected: List[pd.DataFrame] = []
         total = 0
         offset = 0
+        
+        first_batch = True
 
         while total < max_records:
             limit = min(batch_size, max_records - total)
@@ -747,6 +750,18 @@ class LongevityDatasetBuilder:
                 "https://www.ebi.ac.uk/ena/portal/api/search?"
                 f"result=read_run&format=tsv&fields={fields}&limit={limit}&offset={offset}&query={query}"
             )
+            
+            # Imprimir URL da API na primeira consulta
+            if first_batch:
+                # Decodificar a URL para exibição legível (pode copiar e colar no browser)
+                url_legivel = unquote(url)
+                console.print(f"\n[bold cyan]Consultando API do ENA:[/bold cyan]")
+                console.print(f"[cyan]URL (copie e cole no browser):[/cyan]")
+                console.print(f"[blue]{url_legivel}[/blue]")
+                console.print(f"\n[cyan]Projeto: {project_id}[/cyan]")
+                console.print(f"[cyan]Formato: CRAM[/cyan]")
+                console.print(f"[cyan]Registros solicitados: {max_records}[/cyan]\n")
+                first_batch = False
 
             try:
                 df = pd.read_csv(url, sep='\t')
@@ -768,7 +783,17 @@ class LongevityDatasetBuilder:
             return pd.DataFrame(columns=fields.split(','))
 
         combined = pd.concat(collected, ignore_index=True)
-        if 'sample_alias' in combined.columns:
+        
+        # CORREÇÃO: Usar run_accession quando sample_alias está vazio
+        if 'sample_alias' in combined.columns and 'run_accession' in combined.columns:
+            # Preencher sample_alias vazios com run_accession
+            combined['sample_alias'] = combined['sample_alias'].fillna(combined['run_accession'])
+            # Remover registros que não têm nem sample_alias nem run_accession
+            combined = combined.dropna(subset=['sample_alias'])
+            combined = combined.drop_duplicates(subset=['sample_alias'], keep='first')
+        elif 'run_accession' in combined.columns:
+            # Se não houver sample_alias, usar run_accession
+            combined['sample_alias'] = combined['run_accession']
             combined = combined.dropna(subset=['sample_alias'])
             combined = combined.drop_duplicates(subset=['sample_alias'], keep='first')
 
@@ -783,7 +808,7 @@ class LongevityDatasetBuilder:
         subset = df.iloc[start:end]
         records: List[Dict[str, Any]] = []
 
-        for _, row in subset.iterrows():
+        for idx, row in subset.iterrows():
             sample_alias = str(row.get('sample_alias') or '').strip()
             if not sample_alias:
                 continue
@@ -894,6 +919,69 @@ class LongevityDatasetBuilder:
         if not fai_path.exists():
             console.print(f"[cyan]Indexando referência: {fasta_path}[/cyan]")
             sp.run(['samtools', 'faidx', str(fasta_path)], check=True)
+    
+    def _download_reference_genome(self, target_path: Path) -> bool:
+        """
+        Baixa o genoma de referência GRCh38 do 1000 Genomes se não existir.
+        
+        Args:
+            target_path: Caminho onde salvar o arquivo FASTA
+            
+        Returns:
+            True se sucesso, False caso contrário
+        """
+        console.print("\n" + "="*70)
+        console.print("[bold yellow]GENOMA DE REFERÊNCIA NÃO ENCONTRADO[/bold yellow]")
+        console.print("="*70 + "\n")
+        
+        console.print("[cyan]O arquivo de referência configurado não existe.[/cyan]")
+        console.print("[cyan]Iniciando download automático do GRCh38 (1000 Genomes)...[/cyan]\n")
+        
+        # URL oficial do 1000 Genomes para GRCh38
+        base_url = "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/"
+        fasta_url = base_url + "GRCh38_full_analysis_set_plus_decoy_hla.fa"
+        fai_url = fasta_url + ".fai"
+        
+        console.print("[bold cyan]Informações do Arquivo:[/bold cyan]")
+        console.print(f"  • Nome: GRCh38_full_analysis_set_plus_decoy_hla.fa")
+        console.print(f"  • Fonte: 1000 Genomes Project")
+        console.print(f"  • URL: [blue]{fasta_url}[/blue]")
+        console.print(f"  • Tamanho: ~3.2 GB (compactado)")
+        console.print(f"  • Destino: {target_path}")
+        console.print(f"  • Tempo estimado: 5-30 minutos (dependendo da conexão)\n")
+        
+        console.print("[yellow]⚠ Este é um arquivo grande. O download pode levar algum tempo.[/yellow]\n")
+        
+        # Criar diretório se não existir
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Baixar FASTA
+        console.print("[bold cyan]Etapa 1/2: Baixando arquivo FASTA...[/bold cyan]")
+        fasta_ok = self._download_file(fasta_url, target_path)
+        
+        if not fasta_ok:
+            console.print("[red]✗ Falha ao baixar o genoma de referência.[/red]")
+            return False
+        
+        # Baixar índice .fai
+        console.print("\n[bold cyan]Etapa 2/2: Baixando índice FASTA (.fai)...[/bold cyan]")
+        fai_path = target_path.with_suffix(target_path.suffix + '.fai')
+        fai_ok = self._download_file(fai_url, fai_path)
+        
+        if not fai_ok:
+            console.print("[yellow]⚠ Índice não disponível para download, criando localmente...[/yellow]")
+            try:
+                self._ensure_reference_indices(target_path)
+                console.print("[green]✓ Índice criado com sucesso[/green]")
+            except Exception as e:
+                console.print(f"[red]✗ Falha ao criar índice: {e}[/red]")
+                return False
+        
+        console.print("\n" + "="*70)
+        console.print("[green]✓ Genoma de referência baixado e indexado com sucesso![/green]")
+        console.print("="*70 + "\n")
+        
+        return True
 
     def _get_reference_fasta(self) -> Optional[Path]:
         """Retorna caminho absoluto do FASTA de referência."""
@@ -915,8 +1003,20 @@ class LongevityDatasetBuilder:
                 self._ensure_reference_indices(candidate)
                 return candidate
 
+        # Nenhum candidato encontrado - tentar download automático
         tried_paths = "\n".join(str(path) for path in candidates) if candidates else str(ref_path)
-        console.print("[red]✗ Referência não encontrada. Caminhos verificados:[/red]\n" + tried_paths)
+        console.print("[yellow]⚠ Referência não encontrada. Caminhos verificados:[/yellow]\n" + tried_paths + "\n")
+        
+        # Usar o primeiro candidato como destino do download (geralmente DATA_ROOT)
+        download_target = candidates[0] if candidates else (DATA_ROOT / ref_path).resolve()
+        
+        console.print(f"[cyan]Tentando baixar automaticamente para: {download_target}[/cyan]\n")
+        
+        if self._download_reference_genome(download_target):
+            self._ensure_reference_indices(download_target)
+            return download_target
+        
+        console.print("[red]✗ Não foi possível obter o genoma de referência.[/red]")
         return None
 
     def _generate_vcf_for_sample(self, sample_id: str, cram_path: Path, vcf_dir: Path, ref_fasta: Path) -> Optional[Path]:
@@ -1262,22 +1362,43 @@ class LongevityDatasetBuilder:
     
     def download_samples(self):
         """
-        Baixa CRAM/CRAI do ENA e gera VCFs correspondentes.
+        Baixa dados genômicos conforme modo configurado.
+        
+        Modos suportados:
+        - "vcf_multisample": Baixa VCFs filtrados por cromossomo (RECOMENDADO - 3,202 amostras)
+        - "cram": Baixa CRAM/CRAI do ENA e gera VCFs individuais
         """
         console.print("\n[bold cyan]Passo 1: Download de Amostras[/bold cyan]")
 
         is_dry_run = self.config['debug']['dry_run']
+        download_mode = self.config['data_sources'].get('download_mode', 'vcf_multisample')
 
         if is_dry_run:
             console.print("[yellow]⚠ Modo dry-run: simulando downloads[/yellow]")
 
-        project_id = self.config['data_sources']['longevous'].get('ena_project', 'PRJEB31736')
-        longevous_range = self.config['data_sources']['longevous']['sample_range']
-        non_longevous_range = self.config['data_sources']['non_longevous']['sample_range']
+        console.print(f"[cyan]Modo de download: [bold]{download_mode.upper()}[/bold][/cyan]\n")
+
+        if download_mode == 'vcf_multisample':
+            return self._download_samples_vcf_multisample_mode()
+        elif download_mode == 'cram':
+            longevous_range = self.config['data_sources']['longevous']['sample_range']
+            non_longevous_range = self.config['data_sources']['non_longevous']['sample_range']
+            return self._download_samples_cram_mode(longevous_range, non_longevous_range, is_dry_run)
+        else:
+            raise ValueError(f"Modo de download '{download_mode}' não reconhecido. Use 'vcf_multisample' ou 'cram'.")
+    
+    def _download_samples_cram_mode(self, longevous_range, non_longevous_range, is_dry_run):
+        """Modo CRAM: Baixa CRAM/CRAI do ENA e gera VCFs."""
+        
+        project_id = self.config['data_sources']['cram_source'].get('ena_project', 'PRJEB31736')
 
         max_records = max(longevous_range[1], non_longevous_range[1])
-        console.print(f"[cyan]Consultando ENA ({project_id}) para {max_records} registros...[/cyan]")
         runs_df = self._fetch_project_runs(project_id, max_records)
+        
+        if not runs_df.empty:
+            console.print(f"[green]✓ {len(runs_df)} registros CRAM encontrados no ENA[/green]")
+            console.print(f"[cyan]  Selecionando amostras longevas: índices {longevous_range[0]} a {longevous_range[1]-1}[/cyan]")
+            console.print(f"[cyan]  Selecionando amostras não-longevas: índices {non_longevous_range[0]} a {non_longevous_range[1]-1}[/cyan]\n")
 
         if runs_df.empty:
             console.print("[red]✗ Não foi possível obter lista de amostras reais.[/red]")
@@ -1290,6 +1411,69 @@ class LongevityDatasetBuilder:
 
         console.print(f"[green]✓ {len(longevous_records)} registros longevos selecionados[/green]")
         console.print(f"[green]✓ {len(non_longevous_records)} registros não-longevos selecionados[/green]")
+        
+        # Seção informativa sobre os dados
+        all_records_preview = longevous_records + non_longevous_records
+        if all_records_preview:
+            console.print("\n" + "="*70)
+            console.print("[bold yellow]INFORMAÇÕES SOBRE OS DADOS A SEREM BAIXADOS[/bold yellow]")
+            console.print("="*70 + "\n")
+            
+            console.print("[bold cyan]Origem dos Dados:[/bold cyan]")
+            console.print("  • Projeto: [bold]1000 Genomes High Coverage[/bold]")
+            console.print("  • Repositório: European Nucleotide Archive (ENA)")
+            console.print(f"  • Código do projeto: [bold]{project_id}[/bold]")
+            console.print(f"  • URL do projeto: [blue]https://www.ebi.ac.uk/ena/browser/view/{project_id}[/blue]\n")
+            
+            console.print("[bold cyan]Formato dos Arquivos:[/bold cyan]")
+            console.print("  • Tipo: CRAM (Compressed Reference-oriented Alignment Map)")
+            console.print("  • Conteúdo: Sequenciamento completo do genoma (WGS) de indivíduos")
+            console.print("  • Cobertura: ~30x (alta qualidade)")
+            console.print("  • Uso: Extração de variantes genéticas (SNPs, indels) de todos os cromossomos\n")
+            
+            console.print("[bold cyan]Estatísticas dos Downloads:[/bold cyan]")
+            console.print(f"  • Total de indivíduos: [bold]{len(all_records_preview)}[/bold]")
+            console.print(f"  • Longevos (controle positivo): {len(longevous_records)}")
+            console.print(f"  • Não-longevos (controle negativo): {len(non_longevous_records)}")
+            console.print("  • Tamanho médio por indivíduo: ~15-20 GB (CRAM + CRAI)")
+            console.print(f"  • Espaço em disco necessário: ~{len(all_records_preview) * 18} GB\n")
+            
+            console.print("="*70)
+            console.print("[bold yellow]DETALHES DOS INDIVÍDUOS SELECIONADOS[/bold yellow]")
+            console.print("="*70 + "\n")
+            
+            for i, record in enumerate(all_records_preview, 1):
+                label_text = "LONGEVO" if record['label'] == 1 else "NÃO-LONGEVO"
+                run_acc = record.get('run_accession', 'N/A')
+                
+                console.print(f"[bold cyan]┌─ Indivíduo {i}/{len(all_records_preview)} ({label_text})[/bold cyan]")
+                console.print(f"[cyan]│[/cyan]")
+                console.print(f"[cyan]│[/cyan] [bold]Identificadores:[/bold]")
+                console.print(f"[cyan]│[/cyan]   • Sample ID (ENA): {record['sample_id']}")
+                console.print(f"[cyan]│[/cyan]   • Run Accession: {run_acc}")
+                console.print(f"[cyan]│[/cyan]")
+                console.print(f"[cyan]│[/cyan] [bold]Inspecionar no ENA:[/bold]")
+                console.print(f"[cyan]│[/cyan]   • Página do run: [blue]https://www.ebi.ac.uk/ena/browser/view/{run_acc}[/blue]")
+                console.print(f"[cyan]│[/cyan]   • Página da amostra: [blue]https://www.ebi.ac.uk/ena/browser/view/{record['sample_id']}[/blue]")
+                console.print(f"[cyan]│[/cyan]")
+                console.print(f"[cyan]│[/cyan] [bold]URLs de Download:[/bold]")
+                console.print(f"[cyan]│[/cyan]   • CRAM: [dim]{record['cram_url']}[/dim]")
+                console.print(f"[cyan]│[/cyan]   • CRAI: [dim]{record['crai_url']}[/dim]")
+                console.print(f"[cyan]└{'─'*68}[/cyan]\n")
+            
+            console.print("="*70)
+            console.print("[bold yellow]PRÓXIMOS PASSOS[/bold yellow]")
+            console.print("="*70)
+            console.print("1. Download dos arquivos CRAM e CRAI (~20 GB por indivíduo)")
+            console.print("2. Chamada de variantes usando bcftools mpileup + call")
+            console.print("3. Geração de arquivos VCF com todas as variantes genéticas")
+            console.print("4. Seleção de pontos centrais (variantes de interesse)")
+            console.print("5. Extração de sequências FASTA ao redor das variantes")
+            console.print("6. Processamento com AlphaGenome para predições epigenéticas")
+            console.print("7. Construção do dataset PyTorch para treinamento\n")
+            console.print("="*70 + "\n")
+            
+            console.print("[yellow]⏳ Iniciando downloads... (isto pode levar várias horas)[/yellow]\n")
 
         self._write_sample_list(longevous_records, "longevous_samples.txt")
         self._write_sample_list(non_longevous_records, "non_longevous_samples.txt")
@@ -1364,6 +1548,324 @@ class LongevityDatasetBuilder:
 
         self._save_checkpoint()
         console.print("[green]✓ Download e preparação das amostras concluídos[/green]")
+    
+    def _download_samples_vcf_mode(self, longevous_range, non_longevous_range, is_dry_run):
+        """Modo VCF: Baixa VCFs já processados do IGSR (1000 Genomes)."""
+        
+        vcf_config = self.config['data_sources']['vcf_source']
+        base_url = vcf_config['base_url']
+        vcf_suffix = vcf_config['vcf_suffix']
+        index_suffix = vcf_config['index_suffix']
+        
+        # Primeiro, precisamos obter a lista de sample IDs disponíveis
+        # Para o modo VCF, vamos consultar o ENA para mapear índices para sample IDs
+        project_id = self.config['data_sources']['cram_source'].get('ena_project', 'PRJEB31736')
+        max_records = max(longevous_range[1], non_longevous_range[1])
+        
+        console.print(f"[cyan]Consultando ENA para mapear sample IDs...[/cyan]")
+        runs_df = self._fetch_project_runs(project_id, max_records)
+        
+        if runs_df.empty:
+            console.print("[red]✗ Não foi possível obter lista de amostras do ENA.[/red]")
+            return
+        
+        console.print(f"[green]✓ {len(runs_df)} amostras encontradas no ENA[/green]")
+        console.print(f"[cyan]  Selecionando amostras longevas: índices {longevous_range[0]} a {longevous_range[1]-1}[/cyan]")
+        console.print(f"[cyan]  Selecionando amostras não-longevas: índices {non_longevous_range[0]} a {non_longevous_range[1]-1}[/cyan]\n")
+        
+        # Preparar registros
+        longevous_records = self._prepare_vcf_records(runs_df, longevous_range, label=1, base_url=base_url, vcf_suffix=vcf_suffix, index_suffix=index_suffix)
+        non_longevous_records = self._prepare_vcf_records(runs_df, non_longevous_range, label=0, base_url=base_url, vcf_suffix=vcf_suffix, index_suffix=index_suffix)
+        
+        console.print(f"[green]✓ {len(longevous_records)} registros longevos preparados[/green]")
+        console.print(f"[green]✓ {len(non_longevous_records)} registros não-longevos preparados[/green]")
+        
+        # Seção informativa
+        all_records = longevous_records + non_longevous_records
+        if all_records:
+            console.print("\n" + "="*70)
+            console.print("[bold yellow]INFORMAÇÕES SOBRE OS VCFs A SEREM BAIXADOS[/bold yellow]")
+            console.print("="*70 + "\n")
+            
+            console.print("[bold cyan]Origem dos Dados:[/bold cyan]")
+            console.print("  • Projeto: [bold]1000 Genomes High Coverage[/bold]")
+            console.print("  • Repositório: IGSR (International Genome Sample Resource)")
+            console.print(f"  • URL base: [blue]{base_url}[/blue]\n")
+            
+            console.print("[bold cyan]Formato dos Arquivos:[/bold cyan]")
+            console.print("  • Tipo: VCF 4.2 (Variant Call Format)")
+            console.print("  • Processamento: GATK HaplotypeCaller + VQSR")
+            console.print("  • Conteúdo: Variantes genéticas já chamadas e filtradas")
+            console.print("  • Qualidade: Alta (pipeline GATK best-practices)\n")
+            
+            console.print("[bold cyan]Estatísticas dos Downloads:[/bold cyan]")
+            console.print(f"  • Total de indivíduos: [bold]{len(all_records)}[/bold]")
+            console.print(f"  • Longevos: {len(longevous_records)}")
+            console.print(f"  • Não-longevos: {len(non_longevous_records)}")
+            console.print("  • Tamanho médio por VCF: ~200-500 MB (comprimido)")
+            console.print(f"  • Espaço em disco necessário: ~{len(all_records) * 0.35:.1f} GB")
+            console.print("  • [bold green]Vantagem vs CRAM: 100x mais rápido, 100x menor![/bold green]\n")
+            
+            console.print("="*70)
+            console.print("[bold yellow]DETALHES DOS VCFs SELECIONADOS[/bold yellow]")
+            console.print("="*70 + "\n")
+            
+            for i, record in enumerate(all_records, 1):
+                label_text = "LONGEVO" if record['label'] == 1 else "NÃO-LONGEVO"
+                run_acc = record.get('run_accession', 'N/A')
+                
+                console.print(f"[bold cyan]┌─ Indivíduo {i}/{len(all_records)} ({label_text})[/bold cyan]")
+                console.print(f"[cyan]│[/cyan]")
+                console.print(f"[cyan]│[/cyan] [bold]Identificadores:[/bold]")
+                console.print(f"[cyan]│[/cyan]   • Sample ID: {record['sample_id']}")
+                console.print(f"[cyan]│[/cyan]   • Run Accession: {run_acc}")
+                console.print(f"[cyan]│[/cyan]")
+                console.print(f"[cyan]│[/cyan] [bold]Inspecionar no ENA:[/bold]")
+                console.print(f"[cyan]│[/cyan]   • Página do run: [blue]https://www.ebi.ac.uk/ena/browser/view/{run_acc}[/blue]")
+                console.print(f"[cyan]│[/cyan]   • Página da amostra: [blue]https://www.ebi.ac.uk/ena/browser/view/{record['sample_id']}[/blue]")
+                console.print(f"[cyan]│[/cyan]")
+                console.print(f"[cyan]│[/cyan] [bold]URLs de Download:[/bold]")
+                console.print(f"[cyan]│[/cyan]   • VCF: [dim]{record['vcf_url']}[/dim]")
+                console.print(f"[cyan]│[/cyan]   • Index: [dim]{record['index_url']}[/dim]")
+                console.print(f"[cyan]└{'─'*68}[/cyan]\n")
+            
+            console.print("="*70)
+            console.print("[bold yellow]VANTAGENS DO MODO VCF[/bold yellow]")
+            console.print("="*70)
+            console.print("✓ Download 100x mais rápido (~30 min vs ~20 horas)")
+            console.print("✓ Arquivos 100x menores (~200 MB vs ~20 GB por indivíduo)")
+            console.print("✓ Variantes já chamadas com GATK (qualidade superior)")
+            console.print("✓ VQSR aplicado (filtragem de qualidade profissional)")
+            console.print("✓ Economia de tempo e espaço em disco")
+            console.print("✓ Pipeline validado pelo consórcio 1000 Genomes\n")
+            console.print("="*70 + "\n")
+            
+            console.print("[yellow]⏳ Iniciando downloads de VCFs... (muito mais rápido que CRAMs!)[/yellow]\n")
+        
+        self._write_sample_list(longevous_records, "longevous_samples.txt")
+        self._write_sample_list(non_longevous_records, "non_longevous_samples.txt")
+        
+        if is_dry_run:
+            console.print("[yellow]⚠ Dry-run: download real foi pulado[/yellow]")
+            return
+        
+        # Baixar VCFs
+        vcf_root = self.output_dir / "vcf"
+        vcf_root.mkdir(exist_ok=True)
+        
+        processed = self._get_processed_samples()
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            console=console
+        ) as progress:
+            task = progress.add_task("Baixando VCFs...", total=len(all_records))
+            
+            for record in all_records:
+                sample_id = record['sample_id']
+                label = record['label']
+                label_dir = 'longevous' if label == 1 else 'non_longevous'
+                
+                vcf_dir = vcf_root / label_dir
+                vcf_dir.mkdir(exist_ok=True)
+                
+                vcf_path = vcf_dir / f"{sample_id}.vcf.gz"
+                vcf_index_path = vcf_dir / f"{sample_id}.vcf.gz.tbi"
+                
+                # Verificar se já existe
+                if sample_id in processed and vcf_path.exists() and vcf_index_path.exists():
+                    self._update_sample_state_vcf(record, vcf_path)
+                    progress.advance(task)
+                    continue
+                
+                # Baixar VCF e índice
+                vcf_ok = self._download_file(record['vcf_url'], vcf_path)
+                index_ok = self._download_file(record['index_url'], vcf_index_path)
+                
+                if vcf_ok and index_ok:
+                    self._update_sample_state_vcf(record, vcf_path)
+                else:
+                    console.print(f"[yellow]⚠ Falha no download de {sample_id}[/yellow]")
+                
+                processed.add(sample_id)
+                progress.advance(task)
+        
+        self._save_checkpoint()
+        console.print("[green]✓ Download de VCFs concluído![/green]")
+    
+    def _prepare_vcf_records(self, df: pd.DataFrame, sample_range: List[int], label: int, base_url: str, vcf_suffix: str, index_suffix: str) -> List[Dict[str, Any]]:
+        """Prepara registros para download de VCFs do IGSR."""
+        if df.empty:
+            return []
+        
+        start, end = sample_range
+        subset = df.iloc[start:end]
+        records: List[Dict[str, Any]] = []
+        
+        for idx, row in subset.iterrows():
+            sample_id = str(row.get('sample_alias') or '').strip()
+            if not sample_id:
+                continue
+            
+            run_acc = str(row.get('run_accession', '')).strip()
+            
+            # Construir URLs do IGSR
+            vcf_url = base_url + vcf_suffix.format(sample_id=sample_id)
+            index_url = base_url + index_suffix.format(sample_id=sample_id)
+            
+            records.append({
+                'sample_id': sample_id,
+                'run_accession': run_acc,
+                'label': label,
+                'vcf_url': vcf_url,
+                'index_url': index_url
+            })
+        
+        return records
+    
+    def _update_sample_state_vcf(self, record: Dict[str, Any], vcf_path: Path):
+        """Atualiza estado de amostra no modo VCF."""
+        sample_id = record['sample_id']
+        label = record['label']
+        
+        entry = {
+            'sample_id': sample_id,
+            'label': label,
+            'run_accession': record.get('run_accession'),
+            'vcf_path': str(vcf_path),
+            'download_mode': 'vcf'
+        }
+        
+        processed = self._get_processed_samples()
+        if sample_id not in processed:
+            self.state['samples_downloaded'].append(entry)
+        
+        self.state['sample_metadata'][sample_id] = entry
+        self.state['vcf_paths'][sample_id] = str(vcf_path)
+        
+        if sample_id not in self.state['variants_extracted']:
+            self.state['variants_extracted'].append(sample_id)
+    
+    def _download_samples_vcf_multisample_mode(self):
+        """Modo VCF Multi-sample: Baixa VCFs filtrados por cromossomo (todos os 3,202 indivíduos)."""
+        
+        vcf_config = self.config['data_sources']['vcf_multisample_source']
+        base_url = vcf_config['base_url']
+        filename_pattern = vcf_config['filename_pattern']
+        chromosomes = vcf_config['chromosomes']
+        
+        console.print("\n" + "="*70)
+        console.print("[bold yellow]MODO VCF MULTI-SAMPLE (CROMOSSOMOS COMPLETOS)[/bold yellow]")
+        console.print("="*70 + "\n")
+        
+        console.print("[bold cyan]Origem dos Dados:[/bold cyan]")
+        console.print("  • Projeto: [bold]1000 Genomes High Coverage (30x)[/bold]")
+        console.print("  • Repositório: IGSR - Filtered & Phased Variants")
+        console.print(f"  • URL base: [blue]{base_url}[/blue]")
+        console.print(f"  • Total de amostras no VCF: [bold]3,202 indivíduos[/bold]")
+        console.print(f"  • Cromossomos a baixar: {len(chromosomes)}\n")
+        
+        console.print("[bold cyan]Formato dos Arquivos:[/bold cyan]")
+        console.print("  • Tipo: VCF 4.2 multi-sample (todas as amostras por cromossomo)")
+        console.print("  • Processamento: GATK HaplotypeCaller + VQSR + Phased")
+        console.print("  • Filtros aplicados: PASS, MAC≥2, HWE, Mendel errors")
+        console.print("  • Conteúdo: ~73.5 milhões de variantes de alta qualidade")
+        console.print("  • Qualidade: Alta (pipeline NYGC/Broad best-practices)\n")
+        
+        # Estimativa de tamanho
+        avg_size_gb = {
+            'chr1': 5.8, 'chr2': 5.2, 'chr3': 4.3, 'chr4': 4.1, 'chr5': 3.9,
+            'chr6': 3.7, 'chr7': 3.5, 'chr8': 3.3, 'chr9': 2.8, 'chr10': 3.0,
+            'chr11': 3.1, 'chr12': 2.9, 'chr13': 2.0, 'chr14': 2.0, 'chr15': 1.9,
+            'chr16': 2.1, 'chr17': 1.9, 'chr18': 1.7, 'chr19': 1.5, 'chr20': 1.4,
+            'chr21': 0.9, 'chr22': 0.9, 'chrX': 2.8
+        }
+        total_size = sum(avg_size_gb.get(c, 3.0) for c in chromosomes)
+        
+        console.print("[bold cyan]Estatísticas dos Downloads:[/bold cyan]")
+        console.print(f"  • Cromossomos selecionados: [bold]{len(chromosomes)}[/bold]")
+        console.print(f"  • Tamanho estimado total: ~{total_size:.1f} GB")
+        console.print(f"  • Tempo estimado: ~{total_size * 2:.0f}-{total_size * 5:.0f} minutos")
+        console.print(f"  • Variantes totais: ~73.5M (genoma), ~0.6M (chr21), ~0.7M (chr22)\n")
+        
+        console.print("="*70)
+        console.print("[bold yellow]CROMOSSOMOS A BAIXAR[/bold yellow]")
+        console.print("="*70 + "\n")
+        
+        vcf_dir = self.output_dir / "vcf_chromosomes"
+        vcf_dir.mkdir(parents=True, exist_ok=True)
+        
+        downloaded_chroms = []
+        
+        for i, chrom in enumerate(chromosomes, 1):
+            # Tratamento especial para chrX que tem .v2 no nome
+            if chrom == 'chrX':
+                filename = filename_pattern.replace('.vcf.gz', '.v2.vcf.gz').format(chrom=chrom)
+            else:
+                filename = filename_pattern.format(chrom=chrom)
+            
+            vcf_url = base_url + filename
+            vcf_path = vcf_dir / filename
+            index_path = vcf_path.with_suffix(vcf_path.suffix + '.tbi')
+            
+            size_est = avg_size_gb.get(chrom, 3.0)
+            
+            console.print(f"[bold cyan]┌─ Cromossomo {i}/{len(chromosomes)}: {chrom}[/bold cyan]")
+            console.print(f"[cyan]│[/cyan]")
+            console.print(f"[cyan]│[/cyan] [bold]Arquivo:[/bold] {filename}")
+            console.print(f"[cyan]│[/cyan] [bold]URL:[/bold]")
+            console.print(f"[cyan]│[/cyan]   [blue]{vcf_url}[/blue]")
+            console.print(f"[cyan]│[/cyan] [bold]Tamanho estimado:[/bold] ~{size_est:.1f} GB")
+            console.print(f"[cyan]│[/cyan] [bold]Destino:[/bold]")
+            console.print(f"[cyan]│[/cyan]   {vcf_path}")
+            console.print(f"[cyan]└{'─'*68}[/cyan]\n")
+            
+            # Verificar se já existe
+            if vcf_path.exists() and index_path.exists():
+                actual_size = vcf_path.stat().st_size / (1024**3)
+                console.print(f"[green]• Reutilizando download existente: {chrom} ({actual_size:.2f} GB)[/green]\n")
+                downloaded_chroms.append(chrom)
+                continue
+            
+            # Baixar VCF
+            console.print(f"[yellow]⏳ Baixando {chrom}...[/yellow]")
+            vcf_ok = self._download_file(vcf_url, vcf_path)
+            
+            if vcf_ok:
+                # Baixar índice
+                index_url = vcf_url + '.tbi'
+                index_ok = self._download_file(index_url, index_path)
+                
+                if index_ok:
+                    console.print(f"[green]✓ Download completo: {chrom}[/green]\n")
+                    downloaded_chroms.append(chrom)
+                else:
+                    console.print(f"[yellow]⚠ Índice não disponível para {chrom}, criando localmente...[/yellow]")
+                    try:
+                        sp.run(['tabix', '-p', 'vcf', str(vcf_path)], check=True)
+                        console.print(f"[green]✓ Índice criado localmente para {chrom}[/green]\n")
+                        downloaded_chroms.append(chrom)
+                    except Exception as e:
+                        console.print(f"[red]✗ Falha ao criar índice para {chrom}: {e}[/red]\n")
+            else:
+                console.print(f"[red]✗ Falha no download de {chrom}[/red]\n")
+        
+        # Salvar estado
+        self.state['downloaded_chromosomes'] = downloaded_chroms
+        self.state['vcf_chromosome_dir'] = str(vcf_dir)
+        self._save_checkpoint()
+        
+        console.print("="*70)
+        console.print(f"[green]✓ Download concluído: {len(downloaded_chroms)}/{len(chromosomes)} cromossomos[/green]")
+        console.print("="*70 + "\n")
+        
+        if len(downloaded_chroms) < len(chromosomes):
+            console.print(f"[yellow]⚠ Alguns cromossomos não foram baixados. Verifique os erros acima.[/yellow]\n")
+        
+        return downloaded_chroms
     
     # ───────────────────────────────────────────────────────────────
     # Passo 2: Extração de Variantes
@@ -1578,14 +2080,21 @@ class LongevityDatasetBuilder:
     
     def select_central_points(self) -> List[CentralPoint]:
         """
-        Seleciona pontos centrais para construção do dataset.
-        
-        Estratégia inicial: selecionar N variantes da primeira pessoa longeva.
+        Seleciona pontos centrais conforme modo de download.
         
         Returns:
             Lista de pontos centrais selecionados
         """
-        console.print("\n[bold cyan]Passo 3: Seleção de Pontos Centrais[/bold cyan]")
+        download_mode = self.config['data_sources'].get('download_mode', 'vcf_multisample')
+        
+        if download_mode == 'vcf_multisample':
+            return self._select_central_points_multisample()
+        else:
+            return self._select_central_points_individual()
+    
+    def _select_central_points_individual(self) -> List[CentralPoint]:
+        """Método original de seleção de pontos centrais (modo CRAM/individual)."""
+        console.print("\n[bold cyan]Passo 3: Seleção de Pontos Centrais (Individual)[/bold cyan]")
         
         strategy = self.config['variant_selection']['initial_strategy']
         n_points = self.config['variant_selection']['n_central_points']
@@ -1776,6 +2285,195 @@ class LongevityDatasetBuilder:
                 )
             )
         return central_points
+    
+    def _select_central_points_multisample(self) -> List[CentralPoint]:
+        """
+        Seleciona pontos centrais dos VCFs multi-sample por cromossomo.
+        
+        Estratégia: Percorre cada cromossomo e seleciona N variantes 
+        sequencialmente ou aleatoriamente.
+        """
+        console.print("\n[bold cyan]Passo 2: Seleção de Pontos Centrais (Multi-sample)[/bold cyan]")
+        
+        variant_config = self.config['data_sources']['variant_sampling']
+        n_per_chrom = variant_config['n_variants_per_chromosome']
+        selection_method = variant_config.get('selection_method', 'random')
+        random_seed = variant_config.get('random_seed', 42)
+        min_quality = variant_config.get('min_quality', 30)
+        only_pass = variant_config.get('only_pass', True)
+        show_counts = variant_config.get('show_variant_counts', False)
+        
+        downloaded_chroms = self.state.get('downloaded_chromosomes', [])
+        vcf_dir = Path(self.state.get('vcf_chromosome_dir', self.output_dir / 'vcf_chromosomes'))
+        
+        if not downloaded_chroms:
+            console.print("[red]✗ Nenhum cromossomo baixado. Execute download_samples primeiro.[/red]")
+            return []
+        
+        console.print(f"[cyan]Método de seleção: [bold]{selection_method}[/bold][/cyan]")
+        console.print(f"[cyan]Variantes por cromossomo: [bold]{n_per_chrom}[/bold][/cyan]")
+        console.print(f"[cyan]Nota: VCFs do IGSR já são filtrados (alta qualidade)[/cyan]\n")
+        
+        # Contar variantes disponíveis em cada cromossomo (opcional)
+        if show_counts:
+            console.print("[bold cyan]Contando variantes disponíveis em cada cromossomo...[/bold cyan]")
+            total_variants_available = 0
+            variant_counts = {}
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                console=console
+            ) as progress:
+                count_task = progress.add_task("Contando variantes...", total=len(downloaded_chroms))
+                
+                for chrom in downloaded_chroms:
+                    vcf_files = list(vcf_dir.glob(f"*{chrom}.*.vcf.gz"))
+                    if vcf_files:
+                        vcf_path = vcf_files[0]
+                        try:
+                            # Contar linhas do VCF (excluindo cabeçalho)
+                            count_cmd = f"bcftools view -H {vcf_path} | wc -l"
+                            result = sp.run(count_cmd, capture_output=True, text=True, shell=True, check=True)
+                            count = int(result.stdout.strip())
+                            variant_counts[chrom] = count
+                            total_variants_available += count
+                        except Exception as e:
+                            variant_counts[chrom] = 0
+                            console.print(f"[yellow]⚠ Erro ao contar {chrom}: {e}[/yellow]")
+                    else:
+                        variant_counts[chrom] = 0
+                    
+                    progress.advance(count_task)
+            
+            # Exibir resumo das variantes
+            console.print(f"\n[bold cyan]Variantes Disponíveis por Cromossomo:[/bold cyan]")
+            console.print("─" * 70)
+            
+            for chrom in downloaded_chroms:
+                count = variant_counts.get(chrom, 0)
+                count_str = f"{count:,}".replace(',', '.')
+                bar_width = min(40, int(count / max(variant_counts.values()) * 40)) if count > 0 else 0
+                bar = "█" * bar_width
+                console.print(f"  {chrom:>6}: {count_str:>12} variantes  {bar}")
+            
+            console.print("─" * 70)
+            total_str = f"{total_variants_available:,}".replace(',', '.')
+            console.print(f"  [bold]TOTAL: {total_str:>12} variantes[/bold]")
+            
+            # Calcular quantas serão selecionadas
+            total_to_select = min(len(downloaded_chroms) * n_per_chrom, total_variants_available)
+            select_str = f"{total_to_select:,}".replace(',', '.')
+            percent = (total_to_select / total_variants_available * 100) if total_variants_available > 0 else 0
+            console.print(f"  [green]Selecionando: {select_str} ({percent:.4f}%)[/green]\n")
+        
+        all_central_points: List[CentralPoint] = []
+        rng = random.Random(random_seed) if selection_method == 'random' else None
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            console=console
+        ) as progress:
+            task = progress.add_task(
+                f"Selecionando variantes de {len(downloaded_chroms)} cromossomos...",
+                total=len(downloaded_chroms)
+            )
+            
+            for chrom in downloaded_chroms:
+                # Busca específica com ponto após cromossomo para evitar chr1 pegar chr10-19
+                vcf_files = list(vcf_dir.glob(f"*{chrom}.*.vcf.gz"))
+                if not vcf_files:
+                    console.print(f"[yellow]⚠ VCF não encontrado para {chrom}[/yellow]")
+                    progress.advance(task)
+                    continue
+                
+                vcf_path = vcf_files[0]
+                
+                # Extrair variantes do cromossomo de forma eficiente
+                # Nota: VCFs filtrados do IGSR já estão filtrados (sem QUAL, FILTER=.)
+                
+                try:
+                    # Usar pipeline bash eficiente para extrair N variantes
+                    if selection_method == 'random':
+                        # Usar shuf simples (sem random-source que pode não estar disponível)
+                        cmd = f"bcftools view -H {vcf_path} | shuf -n {n_per_chrom}"
+                        result = sp.run(cmd, capture_output=True, text=True, shell=True, check=True)
+                        lines = [l for l in result.stdout.strip().split('\n') if l]
+                    else:
+                        # Sequential: pegar primeiras N - mais confiável
+                        cmd = f"bcftools view -H {vcf_path} | head -n {n_per_chrom}"
+                        result = sp.run(cmd, capture_output=True, text=True, shell=True, check=True)
+                        lines = [l for l in result.stdout.strip().split('\n') if l]
+                    
+                    if not lines:
+                        console.print(f"[yellow]⚠ Nenhuma variante selecionada em {chrom}[/yellow]")
+                        progress.advance(task)
+                        continue
+                    
+                    selected_lines = lines
+                    
+                    # Parse variantes
+                    for line in selected_lines:
+                        fields = line.split('\t')
+                        if len(fields) < 8:  # Precisamos até INFO (coluna 8)
+                            continue
+                        
+                        chr_name = fields[0]
+                        pos = int(fields[1])
+                        ref = fields[3]
+                        alt = fields[4].split(',')[0]
+                        # QUAL e FILTER são '.' nestes VCFs (já filtrados)
+                        qual = 0.0
+                        filter_status = '.'
+                        
+                        # Determinar tipo
+                        if len(ref) == 1 and len(alt) == 1:
+                            var_type = "SNV"
+                        elif len(alt) > len(ref):
+                            var_type = "INSERTION"
+                        else:
+                            var_type = "DELETION"
+                        
+                        variant = GenomicVariant(
+                            chromosome=chr_name,
+                            position=pos,
+                            ref_allele=ref,
+                            alt_allele=alt,
+                            quality=qual,
+                            depth=0,  # Não disponível no VCF multi-sample
+                            allele_frequency=0.0,  # Pode ser extraído do INFO se necessário
+                            filter_status=filter_status,
+                            variant_type=var_type,
+                            source_sample_id=f"multisample_{chrom}"
+                        )
+                        
+                        central_point = CentralPoint(
+                            variant=variant,
+                            selected_for_dataset=True,
+                            source_sample_id=f"multisample_{chrom}"
+                        )
+                        
+                        all_central_points.append(central_point)
+                    
+                    console.print(f"[green]✓ {chrom}: {len(selected_lines)} variantes selecionadas[/green]")
+                    
+                except Exception as e:
+                    console.print(f"[red]✗ Erro ao processar {chrom}: {e}[/red]")
+                
+                progress.advance(task)
+        
+        # Salvar pontos centrais
+        self._save_central_points(all_central_points)
+        
+        console.print(f"\n[green]✓ Total: {len(all_central_points)} pontos centrais selecionados[/green]")
+        console.print(f"[cyan]  Distribuição: ~{len(all_central_points) // len(downloaded_chroms) if downloaded_chroms else 0} por cromossomo[/cyan]\n")
+        
+        return all_central_points
 
     def _save_central_points(self, points: List[CentralPoint]):
         """Salva pontos centrais em arquivo."""
@@ -1806,6 +2504,7 @@ class LongevityDatasetBuilder:
     def extract_sequences(self, central_points: List[CentralPoint]) -> List[SequenceRecord]:
         """
         Extrai sequências FASTA centradas nos pontos selecionados.
+        Despacha para método apropriado conforme modo de download.
         
         Args:
             central_points: Pontos centrais para extração
@@ -1817,9 +2516,22 @@ class LongevityDatasetBuilder:
         
         if self.config['debug']['dry_run']:
             console.print("[yellow]⚠ Modo dry-run: simulando extração de sequências[/yellow]")
-            console.print(f"[cyan]Seria extraído: {len(central_points)} pontos centrais × N amostras[/cyan]")
+            console.print(f"[cyan]Seria extraído: {len(central_points)} pontos centrais[/cyan]")
             return []
         
+        # Detectar modo de download
+        download_mode = self.config['data_sources'].get('download_mode', 'cram')
+        
+        if download_mode == 'vcf_multisample':
+            return self._extract_sequences_multisample(central_points)
+        else:
+            return self._extract_sequences_individual(central_points)
+    
+    def _extract_sequences_individual(self, central_points: List[CentralPoint]) -> List[SequenceRecord]:
+        """
+        Extração de sequências no modo CRAM (amostras individuais).
+        Cada amostra × variante gera uma sequência.
+        """
         window_size = self.config['sequence_extraction']['window_size']
         if window_size % 2 != 0:
             raise ValueError("sequence_extraction.window_size deve ser um número par")
@@ -1893,13 +2605,16 @@ class LongevityDatasetBuilder:
                         sequence_ref = ''.join(result.stdout.split('\n')[1:]).upper()
                         center_idx = center_pos - start
 
+                        # Capturar sequência de referência original (GRCh38)
+                        grch38_seq = sequence_ref[:window_size]
+                        if len(grch38_seq) < window_size:
+                            grch38_seq += 'N' * (window_size - len(grch38_seq))
+                        
                         if use_alt and has_alt:
                             sequence_final = self._apply_variant_to_sequence(sequence_ref, ref_allele, allele_candidate, center_idx, window_size)
                             allele_used = allele_candidate
                         else:
-                            sequence_final = sequence_ref[:window_size]
-                            if len(sequence_final) < window_size:
-                                sequence_final += 'N' * (window_size - len(sequence_final))
+                            sequence_final = grch38_seq
                             allele_used = ref_allele
 
                         header = f">{sample_id}|{chrom}:{center_pos}|{ref_allele}>{allele_used}|win={window_size}"
@@ -1912,15 +2627,11 @@ class LongevityDatasetBuilder:
                             sample_id=sample_id,
                             central_point=point,
                             sequence=sequence_final,
+                            GRCh38_s=grch38_seq,
                             fasta_file=fasta_file,
                             label=label,
                             genotype=genotype,
-                            variant_present=has_alt,
-                            allele_used=allele_used,
-                            vcf_path=vcf_path,
-                            quality=variant_data.get('qual') if variant_data else None,
-                            depth=variant_data.get('depth') if variant_data else None,
-                            allele_frequency=variant_data.get('allele_frequency') if variant_data else None
+                            variant_present=has_alt
                         )
                         records.append(record)
 
@@ -1936,6 +2647,120 @@ class LongevityDatasetBuilder:
         self.state['sequences_extracted'] = [str(rec.fasta_file) for rec in records]
         self._save_checkpoint()
 
+        return records
+    
+    def _extract_sequences_multisample(self, central_points: List[CentralPoint]) -> List[SequenceRecord]:
+        """
+        Extração de sequências no modo VCF multisample.
+        Extrai uma sequência para cada variante dos pontos centrais.
+        """
+        console.print(f"[cyan]Modo: VCF Multisample[/cyan]")
+        console.print(f"[cyan]Extraindo sequências para {len(central_points)} variantes[/cyan]")
+        
+        window_size = self.config['sequence_extraction']['window_size']
+        if window_size % 2 != 0:
+            raise ValueError("sequence_extraction.window_size deve ser um número par")
+        
+        ref_fasta = self._get_reference_fasta()
+        if not ref_fasta:
+            return []
+        
+        use_alt = self.config['sequence_extraction'].get('use_alternate_allele', True)
+        center_on_variant = self.config['sequence_extraction'].get('center_on_variant', True)
+        
+        records: List[SequenceRecord] = []
+        sequences_dir = self.output_dir / "sequences"
+        sequences_dir.mkdir(exist_ok=True)
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeElapsedColumn(),
+            console=console
+        ) as progress:
+            task = progress.add_task("Extraindo sequências...", total=len(central_points))
+            
+            for point in central_points:
+                variant = point.variant
+                chrom = variant.chromosome
+                center_pos = variant.position
+                ref_allele = variant.ref_allele
+                alt_allele = variant.alt_allele
+                
+                # Calcular região
+                start = max(1, center_pos - window_size // 2) if center_on_variant else max(1, center_pos)
+                end = start + window_size - 1
+                
+                # Ajustar para indels
+                if use_alt:
+                    diff = len(alt_allele) - len(ref_allele)
+                    if diff > 0:
+                        end += diff
+                    elif diff < 0:
+                        end += abs(diff)
+                
+                region = f"{chrom}:{start}-{end}"
+                allele_used = alt_allele if use_alt else ref_allele
+                
+                # Nome do arquivo (simplificado - apenas cromossomo e posição)
+                seq_id = f"{chrom}_{center_pos}_w{window_size}"
+                fasta_file = sequences_dir / f"{seq_id}.fasta"
+                
+                try:
+                    # Extrair sequência de referência usando samtools
+                    cmd = ['samtools', 'faidx', str(ref_fasta), region]
+                    result = sp.run(cmd, capture_output=True, text=True, check=True)
+                    sequence_ref = ''.join(result.stdout.split('\n')[1:]).upper()
+                    
+                    # Capturar sequência de referência original (GRCh38)
+                    grch38_seq = sequence_ref[:window_size]
+                    if len(grch38_seq) < window_size:
+                        grch38_seq += 'N' * (window_size - len(grch38_seq))
+                    
+                    # Aplicar alelo alternativo se configurado
+                    center_idx = center_pos - start
+                    
+                    if use_alt:
+                        sequence_final = self._apply_variant_to_sequence(
+                            sequence_ref, ref_allele, alt_allele, center_idx, window_size
+                        )
+                    else:
+                        sequence_final = grch38_seq
+                    
+                    # Escrever FASTA
+                    header = f">multisample|{chrom}:{center_pos}|win={window_size}"
+                    with open(fasta_file, 'w') as fasta_handle:
+                        fasta_handle.write(header + '\n')
+                        for i in range(0, len(sequence_final), 80):
+                            fasta_handle.write(sequence_final[i:i+80] + '\n')
+                    
+                    # Criar registro
+                    record = SequenceRecord(
+                        sample_id="multisample",
+                        central_point=point,
+                        sequence=sequence_final,
+                        GRCh38_s=grch38_seq,
+                        fasta_file=fasta_file,
+                        label=1,  # Placeholder para modo multisample
+                        genotype=None,
+                        variant_present=True
+                    )
+                    records.append(record)
+                    
+                except Exception as e:
+                    console.print(f"[yellow]⚠ Erro ao extrair {region}: {e}[/yellow]")
+                
+                progress.advance(task)
+        
+        console.print(f"[green]✓ {len(records)} sequências extraídas[/green]")
+        
+        # Salvar índice de sequências
+        self._save_sequence_index(records)
+        self.state['sequences_extracted'] = [str(rec.fasta_file) for rec in records]
+        self._save_checkpoint()
+        
         return records
     
     def _load_sample_list(self, filename: str, label: int) -> List[Tuple[str, int]]:
@@ -1955,8 +2780,6 @@ class LongevityDatasetBuilder:
         data = []
         for rec in records:
             base = rec.to_dict()
-            base['fasta_file'] = str(rec.fasta_file)
-            base['vcf_path'] = str(rec.vcf_path) if rec.vcf_path else None
             base['selected'] = rec.central_point.selected_for_dataset
             data.append(base)
         with open(index_file, 'w') as f:
