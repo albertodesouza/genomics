@@ -1,0 +1,172 @@
+# ═══════════════════════════════════════════════════════════════════
+# Configuração: IA Neuro-Simbólica para Longevidade
+# Específico para /dados/GENOMICS_DATA/top3
+# ═══════════════════════════════════════════════════════════════════
+
+project:
+  name: "longevity_markers_top3"
+  description: "Descoberta de Marcadores Genéticos e Epigenéticos de Longevidade"
+  output_dir: "longevity_dataset"
+  
+# ═══════════════════════════════════════════════════════════════════
+# Dados de Entrada
+# Caminhos são relativos ao diretório de execução (work_dir)
+# Se executar em /dados/GENOMICS_DATA/top3, usa refs/ de lá
+# ═══════════════════════════════════════════════════════════════════
+
+data_sources:
+  # Genoma de referência (usa local se disponível)
+  reference:
+    fasta: "refs/reference.fa"  # Relativo ao diretório de execução
+    name: "GRCh38"
+  
+  # Dados de pessoas longevas (do 1000 Genomes)
+  longevous:
+    source: "1000genomes_30x_grch38"
+    url_base: "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV"
+    sample_range: [0, 3]  # Primeiras 3 amostras (teste pequeno)
+    n_samples: 3
+    label: 1
+  
+  # Dados de pessoas não longevas
+  non_longevous:
+    source: "1000genomes_30x_grch38"
+    url_base: "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV"
+    sample_range: [500, 503]  # 3 amostras a partir de 500 (teste pequeno)
+    n_samples: 3
+    label: 0
+
+# ═══════════════════════════════════════════════════════════════════
+# Seleção de Pontos Centrais (Variantes)
+# ═══════════════════════════════════════════════════════════════════
+
+variant_selection:
+  # Usar primeira amostra longeva para selecionar pontos
+  initial_strategy: "first_longevous_sample"
+  
+  # Número de pontos centrais a extrair (teste pequeno)
+  n_central_points: 5  # Reduzido para teste
+  
+  # Filtros de qualidade para variantes
+  filters:
+    min_quality: 30
+    min_depth: 10
+    filter_pass_only: true
+    exclude_common: true
+    max_allele_frequency: 0.5
+
+# ═══════════════════════════════════════════════════════════════════
+# Extração de Sequências FASTA
+# ═══════════════════════════════════════════════════════════════════
+
+sequence_extraction:
+  window_size: 2048  # Tamanho suportado pelo AlphaGenome
+  center_on_variant: true
+  use_alternate_allele: true
+
+# ═══════════════════════════════════════════════════════════════════
+# AlphaGenome
+# ═══════════════════════════════════════════════════════════════════
+
+alphagenome:
+  api_key: ""  # Preencher com sua API key
+  
+  outputs:
+    - "RNA_SEQ"
+    - "CAGE"
+    - "ATAC"
+    - "CHIP_HISTONE"
+    - "CHIP_TF"
+  
+  ontology_terms:
+    - "UBERON:0000955"  # Brain
+    - "UBERON:0002107"  # Liver
+    - "UBERON:0000948"  # Heart
+  
+  cache_results: true
+  cache_dir: "longevity_dataset/alphagenome_cache"
+  
+  batch_size: 10
+  max_retries: 3
+  retry_delay: 5
+
+# ═══════════════════════════════════════════════════════════════════
+# Dataset PyTorch
+# ═══════════════════════════════════════════════════════════════════
+
+dataset:
+  splits:
+    train: 0.6
+    validation: 0.2
+    test: 0.2
+  
+  balance_classes: true
+  random_seed: 42
+  format: "pytorch"
+  
+  features:
+    sequence:
+      enabled: true
+      encoding: "one_hot"
+    
+    position:
+      enabled: true
+      normalize: true
+    
+    alphagenome_predictions:
+      enabled: true
+      aggregation: "statistics"
+      statistics: ["mean", "std", "min", "max", "median"]
+    
+    metadata:
+      enabled: true
+      fields:
+        - "sample_id"
+        - "chromosome"
+        - "position"
+        - "ref_allele"
+        - "alt_allele"
+        - "variant_type"
+
+# ═══════════════════════════════════════════════════════════════════
+# Pipeline de Processamento
+# ═══════════════════════════════════════════════════════════════════
+
+pipeline:
+  steps:
+    download_samples: true  # Baixa lista e prepara estrutura
+    extract_variants: true
+    select_central_points: true
+    extract_sequences: true
+    run_alphagenome: true
+    build_dataset: true
+  
+  parallel:
+    enabled: true
+    n_workers: 4
+  
+  resume_from_checkpoint: true
+  checkpoint_frequency: 10
+
+# ═══════════════════════════════════════════════════════════════════
+# Recursos Computacionais
+# ═══════════════════════════════════════════════════════════════════
+
+resources:
+  max_memory_gb: 32
+  max_disk_gb: 100
+  temp_dir: "/tmp/longevity_processing"
+  
+# ═══════════════════════════════════════════════════════════════════
+# Logging e Debug
+# ═══════════════════════════════════════════════════════════════════
+
+logging:
+  level: "INFO"
+  log_file: "longevity_dataset/processing.log"
+  console_output: true
+  
+debug:
+  dry_run: false
+  limit_samples: null  # null = sem limite
+  save_intermediate: true
