@@ -345,7 +345,7 @@ python neural_integration.py \
 
 ## Non-Longevous Dataset Builder
 
-`build_non_longevous_dataset` is a modular pipeline for building genomic datasets from non-longevous individuals in the 1000 Genomes Project. It analyzes metadata CSV files, selects samples based on configurable criteria (superpopulation, population, sex), and automatically runs `build_window_and_predict.py` with AlphaGenome predictions for each selected individual.
+`build_non_longevous_dataset` is a modular pipeline for building genomic datasets from non-longevous individuals in the 1000 Genomes Project. It analyzes metadata CSV files, selects samples based on configurable criteria (superpopulation, population, sex), and automatically runs `build_window_and_predict.py` (included in the module) with AlphaGenome predictions for each selected individual.
 
 ### Key Features
 

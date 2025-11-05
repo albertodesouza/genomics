@@ -14,7 +14,7 @@ Requirements:
   - Python 3.8+
   - pandas
   - pyyaml
-  - build_window_and_predict.py (in the parent directory)
+  - build_window_and_predict.py (in the same directory)
 
 CSV Format:
   Header: FamilyID,SampleID,FatherID,MotherID,Sex,Population,Superpopulation
@@ -321,9 +321,9 @@ def run_build_window_predict(sample_id: str, config: dict, output_dir: Path) -> 
     data_sources = config['data_sources']
     
     # Build command
-    # build_window_and_predict.py está no diretório pai
+    # build_window_and_predict.py está no mesmo diretório
     script_dir = Path(__file__).parent
-    bwp_script = script_dir.parent / "build_window_and_predict.py"
+    bwp_script = script_dir / "build_window_and_predict.py"
     
     cmd = [
         sys.executable,  # Use same Python interpreter

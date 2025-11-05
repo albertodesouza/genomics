@@ -8,6 +8,18 @@ Pipeline para construir datasets de indivíduos não longevos do projeto 1000 Ge
 
 Este programa analisa um arquivo CSV com metadados de indivíduos do projeto 1000 Genomes, permite selecionar amostras baseado em critérios personalizados, e executa análises genômicas usando `build_window_and_predict.py` para cada indivíduo selecionado.
 
+### build_window_and_predict.py
+
+O módulo inclui `build_window_and_predict.py`, um script para:
+- Extrair janelas genômicas de 1 Mb ao redor de genes específicos
+- Aplicar variantes individuais do 1000 Genomes ao genoma de referência
+- Gerar sequências consenso por haplótipo (H1 e H2)
+- Executar predições AlphaGenome para análise funcional (RNA-seq, ATAC-seq, etc.)
+
+📚 **Documentação do AlphaGenome**:
+- [Guia de Predições](docs/ALPHAGENOME_PREDICTIONS.md)
+- [Guia de Tecidos/Células](docs/ALPHAGENOME_TISSUES.md)
+
 ## 🔧 Requisitos
 
 - Python 3.8+
@@ -20,7 +32,7 @@ Este programa analisa um arquivo CSV com metadados de indivíduos do projeto 100
   - samtools
   - bcftools
 - Arquivos:
-  - `build_window_and_predict.py` (no diretório pai do projeto)
+  - `build_window_and_predict.py` (incluído neste módulo)
   - Genoma de referência GRCh38 (.fa + .fai)
   - VCFs do 1000 Genomes (filtrados e faseados)
 

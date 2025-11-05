@@ -7,12 +7,16 @@ Este diretório contém o módulo **Non-Longevous Dataset Builder** completament
 ```
 build_non_longevous_dataset/
 ├── build_non_longevous_dataset.py    # Programa principal
+├── build_window_and_predict.py       # Script para extrair janelas genômicas e predições
 ├── README.md                         # Documentação completa
 ├── QUICKSTART.md                     # Guia de início rápido
 ├── IMPLEMENTACAO.md                  # Detalhes técnicos da implementação
 ├── ESTRUTURA.md                      # Este arquivo
 ├── configs/
 │   └── default.yaml                  # Configuração padrão
+├── docs/
+│   ├── ALPHAGENOME_PREDICTIONS.md    # Guia de predições AlphaGenome
+│   └── ALPHAGENOME_TISSUES.md        # Guia de tecidos/células AlphaGenome
 └── scripts/
     └── test.sh                       # Script de teste
 ```
@@ -55,4 +59,16 @@ Os caminhos no arquivo `configs/default.yaml` são relativos ao diretório `conf
 ✓ Execução da raiz do projeto
 ✓ Script de teste funcional
 ✓ Resolução correta de caminhos relativos
-✓ Integração com build_window_and_predict.py (no diretório pai)
+✓ Integração com build_window_and_predict.py (incluído no módulo)
+
+## 🔗 build_window_and_predict.py
+
+Este módulo inclui o `build_window_and_predict.py`, que é responsável por:
+- Extrair janelas genômicas de 1 Mb ao redor de genes específicos
+- Aplicar variantes de amostras do 1000 Genomes
+- Gerar sequências consenso por haplótipo
+- Executar predições AlphaGenome (opcional)
+
+📚 Documentação adicional:
+- [Guia de Predições AlphaGenome](docs/ALPHAGENOME_PREDICTIONS.md)
+- [Guia de Tecidos/Células](docs/ALPHAGENOME_TISSUES.md)
