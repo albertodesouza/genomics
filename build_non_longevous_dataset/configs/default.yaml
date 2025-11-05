@@ -15,11 +15,11 @@ data_sources:
   # CSV file with 1000 Genomes metadata
   # Header: FamilyID,SampleID,FatherID,MotherID,Sex,Population,Superpopulation
   # Sex: 1=Male, 2=Female
-  metadata_csv: "doc/1000_genomes_metadata.csv"  # Use example file for testing
+  metadata_csv: "../../doc/1000_genomes_metadata.csv"  # Relativo ao diretório configs/
   
   # Reference genome
   reference:
-    fasta: "refs/GRCh38_full_analysis_set_plus_decoy_hla.fa"
+    fasta: "../../refs/GRCh38_full_analysis_set_plus_decoy_hla.fa"  # Relativo ao diretório configs/
     name: "GRCh38"
   
   # VCF files location (chromosome pattern)

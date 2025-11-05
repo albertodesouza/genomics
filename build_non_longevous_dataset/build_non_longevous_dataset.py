@@ -14,7 +14,7 @@ Requirements:
   - Python 3.8+
   - pandas
   - pyyaml
-  - build_window_and_predict.py (in the same directory)
+  - build_window_and_predict.py (in the parent directory)
 
 CSV Format:
   Header: FamilyID,SampleID,FatherID,MotherID,Sex,Population,Superpopulation
@@ -26,11 +26,11 @@ CSV Format:
 
 Usage:
   # Step 1: Analyze metadata and print statistics
-  python3 build_non_longevous_dataset.py --config non_longevous_dataset.yaml
+  python3 build_non_longevous_dataset.py --config configs/default.yaml
   
   # Step 2: Enable sample selection and run predictions
-  # (Edit non_longevous_dataset.yaml to enable additional steps)
-  python3 build_non_longevous_dataset.py --config non_longevous_dataset.yaml
+  # (Edit configs/default.yaml to enable additional steps)
+  python3 build_non_longevous_dataset.py --config configs/default.yaml
 
 Author: ChatGPT (for Alberto)
 Last updated: 2025-11-04
@@ -49,19 +49,33 @@ import pandas as pd
 
 
 def load_config(config_path: Path) -> dict:
-    """Load YAML configuration file."""
+    """
+    Load YAML configuration file.
+    
+    Relative paths in the config file are resolved relative to the config file's directory.
+    """
+    config_dir = config_path.parent
+    
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     
-    # Expand environment variables
-    def expand_env_vars(obj):
+    # Expand environment variables and resolve relative paths
+    def expand_env_vars(obj, is_path_field=False):
         if isinstance(obj, dict):
-            return {k: expand_env_vars(v) for k, v in obj.items()}
+            return {k: expand_env_vars(v, k in ['metadata_csv', 'fasta', 'vcf_pattern']) for k, v in obj.items()}
         elif isinstance(obj, list):
             return [expand_env_vars(item) for item in obj]
-        elif isinstance(obj, str) and obj.startswith("${") and obj.endswith("}"):
-            env_var = obj[2:-1]
-            return os.environ.get(env_var, obj)
+        elif isinstance(obj, str):
+            # Expand environment variables
+            if obj.startswith("${") and obj.endswith("}"):
+                env_var = obj[2:-1]
+                obj = os.environ.get(env_var, obj)
+            
+            # Resolve relative paths (only for known path fields)
+            if is_path_field and not obj.startswith("/"):
+                obj = str((config_dir / obj).resolve())
+            
+            return obj
         return obj
     
     return expand_env_vars(config)
@@ -307,9 +321,13 @@ def run_build_window_predict(sample_id: str, config: dict, output_dir: Path) -> 
     data_sources = config['data_sources']
     
     # Build command
+    # build_window_and_predict.py está no diretório pai
+    script_dir = Path(__file__).parent
+    bwp_script = script_dir.parent / "build_window_and_predict.py"
+    
     cmd = [
         sys.executable,  # Use same Python interpreter
-        "build_window_and_predict.py",
+        str(bwp_script),
         "--sample", sample_id,
         "--ref-fasta", str(Path(data_sources['reference']['fasta']).expanduser()),
         "--outdir", str(output_dir),
@@ -441,8 +459,8 @@ def main():
     parser.add_argument(
         "--config",
         type=str,
-        default="non_longevous_dataset.yaml",
-        help="Path to YAML configuration file"
+        default="configs/default.yaml",
+        help="Path to YAML configuration file (default: configs/default.yaml)"
     )
     
     args = parser.parse_args()
