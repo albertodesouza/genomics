@@ -4,6 +4,30 @@
 
 Pipeline para construir datasets de indivíduos não longevos do projeto 1000 Genomes.
 
+## 📑 Índice
+
+- [📋 Descrição](#-descrição)
+  - [build_window_and_predict.py](#build_window_and_predictpy)
+- [🔧 Requisitos](#-requisitos)
+- [📊 Formato do CSV](#-formato-do-csv)
+- [🚀 Uso Básico](#-uso-básico)
+  - [Passo 1: Analisar Metadados](#passo-1-analisar-metadados)
+  - [Passo 2: Configurar Seleção de Amostras](#passo-2-configurar-seleção-de-amostras)
+  - [Passo 3: Executar Pipeline Completo](#passo-3-executar-pipeline-completo)
+- [📁 Estrutura de Saída](#-estrutura-de-saída)
+- [🔄 Idempotência](#-idempotência)
+- [⚙️ Opções Avançadas](#️-opções-avançadas)
+  - [Selecionar Apenas Algumas Populações](#selecionar-apenas-algumas-populações)
+  - [Excluir Populações](#excluir-populações)
+  - [Filtrar por Sexo](#filtrar-por-sexo)
+  - [Desabilitar Predições AlphaGenome](#desabilitar-predições-alphagenome-mais-rápido)
+- [📊 Exemplo de Saída (Passo 1)](#-exemplo-de-saída-passo-1)
+- [🧬 Superpopulações do 1000 Genomes](#-superpopulações-do-1000-genomes)
+- [💡 Dicas](#-dicas)
+- [🔍 Troubleshooting](#-troubleshooting)
+
+---
+
 ## 📋 Descrição
 
 Este programa analisa um arquivo CSV com metadados de indivíduos do projeto 1000 Genomes, permite selecionar amostras baseado em critérios personalizados, e executa análises genômicas usando `build_window_and_predict.py` para cada indivíduo selecionado.
