@@ -275,6 +275,6 @@ export ALPHAGENOME_API_KEY="sua_chave_aqui"
 
 ## 📝 Autor
 
-ChatGPT (para Alberto)  
+Alberto F. De Souza
 Última atualização: 2025-11-04
 

@@ -333,5 +333,5 @@ Todos os requisitos foram atendidos:
 ---
 
 **Data**: 2025-11-04  
-**Autor**: ChatGPT (para Alberto)
+**Autor**: Alberto F. De Souza
 

@@ -73,7 +73,7 @@ armazenados em subdiretórios dessa pasta. Use caminhos absolutos para
 referenciar arquivos de configuração localizados no repositório em
 ``~/genomics``.
 
-Autor: IA Neuro-Simbólica para Longevidade
+Autor: Alberto F. De Souza
 Data: Outubro 2025
 """
 
