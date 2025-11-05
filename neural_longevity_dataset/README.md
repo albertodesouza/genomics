@@ -1,5 +1,7 @@
 # Neural Longevity Dataset Builder
 
+> **📁 Location**: This module is in `neural_longevity_dataset/`
+
 Comprehensive usage guide for `neural_longevity_dataset.py`, the CLI pipeline that assembles training-ready datasets for longevity studies by combining public genomes, AlphaGenome predictions, and PyTorch-friendly serialization.
 
 ## Índice
@@ -60,7 +62,7 @@ The dataset root is fixed to `/dados/GENOMICS_DATA/top3/`. The script enforces t
 
 ## 4. Configuration File
 
-The YAML configuration stays in the repository (e.g., `~/genomics/longevity_config.yaml`). Below is a minimal template illustrating the required sections:
+The YAML configuration is in the `configs/` directory (e.g., `configs/default.yaml`). You can also use absolute paths to reference config files from the genomics repository. Below is a minimal template illustrating the required sections:
 
 ```yaml
 project:
@@ -130,7 +132,7 @@ debug:
 3. Execute the builder, pointing to the YAML stored in the repo:
    ```bash
    python3 ~/genomics/neural_longevity_dataset.py \
-     --config ~/genomics/longevity_config.yaml
+     --config ~/genomics/neural_longevity_dataset/configs/default.yaml
    ```
 4. Monitor the Rich progress panels. During downloads the CLI announces every CRAM/CRAI file with its source URL, size, and live transfer metrics. On completion, review the outputs under `/dados/GENOMICS_DATA/top3/<output_dir>/`.
 
@@ -140,7 +142,7 @@ Use `--steps` to run a subset of the pipeline:
 
 ```bash
 python3 ~/genomics/neural_longevity_dataset.py \
-  --config ~/genomics/longevity_config.yaml \
+  --config ~/genomics/neural_longevity_dataset/configs/default.yaml \
   --steps download_samples extract_sequences
 ```
 

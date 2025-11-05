@@ -340,9 +340,34 @@ python neural_integration.py \
 
 ## Neural Longevity Dataset Builder
 
-`neural_longevity_dataset.py` automates the creation of AlphaGenome-ready training data by downloading 1000 Genomes High Coverage CRAMs, calling variants, extracting alternate-allele FASTA windows, and assembling PyTorch splits under `/dados/GENOMICS_DATA/top3/`. Run the script from that directory so every download, cache, and dataset artifact stays grouped per cohort.
+> **📁 Location**: This module is in `neural_longevity_dataset/`
 
-📘 **Detailed usage guide**: [NEURAL_LONGEVITY_DATASET.md](NEURAL_LONGEVITY_DATASET.md)
+The **Neural Longevity Dataset Builder** automates the creation of machine learning datasets for longevity research by integrating genomic data from the 1000 Genomes Project with AI-powered functional predictions from AlphaGenome.
+
+### Key Features:
+- 📥 **Automated Download**: 1000 Genomes High Coverage VCF data
+- 🧬 **Variant Processing**: Calls variants with bcftools, selects central points
+- 🪟 **Window Extraction**: FASTA windows centered on variants with ALT allele applied
+- 🤖 **AlphaGenome Integration**: Feature extraction for each sequence
+- 📊 **PyTorch Datasets**: Balanced train/validation/test splits ready for ML
+- 🔄 **Complete Pipeline**: From raw genomic data to ML-ready features
+
+### Quick Example:
+```bash
+# Build a longevity marker dataset
+cd neural_longevity_dataset
+python neural_longevity_dataset.py --config configs/default.yaml
+
+# Train a model
+python longevity_train.py --config configs/train.yaml
+```
+
+### Documentation:
+📘 **Complete Guide**: [neural_longevity_dataset/README.md](neural_longevity_dataset/README.md)  
+🚀 **Quick Start**: [neural_longevity_dataset/QUICKSTART.md](neural_longevity_dataset/QUICKSTART.md)  
+📖 **Project Details**: [neural_longevity_dataset/docs/PROJECT.md](neural_longevity_dataset/docs/PROJECT.md)
+
+**Note**: Run the script from `/dados/GENOMICS_DATA/top3/` so that downloads, caches, and dataset artifacts stay organized per cohort.
 
 ---
 

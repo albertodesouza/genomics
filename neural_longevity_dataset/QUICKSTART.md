@@ -15,7 +15,7 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 pip install scikit-learn
 
 # 3. Configurar API key do AlphaGenome
-nano longevity_config.yaml
+nano configs/default.yaml
 # Editar linha: api_key: "YOUR_ALPHAGENOME_API_KEY"
 ```
 
@@ -26,7 +26,7 @@ nano longevity_config.yaml
 ### 1. Construir Dataset
 
 ```bash
-python neural_longevity_dataset.py --config longevity_config.yaml
+python neural_longevity_dataset.py --config configs/default.yaml
 ```
 
 **O que acontece**:
@@ -130,7 +130,7 @@ Para testar rapidamente sem processar tudo:
 
 ```bash
 python neural_longevity_dataset.py \
-  --config longevity_config.yaml \
+  --config configs/default.yaml \
   --dry-run
 ```
 
@@ -138,7 +138,7 @@ Mostra o que seria feito sem executar.
 
 ### 2. Limitar Amostras
 
-Edite `longevity_config.yaml`:
+Edite `configs/default.yaml`:
 
 ```yaml
 debug:
@@ -153,7 +153,7 @@ Se não tiver VCFs reais, o pipeline cria pontos centrais simulados automaticame
 
 ## 🔧 Configurações Importantes
 
-### longevity_config.yaml
+### configs/default.yaml
 
 ```yaml
 # Tamanho da janela de DNA (deve ser suportado pelo AlphaGenome)
@@ -237,7 +237,7 @@ Com dados reais de pessoas longevas:
 ✗ API key do AlphaGenome não configurada!
 ```
 
-**Solução**: Edite `longevity_config.yaml` e adicione sua API key.
+**Solução**: Edite `configs/default.yaml` e adicione sua API key.
 
 ### Erro: VCF não encontrado
 
