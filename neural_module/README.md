@@ -6,6 +6,7 @@
 
 - [📋 Description](#-description)
 - [🚀 Features](#-features)
+- [🔗 Integration with Genomic Pipelines](#-integration-with-genomic-pipelines)
 - [📦 Installation](#-installation)
 - [🎯 Usage](#-usage)
 - [📊 Available Output Types](#-available-output-types)
@@ -35,6 +36,33 @@
 - **Variant Analysis**: Prediction of SNP variant effects
 - **Visualizations**: Automatic generation of plots in multiple formats (PNG, PDF, SVG)
 - **FASTA Support**: Reading of standard FASTA files
+
+## 🔗 Integration with Genomic Pipelines
+
+The Neural Module includes **neural_integration.py**, a powerful bridge tool that connects traditional variant calling pipelines with AI-powered functional analysis.
+
+### Key Capabilities:
+- 🔄 **Automated Workflow**: VCF → Sequence Extraction → Neural Analysis → Results Correlation
+- 📊 **Multiple Input Formats**: VCF (variants), BED (regions), GTF (genes)
+- 🎯 **4 Operation Modes**: Integrated analysis, VCF extraction, BED extraction, Gene extraction
+- 🧬 **Smart Extraction**: Automatically extracts ±5kb regions around variants
+- 📈 **Results Correlation**: Links variant calls with functional predictions
+
+### Quick Example:
+```bash
+# Extract variants and analyze with AlphaGenome in one command
+cd neural_module
+python neural_integration.py \
+  --integrated \
+  --vcf ../vcf/sample.vcf.gz \
+  --ref ../refs/GRCh38.fa \
+  --api-key YOUR_API_KEY \
+  --output integrated_results/
+```
+
+📖 **Complete Integration Guide**: [docs/INTEGRATION.md](docs/INTEGRATION.md)
+
+---
 
 ## 📦 Installation
 

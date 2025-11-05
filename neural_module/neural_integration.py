@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Neural Integration - Ponte entre genomes_analyzer.py e neural_module.py
+Neural Integration - Bridge between genomes_analyzer.py and neural_module.py
 
-Este módulo facilita a integração entre o pipeline de análise genômica
-(genomes_analyzer.py) e a análise neural (neural_module.py usando AlphaGenome).
+This module facilitates integration between the genomic analysis pipeline
+(genomes_analyzer.py) and neural analysis (neural_module.py using AlphaGenome).
 
-Funcionalidades:
-- Extração de regiões de interesse do VCF
-- Conversão para FASTA
-- Análise com AlphaGenome
-- Correlação de resultados
+Features:
+- Extract regions of interest from VCF
+- Convert to FASTA
+- Analysis with AlphaGenome
+- Results correlation
 """
 
 import argparse

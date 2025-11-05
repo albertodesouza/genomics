@@ -14,12 +14,15 @@ The Neural Module documentation has been translated from Portuguese to English t
 
 ### Technical Documentation (docs/)
 - ✅ `docs/NEURAL_MODULE.md` - Technical overview
+- ✅ `docs/INTEGRATION.md` - Integration guide ⭐ NEW!
 - ⏸️  `docs/INDEX.md` - Detailed index (Portuguese, translate on demand)
 - ⏸️  `docs/INSTALL.md` - Installation guide (Portuguese, translate on demand)
-- ⏸️  `docs/INTEGRATION.md` - Integration guide (Portuguese, translate on demand)
 - ⏸️  `docs/USAGE.md` - Usage guide (Portuguese, translate on demand)
 - ⏸️  `docs/RESULTS.md` - Results interpretation (Portuguese, translate on demand)
 - 🇧🇷 `docs/LEIA-ME.md` - Intentionally kept in Portuguese
+
+### Python Code
+- ✅ `neural_integration.py` - Module docstring ⭐ NEW!
 
 ## Translation Status
 
@@ -30,19 +33,20 @@ The Neural Module documentation has been translated from Portuguese to English t
 | CHANGELOG.md | ✅ Translated | English | Includes translation entry |
 | STRUCTURE.md | ✅ Translated | English | Renamed from ESTRUTURA.md |
 | docs/NEURAL_MODULE.md | ✅ Translated | English | Complete |
+| docs/INTEGRATION.md | ✅ Translated | English | Complete (~500 lines) |
+| neural_integration.py | ✅ Translated | English | Docstring |
 | docs/LEIA-ME.md | 🇧🇷 Original | Portuguese | Intentional |
 | docs/INDEX.md | ⏸️  Original | Portuguese | Available for translation |
 | docs/INSTALL.md | ⏸️  Original | Portuguese | Available for translation |
-| docs/INTEGRATION.md | ⏸️  Original | Portuguese | Available for translation |
 | docs/USAGE.md | ⏸️  Original | Portuguese | Available for translation |
 | docs/RESULTS.md | ⏸️  Original | Portuguese | Available for translation |
 
 ## Translation Details
 
 **Date**: November 5, 2025  
-**Scope**: Primary documentation files  
-**Lines Translated**: ~1020 lines  
-**Files Translated**: 5 files  
+**Scope**: Primary documentation files + Integration guide  
+**Lines Translated**: ~1520 lines  
+**Files Translated**: 7 files (6 docs + 1 code docstring)  
 
 ## Key Changes
 
@@ -52,6 +56,9 @@ The Neural Module documentation has been translated from Portuguese to English t
 4. Updated all internal links and references
 5. Kept code examples intact
 6. Renamed ESTRUTURA.md → STRUCTURE.md
+7. Translated INTEGRATION.md (~500 lines) ⭐ NEW!
+8. Added integration section to README.md ⭐ NEW!
+9. Translated neural_integration.py docstring ⭐ NEW!
 
 ## Usage
 

@@ -1,6 +1,30 @@
 # 📝 Changelog - Neural Module
 
-## 2025-11-05 - Documentation Translation to English
+## 2025-11-05 - Documentation Translation to English (Update 2)
+
+### 📚 Integration Documentation Translation
+
+**Translated Files**
+- ✅ `docs/INTEGRATION.md` (~500 lines) → Translated from Portuguese to English
+- ✅ `neural_integration.py` docstring → Translated to English
+- ✅ `README.md` → Added comprehensive Integration section
+
+**Content**
+- Complete guide to neural_integration.py
+- 4 operation modes explained in detail
+- 4 practical use cases with examples
+- Complete workflow: DNA → Variants → Neural Predictions
+- FAQ and troubleshooting
+- Advanced configuration examples
+
+**Impact**
+- Users can now understand how to integrate AlphaGenome with variant calling pipelines
+- Clear documentation for VCF/BED/Gene extraction workflows
+- International accessibility for integration features
+
+---
+
+## 2025-11-05 - Documentation Translation to English (Update 1)
 
 ### 📚 Documentation Updates
 
@@ -9,6 +33,7 @@
 - ✅ `QUICKSTART.md` → Translated from Portuguese to English
 - ✅ `CHANGELOG.md` → Translated from Portuguese to English (this file)
 - ✅ `ESTRUTURA.md` → Renamed to `STRUCTURE.md` and translated to English
+- ✅ `docs/NEURAL_MODULE.md` → Translated to English
 
 **Purpose**
 - Make the module accessible to international users

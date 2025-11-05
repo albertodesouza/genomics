@@ -1,95 +1,96 @@
-# 🔗 Integração Neural Module + Genomes Analyzer
+# 🔗 Neural Module + Genomes Analyzer Integration
 
-## 📖 Visão Geral
+## 📖 Overview
 
-O **Neural Integration** (`neural_integration.py`) é uma ferramenta de ponte que conecta o pipeline tradicional de análise genômica (`genomes_analyzer.py`) com a análise neural baseada em IA (`neural_module.py` + AlphaGenome).
+**Neural Integration** (`neural_integration.py`) is a bridge tool that connects the traditional genomic analysis pipeline (`genomes_analyzer.py`) with AI-based neural analysis (`neural_module.py` + AlphaGenome).
 
-Ele automatiza o fluxo de:
-**VCF/BED/Genes → Extração de Sequências → Análise Neural → Correlação de Resultados**
-
----
-
-## 🎯 O que o Neural Integration faz?
-
-### 1. **Extração Inteligente de Sequências**
-- ✅ Extrai regiões do genoma a partir de VCF (variantes)
-- ✅ Extrai regiões de arquivos BED (regiões de interesse)
-- ✅ Extrai genes específicos de GTF (com regiões flanqueadoras)
-- ✅ Converte tudo para FASTA pronto para AlphaGenome
-
-### 2. **Análise Neural Automatizada**
-- ✅ Executa `neural_module.py` automaticamente
-- ✅ Configura parâmetros apropriados
-- ✅ Gerencia outputs do AlphaGenome
-
-### 3. **Correlação de Resultados**
-- ✅ Correlaciona variantes com predições neurais
-- ✅ Gera relatórios de integração
-- ✅ Cria visualizações combinadas
+It automates the workflow:
+**VCF/BED/Genes → Sequence Extraction → Neural Analysis → Results Correlation**
 
 ---
 
-## 🚀 Modos de Operação
+## 🎯 What Does Neural Integration Do?
 
-O `neural_integration.py` opera em 4 modos diferentes:
+### 1. **Intelligent Sequence Extraction**
+- ✅ Extract genomic regions from VCF (variants)
+- ✅ Extract regions from BED files (regions of interest)
+- ✅ Extract specific genes from GTF (with flanking regions)
+- ✅ Convert everything to FASTA ready for AlphaGenome
 
-### Modo 1: **Análise Integrada Completa** 🌟
+### 2. **Automated Neural Analysis**
+- ✅ Automatically run `neural_module.py`
+- ✅ Configure appropriate parameters
+- ✅ Manage AlphaGenome outputs
 
-Executa todo o fluxo automaticamente: extração + análise + correlação.
+### 3. **Results Correlation**
+- ✅ Correlate variants with neural predictions
+- ✅ Generate integration reports
+- ✅ Create combined visualizations
+
+---
+
+## 🚀 Operation Modes
+
+`neural_integration.py` operates in 4 different modes:
+
+### Mode 1: **Complete Integrated Analysis** 🌟
+
+Automatically executes the entire workflow: extraction + analysis + correlation.
 
 ```bash
+cd neural_module
 python neural_integration.py \
   --integrated \
-  --vcf vcf/NA12878.vcf.gz \
-  --ref refs/GRCh38.d1.vd1.fa \
+  --vcf ../vcf/NA12878.vcf.gz \
+  --ref ../refs/GRCh38.d1.vd1.fa \
   --api-key YOUR_API_KEY \
   --output integrated_results/
 ```
 
-**Quando usar**: Após executar `genomes_analyzer.py` e ter um VCF de variantes.
+**When to use**: After running `genomes_analyzer.py` and having a variant VCF.
 
-**O que acontece**:
-1. Extrai regiões ao redor de cada variante (±5kb)
-2. Converte para FASTA
-3. Executa análise neural com AlphaGenome
-4. Correlaciona variantes com predições
-5. Gera relatórios integrados
+**What happens**:
+1. Extracts regions around each variant (±5kb)
+2. Converts to FASTA
+3. Runs neural analysis with AlphaGenome
+4. Correlates variants with predictions
+5. Generates integrated reports
 
 ---
 
-### Modo 2: **Extrair Sequências de VCF**
+### Mode 2: **Extract Sequences from VCF**
 
-Apenas extrai sequências sem executar análise neural.
+Only extracts sequences without running neural analysis.
 
 ```bash
 python neural_integration.py \
   --extract-vcf \
-  --vcf vcf/NA12878.vcf.gz \
-  --ref refs/GRCh38.d1.vd1.fa \
+  --vcf ../vcf/NA12878.vcf.gz \
+  --ref ../refs/GRCh38.d1.vd1.fa \
   --output variants_sequences.fasta
 ```
 
-**Quando usar**: Quando você quer apenas preparar sequências para análise posterior.
+**When to use**: When you only want to prepare sequences for later analysis.
 
-**Saída**: Arquivo FASTA com regiões de ±5kb ao redor de cada variante.
+**Output**: FASTA file with ±5kb regions around each variant.
 
 ---
 
-### Modo 3: **Extrair Sequências de BED**
+### Mode 3: **Extract Sequences from BED**
 
-Extrai sequências de regiões especificadas em arquivo BED.
+Extracts sequences from regions specified in BED file.
 
 ```bash
 python neural_integration.py \
   --extract-bed \
   --bed regions_of_interest.bed \
-  --ref refs/GRCh38.d1.vd1.fa \
+  --ref ../refs/GRCh38.d1.vd1.fa \
   --output regions_sequences.fasta
 ```
 
-**Quando usar**: Quando você tem regiões de interesse específicas (enhancers, promotores, etc.).
+**When to use**: When you have specific regions of interest (enhancers, promoters, etc.).
 
-**Formato BED esperado**:
+**Expected BED format**:
 ```
 chr1    1000000    1002048    region_1
 chr2    5000000    5002048    region_2
@@ -97,88 +98,91 @@ chr2    5000000    5002048    region_2
 
 ---
 
-### Modo 4: **Extrair Genes Específicos**
+### Mode 4: **Extract Specific Genes**
 
-Extrai sequências de genes por nome, com regiões flanqueadoras.
+Extracts gene sequences by name, with flanking regions.
 
 ```bash
 python neural_integration.py \
   --extract-genes \
   --genes BRCA1 TP53 HBB CFTR \
-  --gtf refs/gencode.v38.annotation.gtf.gz \
-  --ref refs/GRCh38.d1.vd1.fa \
+  --gtf ../refs/gencode.v38.annotation.gtf.gz \
+  --ref ../refs/GRCh38.d1.vd1.fa \
   --output genes_sequences.fasta \
   --flank 10000
 ```
 
-**Quando usar**: Para analisar genes específicos de interesse com contexto regulatório.
+**When to use**: To analyze specific genes of interest with regulatory context.
 
-**Parâmetros**:
-- `--flank`: Bases flanqueadoras (padrão: 10kb antes e depois do gene)
+**Parameters**:
+- `--flank`: Flanking bases (default: 10kb before and after gene)
 
 ---
 
-## 📊 Casos de Uso Práticos
+## 📊 Practical Use Cases
 
-### Caso 1: Analisar Variantes de Alto Impacto
+### Case 1: Analyze High-Impact Variants
 
-Após identificar variantes de alto impacto no VCF:
+After identifying high-impact variants in VCF:
 
 ```bash
-# Passo 1: Filtrar variantes de alto impacto (exemplo)
-bcftools view -i 'INFO/ANN~"HIGH"' vcf/sample.vcf.gz > high_impact.vcf
+# Step 1: Filter high-impact variants (example)
+bcftools view -i 'INFO/ANN~"HIGH"' ../vcf/sample.vcf.gz > high_impact.vcf
 
-# Passo 2: Análise integrada
+# Step 2: Integrated analysis
+cd neural_module
 python neural_integration.py \
   --integrated \
   --vcf high_impact.vcf \
-  --ref refs/GRCh38.d1.vd1.fa \
+  --ref ../refs/GRCh38.d1.vd1.fa \
   --api-key YOUR_API_KEY \
   --output neural_high_impact/ \
   --outputs RNA_SEQ ATAC CHIP_HISTONE
 ```
 
-**Resultado**: Predições neurais para regiões com variantes de alto impacto.
+**Result**: Neural predictions for regions with high-impact variants.
 
 ---
 
-### Caso 2: Analisar Genes Candidatos
+### Case 2: Analyze Candidate Genes
 
-Você identificou genes candidatos de doença:
+You've identified disease candidate genes:
 
 ```bash
+cd neural_module
 python neural_integration.py \
   --extract-genes \
   --genes BRCA1 BRCA2 TP53 PTEN \
-  --gtf refs/gencode.v38.annotation.gtf.gz \
-  --ref refs/GRCh38.d1.vd1.fa \
+  --gtf ../refs/gencode.v38.annotation.gtf.gz \
+  --ref ../refs/GRCh38.d1.vd1.fa \
   --output candidate_genes.fasta \
   --flank 20000
 
-# Depois analisar com neural_module
+# Then analyze with neural_module
 python neural_module.py \
   -i candidate_genes.fasta \
   -k YOUR_API_KEY \
   -o candidate_genes_neural/
 ```
 
-**Resultado**: Análise funcional completa dos genes candidatos.
+**Result**: Complete functional analysis of candidate genes.
 
 ---
 
-### Caso 3: Regiões Regulatórias Não-Codificantes
+### Case 3: Non-Coding Regulatory Regions
 
-Você tem regiões regulatórias de interesse em BED:
+You have regulatory regions of interest in BED:
 
 ```bash
-# enhancers.bed contém regiões de enhancers
+# enhancers.bed contains enhancer regions
+cd neural_module
 python neural_integration.py \
   --extract-bed \
   --bed enhancers.bed \
-  --ref refs/GRCh38.d1.vd1.fa \
+  --ref ../refs/GRCh38.d1.vd1.fa \
   --output enhancers.fasta
 
-# Analisar acessibilidade e marcadores epigenéticos
+# Analyze accessibility and epigenetic markers
 python neural_module.py \
   -i enhancers.fasta \
   -k YOUR_API_KEY \
@@ -186,196 +190,201 @@ python neural_module.py \
   --outputs ATAC DNASE CHIP_HISTONE CHIP_TF
 ```
 
-**Resultado**: Predições de atividade regulatória.
+**Result**: Regulatory activity predictions.
 
 ---
 
-### Caso 4: Análise de Trio (Variantes De Novo)
+### Case 4: Trio Analysis (De Novo Variants)
 
-Após identificar variantes de novo no trio:
+After identifying de novo variants in trio:
 
 ```bash
-# Passo 1: Obter variantes de novo do pipeline
-# (genomes_analyzer.py já gera trio/denovo_candidates.vcf)
+# Step 1: Get de novo variants from pipeline
+# (genomes_analyzer.py already generates trio/denovo_candidates.vcf)
 
-# Passo 2: Análise neural das variantes de novo
+# Step 2: Neural analysis of de novo variants
+cd neural_module
 python neural_integration.py \
   --integrated \
-  --vcf trio/denovo_candidates.vcf \
-  --ref refs/GRCh38.d1.vd1.fa \
+  --vcf ../trio/denovo_candidates.vcf \
+  --ref ../refs/GRCh38.d1.vd1.fa \
   --api-key YOUR_API_KEY \
   --output neural_denovo/ \
   --outputs RNA_SEQ CAGE ATAC CHIP_HISTONE CHIP_TF
 ```
 
-**Resultado**: Impacto funcional predito das variantes de novo.
+**Result**: Predicted functional impact of de novo variants.
 
 ---
 
-## 🔄 Fluxo de Trabalho Integrado Completo
+## 🔄 Complete Integrated Workflow
 
-### Pipeline Completo: DNA → Variantes → Predições Neurais
+### Complete Pipeline: DNA → Variants → Neural Predictions
 
 ```bash
 # ════════════════════════════════════════════════════════════════
-# PASSO 1: Análise Genômica Tradicional
+# STEP 1: Traditional Genomic Analysis
 # ════════════════════════════════════════════════════════════════
 
 conda activate genomics
 python genomes_analyzer.py --config config_human_30x.yaml
 
-# Saídas:
-# - vcf/NA12878.vcf.gz (variantes)
+# Outputs:
+# - vcf/NA12878.vcf.gz (variants)
 # - trio/denovo_candidates.vcf (de novo)
-# - bam/*.bam (alinhamentos)
+# - bam/*.bam (alignments)
 
 # ════════════════════════════════════════════════════════════════
-# PASSO 2: Filtrar Variantes de Interesse (Opcional)
+# STEP 2: Filter Variants of Interest (Optional)
 # ════════════════════════════════════════════════════════════════
 
-# Exemplo: Variantes exônicas de alto impacto
+# Example: Exonic high-impact variants
 bcftools view -i 'INFO/ANN~"HIGH|MODERATE" && INFO/ANN~"exonic"' \
   vcf/NA12878.vcf.gz > variants_of_interest.vcf
 
 # ════════════════════════════════════════════════════════════════
-# PASSO 3: Análise Neural Integrada
+# STEP 3: Integrated Neural Analysis
 # ════════════════════════════════════════════════════════════════
 
+cd neural_module
 python neural_integration.py \
   --integrated \
-  --vcf variants_of_interest.vcf \
-  --ref refs/GRCh38.d1.vd1.fa \
+  --vcf ../variants_of_interest.vcf \
+  --ref ../refs/GRCh38.d1.vd1.fa \
   --api-key YOUR_ALPHAGENOME_KEY \
   --output integrated_analysis/ \
   --outputs RNA_SEQ CAGE ATAC CHIP_HISTONE CHIP_TF
 
-# Saídas:
-# - integrated_analysis/neural_results/ (predições AlphaGenome)
-# - integrated_analysis/correlation_report.json (correlação)
+# Outputs:
+# - integrated_analysis/neural_results/ (AlphaGenome predictions)
+# - integrated_analysis/correlation_report.json (correlation)
 
 # ════════════════════════════════════════════════════════════════
-# PASSO 4: Interpretar Resultados
+# STEP 4: Interpret Results
 # ════════════════════════════════════════════════════════════════
 
-# Ver relatório de correlação
+# View correlation report
 cat integrated_analysis/correlation_report.json | jq .
 
-# Ver visualizações neurais
+# View neural visualizations
 ls integrated_analysis/neural_results/*.png
 
-# Ver metadados de ontologia
+# View ontology metadata
 cat integrated_analysis/neural_results/*_metadata.csv
 ```
 
 ---
 
-## 📁 Estrutura de Saídas
+## 📁 Output Structure
 
-### Modo Integrado (`--integrated`)
+### Integrated Mode (`--integrated`)
 
 ```
 integrated_analysis/
-├── variants_sequences.fasta          # Sequências extraídas do VCF
-├── neural_results/                   # Resultados do neural_module
+├── variants_sequences.fasta          # Sequences extracted from VCF
+├── neural_results/                   # neural_module results
 │   ├── variant_1_*_RNA_SEQ.png
 │   ├── variant_1_*_RNA_SEQ_enhanced.png
 │   ├── variant_1_*_RNA_SEQ_heatmap.png
 │   ├── variant_1_*_RNA_SEQ_metadata.csv
 │   ├── variant_1_*_RNA_SEQ_metadata.json
-│   ├── ... (outros outputs)
+│   ├── ... (other outputs)
 │   ├── variant_1_*_comparison.png
 │   ├── variant_1_*_dashboard.png
 │   └── analysis_report.json
-└── correlation_report.json           # Correlação variantes × predições
+└── correlation_report.json           # Variants × predictions correlation
 ```
 
-### Modo Extração (`--extract-*`)
+### Extraction Mode (`--extract-*`)
 
 ```
-sequences.fasta                       # Sequências extraídas prontas para uso
+sequences.fasta                       # Extracted sequences ready for use
 ```
 
 ---
 
-## 💡 Exemplos Avançados
+## 💡 Advanced Examples
 
-### Exemplo 1: Análise por Cromossomo
+### Example 1: Chromosome-Specific Analysis
 
 ```bash
-# Analisar apenas variantes do chr11 (gene HBB)
+# Analyze only chr11 variants (HBB gene)
+cd neural_module
 python neural_integration.py \
   --integrated \
-  --vcf <(bcftools view -r chr11 vcf/sample.vcf.gz) \
-  --ref refs/GRCh38.d1.vd1.fa \
+  --vcf <(bcftools view -r chr11 ../vcf/sample.vcf.gz) \
+  --ref ../refs/GRCh38.d1.vd1.fa \
   --api-key YOUR_API_KEY \
   --output chr11_neural/
 ```
 
-### Exemplo 2: Genes de uma Via Metabólica
+### Example 2: Metabolic Pathway Genes
 
 ```bash
-# Extrair todos os genes de uma via (exemplo: reparo de DNA)
+# Extract all genes from a pathway (example: DNA repair)
+cd neural_module
 python neural_integration.py \
   --extract-genes \
   --genes BRCA1 BRCA2 ATM CHEK2 TP53 PALB2 RAD51 \
-  --gtf refs/gencode.v38.annotation.gtf.gz \
-  --ref refs/GRCh38.d1.vd1.fa \
+  --gtf ../refs/gencode.v38.annotation.gtf.gz \
+  --ref ../refs/GRCh38.d1.vd1.fa \
   --output dna_repair_genes.fasta \
   --flank 15000
 ```
 
-### Exemplo 3: Priorização de Variantes
+### Example 3: Variant Prioritization
 
 ```bash
 #!/bin/bash
-# Script para priorizar variantes com análise neural
+# Script to prioritize variants with neural analysis
 
-# 1. Variantes raras de alto impacto
+# 1. Rare high-impact variants
 bcftools view -i 'INFO/AF<0.01 && INFO/ANN~"HIGH"' \
   vcf/sample.vcf.gz > rare_high_impact.vcf
 
-# 2. Análise neural
+# 2. Neural analysis
+cd neural_module
 python neural_integration.py \
   --integrated \
   --vcf rare_high_impact.vcf \
-  --ref refs/GRCh38.d1.vd1.fa \
+  --ref ../refs/GRCh38.d1.vd1.fa \
   --api-key $ALPHAGENOME_KEY \
   --output prioritized_variants/ \
   --outputs RNA_SEQ ATAC CHIP_HISTONE
 
-# 3. Ver resultados
+# 3. View results
 python -c "
 import json
 with open('prioritized_variants/correlation_report.json') as f:
     data = json.load(f)
-    print(f'Variantes analisadas: {data[\"summary\"][\"total_sequences\"]}')
-    print(f'Predições bem-sucedidas: {data[\"summary\"][\"successful_predictions\"]}')
+    print(f'Variants analyzed: {data[\"summary\"][\"total_sequences\"]}')
+    print(f'Successful predictions: {data[\"summary\"][\"successful_predictions\"]}')
 "
 ```
 
 ---
 
-## ⚙️ Configuração Avançada
+## ⚙️ Advanced Configuration
 
-### Personalizar Tamanho de Janela
+### Customize Window Size
 
-Por padrão, extrai ±5kb ao redor de variantes. Para mudar, edite `neural_integration.py`:
+By default, extracts ±5kb around variants. To change, edit `neural_integration.py`:
 
 ```python
-# Linha ~76
-start = max(1, pos - 10000)  # Era 5000, agora 10kb
+# Line ~76
+start = max(1, pos - 10000)  # Was 5000, now 10kb
 end = pos + 10000
 ```
 
-### Adicionar Filtros de Qualidade
+### Add Quality Filters
 
-Filtrar variantes antes de análise neural:
+Filter variants before neural analysis:
 
 ```bash
-# Apenas variantes PASS com DP ≥ 20 e GQ ≥ 30
+# Only PASS variants with DP ≥ 20 and GQ ≥ 30
 bcftools view -f PASS -i 'FORMAT/DP>=20 && FORMAT/GQ>=30' \
   vcf/sample.vcf.gz | \
-python neural_integration.py \
+python neural_module/neural_integration.py \
   --integrated \
   --vcf /dev/stdin \
   --ref refs/GRCh38.d1.vd1.fa \
@@ -385,11 +394,11 @@ python neural_integration.py \
 
 ---
 
-## 🔍 Interpretando Resultados
+## 🔍 Interpreting Results
 
-### Relatório de Correlação
+### Correlation Report
 
-O arquivo `correlation_report.json` contém:
+The `correlation_report.json` file contains:
 
 ```json
 {
@@ -415,83 +424,84 @@ O arquivo `correlation_report.json` contém:
 }
 ```
 
-### Análise de Resultados
+### Results Analysis
 
-1. **Visualizações Individuais**: Veja `neural_results/*_enhanced.png` para cada variante
-2. **Heatmaps**: Compare múltiplas tracks em `*_heatmap.png`
-3. **Dashboard**: Resumo estatístico em `*_dashboard.png`
-4. **Metadados**: Informações de tecidos/células em `*_metadata.csv`
+1. **Individual Visualizations**: See `neural_results/*_enhanced.png` for each variant
+2. **Heatmaps**: Compare multiple tracks in `*_heatmap.png`
+3. **Dashboard**: Statistical summary in `*_dashboard.png`
+4. **Metadata**: Tissue/cell information in `*_metadata.csv`
 
 ---
 
 ## ❓ FAQ
 
-### P: O neural_integration requer o genomes_analyzer instalado?
+### Q: Does neural_integration require genomes_analyzer installed?
 
-**R**: Não! O `neural_integration.py` é independente. Ele apenas requer:
-- `bcftools` (para VCF)
-- `bedtools` (para BED)
-- `samtools` (para extração de sequências)
-- `neural_module.py` (para análise neural)
+**A**: No! `neural_integration.py` is independent. It only requires:
+- `bcftools` (for VCF)
+- `bedtools` (for BED)
+- `samtools` (for sequence extraction)
+- `neural_module.py` (for neural analysis)
 
-Todos já estão no ambiente `genomics`.
+All are already in the `genomics` environment.
 
-### P: Posso usar com VCFs de outros pipelines?
+### Q: Can I use with VCFs from other pipelines?
 
-**R**: Sim! Funciona com qualquer VCF padrão, não apenas os gerados por `genomes_analyzer.py`.
+**A**: Yes! Works with any standard VCF, not just those generated by `genomes_analyzer.py`.
 
-### P: Quanto custa usar com AlphaGenome?
+### Q: How much does it cost to use with AlphaGenome?
 
-**R**: AlphaGenome é gratuito para uso não comercial. Veja https://www.alphagenomedocs.com/
+**A**: AlphaGenome is free for non-commercial use. See https://www.alphagenomedocs.com/
 
-### P: Posso analisar apenas algumas variantes específicas?
+### Q: Can I analyze only specific variants?
 
-**R**: Sim! Use `bcftools view` para filtrar o VCF primeiro:
+**A**: Yes! Use `bcftools view` to filter the VCF first:
 
 ```bash
-# Apenas variantes em posições específicas
+# Only variants at specific positions
 bcftools view -t chr11:5227002 vcf/sample.vcf.gz | \
-python neural_integration.py --integrated --vcf /dev/stdin ...
+python neural_module/neural_integration.py --integrated --vcf /dev/stdin ...
 ```
 
-### P: Como adicionar análise de variantes (REF vs ALT)?
+### Q: How to add variant analysis (REF vs ALT)?
 
-**R**: Use `neural_module.py` diretamente após extração:
+**A**: Use `neural_module.py` directly after extraction:
 
 ```bash
-# 1. Extrair sequências
+# 1. Extract sequences
+cd neural_module
 python neural_integration.py \
   --extract-vcf \
-  --vcf variants.vcf \
-  --ref genome.fa \
+  --vcf ../variants.vcf \
+  --ref ../genome.fa \
   --output sequences.fasta
 
-# 2. Analisar cada variante com --variant
-# (requer script adicional para parse do VCF)
+# 2. Analyze each variant with --variant
+# (requires additional script to parse VCF)
 ```
 
 ---
 
-## 🔗 Recursos Relacionados
+## 🔗 Related Resources
 
-- **[Neural Module Principal](NEURAL_MODULE.md)** - Documentação completa
-- **[Guia de Uso](USAGE_NEURAL.md)** - Como usar neural_module.py
-- **[Download de Sequências](DOWNLOAD_SEQUENCES.md)** - Baixar genomas reais
-- **[Interpretação de Resultados](RESULTS_NEURAL.md)** - Entender predições
-
----
-
-## 🚀 Próximos Passos
-
-Após dominar a integração básica:
-
-1. **Automatizar**: Crie scripts para análise em lote
-2. **Priorizar**: Combine scores de variantes com predições neurais
-3. **Validar**: Compare predições com dados experimentais (se disponível)
-4. **Publicar**: Inclua análises neurais em seus relatórios
+- **[Main Neural Module](NEURAL_MODULE.md)** - Complete documentation
+- **[Usage Guide](USAGE.md)** - How to use neural_module.py
+- **[Download Sequences](../../DOWNLOAD_SEQUENCES.md)** - Download real genomes
+- **[Results Interpretation](RESULTS.md)** - Understanding predictions
 
 ---
 
-**Criado**: Outubro 2025  
-**Parte do**: Neural Module Documentation
+## 🚀 Next Steps
 
+After mastering basic integration:
+
+1. **Automate**: Create scripts for batch analysis
+2. **Prioritize**: Combine variant scores with neural predictions
+3. **Validate**: Compare predictions with experimental data (if available)
+4. **Publish**: Include neural analyses in your reports
+
+---
+
+**Created**: October 2025  
+**Translated**: November 2025  
+**Part of**: Neural Module Documentation
