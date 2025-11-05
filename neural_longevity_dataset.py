@@ -1238,7 +1238,7 @@ class LongevityDatasetBuilder:
 
         if self._alphagenome_client is None:
             try:
-                from neural_module import AlphaGenomeAnalyzer, DEFAULT_CONFIG
+                from neural_module.neural_module import AlphaGenomeAnalyzer, DEFAULT_CONFIG
             except ImportError as exc:
                 console.print(f"[yellow]⚠ AlphaGenome não disponível: {exc}[/yellow]")
                 self._alphagenome_client = False

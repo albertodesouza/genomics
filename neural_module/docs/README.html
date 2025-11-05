@@ -1,0 +1,186 @@
+<h1>Neural Module - Análise de DNA com AlphaGenome</h1>
+<h2>📋 Descrição</h2>
+<p>O <code>neural_module.py</code> é uma ferramenta Python que integra a API do <a href="https://github.com/google-deepmind/alphagenome">AlphaGenome</a> da Google DeepMind para realizar análises avançadas de sequências de DNA.</p>
+<h2>🚀 Funcionalidades</h2>
+<ul>
+<li><strong>Análise de Sequências</strong>: Predição de múltiplos aspectos funcionais de sequências de DNA</li>
+<li><strong>Predição de Expressão Gênica</strong>: RNA-seq, CAGE</li>
+<li><strong>Características de Cromatina</strong>: ATAC-seq, H3K27AC, H3K4ME3, H3K27ME3, H3K36ME3, H3K9ME3, CTCF</li>
+<li><strong>Análise de Variantes</strong>: Predição do efeito de variantes SNP</li>
+<li><strong>Visualizações</strong>: Geração automática de gráficos em múltiplos formatos (PNG, PDF, SVG)</li>
+<li><strong>Suporte a FASTA</strong>: Leitura de arquivos FASTA padrão</li>
+</ul>
+<h2>📦 Instalação</h2>
+<h3>1. Instalar o AlphaGenome</h3>
+<p>Execute o script de instalação fornecido:</p>
+<p><code>bash
+bash install_alphagenome.sh</code></p>
+<p>Ou manualmente:</p>
+<p><code>bash
+git clone https://github.com/google-deepmind/alphagenome.git
+pip install ./alphagenome</code></p>
+<h3>2. Instalar Dependências Adicionais</h3>
+<p><code>bash
+pip install rich matplotlib</code></p>
+<h3>3. Obter API Key</h3>
+<p>Acesse <a href="https://www.alphagenomedocs.com/">https://www.alphagenomedocs.com/</a> e solicite sua API key gratuita para uso não comercial.</p>
+<h2>🎯 Uso</h2>
+<h3>Exemplo Básico</h3>
+<p><code>bash
+python neural_module.py -i sequence.fasta -k YOUR_API_KEY -o results/</code></p>
+<h3>Análise com Outputs Específicos</h3>
+<p><code>bash
+python neural_module.py -i sequence.fasta -k YOUR_API_KEY -o results/ \
+    --outputs RNA_SEQ ATAC H3K27AC</code></p>
+<h3>Análise de Variante</h3>
+<p><code>bash
+python neural_module.py -i sequence.fasta -k YOUR_API_KEY -o results/ \
+    --variant 1000 A C</code></p>
+<p>Este comando analisa o efeito de uma variante A→C na posição 1000 (relativa ao início da sequência).</p>
+<h3>Múltiplos Formatos de Saída</h3>
+<p><code>bash
+python neural_module.py -i sequence.fasta -k YOUR_API_KEY -o results/ \
+    --formats png pdf svg --dpi 600</code></p>
+<h3>Apenas Análise (Sem Gráficos)</h3>
+<p><code>bash
+python neural_module.py -i sequence.fasta -k YOUR_API_KEY -o results/ \
+    --no-plots</code></p>
+<h2>📊 Tipos de Output Disponíveis</h2>
+<p>| Output | Descrição |
+|--------|-----------|
+| <code>RNA_SEQ</code> | Predição de expressão gênica via RNA-seq |
+| <code>CAGE</code> | Cap Analysis of Gene Expression |
+| <code>ATAC</code> | Acessibilidade de cromatina (ATAC-seq) |
+| <code>H3K27AC</code> | Marcador de elementos regulatórios ativos |
+| <code>H3K4ME3</code> | Marcador de promotores ativos |
+| <code>H3K27ME3</code> | Marcador de repressão gênica |
+| <code>H3K36ME3</code> | Marcador de corpos gênicos ativos |
+| <code>H3K9ME3</code> | Marcador de heterocromatina |
+| <code>CTCF</code> | Fator de ligação de insulador |</p>
+<h2>📝 Formato de Entrada (FASTA)</h2>
+<p>O arquivo FASTA deve seguir o formato padrão:</p>
+<p>```</p>
+<blockquote>
+<p>sequence_id_1 description
+ATCGATCGATCGATCG...
+sequence_id_2 description
+GCTAGCTAGCTAGCTA...
+```</p>
+</blockquote>
+<h3>Requisitos:</h3>
+<ul>
+<li>Sequências com 100 bp a 1.000.000 bp (1 Mbp)</li>
+<li>Caracteres válidos: A, C, G, T, N (e códigos de ambiguidade IUPAC)</li>
+</ul>
+<h2>📁 Estrutura de Saída</h2>
+<p><code>results/
+├── sequence_id_1_RNA_SEQ.png
+├── sequence_id_1_ATAC.png
+├── sequence_id_1_H3K27AC.png
+├── sequence_id_2_RNA_SEQ.png
+├── ...
+└── analysis_report.json</code></p>
+<h3>Relatório JSON</h3>
+<p>O arquivo <code>analysis_report.json</code> contém:</p>
+<p><code>json
+{
+  "timestamp": "2025-10-16T10:30:00",
+  "total_sequences": 2,
+  "successful_analyses": 2,
+  "sequences": [
+    {
+      "id": "sequence_id_1",
+      "length": 50000,
+      "status": "success",
+      "outputs": ["RNA_SEQ", "ATAC", "H3K27AC"]
+    }
+  ]
+}</code></p>
+<h2>⚙️ Opções de Linha de Comando</h2>
+<h3>Obrigatórias</h3>
+<ul>
+<li><code>-i, --input</code>: Arquivo FASTA de entrada</li>
+<li><code>-k, --api-key</code>: Chave da API do AlphaGenome</li>
+<li><code>-o, --output</code>: Diretório de saída</li>
+</ul>
+<h3>Opcionais</h3>
+<ul>
+<li><code>--outputs</code>: Tipos de output desejados (padrão: RNA_SEQ CAGE ATAC H3K27AC H3K4ME3)</li>
+<li><code>--chromosome</code>: Cromossomo de referência (padrão: chr1)</li>
+<li><code>--start</code>: Posição inicial de referência (padrão: 1000000)</li>
+<li><code>--variant POS REF ALT</code>: Analisar variante na posição POS com bases REF&gt;ALT</li>
+<li><code>--formats</code>: Formatos de gráficos (png, pdf, svg) (padrão: png)</li>
+<li><code>--dpi</code>: Resolução dos gráficos (padrão: 300)</li>
+<li><code>--no-plots</code>: Não gerar gráficos (apenas análise)</li>
+</ul>
+<h2>💡 Exemplos Avançados</h2>
+<h3>1. Análise Completa de uma Região Genômica</h3>
+<p><code>bash
+python neural_module.py \
+    -i chr1_region.fasta \
+    -k YOUR_API_KEY \
+    -o chr1_analysis/ \
+    --chromosome chr1 \
+    --start 1000000 \
+    --outputs RNA_SEQ CAGE ATAC H3K27AC H3K4ME3 H3K27ME3 CTCF \
+    --formats png pdf \
+    --dpi 600</code></p>
+<h3>2. Análise Rápida de Múltiplas Sequências</h3>
+<p><code>bash
+python neural_module.py \
+    -i multiple_sequences.fasta \
+    -k YOUR_API_KEY \
+    -o quick_analysis/ \
+    --outputs RNA_SEQ ATAC \
+    --formats png \
+    --dpi 150</code></p>
+<h3>3. Análise de Variante Patogênica</h3>
+<p><code>bash
+python neural_module.py \
+    -i disease_gene.fasta \
+    -k YOUR_API_KEY \
+    -o variant_effect/ \
+    --variant 5000 G T \
+    --formats png pdf svg</code></p>
+<h2>🔧 Troubleshooting</h2>
+<h3>Erro: "AlphaGenome não está instalado"</h3>
+<p><code>bash
+pip install git+https://github.com/google-deepmind/alphagenome.git</code></p>
+<h3>Erro: "API key inválida"</h3>
+<p>Verifique se sua API key está correta e ativa em <a href="https://www.alphagenomedocs.com/">alphagenomedocs.com</a></p>
+<h3>Erro: "Sequência muito longa"</h3>
+<p>AlphaGenome suporta até 1 Mbp. Divida sequências maiores em pedaços menores.</p>
+<h3>Problema com Matplotlib</h3>
+<p><code>bash
+pip install --upgrade matplotlib seaborn</code></p>
+<h2>📚 Recursos</h2>
+<ul>
+<li><strong>Documentação do AlphaGenome</strong>: <a href="https://www.alphagenomedocs.com/">https://www.alphagenomedocs.com/</a></li>
+<li><strong>Repositório GitHub</strong>: <a href="https://github.com/google-deepmind/alphagenome">https://github.com/google-deepmind/alphagenome</a></li>
+<li><strong>Paper</strong>: Avsec et al. 2025 - "AlphaGenome: advancing regulatory variant effect prediction"</li>
+</ul>
+<h2>🔬 Casos de Uso</h2>
+<ol>
+<li><strong>Análise de Variantes Regulatórias</strong>: Identificar impacto de SNPs em regiões regulatórias</li>
+<li><strong>Predição de Elementos Funcionais</strong>: Identificar promotores, enhancers, insuladores</li>
+<li><strong>Estudos de Expressão Gênica</strong>: Predizer níveis de expressão em diferentes tecidos</li>
+<li><strong>Análise de Cromatina</strong>: Estudar acessibilidade e modificações de histonas</li>
+<li><strong>Genômica Funcional</strong>: Caracterizar sequências de DNA desconhecidas</li>
+</ol>
+<h2>⚠️ Limitações</h2>
+<ul>
+<li>Requer conexão com internet (API online)</li>
+<li>Taxa de queries limitada (verificar termos de uso)</li>
+<li>Uso gratuito apenas para pesquisa não comercial</li>
+<li>Sequências de 100 bp a 1 Mbp</li>
+<li>Tempo de processamento varia com tamanho da sequência</li>
+</ul>
+<h2>📄 Licença</h2>
+<p>Este módulo é distribuído sob licença Apache 2.0, compatível com o AlphaGenome.</p>
+<h2>🤝 Contribuições</h2>
+<p>Contribuições são bem-vindas! Por favor, abra issues ou pull requests no repositório do projeto.</p>
+<h2>📧 Suporte</h2>
+<p>Para questões sobre o AlphaGenome: alphagenome@google.com
+Para questões sobre este módulo: abra uma issue no repositório</p>
+<hr />
+<p><strong>Desenvolvido para integração com o genomes_analyzer.py</strong></p>

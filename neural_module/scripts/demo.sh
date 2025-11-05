@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Demonstração rápida do Neural Module
 
+# Mudar para o diretório do módulo (pai de scripts/)
+cd "$(dirname "$0")/.."
+
 cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════════════╗
 ║         Neural Module - Demonstração de Uso                      ║
@@ -26,7 +29,7 @@ Este script demonstra os principais recursos do neural_module.py:
 📋 PRÉ-REQUISITOS:
 
 1. Instalar AlphaGenome:
-   $ bash install_alphagenome.sh
+   $ bash ../install_alphagenome.sh
 
 2. Obter API key (gratuita para uso não comercial):
    👉 https://www.alphagenomedocs.com/
@@ -37,25 +40,28 @@ Este script demonstra os principais recursos do neural_module.py:
 
 🚀 EXEMPLOS DE USO:
 
+# Do diretório neural_module/
+$ cd neural_module
+
 # Exemplo 1: Análise básica
-$ python neural_module.py -i sequence.fasta -k YOUR_API_KEY -o results/
+$ python neural_module.py -i ../example_sequence.fasta -k YOUR_API_KEY -o results/
 
 # Exemplo 2: Análise específica de RNA-seq e ATAC-seq
-$ python neural_module.py -i sequence.fasta -k YOUR_API_KEY -o results/ \\
+$ python neural_module.py -i ../example_sequence.fasta -k YOUR_API_KEY -o results/ \
     --outputs RNA_SEQ ATAC
 
 # Exemplo 3: Análise de variante A→C na posição 1000
-$ python neural_module.py -i sequence.fasta -k YOUR_API_KEY -o results/ \\
+$ python neural_module.py -i ../example_sequence.fasta -k YOUR_API_KEY -o results/ \
     --variant 1000 A C
 
 # Exemplo 4: Alta resolução com múltiplos formatos
-$ python neural_module.py -i sequence.fasta -k YOUR_API_KEY -o results/ \\
+$ python neural_module.py -i ../example_sequence.fasta -k YOUR_API_KEY -o results/ \
     --formats png pdf svg --dpi 600
 
 # Exemplo 5: Análise completa de região genômica
-$ python neural_module.py -i chr1_region.fasta -k YOUR_API_KEY -o chr1/ \\
-    --chromosome chr1 --start 1000000 \\
-    --outputs RNA_SEQ CAGE ATAC H3K27AC H3K4ME3 H3K27ME3 CTCF \\
+$ python neural_module.py -i chr1_region.fasta -k YOUR_API_KEY -o chr1/ \
+    --chromosome chr1 --start 1000000 \
+    --outputs RNA_SEQ CAGE ATAC H3K27AC H3K4ME3 H3K27ME3 CTCF \
     --formats png pdf --dpi 600
 
 ───────────────────────────────────────────────────────────────────
@@ -134,9 +140,11 @@ Paper:         Avsec et al. 2025 - "AlphaGenome: advancing
 
 🤝 SUPORTE:
 
-README:        NEURAL_MODULE_README.md
-Testes:        bash test_neural_module.sh YOUR_API_KEY
-Exemplo FASTA: example_sequence.fasta
+README:        README.md
+Guia Rápido:   QUICKSTART.md
+Documentação:  docs/
+Exemplos:      examples/
+Config:        configs/default.yaml
 
 ───────────────────────────────────────────────────────────────────
 
@@ -154,10 +162,11 @@ Exemplo FASTA: example_sequence.fasta
 
 Para testar rapidamente com a sequência de exemplo:
 
-$ python neural_module.py \\
-    -i example_sequence.fasta \\
-    -k YOUR_API_KEY \\
-    -o test_results/ \\
+$ cd neural_module
+$ python neural_module.py \
+    -i ../example_sequence.fasta \
+    -k YOUR_API_KEY \
+    -o test_results/ \
     --outputs RNA_SEQ ATAC
 
 ╔═══════════════════════════════════════════════════════════════════╗

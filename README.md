@@ -257,7 +257,7 @@ If RNA-seq samples are defined in the YAML, a lightweight expression pipeline (H
 
 ## Neural Module — AI-powered DNA Analysis
 
-In addition to traditional variant calling, this repository includes **Neural Module** (`neural_module.py`), an AI-powered tool that uses [AlphaGenome](https://github.com/google-deepmind/alphagenome) from Google DeepMind to predict functional genomic features directly from DNA sequences.
+In addition to traditional variant calling, this repository includes **Neural Module** (in `neural_module/`), an AI-powered toolkit that uses [AlphaGenome](https://github.com/google-deepmind/alphagenome) from Google DeepMind to predict functional genomic features directly from DNA sequences.
 
 ### What is Neural Module?
 
@@ -285,15 +285,16 @@ Neural Module leverages deep learning to predict:
 curl 'https://rest.ensembl.org/sequence/region/human/11:5227002..5229049?coord_system_version=GRCh38' \
   -H 'Content-type:text/x-fasta' > HBB_gene.fasta
 
-# Analyze with AlphaGenome
+# Analyze with AlphaGenome (from neural_module directory)
+cd neural_module
 python neural_module.py \
-  -i HBB_gene.fasta \
+  -i ../HBB_gene.fasta \
   -k YOUR_API_KEY \
   -o results/
 
 # Analyze variant (e.g., Sickle Cell Anemia mutation)
 python neural_module.py \
-  -i HBB_gene.fasta \
+  -i ../HBB_gene.fasta \
   -k YOUR_API_KEY \
   -o sickle_cell/ \
   --variant 1024 A T
@@ -301,22 +302,23 @@ python neural_module.py \
 
 ### Documentation
 
-📚 **Complete Neural Module Documentation**: [NEURAL_MODULE.md](NEURAL_MODULE.md)
+📚 **Complete Neural Module Documentation**: [neural_module/README.md](neural_module/README.md)
 
 Key guides:
-- 🚀 [Installation Guide](INSTALL_NEURAL.md)
+- 🚀 [Installation Guide](neural_module/docs/INSTALL.md)
 - 📥 [Download Real Sequences](DOWNLOAD_SEQUENCES.md)
-- 💡 [Usage Guide](USAGE_NEURAL.md)
-- 📊 [Interpreting Results](RESULTS_NEURAL.md)
+- 💡 [Usage Guide](neural_module/docs/USAGE.md)
+- 📊 [Interpreting Results](neural_module/docs/RESULTS.md)
 - 🎨 [Advanced Visualizations](VISUALIZACOES_AVANCADAS.md)
+- 📑 [Quick Start](neural_module/QUICKSTART.md)
 
 ### Integration with Genomes Analyzer
 
 Neural Module can be used standalone or integrated with the main pipeline to analyze specific genomic regions identified by variant calling.
 
-📖 **Complete Integration Guide**: [NEURAL_INTEGRATION.md](NEURAL_INTEGRATION.md)
+📖 **Complete Integration Guide**: [neural_module/docs/INTEGRATION.md](neural_module/docs/INTEGRATION.md)
 
-The integration tool (`neural_integration.py`) provides:
+The integration tool (`neural_module/neural_integration.py`) provides:
 - **Automated extraction** of sequences from VCF, BED, or gene lists
 - **Neural analysis** of variants and genomic regions
 - **Correlation** of traditional variant calls with AI predictions
@@ -325,10 +327,11 @@ The integration tool (`neural_integration.py`) provides:
 Quick example:
 ```bash
 # Extract variants from pipeline VCF and analyze with AlphaGenome
+cd neural_module
 python neural_integration.py \
   --integrated \
-  --vcf vcf/sample.vcf.gz \
-  --ref refs/GRCh38.fa \
+  --vcf ../vcf/sample.vcf.gz \
+  --ref ../refs/GRCh38.fa \
   --api-key YOUR_API_KEY \
   --output integrated_analysis/
 ```
