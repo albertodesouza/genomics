@@ -9,6 +9,7 @@ _A technical-scientific guide to `genomes_analyzer.py`_
 - [Genomes Analyzer Pipeline](#genomes-analyzer-pipeline)
 - [Neural Module — AI-powered DNA Analysis](#neural-module--ai-powered-dna-analysis)
 - [Neural Longevity Dataset Builder](#neural-longevity-dataset-builder)
+- [Non-Longevous Dataset Builder](#non-longevous-dataset-builder)
 - [How to Use the Genomes Analyzer](#how-to-use-the-genomes-analyzer)
 - [Background execution & monitoring](#background-execution--monitoring)
 - [Conclusion](#conclusion)
@@ -339,6 +340,42 @@ python neural_integration.py \
 `neural_longevity_dataset.py` automates the creation of AlphaGenome-ready training data by downloading 1000 Genomes High Coverage CRAMs, calling variants, extracting alternate-allele FASTA windows, and assembling PyTorch splits under `/dados/GENOMICS_DATA/top3/`. Run the script from that directory so every download, cache, and dataset artifact stays grouped per cohort.
 
 📘 **Detailed usage guide**: [NEURAL_LONGEVITY_DATASET.md](NEURAL_LONGEVITY_DATASET.md)
+
+---
+
+## Non-Longevous Dataset Builder
+
+`build_non_longevous_dataset` is a modular pipeline for building genomic datasets from non-longevous individuals in the 1000 Genomes Project. It analyzes metadata CSV files, selects samples based on configurable criteria (superpopulation, population, sex), and automatically runs `build_window_and_predict.py` with AlphaGenome predictions for each selected individual.
+
+### Key Features
+
+✅ **Automated Sample Selection** — Configure by superpopulation or population with flexible filters  
+✅ **Metadata Analysis** — Comprehensive statistics about sample distribution and demographics  
+✅ **Idempotent Execution** — Built-in checkpoint system to resume interrupted runs  
+✅ **AlphaGenome Integration** — Direct integration with AI-powered genomic predictions  
+✅ **Organized Structure** — Professional module layout with configs and scripts  
+
+### Quick Usage
+
+```bash
+cd build_non_longevous_dataset
+
+# Analyze available samples
+python3 build_non_longevous_dataset.py --config configs/default.yaml
+
+# Configure selection criteria in configs/default.yaml
+# Enable additional steps and run full pipeline
+python3 build_non_longevous_dataset.py --config configs/default.yaml
+```
+
+### Documentation
+
+📚 **Complete Documentation**: [build_non_longevous_dataset/README.md](build_non_longevous_dataset/README.md)
+
+Additional guides:
+- 🚀 [Quick Start Guide](build_non_longevous_dataset/QUICKSTART.md)
+- 🔧 [Implementation Details](build_non_longevous_dataset/IMPLEMENTACAO.md)
+- 📁 [Module Structure](build_non_longevous_dataset/ESTRUTURA.md)
 
 ---
 
