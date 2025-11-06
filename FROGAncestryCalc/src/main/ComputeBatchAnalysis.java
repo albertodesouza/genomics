@@ -325,9 +325,6 @@ public class ComputeBatchAnalysis {
         int sampleCount = 0; 
         int siteCount=0;
         likelihoodSB.setLength(0);
-        likelihoodSB.append(panelInfo);
-        WriteToOutputFile.WriteToLikelihoodFile(homePath,likelihoodSB, outputFileName);
-        likelihoodSB.setLength(0);
         likelihoodSB.append("Individual").append(TAB).append("SNP_Count").append(TAB);
         for (int x = 0; x < sampleOrderHash.size(); x++) {
             likelihoodSB.append(sampleOrderHash.get(x + 1)).append(TAB);

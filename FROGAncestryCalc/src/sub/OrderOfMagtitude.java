@@ -51,20 +51,17 @@ public class OrderOfMagtitude {
             record = new String();
             while ((record = br.readLine()) != null) {
                 index++;
-                if (index == 2) {
+                if (index == 1) {
                     popS = record.trim().split("\t");
                     //create a vector for pops
                     for (int b = 1; b < popS.length; b++) {
                         popV.add(popS[b]);
                     }
-                    firstOrderOfMagSB.append(panelInfo);
-                    WriteToOutputFile.WriteToOrderOfMagFile(homePath,firstOrderOfMagSB, outputf);
-                    firstOrderOfMagSB.setLength(0);
                     firstOrderOfMagSB.append("Individual").append("\t").append("SNP_Count").append("\t");
                     WriteToOutputFile.WriteToOrderOfMagFile(homePath,firstOrderOfMagSB, outputf);
                     firstOrderOfMagSB.setLength(0);
                 }
-                if (index > 2) {
+                if (index > 1) {
                     SNPCount="";
                     firstOrderOfMagSB.setLength(0);
                     String f[] = record.trim().split("\t");

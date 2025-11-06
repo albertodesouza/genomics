@@ -69,6 +69,138 @@ HG02562_GWD|TT|CT|CC|CC|...|TT
    - Two-allele format: `AA`, `TT`, `GG`, `CC`, `AT`, `AG`, etc.
    - Missing data: `NN`
 
+## 🧬 Extracting SNPs from Genomic Data
+
+The `tools/` directory contains scripts to extract the required SNPs from various genomic data sources:
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `vcf_to_frog.py` | Convert VCF files to FROGAncestryCalc format |
+| `extract_snps_from_1000genomes.sh` | Download and extract SNPs from 1000 Genomes Project |
+| `extract_snps_from_wgs.sh` | Extract SNPs from whole genome sequencing data (FASTQ/BAM/VCF) |
+| `aisnps_55_list.txt` | List of the 55 AISNP rs IDs |
+
+### Option 1: From 1000 Genomes Project
+
+Download and extract data from the 1000 Genomes Project Phase 3:
+
+```bash
+# Extract all samples
+./tools/extract_snps_from_1000genomes.sh
+
+# Extract specific samples only
+echo -e "HG02561\nNA18501\nNA19338" > my_samples.txt
+./tools/extract_snps_from_1000genomes.sh -s my_samples.txt -o input/my_samples.txt
+
+# Keep downloaded VCF files for future use
+./tools/extract_snps_from_1000genomes.sh -k
+```
+
+**Requirements:**
+- `bcftools` (install via: `conda install -c bioconda bcftools`)
+- `wget`
+- ~20 GB disk space for full download
+
+### Option 2: From Your Own VCF File
+
+If you already have a VCF file (from sequencing, microarray, or other sources):
+
+```bash
+# Convert VCF to FROGAncestryCalc format
+python3 tools/vcf_to_frog.py \
+    your_samples.vcf.gz \
+    tools/aisnps_55_list.txt \
+    input/your_data.txt
+```
+
+### Option 3: From Whole Genome Sequencing
+
+Extract SNPs from raw sequencing data:
+
+```bash
+# From VCF
+./tools/extract_snps_from_wgs.sh \
+    -i sample.vcf.gz \
+    -t vcf \
+    -o input/sample.txt
+
+# From BAM (aligned reads)
+./tools/extract_snps_from_wgs.sh \
+    -i sample.bam \
+    -t bam \
+    -r GRCh38.fa \
+    -o input/sample.txt
+
+# From FASTQ (paired-end)
+./tools/extract_snps_from_wgs.sh \
+    -i sample_R1.fastq.gz \
+    -2 sample_R2.fastq.gz \
+    -t fastq \
+    -r GRCh38.fa \
+    -o input/sample.txt
+```
+
+**Requirements for WGS:**
+- `bcftools`, `samtools` (for all types)
+- `bwa` (for FASTQ alignment)
+- Reference genome (GRCh37/hg19 or GRCh38/hg38)
+
+### SNP List Reference
+
+The 55 AISNPs used in this panel are:
+
+<details>
+<summary>Click to expand SNP list</summary>
+
+```
+rs10497191, rs1079597, rs11652805, rs1229984, rs12439433, rs12498138,
+rs12913832, rs1426654, rs1462906, rs1572018, rs16891982, rs174570,
+rs17642714, rs1800414, rs1834619, rs1871534, rs1876482, rs192655,
+rs200354, rs2024566, rs2042762, rs2166624, rs2196051, rs2238151,
+rs2593595, rs260690, rs2814778, rs310644, rs3737576, rs3811801,
+rs3814134, rs3823159, rs3827760, rs3916235, rs4411548, rs4471745,
+rs459920, rs4833103, rs4891825, rs4918664, rs671, rs6754311,
+rs6990312, rs7226659, rs7251928, rs7326934, rs735480, rs7554936,
+rs7657799, rs7722456, rs798443, rs7997709, rs870347, rs917115,
+rs9522149
+```
+
+Full list available in: `tools/aisnps_55_list.txt`
+
+</details>
+
+### Installation of Required Tools
+
+The easiest way to install bioinformatics tools is via conda:
+
+```bash
+# Create a new conda environment with all tools
+conda create -n genomics \
+    bcftools samtools bwa gatk4 \
+    python=3.9 -c bioconda -c conda-forge
+
+# Activate the environment
+conda activate genomics
+
+# Verify installation
+bcftools --version
+samtools --version
+bwa
+```
+
+### Notes on Genome Builds
+
+- **1000 Genomes Phase 3**: Uses GRCh37/hg19
+- **Your data**: Check which build was used for alignment
+- **Converting between builds**: Use UCSC liftOver if needed
+
+```bash
+# Example: Convert coordinates from hg38 to hg19
+# (if your VCF uses a different build than your reference)
+```
+
 ## 📊 Output Files
 
 Generated in the `output/` directory:
@@ -113,8 +245,13 @@ FROGAncestryCalc/
 │   └── precision_sample.txt
 ├── log/                        # Execution logs
 │   └── workingLog.txt
+├── tools/                      # Data extraction tools
+│   ├── vcf_to_frog.py          # VCF converter
+│   ├── extract_snps_from_1000genomes.sh  # 1000G extractor
+│   ├── extract_snps_from_wgs.sh          # WGS extractor
+│   └── aisnps_55_list.txt      # SNP list
 ├── obsolete/                   # Original files with bugs
-├── run.sh          # Execution script
+├── run.sh                      # Execution script
 ├── recompile.sh                # Recompilation script
 ├── FROGAncestryCalc.properties # Configuration file
 └── MODIFICACOES.md             # Technical modification details

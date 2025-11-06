@@ -50,35 +50,32 @@ public class RankPopulationLikelihood {
 			FileReader fr = new FileReader(homePath+"/output/" + fileName);
 			BufferedReader br = new BufferedReader(fr);
 			record = new String();
-			while ((record = br.readLine()) != null) {
-				index++;
-				if(index==2){
-					popS=record.trim().split("\t");
-					//create a vector for pops
-					for(int b=1; b<popS.length;b++){
-						popV.add(popS[b]);
-					}
-                                        rankOrderSB.append(panelInfo);
-                                        WriteToOutputFile.WriteToRankPopFile(homePath,rankOrderSB,outputf);
-					rankOrderSB.setLength(0);
-					rankOrderSB.append("Individual").append("\t").append("SNP_Count").append("\t");
-					for(int g=0; g<popV.size();g++){
-                                            rankOrderSB.append(popV.get(g)).append("\t");
-					}
-					WriteToOutputFile.WriteToRankPopFile(homePath,rankOrderSB,outputf);
-					rankOrderSB.setLength(0);
+		while ((record = br.readLine()) != null) {
+			index++;
+		if(index==1){
+			popS=record.trim().split("\t");
+			//create a vector for pops
+			for(int b=2; b<popS.length;b++){
+				popV.add(popS[b]);
+			}
+				rankOrderSB.append("Individual").append("\t").append("SNP_Count").append("\t");
+				for(int g=0; g<popV.size();g++){
+                                    rankOrderSB.append(popV.get(g)).append("\t");
 				}
-				if(index>2){
+				WriteToOutputFile.WriteToRankPopFile(homePath,rankOrderSB,outputf);
+				rankOrderSB.setLength(0);
+			}
+			if(index>1){
 					rankOrderSB.setLength(0);
 					String f[]=record.trim().split("\t");
 					
-					cellLine=f[0].trim();
-					SNPCount=f[1].trim();
-					cellLinesV.clear();
-					for(int k=2; k<f.length;k++){						
-						likelihoodFromTb=f[k];						
-						cellLinesV.add(new IndividualBean(popV.get(k-1),Double.parseDouble(likelihoodFromTb)));
-					}
+				cellLine=f[0].trim();
+				SNPCount=f[1].trim();
+				cellLinesV.clear();
+				for(int k=2; k<f.length;k++){						
+					likelihoodFromTb=f[k];						
+					cellLinesV.add(new IndividualBean(popV.get(k-2),Double.parseDouble(likelihoodFromTb)));
+				}
 					//get rank order
 					Collections.sort(cellLinesV,Collections.reverseOrder()); 
 				 
