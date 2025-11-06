@@ -4,6 +4,35 @@ FROG-kb (Forensic Resource/Reference On Genetics - Knowledge base) Ancestry Infe
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+## Index
+- [Quick Start](#-quick-start)
+- [Configuration](#-configuration)
+  - [Available AI Panels](#available-ai-panels)
+- [Input File Format](#-input-file-format)
+  - [Format Specifications](#format-specifications)
+  - [Preparing Your Input File](#preparing-your-input-file)
+- [Extracting SNPs from Genomic Data](#-extracting-snps-from-genomic-data)
+  - [Available Tools](#available-tools)
+  - [Option 1: From 1000 Genomes Project](#option-1-from-1000-genomes-project)
+  - [Option 2: From Your Own VCF File](#option-2-from-your-own-vcf-file)
+  - [Option 3: From Whole Genome Sequencing](#option-3-from-whole-genome-sequencing)
+  - [SNP List Reference](#snp-list-reference)
+  - [Installation of Required Tools](#installation-of-required-tools)
+  - [Notes on Genome Builds](#notes-on-genome-builds)
+- [Output Files](#-output-files)
+- [Project Structure](#️-project-structure)
+- [Requirements](#️-requirements)
+- [Modifications from Original](#-modifications-from-original)
+- [Error Handling](#-error-handling)
+- [Maintenance](#️-maintenance)
+- [Population Coverage](#-population-coverage)
+- [Troubleshooting](#-troubleshooting)
+- [License](#-license)
+- [Acknowledgments](#-acknowledgments)
+- [Support](#-support)
+
+---
+
 ## 🚀 Quick Start
 
 ### Run Analysis
