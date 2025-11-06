@@ -407,6 +407,73 @@ Additional guides:
 
 ---
 
+## FROGAncestryCalc — Análise de Ancestralidade por AISNPs
+
+> **📁 Localização**: Este módulo está em `FROGAncestryCalc/`
+
+O **FROGAncestryCalc** (FROG-kb Ancestry Inference Batch Likelihood Computation Tool) é uma ferramenta para inferência de ancestralidade baseada em SNPs informativos de ancestralidade (AISNPs). A versão modificada neste repositório suporta delimitadores pipe (`|`) e inclui ferramentas para extrair SNPs de dados genômicos em diversos formatos.
+
+### Principais Recursos
+
+✅ **Múltiplos Painéis de AISNPs** — Suporta 5 painéis: 55AI (KiddLab), 128AI (Seldin), 34plex (SNPforID), combined (192 SNPs), precision (165 SNPs)  
+✅ **Extração Automatizada** — Scripts para extrair SNPs de VCF, BAM, FASTQ, e 1000 Genomes Project  
+✅ **155 Populações** — Calcula probabilidades de ancestralidade para 155 populações mundiais  
+✅ **Formatos Flexíveis** — Converte VCF/BAM/FASTQ para formato FROGAncestryCalc  
+✅ **Relatórios Detalhados** — Gera arquivos de likelihood, ordem de magnitude e ranking por população  
+
+### Exemplo Rápido
+
+```bash
+cd FROGAncestryCalc
+
+# Extrair SNPs de um arquivo VCF
+python3 tools/vcf_to_frog.py \
+    sample.vcf.gz \
+    tools/aisnps_55_list.txt \
+    input/sample_data.txt
+
+# Executar análise de ancestralidade
+./run.sh
+```
+
+### Ferramentas de Extração
+
+O módulo inclui três ferramentas para extrair AISNPs de dados genômicos:
+
+| Ferramenta | Origem dos Dados |
+|------------|------------------|
+| `vcf_to_frog.py` | Arquivos VCF (de qualquer fonte) |
+| `extract_snps_from_1000genomes.sh` | Download direto do 1000 Genomes Project Phase 3 |
+| `extract_snps_from_wgs.sh` | Dados de sequenciamento completo (FASTQ/BAM/VCF) |
+
+### Documentação
+
+📚 **Documentação Completa**: [FROGAncestryCalc/README.md](FROGAncestryCalc/README.md)
+
+Guias adicionais:
+- 🧬 [Lista de 55 AISNPs](FROGAncestryCalc/tools/aisnps_55_list.txt)
+- ⚙️ [Detalhes das Modificações](FROGAncestryCalc/MODIFICACOES.md)
+
+### Integração com o Pipeline Principal
+
+O FROGAncestryCalc pode ser usado de forma independente ou integrado com o pipeline principal para análise de ancestralidade de amostras processadas:
+
+```bash
+# Extrair SNPs do VCF gerado pelo pipeline
+cd FROGAncestryCalc
+python3 tools/vcf_to_frog.py \
+    ../vcf/NA12878.vcf.gz \
+    tools/aisnps_55_list.txt \
+    input/NA12878_aisnps.txt
+
+# Executar análise
+./run.sh
+```
+
+**Nota**: O pipeline principal também inclui análise de ancestralidade via ADMIXTURE supervisionado (passo 15), que usa uma abordagem diferente baseada em PLINK e referências HGDP+1KG. O FROGAncestryCalc oferece uma alternativa focada especificamente em painéis de AISNPs validados para uso forense e clínico.
+
+---
+
 ## How to Use the Genomes Analyzer
 
 ### Uninstallation (if desired)
