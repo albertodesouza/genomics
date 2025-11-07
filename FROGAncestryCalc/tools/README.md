@@ -86,7 +86,7 @@ Sample2|TT|CC|AG|...
 
 ### extract_snps_from_1000genomes.sh
 
-Downloads 1000 Genomes High Coverage (GRCh38) data and extracts the 55 AISNPs.
+Downloads 1000 Genomes data (Phase 3 GRCh37 or High Coverage GRCh38) and extracts the 55 AISNPs.
 Auto-detects existing VCF files and skips download if already present.
 
 **Usage:**
@@ -95,7 +95,10 @@ Auto-detects existing VCF files and skips download if already present.
 ```
 
 **Options:**
-- `-d DIR` - VCF directory (default: `/dados/GENOMICS_DATA/top3/longevity_dataset/vcf_chromosomes`)
+- `-b BUILD` - Genome build: `grch37` or `grch38` (default: `grch37`)
+- `-d DIR` - VCF directory (default: auto-set based on build)
+  - GRCh37: `/dados/GENOMICS_DATA/top3/longevity_dataset/vcf_chromosomes_GRCh37`
+  - GRCh38: `/dados/GENOMICS_DATA/top3/longevity_dataset/vcf_chromosomes`
   - Script auto-detects existing VCFs and skips download if present
 - `-o FILE` - Output file (default: `input/1000genomes_55aisnps.txt`)
 - `-s FILE` - Sample list file (one sample ID per line)
@@ -104,12 +107,20 @@ Auto-detects existing VCF files and skips download if already present.
 **Requirements:**
 - `bcftools` (install via conda: `conda install -c bioconda bcftools`)
 - `wget`
-- ~35 GB disk space for full download (High Coverage files are larger)
+- Python 3 with `requests` library
+- Disk space:
+  - GRCh37 Phase 3: ~20 GB
+  - GRCh38 High Coverage: ~35 GB
 - Internet connection (only if downloading)
+- **For GRCh38:** Run `tools/convert_grch37_to_grch38.py` first to generate GRCh38 coordinates
 
 **What it does:**
 1. Checks for existing VCF files in specified directory
 2. Downloads missing VCF files for chromosomes 1-22 and X (if needed)
+   - Uses robust download with automatic retry (up to 5 attempts)
+   - Detects stalled downloads with 5-minute timeout
+   - Supports resume for interrupted downloads
+   - Exponential backoff between retries (2s, 4s, 8s, 16s)
 3. Checks for cached extracted SNPs (reuses if found)
 4. Concatenates all chromosomes (if cache not found)
 5. Extracts only the 55 target SNPs and caches result
@@ -118,24 +129,35 @@ Auto-detects existing VCF files and skips download if already present.
 
 **Examples:**
 ```bash
-# Extract all samples (uses existing VCFs or downloads if needed)
+# Extract all samples using GRCh37 Phase 3 (default)
 ./tools/extract_snps_from_1000genomes.sh
 
-# Extract specific samples
+# Extract using GRCh38 High Coverage (requires coordinate conversion first)
+python3 tools/convert_grch37_to_grch38.py
+./tools/extract_snps_from_1000genomes.sh -b grch38
+
+# Extract specific samples with GRCh37
 ./tools/extract_snps_from_1000genomes.sh \
+    -b grch37 \
     -s african_samples.txt \
     -o input/african_1000g.txt
 
-# Use custom VCF directory
+# Use custom VCF directory with GRCh38
 ./tools/extract_snps_from_1000genomes.sh \
+    -b grch38 \
     -d /path/to/vcf/directory \
     -o input/custom.txt
 ```
 
-**Data Source:**
-- FTP: ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20201028_3202_phased/
-- Genome build: GRCh38 (hg38)
-- Version: High Coverage (30x)
+**Data Sources:**
+- **GRCh37 Phase 3:**
+  - FTP: ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/
+  - Genome build: GRCh37/hg19
+  - Version: Phase 3 (low coverage)
+- **GRCh38 High Coverage:**
+  - FTP: ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20201028_3202_phased/
+  - Genome build: GRCh38/hg38
+  - Version: High Coverage (30x)
 
 ---
 
@@ -257,26 +279,80 @@ brew install bcftools samtools bwa python3 wget
 
 ### Genome Build Compatibility
 
-- **1000 Genomes High Coverage**: GRCh38/hg38
-- **Your data**: Check alignment build in VCF/BAM header
-- **Mismatch**: Use UCSC liftOver to convert coordinates
+The FROGAncestryCalc tools support both major genome builds:
+
+- **GRCh37/hg19 (default)**:
+  - 1000 Genomes Phase 3 data
+  - Coordinates in `SNPInfo/55_aisnps_alleles.txt`
+  - Most legacy sequencing data
+  
+- **GRCh38/hg38**:
+  - 1000 Genomes High Coverage data
+  - Coordinates in `SNPInfo/55_aisnps_alleles_grch38.txt` (generated via conversion script)
+  - Modern sequencing data
+
+**Converting Coordinates:**
+
+To use GRCh38 data, first generate the GRCh38 coordinate file:
+
+```bash
+python3 tools/convert_grch37_to_grch38.py
+```
+
+This script:
+- Queries the Ensembl REST API for each SNP
+- Converts GRCh37 coordinates to GRCh38
+- Creates `SNPInfo/55_aisnps_alleles_grch38.txt`
+- Takes ~5 minutes due to API rate limiting
+
+**Checking Your Data's Build:**
+
+```bash
+# Check VCF header
+bcftools view -h your_file.vcf.gz | grep "##reference"
+
+# Check BAM header
+samtools view -H your_file.bam | grep "@SQ"
+```
+
+Common reference indicators:
+- GRCh37/hg19: "b37", "hg19", "GRCh37"
+- GRCh38/hg38: "b38", "hg38", "GRCh38"
 
 ### SNP Coordinates
 
 The 55 AISNPs span multiple chromosomes. Missing SNPs in output may indicate:
 - SNP not covered by sequencing
 - Low quality/filtered out
-- Wrong genome build
+- Wrong genome build (use `-b` flag to match your data)
 - SNP not in VCF (microarray data may miss some SNPs)
 
 ### Performance Tips
 
 - The script automatically caches extracted SNPs for faster subsequent runs
 - VCF files are preserved for future use
+- Downloads can be resumed if interrupted (the script detects partial files)
 - For large datasets, consider parallel processing:
   ```bash
   parallel -j 4 './tools/extract_snps_from_wgs.sh -i {} -t vcf -o input/{/.}.txt' ::: *.vcf.gz
   ```
+
+### Download Issues
+
+If downloads are stalling or failing:
+
+1. **The script will automatically retry** up to 5 times with exponential backoff
+2. **Downloads can be resumed** - just run the script again, it will skip completed files
+3. **Check your connection:**
+   ```bash
+   ping ftp.1000genomes.ebi.ac.uk
+   ```
+4. **Verify disk space:**
+   ```bash
+   df -h /dados/GENOMICS_DATA/
+   ```
+5. **Try a different mirror** (if available) by manually downloading and placing files in the target directory
+6. **Use curl instead of wget** - the script automatically falls back to curl if wget fails
 
 ### Quality Filtering
 

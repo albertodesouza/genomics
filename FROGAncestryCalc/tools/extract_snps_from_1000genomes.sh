@@ -3,15 +3,18 @@
 # Extract AISNPs from 1000 Genomes Project Data
 ################################################################################
 #
-# This script downloads 1000 Genomes High Coverage (GRCh38) data and extracts
-# the 55 Ancestry Informative SNPs (AISNPs) for use with FROGAncestryCalc.
+# This script downloads 1000 Genomes data (Phase 3 GRCh37 or High Coverage GRCh38)
+# and extracts the 55 Ancestry Informative SNPs (AISNPs) for use with FROGAncestryCalc.
 # If VCFs already exist in the specified directory, download is skipped.
 #
 # Usage:
 #   ./extract_snps_from_1000genomes.sh [options]
 #
 # Options:
-#   -d DIR    VCF directory (default: /dados/GENOMICS_DATA/top3/longevity_dataset/vcf_chromosomes)
+#   -b BUILD  Genome build: grch37 or grch38 (default: grch37)
+#   -d DIR    VCF directory (default: auto-set based on build)
+#             GRCh37: /dados/GENOMICS_DATA/top3/longevity_dataset/vcf_chromosomes_GRCh37
+#             GRCh38: /dados/GENOMICS_DATA/top3/longevity_dataset/vcf_chromosomes
 #             Script will auto-detect existing VCFs and skip download if present
 #   -o FILE   Output file (default: input/1000genomes_55aisnps.txt)
 #   -s FILE   Sample list (optional, extracts specific samples only)
@@ -21,25 +24,29 @@
 #   - bcftools (install via: conda install -c bioconda bcftools)
 #   - wget
 #   - Python 3
+#   - For GRCh38: Run tools/convert_grch37_to_grch38.py first to generate coordinates
 #
-# Example:
-#   # Extract all samples (uses existing VCFs if available)
+# Examples:
+#   # Extract all samples using GRCh37 (default, uses existing VCFs if available)
 #   ./extract_snps_from_1000genomes.sh
 #
-#   # Extract specific samples
+#   # Extract using GRCh38 High Coverage data
+#   ./extract_snps_from_1000genomes.sh -b grch38
+#
+#   # Extract specific samples with GRCh37
 #   echo -e "HG02561\nHG02562\nHG03055" > my_samples.txt
-#   ./extract_snps_from_1000genomes.sh -s my_samples.txt -o input/my_data.txt
+#   ./extract_snps_from_1000genomes.sh -b grch37 -s my_samples.txt -o input/my_data.txt
 #
 ################################################################################
 
 # set -e  # Exit on error
 
 # Default parameters
-DOWNLOAD_DIR="/dados/GENOMICS_DATA/top3/longevity_dataset/vcf_chromosomes"
+BUILD="grch37"
+DOWNLOAD_DIR=""  # Will be set based on build
 OUTPUT_FILE="input/1000genomes_55aisnps.txt"
 SAMPLE_FILE=""
 SNP_LIST="tools/aisnps_55_list.txt"
-SNP_BED="tools/aisnps_55_grch38.bed"
 
 # Colors for output
 RED='\033[0;31m'
@@ -50,13 +57,14 @@ NC='\033[0m' # No Color
 
 # Help message
 show_help() {
-    head -n 30 "$0" | grep "^#" | sed 's/^# \?//'
+    head -n 40 "$0" | grep "^#" | sed 's/^# \?//'
     exit 0
 }
 
 # Parse command line arguments
-while getopts "d:o:s:h" opt; do
+while getopts "b:d:o:s:h" opt; do
     case $opt in
+        b) BUILD="$OPTARG" ;;
         d) DOWNLOAD_DIR="$OPTARG" ;;
         o) OUTPUT_FILE="$OPTARG" ;;
         s) SAMPLE_FILE="$OPTARG" ;;
@@ -65,9 +73,42 @@ while getopts "d:o:s:h" opt; do
     esac
 done
 
+# Validate build option
+BUILD=$(echo "$BUILD" | tr '[:upper:]' '[:lower:]')
+if [[ "$BUILD" != "grch37" && "$BUILD" != "grch38" ]]; then
+    echo -e "${RED}Error: Invalid build '$BUILD'. Must be 'grch37' or 'grch38'${NC}"
+    exit 1
+fi
+
+# Set build-specific defaults
+if [ -z "$DOWNLOAD_DIR" ]; then
+    if [ "$BUILD" = "grch38" ]; then
+        DOWNLOAD_DIR="/dados/GENOMICS_DATA/top3/longevity_dataset/vcf_chromosomes"
+    else
+        DOWNLOAD_DIR="/dados/GENOMICS_DATA/top3/longevity_dataset/vcf_chromosomes_GRCh37"
+    fi
+fi
+
+# Set build-specific files and URLs
+if [ "$BUILD" = "grch38" ]; then
+    ALLELES_FILE="SNPInfo/55_aisnps_alleles_grch38.txt"
+    SNP_BED="tools/aisnps_55_grch38.bed"
+    FTP_BASE="ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20201028_3202_phased"
+    VCF_PATTERN="1kGP_high_coverage_Illumina"
+    BUILD_DISPLAY="GRCh38/hg38 (High Coverage)"
+else
+    ALLELES_FILE="SNPInfo/55_aisnps_alleles.txt"
+    SNP_BED="tools/aisnps_55_grch37.bed"
+    FTP_BASE="ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502"
+    VCF_PATTERN="phase3"
+    BUILD_DISPLAY="GRCh37/hg19 (Phase 3)"
+fi
+
 # Print header
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}1000 Genomes AISNP Extraction Pipeline${NC}"
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}Genome Build: ${BUILD_DISPLAY}${NC}"
 echo -e "${BLUE}========================================${NC}\n"
 
 # Check requirements
@@ -96,10 +137,26 @@ if [ ! -f "$SNP_LIST" ]; then
     exit 1
 fi
 
+# Check for alleles file
+if [ ! -f "$ALLELES_FILE" ]; then
+    echo -e "${RED}Error: Alleles file not found: $ALLELES_FILE${NC}"
+    if [ "$BUILD" = "grch38" ]; then
+        echo -e "${YELLOW}For GRCh38, you need to generate the coordinates file first:${NC}"
+        echo "  python3 tools/convert_grch37_to_grch38.py"
+    fi
+    exit 1
+fi
+
 # Create BED file if it doesn't exist
 if [ ! -f "$SNP_BED" ]; then
-    echo "Creating BED file with SNP coordinates..."
-    awk 'NR>1 {print "chr"$3"\t"$4-1"\t"$4"\t"$2}' SNPInfo/55_aisnps_alleles.txt > "$SNP_BED"
+    echo "Creating BED file with SNP coordinates from $ALLELES_FILE..."
+    if [ "$BUILD" = "grch37" ]; then
+        # GRCh37/Phase 3: SEM prefixo chr (usa apenas 1, 2, 3, ..., X)
+        awk 'NR>1 {print $3"\t"$4-1"\t"$4"\t"$2}' "$ALLELES_FILE" > "$SNP_BED"
+    else
+        # GRCh38: COM prefixo chr (usa chr1, chr2, chr3, ..., chrX)
+        awk 'NR>1 {print "chr"$3"\t"$4-1"\t"$4"\t"$2}' "$ALLELES_FILE" > "$SNP_BED"
+    fi
     echo -e "${GREEN}✓ Created $SNP_BED${NC}"
 fi
 
@@ -123,17 +180,185 @@ cd "$DOWNLOAD_DIR" || {
 
 echo "Changed to: $(pwd)"
 
-# 1000 Genomes High Coverage FTP base URL
-FTP_BASE="ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20201028_3202_phased"
-
 echo -e "${YELLOW}Step 1: Checking for existing VCF files...${NC}"
+
+# Function to get VCF filename for a chromosome
+get_vcf_filename() {
+    local chr=$1
+    if [ "$BUILD" = "grch38" ]; then
+        # High Coverage pattern (might have .v2 suffix for some chromosomes)
+        echo "1kGP_high_coverage_Illumina.chr${chr}.filtered.SNV_INDEL_SV_phased_panel"
+    else
+        # Phase 3 pattern
+        # Note: chrX uses v1c instead of v5b
+        if [ "$chr" = "X" ]; then
+            echo "ALL.chr${chr}.phase3_shapeit2_mvncall_integrated_v1c.20130502.genotypes"
+        else
+            echo "ALL.chr${chr}.phase3_shapeit2_mvncall_integrated_v5b.20130502.genotypes"
+        fi
+    fi
+}
+
+# Robust download function with retry and timeout
+download_file_robust() {
+    local url=$1
+    local output=$2
+    local max_attempts=5
+    local stall_timeout=120  # Kill if no progress for 2 minutes
+    local attempt=1
+    
+    while [ $attempt -le $max_attempts ]; do
+        if [ $attempt -eq 1 ]; then
+            echo -e "${BLUE}  Starting download...${NC}"
+        else
+            echo -e "${BLUE}  Retry attempt $attempt/$max_attempts...${NC}"
+        fi
+        
+        # Remove partial file if exists on first attempt
+        if [ $attempt -eq 1 ]; then
+            [ -f "${output}.partial" ] && rm -f "${output}.partial"
+        fi
+        
+        # Get start time for speed calculation
+        start_time=$(date +%s)
+        
+        # Start download in background with watchdog
+        if command -v wget &> /dev/null; then
+            # Use wget with progress bar in background
+            (
+                wget --timeout=60 \
+                     --read-timeout=60 \
+                     --tries=1 \
+                     --continue \
+                     --show-progress \
+                     --progress=bar:force:noscroll \
+                     -O "${output}.partial" \
+                     "$url" 2>&1
+            ) &
+            download_pid=$!
+        # Fallback to curl if wget not available
+        elif command -v curl &> /dev/null; then
+            echo -e "${YELLOW}  Using curl (wget not available)${NC}"
+            (
+                curl --connect-timeout 30 \
+                     --max-time 0 \
+                     --speed-time 120 \
+                     --speed-limit 1000 \
+                     --retry 0 \
+                     --progress-bar \
+                     --continue-at - \
+                     -o "${output}.partial" \
+                     "$url"
+            ) &
+            download_pid=$!
+        else
+            echo -e "${RED}Error: Neither wget nor curl is available${NC}"
+            return 1
+        fi
+        
+        # Watchdog: monitor if file is growing
+        last_size=0
+        stall_count=0
+        max_stalls=3  # Allow 3 checks without progress before killing
+        
+        while kill -0 $download_pid 2>/dev/null; do
+            sleep 20  # Check every 20 seconds
+            
+            if [ -f "${output}.partial" ]; then
+                current_size=$(stat -f%z "${output}.partial" 2>/dev/null || stat -c%s "${output}.partial" 2>/dev/null || echo 0)
+                
+                if [ "$current_size" -eq "$last_size" ]; then
+                    stall_count=$((stall_count + 1))
+                    echo -e "${YELLOW}  ⚠ No progress detected (check $stall_count/$max_stalls)${NC}"
+                    
+                    if [ $stall_count -ge $max_stalls ]; then
+                        echo -e "${RED}  ✗ Download stalled - killing process${NC}"
+                        kill -9 $download_pid 2>/dev/null
+                        wait $download_pid 2>/dev/null
+                        break
+                    fi
+                else
+                    # Progress detected, reset counter
+                    if [ $stall_count -gt 0 ]; then
+                        echo -e "${GREEN}  ✓ Progress resumed${NC}"
+                    fi
+                    stall_count=0
+                    last_size=$current_size
+                fi
+            fi
+        done
+        
+        # Wait for download to finish
+        wait $download_pid 2>/dev/null
+        download_status=$?
+        
+        # Calculate download time
+        end_time=$(date +%s)
+        duration=$((end_time - start_time))
+        
+        # Check if download succeeded
+        if [ $download_status -eq 0 ] && [ -f "${output}.partial" ]; then
+            # Check if file has content (not empty or too small)
+            file_size=$(stat -f%z "${output}.partial" 2>/dev/null || stat -c%s "${output}.partial" 2>/dev/null || echo 0)
+            
+            if [ "$file_size" -gt 1000 ]; then
+                # Move to final location
+                mv "${output}.partial" "$output"
+                
+                # Format file size
+                if command -v numfmt &> /dev/null; then
+                    size_human=$(numfmt --to=iec-i --suffix=B $file_size)
+                else
+                    size_human=$(echo "scale=2; $file_size / 1024 / 1024 / 1024" | bc 2>/dev/null || echo "$file_size")
+                    size_human="${size_human} GB"
+                fi
+                
+                # Calculate average speed
+                if [ $duration -gt 0 ]; then
+                    speed_bps=$((file_size / duration))
+                    if command -v numfmt &> /dev/null; then
+                        speed_human=$(numfmt --to=iec-i --suffix=B/s $speed_bps)
+                    else
+                        speed_mbps=$(echo "scale=2; $speed_bps / 1024 / 1024" | bc 2>/dev/null || echo "?")
+                        speed_human="${speed_mbps} MB/s"
+                    fi
+                    echo -e "${GREEN}  ✓ Download complete: ${size_human} in ${duration}s (avg: ${speed_human})${NC}"
+                else
+                    echo -e "${GREEN}  ✓ Download complete: ${size_human}${NC}"
+                fi
+                return 0
+            else
+                echo -e "${YELLOW}  ⚠ Downloaded file too small ($file_size bytes), retrying...${NC}"
+                rm -f "${output}.partial"
+            fi
+        else
+            echo -e "${YELLOW}  ⚠ Download failed (exit code: $download_status) after ${duration}s${NC}"
+            # Don't delete partial file - we'll try to resume
+        fi
+        
+        # Wait before retry (exponential backoff)
+        if [ $attempt -lt $max_attempts ]; then
+            wait_time=$((2 ** attempt))
+            echo -e "${YELLOW}  Waiting ${wait_time}s before retry...${NC}"
+            sleep $wait_time
+        fi
+        
+        attempt=$((attempt + 1))
+    done
+    
+    # All attempts failed
+    echo -e "${RED}  ✗ Failed to download after $max_attempts attempts${NC}"
+    rm -f "${output}.partial"
+    return 1
+}
 
 # Check if VCFs already exist
 EXISTING_COUNT=0
 for chr in {1..22} X; do
-    VCF_FILE="1kGP_high_coverage_Illumina.chr${chr}.filtered.SNV_INDEL_SV_phased_panel.vcf.gz"
-    VCF_FILE_V2="1kGP_high_coverage_Illumina.chr${chr}.filtered.SNV_INDEL_SV_phased_panel.v2.vcf.gz"
-    if [ -f "$VCF_FILE" ] || [ -f "$VCF_FILE_V2" ]; then
+    VCF_BASE=$(get_vcf_filename "$chr")
+    
+    # Check for both possible file names (with and without .v2)
+    if [ -f "${VCF_BASE}.vcf.gz" ] || [ -f "${VCF_BASE}.v2.vcf.gz" ]; then
         EXISTING_COUNT=$((EXISTING_COUNT + 1))
     fi
 done
@@ -149,33 +374,62 @@ elif [ $EXISTING_COUNT -gt 0 ]; then
     NEED_DOWNLOAD=true
 else
     echo -e "${YELLOW}→ No existing VCFs found${NC}"
-    echo -e "${YELLOW}→ Downloading 1000 Genomes High Coverage VCF files...${NC}"
+    if [ "$BUILD" = "grch38" ]; then
+        echo -e "${YELLOW}→ Downloading 1000 Genomes High Coverage (GRCh38) VCF files...${NC}"
+    else
+        echo -e "${YELLOW}→ Downloading 1000 Genomes Phase 3 (GRCh37) VCF files...${NC}"
+    fi
     echo "This may take a while (several GB of data)"
     NEED_DOWNLOAD=true
 fi
 
 # Download VCFs if needed
 if [ "$NEED_DOWNLOAD" = true ]; then
+    FAILED_DOWNLOADS=()
+    
     for chr in {1..22} X; do
-        VCF_FILE="1kGP_high_coverage_Illumina.chr${chr}.filtered.SNV_INDEL_SV_phased_panel.vcf.gz"
-        VCF_FILE_V2="1kGP_high_coverage_Illumina.chr${chr}.filtered.SNV_INDEL_SV_phased_panel.v2.vcf.gz"
+        VCF_BASE=$(get_vcf_filename "$chr")
+        VCF_FILE="${VCF_BASE}.vcf.gz"
+        VCF_FILE_V2="${VCF_BASE}.v2.vcf.gz"
         TBI_FILE="${VCF_FILE}.tbi"
         
-        # Check both possible file names
+        # Check if file already exists (with or without .v2)
         if [ -f "$VCF_FILE" ] || [ -f "$VCF_FILE_V2" ]; then
             echo -e "${GREEN}✓ chr${chr} already present${NC}"
         else
             echo -e "${BLUE}→ Downloading chromosome ${chr}...${NC}"
-            wget -q --show-progress "${FTP_BASE}/${VCF_FILE}" || {
-                echo -e "${RED}Failed to download chr${chr}${NC}"
-                exit 1
-            }
-            wget -q "${FTP_BASE}/${TBI_FILE}" || {
-                echo -e "${RED}Failed to download chr${chr} index${NC}"
-                exit 1
-            }
+            
+            # Download VCF file
+            if download_file_robust "${FTP_BASE}/${VCF_FILE}" "$VCF_FILE"; then
+                # Download index file (with retry)
+                echo -e "${BLUE}  → Downloading index...${NC}"
+                if ! download_file_robust "${FTP_BASE}/${TBI_FILE}" "$TBI_FILE"; then
+                    echo -e "${YELLOW}  ⚠ Warning: Failed to download index for chr${chr}${NC}"
+                    echo -e "${YELLOW}  Will try to create index locally later${NC}"
+                fi
+                echo -e "${GREEN}✓ chr${chr} download complete${NC}"
+            else
+                echo -e "${RED}✗ Failed to download chr${chr} after all retries${NC}"
+                FAILED_DOWNLOADS+=("chr${chr}")
+            fi
         fi
     done
+    
+    # Check if any downloads failed
+    if [ ${#FAILED_DOWNLOADS[@]} -gt 0 ]; then
+        echo -e "\n${RED}========================================${NC}"
+        echo -e "${RED}Download Failed for ${#FAILED_DOWNLOADS[@]} chromosome(s)${NC}"
+        echo -e "${RED}========================================${NC}"
+        echo -e "${RED}Failed chromosomes: ${FAILED_DOWNLOADS[*]}${NC}"
+        echo -e "\n${YELLOW}Suggestions:${NC}"
+        echo -e "1. Check your internet connection"
+        echo -e "2. Try running the script again (it will resume incomplete downloads)"
+        echo -e "3. Manually download the missing files from:"
+        echo -e "   ${FTP_BASE}"
+        echo -e "4. Check if the FTP server is accessible:"
+        echo -e "   ping ftp.1000genomes.ebi.ac.uk"
+        exit 1
+    fi
 fi
 
 echo -e "\n${YELLOW}Step 2: Extracting 55 AISNPs from VCF files...${NC}"
@@ -212,8 +466,9 @@ else
     # Build list of VCF files to concatenate (handle both naming patterns)
     VCF_LIST=""
     for chr in {1..22} X; do
-        VCF_FILE="1kGP_high_coverage_Illumina.chr${chr}.filtered.SNV_INDEL_SV_phased_panel.vcf.gz"
-        VCF_FILE_V2="1kGP_high_coverage_Illumina.chr${chr}.filtered.SNV_INDEL_SV_phased_panel.v2.vcf.gz"
+        VCF_BASE=$(get_vcf_filename "$chr")
+        VCF_FILE="${VCF_BASE}.vcf.gz"
+        VCF_FILE_V2="${VCF_BASE}.v2.vcf.gz"
         
         if [ -f "$VCF_FILE" ]; then
             VCF_LIST="$VCF_LIST $VCF_FILE"
@@ -229,7 +484,11 @@ else
     echo "Found $VCF_COUNT VCF files to process"
 
     # Concatenate chromosomes
-    echo -e "\n${BLUE}ℹ Step 2a: Concatenating 23 chromosomes (may take 3-7 minutes)${NC}"
+    if [ "$BUILD" = "grch38" ]; then
+        echo -e "\n${BLUE}ℹ Step 2a: Concatenating 23 chromosomes (may take 3-7 minutes)${NC}"
+    else
+        echo -e "\n${BLUE}ℹ Step 2a: Concatenating 23 chromosomes (may take 5-10 minutes)${NC}"
+    fi
     echo -e "${BLUE}→ Using 16 threads for faster processing${NC}\n"
 
     echo "Command being executed:"
@@ -338,7 +597,8 @@ cd "$ORIGINAL_DIR"
 python3 tools/vcf_to_frog.py \
     "${DOWNLOAD_DIR}/${FINAL_VCF}" \
     "$SNP_LIST" \
-    "$OUTPUT_FILE"
+    "$OUTPUT_FILE" \
+    "${ORIGINAL_DIR}/${ALLELES_FILE}"
 
 echo -e "\n${GREEN}========================================${NC}"
 echo -e "${GREEN}✅ Extraction complete!${NC}"

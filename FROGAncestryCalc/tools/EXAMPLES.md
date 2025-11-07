@@ -23,9 +23,14 @@ echo "panelInfo=55AI" >> FROGAncestryCalc.properties
 
 ## Exemplo 2: Baixar dados do 1000 Genomes automaticamente
 
+### Usando GRCh37 Phase 3 (padrão)
+
 ```bash
 # Baixar todos os dados (usa VCFs existentes ou baixa se necessário)
 ./tools/extract_snps_from_1000genomes.sh
+
+# Ou usar explicitamente GRCh37
+./tools/extract_snps_from_1000genomes.sh -b grch37
 
 # Ou baixar apenas algumas amostras específicas
 cat > test_samples.txt << 'SAMPLES'
@@ -35,8 +40,28 @@ HG03055
 SAMPLES
 
 ./tools/extract_snps_from_1000genomes.sh \
+    -b grch37 \
     -s test_samples.txt \
     -o input/test_samples.txt
+
+# Analisar
+./run.sh
+```
+
+### Usando GRCh38 High Coverage
+
+```bash
+# Primeiro, gerar arquivo de coordenadas GRCh38 (só precisa fazer uma vez)
+python3 tools/convert_grch37_to_grch38.py
+
+# Depois, extrair os dados usando GRCh38
+./tools/extract_snps_from_1000genomes.sh -b grch38
+
+# Ou extrair amostras específicas
+./tools/extract_snps_from_1000genomes.sh \
+    -b grch38 \
+    -s test_samples.txt \
+    -o input/test_samples_grch38.txt
 
 # Analisar
 ./run.sh
@@ -215,22 +240,31 @@ python3 tools/vcf_to_frog.py \
 ### Obter genoma de referência
 
 ```bash
-# GRCh38/hg38 (versão recomendada - usada pelo 1000 Genomes High Coverage)
-wget http://ftp.ensembl.org/pub/release-109/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
-
-# GRCh37/hg19 (versão antiga)
+# GRCh37/hg19 (padrão - usado pelo 1000 Genomes Phase 3 e maioria dos dados legacy)
 wget http://ftp.ensembl.org/pub/grch37/current/fasta/homo_sapiens/dna/Homo_sapiens.GRCh37.dna.primary_assembly.fa.gz
+
+# GRCh38/hg38 (versão moderna - usado pelo 1000 Genomes High Coverage)
+wget http://ftp.ensembl.org/pub/release-109/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
 ```
+
+**Nota:** Use o genoma de referência que corresponde aos seus dados. Para verificar qual build usar:
+- Veja o cabeçalho do seu VCF/BAM
+- Use GRCh37 por padrão para dados do 1000 Genomes Phase 3
+- Use GRCh38 para 1000 Genomes High Coverage ou dados modernos
 
 ### Converter entre builds do genoma
 
 ```bash
-# Se seus dados estão em hg19 mas precisa hg38
+# Se seus dados estão em hg19/GRCh37 mas precisa hg38/GRCh38
 # Use UCSC liftOver ou CrossMap
 
-# Com CrossMap
+# Com CrossMap (converter VCF)
 pip install crossmap
-CrossMap.py vcf hg19ToHg38.chain.gz input_hg19.vcf.gz hg38.fa output_hg38.vcf
+wget http://hgdownload.cse.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz
+CrossMap.py vcf hg19ToHg38.over.chain.gz input_hg19.vcf.gz hg38.fa output_hg38.vcf
+
+# Para converter apenas as coordenadas dos 55 AISNPs (já feito pelo script):
+python3 tools/convert_grch37_to_grch38.py
 ```
 
 ### Verificar build do VCF
@@ -244,6 +278,31 @@ bcftools view -h sample.vcf.gz | grep "^##contig"
 ```
 
 ## Troubleshooting Comum
+
+### Problema: Download trava ou falha
+
+O script agora possui sistema robusto de download com:
+- **Retry automático**: Até 5 tentativas
+- **Timeout de 5 minutos**: Detecta downloads travados
+- **Resume automático**: Continua de onde parou
+- **Backoff exponencial**: Espera 2s, 4s, 8s, 16s entre tentativas
+
+Se mesmo assim falhar:
+
+```bash
+# Verificar conectividade
+ping ftp.1000genomes.ebi.ac.uk
+
+# Verificar espaço em disco
+df -h /dados/GENOMICS_DATA/
+
+# Rodar novamente (vai resumir downloads interrompidos)
+./tools/extract_snps_from_1000genomes.sh
+
+# Remover downloads corrompidos e tentar de novo
+rm /path/to/vcf_chromosomes/*.partial
+./tools/extract_snps_from_1000genomes.sh
+```
 
 ### Problema: "No SNPs found"
 
