@@ -126,8 +126,7 @@ set -e
 if [ ! -f "input/1000genomes_reference.txt" ]; then
     echo "Baixando dados do 1000 Genomes..."
     ./tools/extract_snps_from_1000genomes.sh \
-        -o input/1000genomes_reference.txt \
-        -k
+        -o input/1000genomes_reference.txt
 fi
 
 # 2. Processar amostras do estudo

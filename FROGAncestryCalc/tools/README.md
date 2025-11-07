@@ -99,7 +99,6 @@ Auto-detects existing VCF files and skips download if already present.
   - Script auto-detects existing VCFs and skips download if present
 - `-o FILE` - Output file (default: `input/1000genomes_55aisnps.txt`)
 - `-s FILE` - Sample list file (one sample ID per line)
-- `-k` - Keep downloaded VCF files after extraction
 - `-h` - Show help message
 
 **Requirements:**
@@ -111,11 +110,11 @@ Auto-detects existing VCF files and skips download if already present.
 **What it does:**
 1. Checks for existing VCF files in specified directory
 2. Downloads missing VCF files for chromosomes 1-22 and X (if needed)
-3. Concatenates all chromosomes
-4. Extracts only the 55 target SNPs
-5. Optionally filters for specific samples
-6. Converts to FROGAncestryCalc format
-7. Cleans up intermediate files (unless `-k` is used)
+3. Checks for cached extracted SNPs (reuses if found)
+4. Concatenates all chromosomes (if cache not found)
+5. Extracts only the 55 target SNPs and caches result
+6. Optionally filters for specific samples
+7. Converts to FROGAncestryCalc format
 
 **Examples:**
 ```bash
@@ -131,9 +130,6 @@ Auto-detects existing VCF files and skips download if already present.
 ./tools/extract_snps_from_1000genomes.sh \
     -d /path/to/vcf/directory \
     -o input/custom.txt
-
-# Keep VCF files for later use
-./tools/extract_snps_from_1000genomes.sh -k
 ```
 
 **Data Source:**
@@ -275,7 +271,8 @@ The 55 AISNPs span multiple chromosomes. Missing SNPs in output may indicate:
 
 ### Performance Tips
 
-- Use `-k` flag to keep VCF files if processing multiple samples
+- The script automatically caches extracted SNPs for faster subsequent runs
+- VCF files are preserved for future use
 - For large datasets, consider parallel processing:
   ```bash
   parallel -j 4 './tools/extract_snps_from_wgs.sh -i {} -t vcf -o input/{/.}.txt' ::: *.vcf.gz

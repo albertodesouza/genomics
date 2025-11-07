@@ -123,9 +123,6 @@ Download and extract data from the 1000 Genomes High Coverage (GRCh38):
 echo -e "HG02561\nHG02562\nHG03055" > my_samples.txt
 ./tools/extract_snps_from_1000genomes.sh -s my_samples.txt -o input/my_samples.txt
 
-# Keep downloaded VCF files for future use
-./tools/extract_snps_from_1000genomes.sh -k
-
 # Use custom VCF directory
 ./tools/extract_snps_from_1000genomes.sh -d /path/to/vcf/directory
 ```
@@ -422,6 +419,109 @@ copies or substantial portions of the Software.
 For issues related to:
 - **Original tool:** Refer to FROG-kb documentation
 - **This modified version:** Check `MODIFICACOES.md` for technical details
+
+---
+
+## 📚 Appendix: bcftools Commands for 1000 Genomes VCF Extraction
+
+This appendix provides useful `bcftools` commands for working directly with 1000 Genomes VCF files.
+
+### 1. Extract Specific Individual from a Chromosome
+
+```bash
+# Example: extract individual HG02561 from chromosome 1
+bcftools view -s HG02561 \
+  /path/to/1kGP_high_coverage_Illumina.chr1.filtered.SNV_INDEL_SV_phased_panel.vcf.gz \
+  -Oz -o HG02561_chr1.vcf.gz
+```
+
+### 2. Extract Multiple Individuals
+
+```bash
+# Extract HG02561, HG02562 and HG03055 from chromosome 1
+bcftools view -s HG02561,HG02562,HG03055 \
+  /path/to/1kGP_high_coverage_Illumina.chr1.filtered.SNV_INDEL_SV_phased_panel.vcf.gz \
+  -Oz -o three_samples_chr1.vcf.gz
+```
+
+### 3. Extract Only SNPs (no INDELs or structural variants)
+
+```bash
+# Extract only biallelic SNPs from HG02561
+bcftools view -s HG02561 -v snps -m2 -M2 \
+  /path/to/1kGP_high_coverage_Illumina.chr1.filtered.SNV_INDEL_SV_phased_panel.vcf.gz \
+  -Oz -o HG02561_chr1_snps.vcf.gz
+```
+
+### 4. Extract Specific Genomic Regions (by coordinates)
+
+```bash
+# Extract specific region from chromosome 2 (positions 158667216-158667217)
+bcftools view -s HG02561 -r chr2:158667216-158667217 \
+  /path/to/1kGP_high_coverage_Illumina.chr2.filtered.SNV_INDEL_SV_phased_panel.vcf.gz
+```
+
+### 5. List Available Samples in a VCF
+
+```bash
+# View which samples are available
+bcftools query -l \
+  /path/to/1kGP_high_coverage_Illumina.chr1.filtered.SNV_INDEL_SV_phased_panel.vcf.gz | head -20
+```
+
+### 6. Use BED File for Specific Regions
+
+```bash
+# Extract specific positions using BED file
+bcftools view -s HG02561,HG02562,HG03055 \
+  -R aisnps_55_grch38.bed \
+  /path/to/1kGP_high_coverage_Illumina.chr2.filtered.SNV_INDEL_SV_phased_panel.vcf.gz
+```
+
+### 7. Extract and View Genotypes in Readable Format
+
+```bash
+# Query specific format: chromosome, position, REF, ALT, and genotypes
+bcftools query -f '%CHROM\t%POS\t%REF\t%ALT[\t%GT]\n' \
+  -s HG02561,HG02562,HG03055 \
+  -r chr1:1000000-2000000 \
+  /path/to/1kGP_high_coverage_Illumina.chr1.filtered.SNV_INDEL_SV_phased_panel.vcf.gz
+```
+
+### 8. Concatenate Multiple Chromosomes
+
+```bash
+# Concatenate all chromosomes into a single VCF
+bcftools concat --threads 16 \
+  /path/to/1kGP_high_coverage_Illumina.chr*.vcf.gz \
+  -Oz -o all_chromosomes.vcf.gz
+
+# Index the concatenated file
+bcftools index all_chromosomes.vcf.gz
+```
+
+### Useful bcftools view Options
+
+| Option | Description |
+|--------|-------------|
+| `-s` | Select samples (comma-separated) |
+| `-r` | Specific region(s), format `chr:start-end` |
+| `-R` | BED file with regions |
+| `-v snps` | Only SNPs |
+| `-v indels` | Only INDELs |
+| `-m2 -M2` | Only biallelic variants |
+| `-Oz` | Output compressed with bgzip |
+| `-o` | Output file |
+| `--threads N` | Use N threads for processing |
+
+### Important Note on Genome Builds
+
+⚠️ **Genome Build Compatibility:** The 1000 Genomes High Coverage VCFs use **GRCh38/hg38** coordinates. If you're working with older references or annotation files that use **GRCh37/hg19** coordinates, you will need to:
+
+1. Use liftOver or CrossMap to convert coordinates between builds, OR
+2. Use the Phase 3 VCFs (which use GRCh37/hg19) instead of High Coverage VCFs
+
+For FROGAncestryCalc's 55 AISNPs, the coordinates in `SNPInfo/55_aisnps_alleles.txt` are in **GRCh37/hg19** format.
 
 ---
 
