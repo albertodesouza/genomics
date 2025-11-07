@@ -3,14 +3,16 @@
 # Extract AISNPs from 1000 Genomes Project Data
 ################################################################################
 #
-# This script downloads 1000 Genomes Project Phase 3 data and extracts
+# This script downloads 1000 Genomes High Coverage (GRCh38) data and extracts
 # the 55 Ancestry Informative SNPs (AISNPs) for use with FROGAncestryCalc.
+# If VCFs already exist in the specified directory, download is skipped.
 #
 # Usage:
 #   ./extract_snps_from_1000genomes.sh [options]
 #
 # Options:
-#   -d DIR    Download directory (default: ./1000genomes_data)
+#   -d DIR    VCF directory (default: /dados/GENOMICS_DATA/top3/longevity_dataset/vcf_chromosomes)
+#             Script will auto-detect existing VCFs and skip download if present
 #   -o FILE   Output file (default: input/1000genomes_55aisnps.txt)
 #   -s FILE   Sample list (optional, extracts specific samples only)
 #   -k        Keep downloaded VCF files (default: delete after extraction)
@@ -22,11 +24,11 @@
 #   - Python 3
 #
 # Example:
-#   # Extract all samples
+#   # Extract all samples (uses existing VCFs if available)
 #   ./extract_snps_from_1000genomes.sh
 #
 #   # Extract specific samples
-#   echo -e "HG02561\nHG02562\nNA18501" > my_samples.txt
+#   echo -e "HG02561\nHG02562\nHG03055" > my_samples.txt
 #   ./extract_snps_from_1000genomes.sh -s my_samples.txt -o input/my_data.txt
 #
 ################################################################################
@@ -34,7 +36,7 @@
 set -e  # Exit on error
 
 # Default parameters
-DOWNLOAD_DIR="./1000genomes_data"
+DOWNLOAD_DIR="/dados/GENOMICS_DATA/top3/longevity_dataset/vcf_chromosomes"
 OUTPUT_FILE="input/1000genomes_55aisnps.txt"
 SAMPLE_FILE=""
 KEEP_FILES=false
@@ -102,36 +104,60 @@ echo -e "${GREEN}✓ All requirements met${NC}\n"
 mkdir -p "$DOWNLOAD_DIR"
 cd "$DOWNLOAD_DIR"
 
-# 1000 Genomes FTP base URL
-FTP_BASE="ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502"
+# 1000 Genomes High Coverage FTP base URL
+FTP_BASE="ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20201028_3202_phased"
 
-echo -e "${YELLOW}Step 1: Downloading 1000 Genomes VCF files...${NC}"
-echo "This may take a while (several GB of data)"
+echo -e "${YELLOW}Step 1: Checking for existing VCF files...${NC}"
 
-# Download VCFs for all chromosomes
+# Check if VCFs already exist
+EXISTING_COUNT=0
 for chr in {1..22} X; do
-    VCF_FILE="ALL.chr${chr}.phase3_shapeit2_mvncall_integrated_v5b.20130502.genotypes.vcf.gz"
-    TBI_FILE="${VCF_FILE}.tbi"
-    
+    VCF_FILE="1kGP_high_coverage_Illumina.chr${chr}.filtered.SNV_INDEL_SV_phased_panel.vcf.gz"
     if [ -f "$VCF_FILE" ]; then
-        echo -e "${GREEN}✓ chr${chr} already downloaded${NC}"
-    else
-        echo -e "${BLUE}→ Downloading chromosome ${chr}...${NC}"
-        wget -q --show-progress "${FTP_BASE}/${VCF_FILE}" || {
-            echo -e "${RED}Failed to download chr${chr}${NC}"
-            exit 1
-        }
-        wget -q "${FTP_BASE}/${TBI_FILE}" || {
-            echo -e "${RED}Failed to download chr${chr} index${NC}"
-            exit 1
-        }
+        ((EXISTING_COUNT++))
     fi
 done
+
+if [ $EXISTING_COUNT -eq 23 ]; then
+    echo -e "${GREEN}✓ All 23 VCF files found in ${DOWNLOAD_DIR}${NC}"
+    echo -e "${GREEN}✓ Skipping download step${NC}"
+elif [ $EXISTING_COUNT -gt 0 ]; then
+    echo -e "${YELLOW}⚠ Found ${EXISTING_COUNT}/23 VCF files${NC}"
+    echo -e "${YELLOW}→ Downloading missing chromosomes...${NC}"
+    NEED_DOWNLOAD=true
+else
+    echo -e "${YELLOW}→ No existing VCFs found${NC}"
+    echo -e "${YELLOW}→ Downloading 1000 Genomes High Coverage VCF files...${NC}"
+    echo "This may take a while (several GB of data)"
+    NEED_DOWNLOAD=true
+fi
+
+# Download VCFs if needed
+if [ "$NEED_DOWNLOAD" = true ]; then
+    for chr in {1..22} X; do
+        VCF_FILE="1kGP_high_coverage_Illumina.chr${chr}.filtered.SNV_INDEL_SV_phased_panel.vcf.gz"
+        TBI_FILE="${VCF_FILE}.tbi"
+        
+        if [ -f "$VCF_FILE" ]; then
+            echo -e "${GREEN}✓ chr${chr} already present${NC}"
+        else
+            echo -e "${BLUE}→ Downloading chromosome ${chr}...${NC}"
+            wget -q --show-progress "${FTP_BASE}/${VCF_FILE}" || {
+                echo -e "${RED}Failed to download chr${chr}${NC}"
+                exit 1
+            }
+            wget -q "${FTP_BASE}/${TBI_FILE}" || {
+                echo -e "${RED}Failed to download chr${chr} index${NC}"
+                exit 1
+            }
+        fi
+    done
+fi
 
 echo -e "\n${YELLOW}Step 2: Extracting 55 AISNPs from VCF files...${NC}"
 
 # Concatenate and extract SNPs
-bcftools concat ALL.chr*.vcf.gz | \
+bcftools concat 1kGP_high_coverage_Illumina.chr*.vcf.gz | \
     bcftools view -i "ID=@../${SNP_LIST}" -Oz -o 1000genomes_55aisnps.vcf.gz
 
 bcftools index 1000genomes_55aisnps.vcf.gz
@@ -167,10 +193,10 @@ python3 tools/vcf_to_frog.py \
 # Clean up if requested
 if [ "$KEEP_FILES" = false ]; then
     echo -e "\n${YELLOW}Cleaning up downloaded files...${NC}"
-    rm -rf "$DOWNLOAD_DIR"/ALL.chr*.vcf.gz*
+    rm -rf "$DOWNLOAD_DIR"/1kGP_high_coverage_Illumina.chr*.vcf.gz*
     echo -e "${GREEN}✓ Cleaned up${NC}"
 else
-    echo -e "\n${BLUE}ℹ Keeping downloaded VCF files in ${DOWNLOAD_DIR}${NC}"
+    echo -e "\n${BLUE}ℹ Keeping VCF files in ${DOWNLOAD_DIR}${NC}"
 fi
 
 echo -e "\n${GREEN}========================================${NC}"

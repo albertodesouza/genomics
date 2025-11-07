@@ -24,21 +24,19 @@ echo "panelInfo=55AI" >> FROGAncestryCalc.properties
 ## Exemplo 2: Baixar dados do 1000 Genomes automaticamente
 
 ```bash
-# Baixar todos os dados (pode demorar várias horas)
+# Baixar todos os dados (usa VCFs existentes ou baixa se necessário)
 ./tools/extract_snps_from_1000genomes.sh
 
-# Ou baixar apenas algumas amostras africanas
-cat > african_samples.txt << 'SAMPLES'
+# Ou baixar apenas algumas amostras específicas
+cat > test_samples.txt << 'SAMPLES'
 HG02561
 HG02562
 HG03055
-NA18501
-NA18502
 SAMPLES
 
 ./tools/extract_snps_from_1000genomes.sh \
-    -s african_samples.txt \
-    -o input/african_test.txt
+    -s test_samples.txt \
+    -o input/test_samples.txt
 
 # Analisar
 ./run.sh
@@ -66,13 +64,13 @@ sed -i 's/inputFilename=.*/inputFilename=patient_001.txt/' FROGAncestryCalc.prop
 
 ```bash
 # Baixar referência (se não tiver)
-# wget http://ftp.ensembl.org/pub/grch37/current/fasta/homo_sapiens/dna/Homo_sapiens.GRCh37.dna.primary_assembly.fa.gz
-# gunzip Homo_sapiens.GRCh37.dna.primary_assembly.fa.gz
+# wget http://ftp.ensembl.org/pub/release-109/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
+# gunzip Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
 
 ./tools/extract_snps_from_wgs.sh \
     -i /path/to/sample.bam \
     -t bam \
-    -r /path/to/GRCh37.fa \
+    -r /path/to/GRCh38.fa \
     -o input/sample.txt \
     -n MySample
 
@@ -218,22 +216,22 @@ python3 tools/vcf_to_frog.py \
 ### Obter genoma de referência
 
 ```bash
-# GRCh37/hg19 (para dados do 1000 Genomes)
-wget http://ftp.ensembl.org/pub/grch37/current/fasta/homo_sapiens/dna/Homo_sapiens.GRCh37.dna.primary_assembly.fa.gz
-
-# GRCh38/hg38 (versão mais recente)
+# GRCh38/hg38 (versão recomendada - usada pelo 1000 Genomes High Coverage)
 wget http://ftp.ensembl.org/pub/release-109/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
+
+# GRCh37/hg19 (versão antiga)
+wget http://ftp.ensembl.org/pub/grch37/current/fasta/homo_sapiens/dna/Homo_sapiens.GRCh37.dna.primary_assembly.fa.gz
 ```
 
 ### Converter entre builds do genoma
 
 ```bash
-# Se seus dados estão em hg38 mas precisa hg19
+# Se seus dados estão em hg19 mas precisa hg38
 # Use UCSC liftOver ou CrossMap
 
 # Com CrossMap
 pip install crossmap
-CrossMap.py vcf hg38ToHg19.chain.gz input_hg38.vcf.gz hg19.fa output_hg19.vcf
+CrossMap.py vcf hg19ToHg38.chain.gz input_hg19.vcf.gz hg38.fa output_hg38.vcf
 ```
 
 ### Verificar build do VCF

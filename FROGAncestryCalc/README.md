@@ -50,7 +50,7 @@ FROG-kb (Forensic Resource/Reference On Genetics - Knowledge base) Ancestry Infe
 Edit the `FROGAncestryCalc.properties` file:
 
 ```properties
-homePath=/home/lume2/genomics/frog/FROGAncestryCalc
+homePath=.
 inputFilename=55_aisnp_1000_Genome.txt
 panelInfo=55AI
 ```
@@ -113,24 +113,27 @@ The `tools/` directory contains scripts to extract the required SNPs from variou
 
 ### Option 1: From 1000 Genomes Project
 
-Download and extract data from the 1000 Genomes Project Phase 3:
+Download and extract data from the 1000 Genomes High Coverage (GRCh38):
 
 ```bash
-# Extract all samples
+# Extract all samples (auto-detects existing VCFs)
 ./tools/extract_snps_from_1000genomes.sh
 
 # Extract specific samples only
-echo -e "HG02561\nNA18501\nNA19338" > my_samples.txt
+echo -e "HG02561\nHG02562\nHG03055" > my_samples.txt
 ./tools/extract_snps_from_1000genomes.sh -s my_samples.txt -o input/my_samples.txt
 
 # Keep downloaded VCF files for future use
 ./tools/extract_snps_from_1000genomes.sh -k
+
+# Use custom VCF directory
+./tools/extract_snps_from_1000genomes.sh -d /path/to/vcf/directory
 ```
 
 **Requirements:**
 - `bcftools` (install via: `conda install -c bioconda bcftools`)
 - `wget`
-- ~20 GB disk space for full download
+- ~35 GB disk space for full download (High Coverage files are larger)
 
 ### Option 2: From Your Own VCF File
 
@@ -221,12 +224,12 @@ bwa
 
 ### Notes on Genome Builds
 
-- **1000 Genomes Phase 3**: Uses GRCh37/hg19
+- **1000 Genomes High Coverage**: Uses GRCh38/hg38
 - **Your data**: Check which build was used for alignment
 - **Converting between builds**: Use UCSC liftOver if needed
 
 ```bash
-# Example: Convert coordinates from hg38 to hg19
+# Example: Convert coordinates from hg19 to hg38
 # (if your VCF uses a different build than your reference)
 ```
 

@@ -14,11 +14,11 @@ This directory contains scripts to extract the 55 Ancestry Informative SNPs (AIS
 ### From 1000 Genomes Project
 
 ```bash
-# Basic usage - extracts all samples
+# Basic usage - extracts all samples (auto-detects existing VCFs)
 ./tools/extract_snps_from_1000genomes.sh
 
 # Extract specific samples
-echo -e "HG02561\nHG02562\nNA18501" > samples.txt
+echo -e "HG02561\nHG02562\nHG03055" > samples.txt
 ./tools/extract_snps_from_1000genomes.sh -s samples.txt -o input/my_data.txt
 ```
 
@@ -86,7 +86,8 @@ Sample2|TT|CC|AG|...
 
 ### extract_snps_from_1000genomes.sh
 
-Downloads 1000 Genomes Project Phase 3 data and extracts the 55 AISNPs.
+Downloads 1000 Genomes High Coverage (GRCh38) data and extracts the 55 AISNPs.
+Auto-detects existing VCF files and skips download if already present.
 
 **Usage:**
 ```bash
@@ -94,7 +95,8 @@ Downloads 1000 Genomes Project Phase 3 data and extracts the 55 AISNPs.
 ```
 
 **Options:**
-- `-d DIR` - Download directory (default: `./1000genomes_data`)
+- `-d DIR` - VCF directory (default: `/dados/GENOMICS_DATA/top3/longevity_dataset/vcf_chromosomes`)
+  - Script auto-detects existing VCFs and skips download if present
 - `-o FILE` - Output file (default: `input/1000genomes_55aisnps.txt`)
 - `-s FILE` - Sample list file (one sample ID per line)
 - `-k` - Keep downloaded VCF files after extraction
@@ -103,35 +105,41 @@ Downloads 1000 Genomes Project Phase 3 data and extracts the 55 AISNPs.
 **Requirements:**
 - `bcftools` (install via conda: `conda install -c bioconda bcftools`)
 - `wget`
-- ~20 GB disk space for full download
-- Internet connection
+- ~35 GB disk space for full download (High Coverage files are larger)
+- Internet connection (only if downloading)
 
 **What it does:**
-1. Downloads VCF files for chromosomes 1-22 and X from 1000 Genomes
-2. Concatenates all chromosomes
-3. Extracts only the 55 target SNPs
-4. Optionally filters for specific samples
-5. Converts to FROGAncestryCalc format
-6. Cleans up intermediate files (unless `-k` is used)
+1. Checks for existing VCF files in specified directory
+2. Downloads missing VCF files for chromosomes 1-22 and X (if needed)
+3. Concatenates all chromosomes
+4. Extracts only the 55 target SNPs
+5. Optionally filters for specific samples
+6. Converts to FROGAncestryCalc format
+7. Cleans up intermediate files (unless `-k` is used)
 
 **Examples:**
 ```bash
-# Extract all samples (2,504 individuals)
+# Extract all samples (uses existing VCFs or downloads if needed)
 ./tools/extract_snps_from_1000genomes.sh
 
-# Extract only African samples
+# Extract specific samples
 ./tools/extract_snps_from_1000genomes.sh \
     -s african_samples.txt \
     -o input/african_1000g.txt
+
+# Use custom VCF directory
+./tools/extract_snps_from_1000genomes.sh \
+    -d /path/to/vcf/directory \
+    -o input/custom.txt
 
 # Keep VCF files for later use
 ./tools/extract_snps_from_1000genomes.sh -k
 ```
 
 **Data Source:**
-- FTP: ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/
-- Genome build: GRCh37 (hg19)
-- Phase: 3 (final release)
+- FTP: ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20201028_3202_phased/
+- Genome build: GRCh38 (hg38)
+- Version: High Coverage (30x)
 
 ---
 
@@ -253,7 +261,7 @@ brew install bcftools samtools bwa python3 wget
 
 ### Genome Build Compatibility
 
-- **1000 Genomes Phase 3**: GRCh37/hg19
+- **1000 Genomes High Coverage**: GRCh38/hg38
 - **Your data**: Check alignment build in VCF/BAM header
 - **Mismatch**: Use UCSC liftOver to convert coordinates
 
