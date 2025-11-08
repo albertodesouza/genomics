@@ -799,8 +799,8 @@ python3 tools/vcf_to_frog.py \
 cd genes_difference_count
 
 # Step 1: Generate gene FASTA files from VCF data
-# Edit generate_gene_fastas.sh to configure paths (lines 17-34)
-bash generate_gene_fastas.sh
+# Edit scripts/generate_gene_fastas.sh to configure paths (lines 17-34)
+bash scripts/generate_gene_fastas.sh
 
 # Step 2: Configure input/output paths in genes_difference_count.cpp
 # Edit lines 16-24 to point to generated FASTA files

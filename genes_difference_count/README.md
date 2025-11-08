@@ -22,11 +22,11 @@ Before running the comparison tool, you need to generate the required gene-level
 
 ### Step 1: Generate Gene FASTA Files
 
-The `generate_gene_fastas.sh` script processes VCF files from the main pipeline and creates consensus FASTA files with one sequence per gene for each sample.
+The `scripts/generate_gene_fastas.sh` script processes VCF files from the main pipeline and creates consensus FASTA files with one sequence per gene for each sample.
 
 #### Configure the Script
 
-Edit `generate_gene_fastas.sh` and modify the paths at the top (lines 17-34):
+Edit `scripts/generate_gene_fastas.sh` and modify the paths at the top (lines 17-34):
 
 ```bash
 # Root directory containing your genomics data
@@ -52,7 +52,7 @@ OUT="${ROOT}/fasta"
 
 ```bash
 cd genes_difference_count
-bash generate_gene_fastas.sh
+bash scripts/generate_gene_fastas.sh
 ```
 
 **Output:** The script generates two FASTA files per sample:
@@ -384,9 +384,10 @@ sudo apt install libomp-dev
 ```
 genes_difference_count/
 ├── genes_difference_count.cpp   # Main source code (C++)
-├── generate_gene_fastas.sh      # Helper script to generate input FASTA files
 ├── Makefile                      # Build configuration
-└── README.md                     # This file
+├── README.md                     # This file
+└── scripts/
+    └── generate_gene_fastas.sh  # Helper script to generate input FASTA files
 ```
 
 ### Workflow Summary
@@ -394,7 +395,7 @@ genes_difference_count/
 ```
 Pipeline VCF files
        ↓
-[generate_gene_fastas.sh]
+[scripts/generate_gene_fastas.sh]
        ↓
 Gene FASTA files (*.genes.consensus.fa)
        ↓
