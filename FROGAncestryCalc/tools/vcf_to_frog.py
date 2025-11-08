@@ -73,6 +73,7 @@ def convert_genotype(gt_field, ref, alt):
         
     Returns:
         Two-character genotype string (e.g., 'AG') or 'NN' for missing
+        Note: Alleles are sorted alphabetically for consistency
     """
     if gt_field in ['./.', '.|.', '.']:
         return 'NN'
@@ -86,16 +87,18 @@ def convert_genotype(gt_field, ref, alt):
         return 'NN'
     
     # Convert numeric alleles to actual bases
-    result = ''
+    bases = []
     for allele in alleles:
         if allele == '0':
-            result += ref
+            bases.append(ref)
         elif allele == '1':
-            result += alt.split(',')[0]  # Use first alt allele if multiple
+            bases.append(alt.split(',')[0])  # Use first alt allele if multiple
         else:
             return 'NN'
     
-    return result
+    # Sort alleles alphabetically for consistency (AG instead of GA, CT instead of TC)
+    bases.sort()
+    return ''.join(bases)
 
 def vcf_to_frog(vcf_file, snp_list_file, output_file, alleles_file=None):
     """
@@ -177,7 +180,9 @@ def vcf_to_frog(vcf_file, snp_list_file, output_file, alleles_file=None):
             chrom, pos, vcf_id, ref, alt = fields[0:5]
             
             # Look up rsID by position (chrom:pos)
-            pos_key = f"{chrom}:{pos}"
+            # Normalize chromosome name (remove 'chr' prefix if present for matching)
+            chrom_normalized = chrom.replace('chr', '') if chrom.startswith('chr') else chrom
+            pos_key = f"{chrom_normalized}:{pos}"
             snp_id = pos_to_rsid.get(pos_key)
             
             # If no position mapping, fall back to VCF ID field

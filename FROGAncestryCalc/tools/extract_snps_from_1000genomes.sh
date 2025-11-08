@@ -42,7 +42,7 @@
 # set -e  # Exit on error
 
 # Default parameters
-BUILD="grch37"
+BUILD="GRCh38"
 DOWNLOAD_DIR=""  # Will be set based on build
 OUTPUT_FILE="input/1000genomes_55aisnps.txt"
 SAMPLE_FILE=""
