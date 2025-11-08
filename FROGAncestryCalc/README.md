@@ -343,7 +343,7 @@ This modified version includes the following improvements:
 - `src/dv/ValidateFileHeader.java` - Validation logic
 - `src/read/ReadTxtFiles.java` - File parsing
 
-For complete technical details, see [`MODIFICACOES.md`](MODIFICACOES.md)
+For complete technical details, see [`MODIFICATIONS.md`](MODIFICATIONS.md)
 
 ## 📝 Error Handling
 

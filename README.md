@@ -41,7 +41,7 @@ This document introduces the pipeline to readers **without assuming prior genomi
 
 Recent updates expanded the pipeline, improved resilience, and enriched the YAML configuration. Highlights:
 
-- **Neural Module**: AI-powered DNA analysis using Google DeepMind's AlphaGenome for functional predictions (gene expression, epigenetics, chromatin accessibility, variant effects). See [NEURAL_MODULE.md](NEURAL_MODULE.md).
+- **Neural Module**: AI-powered DNA analysis using Google DeepMind's AlphaGenome for functional predictions (gene expression, epigenetics, chromatin accessibility, variant effects). See [neural_module/docs/NEURAL_MODULE.md](neural_module/docs/NEURAL_MODULE.md).
 - Paternity analysis: likelihood-based SNP evaluation with configurable thresholds and optional use of VEP allele frequencies.
 - Ancestry (ADMIXTURE supervised): supervised ADMIXTURE using HGDP+1KG reference, with QC, pruning and category collapsing.
 - Idempotent ancestry pipeline: reuses existing outputs, checks for prepared references and intermediate PLINK files.
@@ -307,10 +307,9 @@ python neural_module.py \
 
 Key guides:
 - 🚀 [Installation Guide](neural_module/docs/INSTALL.md)
-- 📥 [Download Real Sequences](DOWNLOAD_SEQUENCES.md)
+- 📥 [Download Real Sequences](docs/DOWNLOAD_SEQUENCES.md)
 - 💡 [Usage Guide](neural_module/docs/USAGE.md)
 - 📊 [Interpreting Results](neural_module/docs/RESULTS.md)
-- 🎨 [Advanced Visualizations](VISUALIZACOES_AVANCADAS.md)
 - 📑 [Quick Start](neural_module/QUICKSTART.md)
 
 ### Integration with Genomes Analyzer
@@ -403,8 +402,8 @@ python3 build_non_longevous_dataset.py --config configs/default.yaml
 
 Additional guides:
 - 🚀 [Quick Start Guide](build_non_longevous_dataset/QUICKSTART.md)
-- 🔧 [Implementation Details](build_non_longevous_dataset/IMPLEMENTACAO.md)
-- 📁 [Module Structure](build_non_longevous_dataset/ESTRUTURA.md)
+- 🔧 [Implementation Details](build_non_longevous_dataset/IMPLEMENTATION.md)
+- 📁 [Module Structure](build_non_longevous_dataset/STRUCTURE.md)
 
 ---
 
@@ -453,7 +452,7 @@ The module includes three tools to extract AISNPs from genomic data:
 
 Additional guides:
 - 🧬 [55 AISNPs List](FROGAncestryCalc/tools/aisnps_55_list.txt)
-- ⚙️ [Modification Details](FROGAncestryCalc/MODIFICACOES.md)
+- ⚙️ [Modification Details](FROGAncestryCalc/MODIFICATIONS.md)
 
 ### Integration with Main Pipeline
 
@@ -499,13 +498,13 @@ if ! command -v mamba >/dev/null 2>&1; then
 fi
 
 conda activate
-./install_genomics_env.sh
+./scripts/install_genomics_env.sh
 # VEP: escolha um instalador
 # Opção padrão e resiliente:
-source vep_install_smart.sh
+source scripts/vep_install_smart.sh
 # Alternativas:
-# source vep_install_latest.sh
-# source vep_install_fixed.sh
+# source scripts/vep_install_latest.sh
+# source scripts/vep_install_fixed.sh
 ```
 
 ### Starting the environment
@@ -515,9 +514,9 @@ Leave any active conda environment and initialize the session:
 ```bash
 conda deactivate
 # Método universal (auto‑detecta conda):
-source start_genomics_universal.sh
+source scripts/start_genomics_universal.sh
 # Alternativa simples, se seu conda está em ~/miniforge3:
-# source start_genomics.sh
+# source scripts/start_genomics.sh
 ```
 
 ### Running the pipeline
@@ -526,15 +525,15 @@ Execute the workflow by pointing the script to your YAML file:
 
 ```bash
 conda deactivate
-source start_genomics.sh
-./genomes_analyzer.py --config config_human_30x_low_memory.yaml
+source scripts/start_genomics.sh
+./genomes_analyzer.py --config configs/config_human_30x_low_memory.yaml
 
 # Perfis prontos:
-#  - config_human_30x.yaml              (trio 30×, ENA/1000G)
-#  - config_human_30x_low_memory.yaml   (downsample 25%, footprint reduzido)
-#  - config_human_30x_latest_ref.yaml   (GENCODE r46, GRCh38 primary)
-#  - config_human_30x_monster.yaml      (128 cores / 256 GB, K=4 ancestry, VEP rápido)
-#  - config_human_30x_filtered.yaml     (exemplo com filtros mais restritos)
+#  - configs/config_human_30x.yaml              (trio 30×, ENA/1000G)
+#  - configs/config_human_30x_low_memory.yaml   (downsample 25%, footprint reduzido)
+#  - configs/config_human_30x_latest_ref.yaml   (GENCODE r46, GRCh38 primary)
+#  - configs/config_human_30x_monster.yaml      (128 cores / 256 GB, K=4 ancestry, VEP rápido)
+#  - configs/config_human_30x_filtered.yaml     (exemplo com filtros mais restritos)
 ```
 
 The console prints progress panels, including per-shard heartbeats when variant calling is parallelized.
@@ -705,21 +704,21 @@ Run detached and monitor long jobs on shared servers or high‑core workstations
 
 ```bash
 # Executar em background (logs com formatação otimizada)
-./run_in_background.sh --config config_human_30x_latest_ref.yaml
+./scripts/run_in_background.sh --config configs/config_human_30x_latest_ref.yaml
 
 # Perfis dedicados
-./run_monster_background.sh --config config_human_30x_monster.yaml
-./run_atena_background.sh   --config config_human_30x_atena.yaml
+./scripts/run_monster_background.sh --config configs/config_human_30x_monster.yaml
+./scripts/run_atena_background.sh   --config configs/config_human_30x_atena.yaml
 
 # Monitores auxiliares
-./monitor_monster.sh
-./monitor_bwa_index.sh
+./scripts/monitor_monster.sh
+./scripts/monitor_bwa_index.sh
 ```
 
 Diagnostics and recovery:
 
-- `diagnose_bcftools_error.sh`: troubleshooting for zero‑variant situations; reproduces bcftools pipelines via `conda run -n genomics` with extra logging.
-- `fix_reference_mismatch.sh`: safeguards and guidance for reference read‑group mismatches.
+- `scripts/diagnose_bcftools_error.sh`: troubleshooting for zero‑variant situations; reproduces bcftools pipelines via `conda run -n genomics` with extra logging.
+- `scripts/fix_reference_mismatch.sh`: safeguards and guidance for reference read‑group mismatches.
 - Steps are idempotent; ancestry and heavy bcftools/ADMIXTURE stages check for expected outputs before recomputing.
 
 ---

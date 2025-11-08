@@ -27,23 +27,22 @@
 
 ### 🚀 Quick Start
 - **[Installation Guide](INSTALL.md)** - How to install and configure
-- **[Download Sequences](../../DOWNLOAD_SEQUENCES.md)** - How to download real genomic sequences
+- **[Download Sequences](../../docs/DOWNLOAD_SEQUENCES.md)** - How to download real genomic sequences
 - **[Usage Guide](USAGE.md)** - How to run analyses
 - **[Interpreting Results](RESULTS.md)** - How to interpret visualizations
 
 ### 📖 Detailed Documentation
 - **[Complete README](../README.md)** - Complete technical documentation
 - **[Quick Start](../QUICKSTART.md)** - Get started in 5 minutes
-- **[Available Outputs](../../OUTPUTS_DISPONIVEIS.md)** - List of all analysis types
-- **[Supported Sizes](../../TAMANHOS_SUPORTADOS.md)** - Sequence size restrictions
+- **[Available Outputs](../../docs/AVAILABLE_OUTPUTS.md)** - List of all analysis types
+- **[Supported Sizes](../../docs/SUPPORTED_SIZES.md)** - Sequence size restrictions
 
 ### 🔧 Advanced Features
-- **[Advanced Visualizations](../../VISUALIZACOES_AVANCADAS.md)** - Visualization guide
 - **[Programmatic Usage](../examples/neural_example.py)** - Python code examples
 - **[Pipeline Integration](INTEGRATION.md)** - Bridge with genomes_analyzer
 
 ### 🐛 Troubleshooting
-- **[Applied Fixes](../../CORRECOES_APLICADAS.md)** - Resolved issues
+- **[Applied Fixes](../../docs/APPLIED_FIXES.md)** - Resolved issues
 - **[FAQ](../README.md#troubleshooting)** - Frequently asked questions
 
 ---

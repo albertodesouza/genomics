@@ -1,0 +1,161 @@
+# config_human_30x.yaml  (low-memory version for genomes_analyzer.py)
+project:
+  name: human_30x_trio_demo
+  organism: homo_sapiens
+  reference:
+    # use o nome que preferir; este é o do pacote do GDC
+    name: GRCh38.d1.vd1
+    # FASTA em tar.gz do GDC (o script extrai e cria refs/reference.fa)
+    fasta_url: "https://api.gdc.cancer.gov/data/254f697d-310d-4d7d-a27b-27fbf767a834"
+    # índice BWA pré-construído (evita indexar localmente → baixa RAM) --> so usar com bwa classico; com bwa-mem2, comentar
+    bwa_index_url: "https://api.gdc.cancer.gov/data/25217ec9-af07-4a17-8db9-101271ee7225"
+    # (opcional) se quiser fixar um GTF específico, adicione:
+    # gtf_url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/gencode.v46.primary_assembly.annotation.gtf.gz"
+
+general:
+  # So precisa force_indexes: true quando rodar a primeira vez o bwa-mem2 com os mesmos dados
+  force_indexes: false
+  sort_mem_mb: 512      # memória por thread do 'samtools sort' (ex.: 384, 512, 768)
+  bwa_batch_k: 20000000 # tamanho de lote do (bwa|bwa-mem2) mem; menor = menos RAM
+  aln_threads: 16       # usado por bwa
+
+  gene_presence_min_mean_cov: 5.0
+  gene_presence_min_breadth_1x: 0.8
+
+  trio_child_id: NA12878
+  trio_parent_ids: [NA12891, NA12892]
+
+  # filtros simples para os de novo (padrões robustos p/ ~7–10×)
+  trio_min_dp_child: 8
+  trio_min_dp_parents: 8
+  trio_min_gq: 20
+  trio_min_ab_het: 0.25
+  trio_max_ab_het: 0.75
+  trio_min_ab_hom: 0.90
+  trio_max_parent_alt_frac: 0.02
+
+# Parâmetros de alinhamento/chamada (exemplo; alinhe com o que seu script usa)
+params:
+  aligner: bwa # bwa-mem2
+  bwa_mem2_threads: 2
+  gatk_threads: 8
+  target_gene_list: null   # ou caminho para um painel BED/genes de interesse
+
+  variant_caller: bcftools    # opções - "gatk" (padrão) ou "bcftools"
+
+  # (opcionais – só quando usar bcftools)
+  bcf_verbose: true          # liga banners e heartbeats
+  bcf_show_intervals: true          # <- mostra tabelas dos .bed
+  bcf_show_intervals_rows: 12       # <- quantas linhas por shard (resumo)
+  bcf_heartbeat_sec: 30      # 0 desativa o heartbeat
+  bcf_progress_sec: 30       # intervalo do heartbeat
+  bcf_mapq: 20
+  bcf_baseq: 20
+  bcf_max_depth: 250
+  bcf_scatter_parts: 16      # opcional: “quebra” em shards BED
+  bcf_max_parallel: 8        # para usar mais cores (SSD: 6–8; HDD: 2–3)
+  bcf_threads_io: 2          # threads de I/O do htslib por processo
+  bcf_io_threads: 16         # acelera compressão/IO (não o compute)
+  bcf_emit_variants_only: true   # bcftools call -v (apenas variantes)
+  bcf_min_baseq: 20           # -Q em mpileup (qualidade de base)
+  bcf_min_mapq: 20            # -q em mpileup (qualidade de mapeamento)
+  bcf_emit_all_sites: false   # true => -A em 'bcftools call' (raramente necessário)
+  bcf_split_multiallelic: true  # normaliza com 'bcftools norm -m +any'
+
+  # gatk HaplotypeCaller
+  hc_java_mem_gb: 24
+  hc_threads_native: 4 # mais que 4 thread ficou ruim na minha maquina
+  hc_pcr_free: true         # PCR-free (1000G) → mais rápido/leve
+  keep_alt_decoy: true      # padrão: manter ALT/decoys; ponha false p/ canônicos
+  hc_scatter_parts: 8       # aumente p/ acelerar (ex.: 8)
+  hc_max_parallel: 8        # paralelo entre shards (mantido serial aqui)
+  hc_extra_args: []         # lista extra opcional p/ GATK HC
+
+  # GenotypeGVCFs
+  gg_java_mem_gb: 12
+  gg_extra_args: []
+
+  # VEP (Variant Effect Predictor)
+  annotate_with_vep: true
+  vep_species: "homo_sapiens"
+  vep_assembly: "GRCh38"        # (não use GRCh38.d1.vd1 aqui)
+  vep_dir_cache: "/dados/vep_cache"
+  
+  # Performance VEP
+  vep_fork: 16                  # threads para processamento paralelo
+  vep_buffer_size: 10000        # variantes por lote (aumentado para melhor performance)
+  vep_heartbeat_sec: 15         # intervalo dos updates de progresso
+  vep_compress_output: false    # desabilita bgzip para compatibilidade
+  
+  # Flags extras (o buffer_size acima sobrescreve o dos vep_extra)
+  vep_extra:
+    - "--everything"            # todas as anotações disponíveis
+    - "--no_stats"              # pula estatísticas desnecessárias para velocidade
+      
+storage:
+  base_dir: "/dados/GENOMICS_DATA/low_memory"
+  work_dir: "/dados/GENOMICS_DATA/low_memory/work"
+  # temp_dir: "/dados/GENOMICS_DATA/low_memory/tmp"
+  keep_intermediates: true   # útil para retomar e inspecionar
+  temp_dir: "/dados/tmp"   # ← seu disco rápido
+
+download:
+  tool: sra_toolkit            # prefetch + fasterq-dump
+  use_ascp: false              # mude para true se tiver Aspera configurado
+  threads: 8
+  prefetch_retries: 3          # tenta de novo (com backoff) se prefetch falhar
+  # Se preferir baixar direto os FASTQs via FTP, seu script pode respeitar 'direct_fastq_urls' (opcional)
+
+execution:
+  verbose: true
+  resume: true                 # não reprocessa o que já existe
+  skip_existing: true          # idem para baixados/gerados
+  progress_interval_sec: 60    # estimativas periódicas
+  stall_warn_min: 5
+  stall_fail_min: 50
+  ena_fallback: true           # cai para ENA HTTP quando o fasterq ficar parado além do limite
+  cancel_on_convert_stall: false  # não cancelar na fase "convertendo"
+  prefer_ena_fastq: false      # tenta baixar FASTQs prontos do ENA antes de prefetch/fasterq
+  
+size_control:
+  downsample:
+    enabled: true
+    fraction: 0.25             # 25% (~7.5×); aumente para 1.0 quando quiser o 30× completo
+  # Ou, alternativamente, limite de disco:
+  # disk_budget_gb: 650        # o pipeline pode pausar/adiar amostras para não estourar
+
+# Amostras 30× (NYGC 1000G GRCh38); cada 'runs' aceita SRR/ERR/DRR
+
+# <<< NÃO ative limit_to_canonical quando usar o índice pré-pronto do GDC >>>
+# (se você ativar, o FASTA canônico deixará de corresponder ao índice baixado)
+limit_to_canonical: false
+
+samples:
+  - sample_id: NA12878        # filha (HG001 / GM12878)
+    study: PRJEB31736         # 1000G 30× (lote principal)
+    runs:
+      - ERR3239334            # FASTQs gerados pelo ENA: ERR3239334_1.fastq.gz / _2.fastq.gz
+    notes: "CRAM 'final' disponível: ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR323/ERR3239334/NA12878.final.cram"
+
+  - sample_id: NA12891        # pai
+    study: PRJEB36890         # 1000G 30× (trios adicionais)
+    runs:
+      - ERR3989341            # ENA fornece FASTQ gerado para este run
+    notes: "CRAM 'final': ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR398/ERR3989341/NA12891.final.cram"
+
+  - sample_id: NA12892        # mãe
+    study: PRJEB36890
+    runs:
+      - ERR3989342            # ENA fornece FASTQ gerado para este run
+    notes: "CRAM 'final': ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR398/ERR3989342/NA12892.final.cram"
+
+# Etapas do pipeline (ajuste conforme seu script)
+steps:
+  - fetch_fastqs          # prefetch/fasterq-dump; respeita skip_existing/resume
+  - qc_reads              # FastQC/MultiQC (se configurados)
+  - align_and_sort        # BWA-MEM/BWA-MEM2 + samtools
+  - mark_duplicates       # GATK MarkDuplicatesSpark/picard
+  - bqsr                  # GATK BaseRecalibrator/applyBQSR (opcional)
+  - call_genes            # sua extração/varredura de genes (exons/introns) e comparação
+  - summarize             # relatórios e métricas
+

@@ -297,9 +297,9 @@ Após validar o pipeline com dados simulados:
 
 ## 🆘 Ajuda
 
-- **Documentação completa**: [LONGEVITY_PROJECT.md](LONGEVITY_PROJECT.md)
-- **Neural Module**: [NEURAL_MODULE.md](NEURAL_MODULE.md)
-- **Pipeline genômico**: [README.md](README.md)
+- **Documentação completa**: [docs/PROJECT.md](docs/PROJECT.md)
+- **Neural Module**: [../neural_module/README.md](../neural_module/README.md)
+- **Pipeline genômico**: [../README.md](../README.md)
 
 ---
 

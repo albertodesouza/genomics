@@ -486,7 +486,7 @@ python neural_integration.py \
 
 - **[Main Neural Module](NEURAL_MODULE.md)** - Complete documentation
 - **[Usage Guide](USAGE.md)** - How to use neural_module.py
-- **[Download Sequences](../../DOWNLOAD_SEQUENCES.md)** - Download real genomes
+- **[Download Sequences](../../docs/DOWNLOAD_SEQUENCES.md)** - Download real genomes
 - **[Results Interpretation](RESULTS.md)** - Understanding predictions
 
 ---
