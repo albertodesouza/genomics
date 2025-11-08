@@ -1,0 +1,40 @@
+# Generated BED files (created automatically by extract_snps_from_1000genomes.sh)
+tools/aisnps_55_grch37.bed
+tools/aisnps_55_grch38.bed
+
+# Input files (user data and test samples)
+input/*.txt
+input/*.vcf.gz*
+!input/55_aisnps_1000_Genome.txt
+
+# Output files (analysis results)
+output/
+
+# Log files
+log/
+
+# Compiled Java classes
+bin/
+
+# Sample lists (user-specific)
+my_samples.txt
+
+# Test VCF files
+*.vcf.gz
+*.vcf.gz.tbi
+*.vcf.gz.csi
+
+# Individual genotype files
+input/ind/
+input/indGenotype/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Temporary files
+*.tmp
+*.temp
+caco.txt
+
