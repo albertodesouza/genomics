@@ -7,14 +7,15 @@ _A technical-scientific guide to `genomes_analyzer.py`_
 - [Introduction](#introduction)
 - [What's new](#whats-new)
 - [Genomes Analyzer Pipeline](#genomes-analyzer-pipeline)
-- [Neural Module — AI-powered DNA Analysis](#neural-module--ai-powered-dna-analysis)
-- [Neural Longevity Dataset Builder](#neural-longevity-dataset-builder)
-- [Non-Longevous Dataset Builder](#non-longevous-dataset-builder)
-- [FROGAncestryCalc — AISNP-Based Ancestry Analysis](#frogancestrycalc--aisnp-based-ancestry-analysis)
 - [How to Use the Genomes Analyzer](#how-to-use-the-genomes-analyzer)
 - [Background execution & monitoring](#background-execution--monitoring)
 - [Conclusion](#conclusion)
-- [Appendix 1 — Tools & typical usage](#appendix-1--tools--typical-usage)
+- [Appendix 1 — Command Line Tools & Typical Usage](#appendix-1--command-line-tools--typical-usage)
+- [Appendix 2 — Additional Important Modules](#appendix-2--additional-important-modules)
+  - [Neural Module — AI-powered DNA Analysis](#neural-module--ai-powered-dna-analysis)
+  - [Neural Longevity Dataset Builder](#neural-longevity-dataset-builder)
+  - [Non-Longevous Dataset Builder](#non-longevous-dataset-builder)
+  - [FROGAncestryCalc — AISNP-Based Ancestry Analysis](#frogancestrycalc--aisnp-based-ancestry-analysis)
 
 ---
 
@@ -253,224 +254,6 @@ If RNA-seq samples are defined in the YAML, a lightweight expression pipeline (H
 | `vcf/<sample>.vcf.gz` | VCF | Final, genome-wide variant calls |
 | `genes/<sample>_gene_presence.tsv` | TSV | Per-gene coverage report |
 | `qc/<sample>_R1_fastqc.html` | HTML | Read quality report |
-
----
-
-## Neural Module — AI-powered DNA Analysis
-
-In addition to traditional variant calling, this repository includes **Neural Module** (in `neural_module/`), an AI-powered toolkit that uses [AlphaGenome](https://github.com/google-deepmind/alphagenome) from Google DeepMind to predict functional genomic features directly from DNA sequences.
-
-### What is Neural Module?
-
-Neural Module leverages deep learning to predict:
-- 🧬 **Gene Expression** (RNA-seq, CAGE, PRO-cap)
-- 🔬 **Chromatin Accessibility** (ATAC-seq, DNase-seq)
-- ⚛️ **Epigenetic Markers** (Histone modifications: H3K27AC, H3K4ME3, H3K27ME3, etc.)
-- 🔗 **Transcription Factors** (CTCF and other binding sites)
-- 🧩 **3D Structure** (Contact Maps)
-- ✂️ **Splicing** (Junction sites, site usage)
-
-### Key Features
-
-✅ **11 Analysis Types** supported by AlphaGenome  
-✅ **Advanced Visualizations** (heatmaps, dashboards, multi-output comparison)  
-✅ **Variant Effect Prediction** with 3-panel comparison  
-✅ **Ontology Metadata Export** (tissue/cell-type information in CSV/JSON)  
-✅ **Real Sequence Download Guide** (Ensembl, UCSC, NCBI, samtools)  
-✅ **Complete Documentation** in Portuguese and English  
-
-### Quick Example
-
-```bash
-# Download a real genomic sequence (HBB gene, 2048 bp)
-curl 'https://rest.ensembl.org/sequence/region/human/11:5227002..5229049?coord_system_version=GRCh38' \
-  -H 'Content-type:text/x-fasta' > HBB_gene.fasta
-
-# Analyze with AlphaGenome (from neural_module directory)
-cd neural_module
-python neural_module.py \
-  -i ../HBB_gene.fasta \
-  -k YOUR_API_KEY \
-  -o results/
-
-# Analyze variant (e.g., Sickle Cell Anemia mutation)
-python neural_module.py \
-  -i ../HBB_gene.fasta \
-  -k YOUR_API_KEY \
-  -o sickle_cell/ \
-  --variant 1024 A T
-```
-
-### Documentation
-
-📚 **Complete Neural Module Documentation**: [neural_module/README.md](neural_module/README.md)
-
-Key guides:
-- 🚀 [Installation Guide](neural_module/docs/INSTALL.md)
-- 📥 [Download Real Sequences](docs/DOWNLOAD_SEQUENCES.md)
-- 💡 [Usage Guide](neural_module/docs/USAGE.md)
-- 📊 [Interpreting Results](neural_module/docs/RESULTS.md)
-- 📑 [Quick Start](neural_module/QUICKSTART.md)
-
-### Integration with Genomes Analyzer
-
-Neural Module can be used standalone or integrated with the main pipeline to analyze specific genomic regions identified by variant calling.
-
-📖 **Complete Integration Guide**: [neural_module/docs/INTEGRATION.md](neural_module/docs/INTEGRATION.md)
-
-The integration tool (`neural_module/neural_integration.py`) provides:
-- **Automated extraction** of sequences from VCF, BED, or gene lists
-- **Neural analysis** of variants and genomic regions
-- **Correlation** of traditional variant calls with AI predictions
-- **4 operation modes**: integrated analysis, VCF extraction, BED extraction, gene extraction
-
-Quick example:
-```bash
-# Extract variants from pipeline VCF and analyze with AlphaGenome
-cd neural_module
-python neural_integration.py \
-  --integrated \
-  --vcf ../vcf/sample.vcf.gz \
-  --ref ../refs/GRCh38.fa \
-  --api-key YOUR_API_KEY \
-  --output integrated_analysis/
-```
-
----
-
-## Neural Longevity Dataset Builder
-
-> **📁 Location**: This module is in `neural_longevity_dataset/`
-
-The **Neural Longevity Dataset Builder** automates the creation of machine learning datasets for longevity research by integrating genomic data from the 1000 Genomes Project with AI-powered functional predictions from AlphaGenome.
-
-### Key Features:
-- 📥 **Automated Download**: 1000 Genomes High Coverage VCF data
-- 🧬 **Variant Processing**: Calls variants with bcftools, selects central points
-- 🪟 **Window Extraction**: FASTA windows centered on variants with ALT allele applied
-- 🤖 **AlphaGenome Integration**: Feature extraction for each sequence
-- 📊 **PyTorch Datasets**: Balanced train/validation/test splits ready for ML
-- 🔄 **Complete Pipeline**: From raw genomic data to ML-ready features
-
-### Quick Example:
-```bash
-# Build a longevity marker dataset
-cd neural_longevity_dataset
-python neural_longevity_dataset.py --config configs/default.yaml
-
-# Train a model
-python longevity_train.py --config configs/train.yaml
-```
-
-### Documentation:
-📘 **Complete Guide**: [neural_longevity_dataset/README.md](neural_longevity_dataset/README.md)  
-🚀 **Quick Start**: [neural_longevity_dataset/QUICKSTART.md](neural_longevity_dataset/QUICKSTART.md)  
-📖 **Project Details**: [neural_longevity_dataset/docs/PROJECT.md](neural_longevity_dataset/docs/PROJECT.md)
-
-**Note**: Run the script from `/dados/GENOMICS_DATA/top3/` so that downloads, caches, and dataset artifacts stay organized per cohort.
-
----
-
-## Non-Longevous Dataset Builder
-
-`build_non_longevous_dataset` is a modular pipeline for building genomic datasets from non-longevous individuals in the 1000 Genomes Project. It analyzes metadata CSV files, selects samples based on configurable criteria (superpopulation, population, sex), and automatically runs `build_window_and_predict.py` (included in the module) with AlphaGenome predictions for each selected individual.
-
-### Key Features
-
-✅ **Automated Sample Selection** — Configure by superpopulation or population with flexible filters  
-✅ **Metadata Analysis** — Comprehensive statistics about sample distribution and demographics  
-✅ **Idempotent Execution** — Built-in checkpoint system to resume interrupted runs  
-✅ **AlphaGenome Integration** — Direct integration with AI-powered genomic predictions  
-✅ **Organized Structure** — Professional module layout with configs and scripts  
-
-### Quick Usage
-
-```bash
-cd build_non_longevous_dataset
-
-# Analyze available samples
-python3 build_non_longevous_dataset.py --config configs/default.yaml
-
-# Configure selection criteria in configs/default.yaml
-# Enable additional steps and run full pipeline
-python3 build_non_longevous_dataset.py --config configs/default.yaml
-```
-
-### Documentation
-
-📚 **Complete Documentation**: [build_non_longevous_dataset/README.md](build_non_longevous_dataset/README.md)
-
-Additional guides:
-- 🚀 [Quick Start Guide](build_non_longevous_dataset/QUICKSTART.md)
-- 🔧 [Implementation Details](build_non_longevous_dataset/IMPLEMENTATION.md)
-- 📁 [Module Structure](build_non_longevous_dataset/STRUCTURE.md)
-
----
-
-## FROGAncestryCalc — AISNP-Based Ancestry Analysis
-
-> **📁 Location**: This module is in `FROGAncestryCalc/`
-
-**FROGAncestryCalc** (FROG-kb Ancestry Inference Batch Likelihood Computation Tool) is a tool for ancestry inference based on Ancestry Informative SNPs (AISNPs). The modified version in this repository supports pipe delimiters (`|`) and includes tools to extract SNPs from genomic data in various formats.
-
-### Key Features
-
-✅ **Multiple AISNP Panels** — Supports 5 panels: 55AI (KiddLab), 128AI (Seldin), 34plex (SNPforID), combined (192 SNPs), precision (165 SNPs)  
-✅ **Automated Extraction** — Scripts to extract SNPs from VCF, BAM, FASTQ, and 1000 Genomes Project  
-✅ **155 Populations** — Calculates ancestry likelihoods for 155 worldwide populations  
-✅ **Flexible Formats** — Converts VCF/BAM/FASTQ to FROGAncestryCalc format  
-✅ **Detailed Reports** — Generates likelihood, order of magnitude, and population ranking files  
-
-### Quick Example
-
-```bash
-cd FROGAncestryCalc
-
-# Extract SNPs from a VCF file
-python3 tools/vcf_to_frog.py \
-    sample.vcf.gz \
-    tools/aisnps_55_list.txt \
-    input/sample_data.txt
-
-# Run ancestry analysis
-./run.sh
-```
-
-### Extraction Tools
-
-The module includes three tools to extract AISNPs from genomic data:
-
-| Tool | Data Source |
-|------|-------------|
-| `vcf_to_frog.py` | VCF files (from any source) |
-| `extract_snps_from_1000genomes.sh` | Direct download from 1000 Genomes Project Phase 3 |
-| `extract_snps_from_wgs.sh` | Whole genome sequencing data (FASTQ/BAM/VCF) |
-
-### Documentation
-
-📚 **Complete Documentation**: [FROGAncestryCalc/README.md](FROGAncestryCalc/README.md)
-
-Additional guides:
-- 🧬 [55 AISNPs List](FROGAncestryCalc/tools/aisnps_55_list.txt)
-- ⚙️ [Modification Details](FROGAncestryCalc/MODIFICATIONS.md)
-
-### Integration with Main Pipeline
-
-FROGAncestryCalc can be used independently or integrated with the main pipeline for ancestry analysis of processed samples:
-
-```bash
-# Extract SNPs from pipeline-generated VCF
-cd FROGAncestryCalc
-python3 tools/vcf_to_frog.py \
-    ../vcf/NA12878.vcf.gz \
-    tools/aisnps_55_list.txt \
-    input/NA12878_aisnps.txt
-
-# Run analysis
-./run.sh
-```
-
-**Note**: The main pipeline also includes ancestry analysis via supervised ADMIXTURE (step 15), which uses a different approach based on PLINK and HGDP+1KG references. FROGAncestryCalc offers an alternative specifically focused on validated AISNP panels for forensic and clinical use.
 
 ---
 
@@ -729,9 +512,9 @@ Genomes Analyzer provides a clear, reproducible path from raw reads to variant c
 
 ---
 
-## Appendix 1 — Tools & typical usage
+## Appendix 1 — Command Line Tools & Typical Usage
 
-The pipeline wraps several established command‑line programs. Table 1 summarizes their roles and highlights common parameters.
+The pipeline wraps several established command‑line programs. Table 1 summarizes their roles and highlights common parameters.
 
 | Tool | Role | Typical command | Key parameters |
 |------|------|----------------|----------------|
@@ -767,4 +550,228 @@ Each tool offers many more options; consult the official manuals for advanced us
 ### GATK
 
 The Java-based `GATK` suite provides sophisticated variant calling. `HaplotypeCaller` generates per-sample gVCFs, and tools like `GenotypeGVCFs` merge them. Outputs include `out.g.vcf.gz` and corresponding indexes, with detailed progress logs in the console.
+
+---
+
+## Appendix 2 — Additional Important Modules
+
+This section describes specialized modules available in the repository that extend the core functionality of the Genomes Analyzer pipeline for specific use cases such as AI-powered DNA analysis, dataset generation for machine learning, and ancestry inference.
+
+---
+
+### Neural Module — AI-powered DNA Analysis
+
+In addition to traditional variant calling, this repository includes **Neural Module** (in `neural_module/`), an AI-powered toolkit that uses [AlphaGenome](https://github.com/google-deepmind/alphagenome) from Google DeepMind to predict functional genomic features directly from DNA sequences.
+
+#### What is Neural Module?
+
+Neural Module leverages deep learning to predict:
+- 🧬 **Gene Expression** (RNA-seq, CAGE, PRO-cap)
+- 🔬 **Chromatin Accessibility** (ATAC-seq, DNase-seq)
+- ⚛️ **Epigenetic Markers** (Histone modifications: H3K27AC, H3K4ME3, H3K27ME3, etc.)
+- 🔗 **Transcription Factors** (CTCF and other binding sites)
+- 🧩 **3D Structure** (Contact Maps)
+- ✂️ **Splicing** (Junction sites, site usage)
+
+#### Key Features
+
+✅ **11 Analysis Types** supported by AlphaGenome  
+✅ **Advanced Visualizations** (heatmaps, dashboards, multi-output comparison)  
+✅ **Variant Effect Prediction** with 3-panel comparison  
+✅ **Ontology Metadata Export** (tissue/cell-type information in CSV/JSON)  
+✅ **Real Sequence Download Guide** (Ensembl, UCSC, NCBI, samtools)  
+✅ **Complete Documentation** in Portuguese and English  
+
+#### Quick Example
+
+```bash
+# Download a real genomic sequence (HBB gene, 2048 bp)
+curl 'https://rest.ensembl.org/sequence/region/human/11:5227002..5229049?coord_system_version=GRCh38' \
+  -H 'Content-type:text/x-fasta' > HBB_gene.fasta
+
+# Analyze with AlphaGenome (from neural_module directory)
+cd neural_module
+python neural_module.py \
+  -i ../HBB_gene.fasta \
+  -k YOUR_API_KEY \
+  -o results/
+
+# Analyze variant (e.g., Sickle Cell Anemia mutation)
+python neural_module.py \
+  -i ../HBB_gene.fasta \
+  -k YOUR_API_KEY \
+  -o sickle_cell/ \
+  --variant 1024 A T
+```
+
+#### Documentation
+
+📚 **Complete Neural Module Documentation**: [neural_module/README.md](neural_module/README.md)
+
+Key guides:
+- 🚀 [Installation Guide](neural_module/docs/INSTALL.md)
+- 📥 [Download Real Sequences](docs/DOWNLOAD_SEQUENCES.md)
+- 💡 [Usage Guide](neural_module/docs/USAGE.md)
+- 📊 [Interpreting Results](neural_module/docs/RESULTS.md)
+- 📑 [Quick Start](neural_module/QUICKSTART.md)
+
+#### Integration with Genomes Analyzer
+
+Neural Module can be used standalone or integrated with the main pipeline to analyze specific genomic regions identified by variant calling.
+
+📖 **Complete Integration Guide**: [neural_module/docs/INTEGRATION.md](neural_module/docs/INTEGRATION.md)
+
+The integration tool (`neural_module/neural_integration.py`) provides:
+- **Automated extraction** of sequences from VCF, BED, or gene lists
+- **Neural analysis** of variants and genomic regions
+- **Correlation** of traditional variant calls with AI predictions
+- **4 operation modes**: integrated analysis, VCF extraction, BED extraction, gene extraction
+
+Quick example:
+```bash
+# Extract variants from pipeline VCF and analyze with AlphaGenome
+cd neural_module
+python neural_integration.py \
+  --integrated \
+  --vcf ../vcf/sample.vcf.gz \
+  --ref ../refs/GRCh38.fa \
+  --api-key YOUR_API_KEY \
+  --output integrated_analysis/
+```
+
+---
+
+### Neural Longevity Dataset Builder
+
+> **📁 Location**: This module is in `neural_longevity_dataset/`
+
+The **Neural Longevity Dataset Builder** automates the creation of machine learning datasets for longevity research by integrating genomic data from the 1000 Genomes Project with AI-powered functional predictions from AlphaGenome.
+
+#### Key Features:
+- 📥 **Automated Download**: 1000 Genomes High Coverage VCF data
+- 🧬 **Variant Processing**: Calls variants with bcftools, selects central points
+- 🪟 **Window Extraction**: FASTA windows centered on variants with ALT allele applied
+- 🤖 **AlphaGenome Integration**: Feature extraction for each sequence
+- 📊 **PyTorch Datasets**: Balanced train/validation/test splits ready for ML
+- 🔄 **Complete Pipeline**: From raw genomic data to ML-ready features
+
+#### Quick Example:
+```bash
+# Build a longevity marker dataset
+cd neural_longevity_dataset
+python neural_longevity_dataset.py --config configs/default.yaml
+
+# Train a model
+python longevity_train.py --config configs/train.yaml
+```
+
+#### Documentation:
+📘 **Complete Guide**: [neural_longevity_dataset/README.md](neural_longevity_dataset/README.md)  
+🚀 **Quick Start**: [neural_longevity_dataset/QUICKSTART.md](neural_longevity_dataset/QUICKSTART.md)  
+📖 **Project Details**: [neural_longevity_dataset/docs/PROJECT.md](neural_longevity_dataset/docs/PROJECT.md)
+
+**Note**: Run the script from `/dados/GENOMICS_DATA/top3/` so that downloads, caches, and dataset artifacts stay organized per cohort.
+
+---
+
+### Non-Longevous Dataset Builder
+
+`build_non_longevous_dataset` is a modular pipeline for building genomic datasets from non-longevous individuals in the 1000 Genomes Project. It analyzes metadata CSV files, selects samples based on configurable criteria (superpopulation, population, sex), and automatically runs `build_window_and_predict.py` (included in the module) with AlphaGenome predictions for each selected individual.
+
+#### Key Features
+
+✅ **Automated Sample Selection** — Configure by superpopulation or population with flexible filters  
+✅ **Metadata Analysis** — Comprehensive statistics about sample distribution and demographics  
+✅ **Idempotent Execution** — Built-in checkpoint system to resume interrupted runs  
+✅ **AlphaGenome Integration** — Direct integration with AI-powered genomic predictions  
+✅ **Organized Structure** — Professional module layout with configs and scripts  
+
+#### Quick Usage
+
+```bash
+cd build_non_longevous_dataset
+
+# Analyze available samples
+python3 build_non_longevous_dataset.py --config configs/default.yaml
+
+# Configure selection criteria in configs/default.yaml
+# Enable additional steps and run full pipeline
+python3 build_non_longevous_dataset.py --config configs/default.yaml
+```
+
+#### Documentation
+
+📚 **Complete Documentation**: [build_non_longevous_dataset/README.md](build_non_longevous_dataset/README.md)
+
+Additional guides:
+- 🚀 [Quick Start Guide](build_non_longevous_dataset/QUICKSTART.md)
+- 🔧 [Implementation Details](build_non_longevous_dataset/IMPLEMENTATION.md)
+- 📁 [Module Structure](build_non_longevous_dataset/STRUCTURE.md)
+
+---
+
+### FROGAncestryCalc — AISNP-Based Ancestry Analysis
+
+> **📁 Location**: This module is in `FROGAncestryCalc/`
+
+**FROGAncestryCalc** (FROG-kb Ancestry Inference Batch Likelihood Computation Tool) is a tool for ancestry inference based on Ancestry Informative SNPs (AISNPs). The modified version in this repository supports pipe delimiters (`|`) and includes tools to extract SNPs from genomic data in various formats.
+
+#### Key Features
+
+✅ **Multiple AISNP Panels** — Supports 5 panels: 55AI (KiddLab), 128AI (Seldin), 34plex (SNPforID), combined (192 SNPs), precision (165 SNPs)  
+✅ **Automated Extraction** — Scripts to extract SNPs from VCF, BAM, FASTQ, and 1000 Genomes Project  
+✅ **155 Populations** — Calculates ancestry likelihoods for 155 worldwide populations  
+✅ **Flexible Formats** — Converts VCF/BAM/FASTQ to FROGAncestryCalc format  
+✅ **Detailed Reports** — Generates likelihood, order of magnitude, and population ranking files  
+
+#### Quick Example
+
+```bash
+cd FROGAncestryCalc
+
+# Extract SNPs from a VCF file
+python3 tools/vcf_to_frog.py \
+    sample.vcf.gz \
+    tools/aisnps_55_list.txt \
+    input/sample_data.txt
+
+# Run ancestry analysis
+./run.sh
+```
+
+#### Extraction Tools
+
+The module includes three tools to extract AISNPs from genomic data:
+
+| Tool | Data Source |
+|------|-------------|
+| `vcf_to_frog.py` | VCF files (from any source) |
+| `extract_snps_from_1000genomes.sh` | Direct download from 1000 Genomes Project Phase 3 |
+| `extract_snps_from_wgs.sh` | Whole genome sequencing data (FASTQ/BAM/VCF) |
+
+#### Documentation
+
+📚 **Complete Documentation**: [FROGAncestryCalc/README.md](FROGAncestryCalc/README.md)
+
+Additional guides:
+- 🧬 [55 AISNPs List](FROGAncestryCalc/tools/aisnps_55_list.txt)
+- ⚙️ [Modification Details](FROGAncestryCalc/MODIFICATIONS.md)
+
+#### Integration with Main Pipeline
+
+FROGAncestryCalc can be used independently or integrated with the main pipeline for ancestry analysis of processed samples:
+
+```bash
+# Extract SNPs from pipeline-generated VCF
+cd FROGAncestryCalc
+python3 tools/vcf_to_frog.py \
+    ../vcf/NA12878.vcf.gz \
+    tools/aisnps_55_list.txt \
+    input/NA12878_aisnps.txt
+
+# Run analysis
+./run.sh
+```
+
+**Note**: The main pipeline also includes ancestry analysis via supervised ADMIXTURE (step 15), which uses a different approach based on PLINK and HGDP+1KG references. FROGAncestryCalc offers an alternative specifically focused on validated AISNP panels for forensic and clinical use.
 
