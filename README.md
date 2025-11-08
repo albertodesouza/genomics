@@ -16,6 +16,7 @@ _A technical-scientific guide to `genomes_analyzer.py`_
   - [Neural Longevity Dataset Builder](#neural-longevity-dataset-builder)
   - [Non-Longevous Dataset Builder](#non-longevous-dataset-builder)
   - [FROGAncestryCalc — AISNP-Based Ancestry Analysis](#frogancestrycalc--aisnp-based-ancestry-analysis)
+  - [Genes Difference Count — Pairwise Genetic Comparison Tool](#genes-difference-count--pairwise-genetic-comparison-tool)
 
 ---
 
@@ -774,4 +775,63 @@ python3 tools/vcf_to_frog.py \
 ```
 
 **Note**: The main pipeline also includes ancestry analysis via supervised ADMIXTURE (step 15), which uses a different approach based on PLINK and HGDP+1KG references. FROGAncestryCalc offers an alternative specifically focused on validated AISNP panels for forensic and clinical use.
+
+---
+
+### Genes Difference Count — Pairwise Genetic Comparison Tool
+
+> **📁 Location**: This module is in `genes_difference_count/`
+
+**Genes Difference Count** is a high-performance C++ tool for comparing gene sequences between family members (trio analysis: father, mother, child) using parallel processing and optimized algorithms. It generates comprehensive pairwise comparison statistics for genetic differences.
+
+#### Key Features
+
+✅ **Parallel Processing** — OpenMP-based parallelization for maximum performance  
+✅ **IUPAC Compatibility** — Full support for IUPAC nucleotide ambiguity codes  
+✅ **Smart Alignment** — Hirschberg algorithm for short sequences, fast estimation for long ones  
+✅ **Comprehensive Statistics** — Detailed per-gene metrics (matches, substitutions, indels)  
+✅ **CSV Output** — Structured results for easy downstream analysis  
+✅ **Optimized** — Aggressive compiler optimizations for ultra-fast execution  
+
+#### Quick Example
+
+```bash
+cd genes_difference_count
+
+# Configure input/output paths in genes_difference_count.cpp
+# Edit lines 16-24 to set your FASTA file paths
+
+# Compile with optimizations
+make
+
+# Run the analysis
+./genes_difference_count
+```
+
+#### Output
+
+The tool generates a CSV file with detailed statistics for each gene across all three pairwise comparisons:
+- Father vs Mother
+- Father vs Child
+- Mother vs Child
+
+Each comparison includes: aligned columns, matches, substitutions, indels, and ambiguous bases.
+
+#### Performance
+
+On a 16-core system:
+- **Speed**: ~100-150 comparisons/second
+- **Typical Runtime**: 8-12 minutes for ~60,000 comparisons (20,000 genes × 3 pairs)
+- **Parallelization**: Scales well with available CPU cores
+
+#### Documentation
+
+📚 **Complete Documentation**: [genes_difference_count/README.md](genes_difference_count/README.md)
+
+Includes:
+- 🔧 Configuration guide
+- 🔨 Compilation instructions
+- 📊 Output format details
+- 🚀 Performance optimization tips
+- 🧬 Algorithm details (IUPAC compatibility, alignment strategies)
 

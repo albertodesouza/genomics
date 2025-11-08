@@ -1,11 +1,11 @@
-# Makefile para conta_diferencas_genes
+# Makefile for genes_difference_count
 CXX = g++
 CXXFLAGS = -std=c++17 -O3 -march=native -mtune=native -flto -DNDEBUG
 CXXFLAGS += -Wall -Wextra -pedantic
 CXXFLAGS += -funroll-loops -ffast-math -finline-functions
 CXXFLAGS += -fopenmp
-TARGET = conta_diferencas_genes
-SOURCE = conta_diferencas_genes.cpp
+TARGET = genes_difference_count
+SOURCE = genes_difference_count.cpp
 
 # Compilação otimizada para máxima performance
 $(TARGET): $(SOURCE)
