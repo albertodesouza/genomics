@@ -15,7 +15,7 @@ data_sources:
   # CSV file with 1000 Genomes metadata
   # Header: FamilyID,SampleID,FatherID,MotherID,Sex,Population,Superpopulation
   # Sex: 1=Male, 2=Female
-  metadata_csv: "../../doc/1000_genomes_metadata.csv"  # Relativo ao diretório configs/
+  metadata_csv: "../../docs/1000_genomes_metadata.csv"  # Relativo ao diretório configs/
   
   # Reference genome
   reference:

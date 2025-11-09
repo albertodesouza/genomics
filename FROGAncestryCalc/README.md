@@ -391,14 +391,135 @@ rm -f log/workingLog.txt
 
 ## 📚 Population Coverage
 
-The tool calculates ancestry likelihoods for **155 populations** including:
+The tool calculates ancestry likelihoods for **160 populations** including:
 
-- African populations (Yoruba, Mbuti, Biaka, etc.)
-- European populations (Danes, Finns, British, etc.)
-- Asian populations (Han Chinese, Japanese, Korean, etc.)
-- American populations (Maya, Pima, Karitiana, etc.)
-- Middle Eastern populations (Druze, Bedouin, Palestinian, etc.)
-- And many more...
+- **22 populations** from the **1000 Genomes Project Phase 3**
+- **138 populations** from other sources (ALFRED, HGDP, regional studies, etc.)
+
+Major population groups include:
+- African populations (Yoruba, Mbuti, Biaka, Luhya, etc.)
+- European populations (Danes, Finns, British, Toscani, etc.)
+- East Asian populations (Han Chinese variants, Japanese, Korean, Vietnamese, etc.)
+- South Asian populations (Gujarati, Punjabi, Bengali, Telugu, etc.)
+- American populations (Maya, Pima, Karitiana, Peruvian, etc.)
+- Middle Eastern populations (Druze, Palestinian Arabs, Saudi, etc.)
+- And many more regional populations...
+
+### Population Mapping Files
+
+Two comprehensive mapping files are available to understand the population structure:
+
+#### 1. **`population_mapping_complete.csv`** - All 160 Populations
+
+Lists **all 160 populations** in FROGAncestryCalc and identifies their source database:
+- 22 populations from **1000 Genomes Project Phase 3** (with full metadata)
+- 138 populations from **ALFRED, HGDP, and other sources**
+
+#### 2. **`population_mapping_1000genomes.csv`** - 1000 Genomes Only
+
+Contains only the **22 populations from 1000 Genomes Phase 3** that relates:
+
+1. **FROGAncestryCalc population names** → **1000 Genomes population codes**
+2. **1000 Genomes populations** → **Superpopulations**
+
+#### Population-Superpopulation Structure in 1000 Genomes Project
+
+The **1000 Genomes Project Phase 3 / High Coverage** has **26 populations** organized into 5 major superpopulations:
+
+| Superpopulation | 1000G Total | In FROGAncestryCalc | Populations in FROGAncestryCalc | Missing from FROG |
+|----------------|-------------|---------------------|----------------------------------|-------------------|
+| African (AFR) | 7 | 6 | LWK, ASW, YRI, GWD, MSL, ESN | **ACB** |
+| European (EUR) | 5 | 5 | CEU, GBR, FIN, IBS, TSI | none |
+| East Asian (EAS) | 5 | 5 | CHB, CHS, JPT, CDX, KHV | none |
+| South Asian (SAS) | 5 | 5 | GIH, PJL, BEB, STU, ITU | none |
+| Admixed American (AMR) | 4 | 1 | PEL | **CLM, MXL, PUR** |
+| **TOTAL** | **26** | **22** | | **4 missing** |
+
+**⚠️ Important Notes:**
+
+1. **FROGAncestryCalc has 22 of 26 populations** from 1000 Genomes. The 4 missing populations are:
+   - **ACB** (African Caribbean in Barbados) - AFR
+   - **CLM** (Colombian in Medellin) - AMR
+   - **MXL** (Mexican Ancestry in Los Angeles) - AMR
+   - **PUR** (Puerto Rican in Puerto Rico) - AMR
+
+2. **Use High Coverage data when possible**: The 1000 Genomes Project has two main releases:
+   - **Phase 3** (2015): ~2,500 individuals, low coverage (~7.4x)
+   - **High Coverage** (2022): ~3,200 individuals, high coverage (~30x) - **RECOMMENDED**
+   
+   The High Coverage data provides better quality and includes 602 complete trios. Use GRCh38 coordinates for High Coverage data.
+
+#### Using the Mapping Files
+
+**View all 160 populations:**
+```bash
+# See all populations with their source database
+cat population_mapping_complete.csv
+
+# Count populations by source
+grep "1000 Genomes" population_mapping_complete.csv | wc -l  # 22 populations
+grep "ALFRED/HGDP" population_mapping_complete.csv | wc -l   # 138 populations
+```
+
+**Work with 1000 Genomes populations only:**
+```bash
+# View only 1000 Genomes populations
+cat population_mapping_1000genomes.csv
+
+# Filter by superpopulation (e.g., African)
+grep ",AFR," population_mapping_1000genomes.csv
+
+# Filter by specific population code
+grep ",GBR," population_mapping_1000genomes.csv
+
+# Or from the complete file
+grep "1000 Genomes" population_mapping_complete.csv | grep ",AFR,"
+```
+
+#### Example Mapping Entries
+
+**From `population_mapping_complete.csv` (includes all populations):**
+```csv
+FROGAncestryCalc_Population,Source_Database,Pop_Code_1000G,Full_Name_1000G,Superpopulation_1000G,Superpopulation_Full_Name
+Yoruba(YRI),1000 Genomes Phase 3,YRI,Yoruba in Ibadan Nigeria,AFR,African
+British(GBR),1000 Genomes Phase 3,GBR,British in England and Scotland,EUR,European
+Mbuti,ALFRED/HGDP/Other,,,,
+Maya-Yucatec,ALFRED/HGDP/Other,,,,
+Druze,ALFRED/HGDP/Other,,,,
+```
+
+**From `population_mapping_1000genomes.csv` (1000 Genomes only):**
+```csv
+FROGAncestryCalc_Population,Pop_Code_1000G,Full_Name_1000G,Superpopulation_1000G,Superpopulation_Full_Name
+Yoruba(YRI),YRI,Yoruba in Ibadan Nigeria,AFR,African
+British(GBR),GBR,British in England and Scotland,EUR,European
+Han Chinese(CHB),CHB,Han Chinese in Beijing China,EAS,East Asian
+Gujarati(GIH),GIH,Gujarati Indian in Houston TX,SAS,South Asian
+Peruvian(PEL),PEL,Peruvian in Lima Peru,AMR,Admixed American
+```
+
+#### References
+
+1. **The 1000 Genomes Project Consortium** (2015). A global reference for human genetic variation. *Nature*, 526(7571), 68-74. https://doi.org/10.1038/nature15393
+
+2. **Byrska-Bishop, M., et al.** (2022). High-coverage whole-genome sequencing of the expanded 1000 Genomes Project cohort including 602 trios. *Cell*, 185(18), 3426-3440.e19. https://doi.org/10.1016/j.cell.2022.08.004
+
+3. **1000 Genomes Project Official Website**. Population descriptions and metadata. https://www.internationalgenome.org/
+
+4. **Kidd, K.K., et al.** (2014). Progress toward an efficient panel of SNPs for ancestry inference. *Forensic Science International: Genetics*, 10, 23-32. https://doi.org/10.1016/j.fsigen.2014.01.002
+
+5. **ALFRED (ALlele FREquency Database)**. The ALlele FREquency Database. https://alfred.med.yale.edu/
+
+6. **FROG-kb (Forensic Resource/Reference On Genetics - Knowledge base)**. https://frog.med.yale.edu/
+
+**Important Notes:**
+- The **1000 Genomes Project** has **26 populations total** (Phase 3 / High Coverage data)
+- FROGAncestryCalc includes only **22 of those 26** (missing: ACB, CLM, MXL, PUR)
+- Of the **160 total populations** in FROGAncestryCalc:
+  - **22 are from 1000 Genomes** (13.75%)
+  - **138 are from ALFRED, HGDP, and regional studies** (86.25%)
+- The `population_mapping_complete.csv` file lists all 160 populations and identifies their source
+- The `population_mapping_1000genomes.csv` file contains only the 22 populations from 1000 Genomes with full metadata
 
 ## 🐛 Troubleshooting
 

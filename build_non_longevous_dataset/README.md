@@ -109,7 +109,7 @@ Edite o arquivo `configs/default.yaml` para configurar:
 1. **Caminho do CSV**:
 ```yaml
 data_sources:
-  metadata_csv: "../../doc/1000_genomes_metadata.csv"  # Relativo ao diretório configs/
+  metadata_csv: "../../docs/1000_genomes_metadata.csv"  # Relativo ao diretório configs/
 ```
 
 2. **Critérios de seleção**:
