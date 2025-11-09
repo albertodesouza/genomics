@@ -18,6 +18,7 @@
 - [📚 Resources](#-resources)
 - [🔬 Use Cases](#-use-cases)
 - [⚠️ Limitations](#️-limitations)
+- [🧬 Haplotype Processing Details](#-haplotype-processing-details)
 - [📄 License](#-license)
 - [🤝 Contributions](#-contributions)
 - [📧 Support](#-support)
@@ -291,6 +292,109 @@ pip install --upgrade matplotlib seaborn
 - Free use only for non-commercial research
 - Sequences from 100 bp to 1 Mbp
 - Processing time varies with sequence size
+- **Haplotype processing**: AlphaGenome processes each [haplotype](../build_non_longevous_dataset/docs/HAPLOTYPES.md) independently (see [Haplotype Processing Details](#-haplotype-processing-details) below)
+
+## 🧬 Haplotype Processing Details
+
+### How AlphaGenome Handles Haplotypes
+
+AlphaGenome **does NOT process both [haplotypes](../build_non_longevous_dataset/docs/HAPLOTYPES.md) simultaneously**. When analyzing genomic sequences from diploid organisms (like humans), each haplotype is treated as a completely independent sequence.
+
+### Separate Processing Model
+
+When you have phased genomic data with separate consensus sequences for H1 (haplotype 1) and H2 (haplotype 2):
+
+```python
+# Each haplotype is submitted separately
+h1_seq = load_sequence("consensus_H1.fasta")  # 1 Mb from haplotype 1
+h2_seq = load_sequence("consensus_H2.fasta")  # 1 Mb from haplotype 2
+
+# AlphaGenome processes them independently
+predictions_h1 = client.predict_sequence(h1_seq, ...)  # First call: H1 only
+predictions_h2 = client.predict_sequence(h2_seq, ...)  # Second call: H2 only
+```
+
+### Key Implications
+
+**What happens:**
+- ✅ Each haplotype gets its own independent functional prediction
+- ✅ You can identify allele-specific differences by comparing H1 vs H2 results
+- ✅ Useful for detecting regulatory variants affecting one allele differently
+
+**What doesn't happen:**
+- ❌ AlphaGenome doesn't "know" it's analyzing two haplotypes from the same individual
+- ❌ No modeling of interactions between haplotypes
+- ❌ No representation of the true diploid cellular state
+- ❌ Each prediction assumes the sequence exists in isolation
+
+### Practical Example
+
+Suppose you have a regulatory variant present only on H1:
+
+```
+Position:        chr2:1,000,500
+Variant:         C→T (only on H1, not on H2)
+
+AlphaGenome Results:
+├── H1 prediction: Shows increased ATAC signal at position 500,500
+│                  (T allele creates new TF binding site)
+└── H2 prediction: Shows normal ATAC signal at position 500,500
+                   (C allele maintains reference state)
+
+Real cell state: Intermediate effect, with allele-specific binding
+```
+
+### Working with Results
+
+To approximate diploid cellular behavior, you can post-process the predictions:
+
+```python
+# Load predictions from both haplotypes
+h1_atac = np.load("predictions_H1/atac.npz")['values']
+h2_atac = np.load("predictions_H2/atac.npz")['values']
+
+# Calculate allele-specific differences
+difference = h1_atac - h2_atac
+significant_regions = np.where(np.abs(difference) > threshold)
+
+# Approximate diploid state (simple average)
+diploid_prediction = (h1_atac + h2_atac) / 2
+```
+
+### Architecture Limitation
+
+This is a fundamental limitation of the AlphaGenome model architecture, which was trained on:
+- **Input**: Single DNA sequence of up to 1,000,000 bases (A, C, G, T)
+- **Output**: Functional predictions for that sequence alone
+
+The model has no built-in mechanism to:
+- Accept two sequences simultaneously
+- Model *cis* interactions between homologous chromosomes
+- Represent diploid cellular states
+
+### When This Matters Most
+
+**Critical for analyses involving:**
+- Allele-specific expression (ASE)
+- Imprinted genes
+- Regulatory variants with dominant/recessive effects
+- Parent-of-origin effects
+
+**Less critical for:**
+- Homozygous variants (both haplotypes identical)
+- Analyses focused on structural features
+- Initial variant screening
+
+### Integration with Other Modules
+
+For pipelines that generate haplotype-resolved consensus sequences (like `build_non_longevous_dataset`), this module will:
+1. Process H1 and H2 as separate jobs
+2. Save predictions with `_H1` and `_H2` suffixes
+3. Allow downstream comparative analysis
+
+For detailed information about haplotype generation and phasing, see:
+- [Understanding Haplotypes and Consensus Sequences](../build_non_longevous_dataset/docs/HAPLOTYPES.md)
+- [AISNP Haplotype Analysis Mode](../build_non_longevous_dataset/docs/AISNP_MODE.md)
 
 ## 📄 License
 

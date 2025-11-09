@@ -30,6 +30,8 @@ FROG-kb (Forensic Resource/Reference On Genetics - Knowledge base) Ancestry Infe
 - [License](#-license)
 - [Acknowledgments](#-acknowledgments)
 - [Support](#-support)
+- [Appendix: bcftools Commands for 1000 Genomes VCF Extraction](#-appendix-bcftools-commands-for-1000-genomes-vcf-extraction)
+- [Appendix: How FROGAncestryCalc Handles Haplotypes](#-appendix-how-frogancestrycalc-handles-haplotypes)
 
 ---
 
@@ -672,6 +674,83 @@ bcftools index all_chromosomes.vcf.gz
 2. Use the Phase 3 VCFs (which use GRCh37/hg19) instead of High Coverage VCFs
 
 For FROGAncestryCalc's 55 AISNPs, the coordinates in `SNPInfo/55_aisnps_alleles.txt` are in **GRCh37/hg19** format.
+
+---
+
+## 📚 Appendix: How FROGAncestryCalc Handles Haplotypes
+
+### Overview
+
+FROGAncestryCalc does **not** work with [haplotypes](../build_non_longevous_dataset/docs/HAPLOTYPES.md) separately. Instead, it processes genotypes as unphased allele pairs, which is sufficient for ancestry inference based on allele frequencies.
+
+### Genotype Processing
+
+The module uses a two-allele representation for each SNP:
+
+```
+Individual|rs10497191|rs1079597|rs11652805|...
+HG02561|NN|CC|CC|...
+HG02562|TT|CT|CC|...
+```
+
+Where:
+- `CC`, `TT`, `GG`, `AA` = Homozygous (both haplotypes have the same allele)
+- `CT`, `AG`, etc. = Heterozygous (haplotypes have different alleles)
+- `NN` = Missing data
+
+### Phase Information is Not Preserved
+
+When extracting genotypes from phased VCFs (which contain haplotype information), the `vcf_to_frog.py` script:
+
+1. **Accepts phased genotypes**: Can read `0|1` (phased) or `0/1` (unphased)
+2. **Sorts alleles alphabetically**: Always outputs alleles in alphabetical order
+3. **Loses phase information**: `0|1` and `1|0` both become the same output (e.g., `AG`)
+
+**Example:**
+```
+VCF Genotype    →    FROGAncestryCalc Output
+0|1 (A|G)       →    AG
+1|0 (G|A)       →    AG  (same as above!)
+0|0 (A|A)       →    AA
+1|1 (G|G)       →    GG
+```
+
+### Why This Approach Works
+
+Ancestry inference algorithms used by FROGAncestryCalc:
+
+1. **Calculate allele frequencies** in reference populations
+2. **Compute likelihood** of observing the genotype set in each population
+3. **Compare likelihoods** across populations
+
+For this allele frequency-based analysis, **it doesn't matter which allele is on which haplotype**. What matters is:
+- How many copies of each allele the individual has (0, 1, or 2)
+- The frequencies of those alleles in reference populations
+
+### Implications
+
+**Advantages:**
+- ✅ Simpler input format
+- ✅ Works with unphased data
+- ✅ Sufficient for population ancestry inference
+- ✅ Compatible with various genotyping platforms
+
+**Limitations:**
+- ❌ Cannot detect haplotype-specific patterns
+- ❌ Cannot analyze phase-dependent effects
+- ❌ Cannot track which parental lineage contributed which allele
+
+### When Haplotype Information Matters
+
+For analyses that require haplotype information (such as functional genomics or regulatory studies), see the `build_non_longevous_dataset` module, which:
+- Extracts separate consensus sequences for H1 and H2
+- Preserves phase information from phased VCFs
+- Enables haplotype-specific functional predictions
+
+### Related Documentation
+
+- [Understanding Haplotypes and Consensus Sequences](../build_non_longevous_dataset/docs/HAPLOTYPES.md) - Detailed explanation of haplotype concepts
+- [AISNP Mode](../build_non_longevous_dataset/docs/AISNP_MODE.md) - Functional analysis of AISNPs with haplotype resolution
 
 ---
 
