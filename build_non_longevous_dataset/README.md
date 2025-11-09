@@ -38,7 +38,7 @@ This program analyzes a CSV file with metadata from 1000 Genomes Project individ
 The module includes `build_window_and_predict.py`, a script for:
 - Extracting 1 Mb genomic windows centered on specific genes or SNPs
 - Applying individual variants from 1000 Genomes to the reference genome
-- Generating consensus sequences per haplotype (H1 and H2)
+- [Generating consensus sequences per haplotype (H1 and H2)](docs/HAPLOTYPES.md)
 - Running AlphaGenome predictions for functional analysis (RNA-seq, ATAC-seq, etc.)
 
 📚 **AlphaGenome Documentation**:
