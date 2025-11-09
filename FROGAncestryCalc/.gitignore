@@ -3,12 +3,12 @@ tools/aisnps_55_grch37.bed
 tools/aisnps_55_grch38.bed
 
 # Input files (user data and test samples)
-input/*.txt
-input/*.vcf.gz*
-!input/55_aisnps_1000_Genome.txt
+#input/*.txt
+#input/*.vcf.gz*
+#!input/55_aisnps_1000_Genome.txt
 
 # Output files (analysis results)
-output/
+#output/
 
 # Log files
 log/
@@ -17,12 +17,7 @@ log/
 bin/
 
 # Sample lists (user-specific)
-my_samples.txt
-
-# Test VCF files
-*.vcf.gz
-*.vcf.gz.tbi
-*.vcf.gz.csi
+#my_samples.txt
 
 # Individual genotype files
 input/ind/
@@ -33,8 +28,4 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Temporary files
-*.tmp
-*.temp
-caco.txt
 
