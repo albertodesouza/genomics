@@ -333,13 +333,32 @@ def run_build_window_predict(sample_id: str, config: dict, output_dir: Path) -> 
         "--outdir", str(output_dir),
     ]
     
-    # Add gene or gene-id
-    if params.get('gene'):
-        cmd.extend(["--gene", params['gene']])
-    elif params.get('gene_id'):
-        cmd.extend(["--gene-id", params['gene_id']])
-    else:
-        raise ValueError("Nenhum gene especificado (gene ou gene_id)")
+    # Add mode
+    mode = params.get('mode', 'gene')
+    cmd.extend(["--mode", mode])
+    
+    # Mode-specific arguments
+    if mode == 'gene':
+        gene_config = params.get('gene', {})
+        
+        # Check for gene list file first
+        if gene_config.get('gene_list_file'):
+            cmd.extend(["--gene-list-file", gene_config['gene_list_file']])
+        # Otherwise check for single gene
+        elif gene_config.get('symbol'):
+            cmd.extend(["--gene", gene_config['symbol']])
+        elif gene_config.get('id'):
+            cmd.extend(["--gene-id", gene_config['id']])
+        else:
+            raise ValueError("Gene mode requires either gene.symbol, gene.id, or gene.gene_list_file in config")
+    
+    elif mode == 'snp':
+        snp_config = params.get('snp', {})
+        
+        if not snp_config.get('snp_list_file'):
+            raise ValueError("SNP mode requires snp.snp_list_file in config")
+        
+        cmd.extend(["--snp-list-file", snp_config['snp_list_file']])
     
     # Add GTF if specified
     if params.get('gtf_feather'):

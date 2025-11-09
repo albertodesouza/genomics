@@ -58,11 +58,37 @@ sample_selection:
 # ═══════════════════════════════════════════════════════════════════
 
 build_window_params:
-  # Gene to analyze (use either gene or gene_id, not both)
-  gene: "CYP2B6"           # HGNC gene symbol
-  gene_id: null            # ENSEMBL gene ID (e.g., ENSG00000197894)
+  # ═══════════════════════════════════════════════════════════════
+  # Window Mode: "gene" or "snp"
+  # ═══════════════════════════════════════════════════════════════
+  mode: "gene"  # Options: "gene" or "snp"
   
-  # GTF annotation (optional, will use public URL if not provided)
+  # ═══════════════════════════════════════════════════════════════
+  # Gene Mode Options
+  # ═══════════════════════════════════════════════════════════════
+  gene:
+    # Single gene (use either symbol or id, not both)
+    symbol: "CYP2B6"           # HGNC gene symbol
+    id: null                   # ENSEMBL gene ID (e.g., ENSG00000197894)
+    
+    # OR multiple genes from file (one per line)
+    # If gene_list_file is provided, it overrides single gene above
+    gene_list_file: null       # Path to file with gene list
+  
+  # ═══════════════════════════════════════════════════════════════
+  # SNP Mode Options
+  # ═══════════════════════════════════════════════════════════════
+  snp:
+    # Path to SNP list file (tab-delimited with header)
+    # Format: ALFRED_UID  dbSNP_rsnumber  chrom  chrom_pos  alleles
+    # Default: Uses 55 AISNPs from FROGAncestryCalc (GRCh38 coordinates)
+    snp_list_file: "../FROGAncestryCalc/SNPInfo/55_aisnps_alleles_grch38.txt"
+  
+  # ═══════════════════════════════════════════════════════════════
+  # Common Options (apply to both modes)
+  # ═══════════════════════════════════════════════════════════════
+  
+  # GTF annotation (optional for gene mode, ignored for SNP mode)
   gtf_feather: null
   
   # Window size (must match AlphaGenome supported sizes)

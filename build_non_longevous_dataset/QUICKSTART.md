@@ -1,114 +1,123 @@
-# 🚀 Início Rápido: Non-Longevous Dataset Builder
+# 🚀 Quick Start: Non-Longevous Dataset Builder
 
-## ⚡ Teste Rápido (5 minutos)
+## ⚡ Quick Test (5 minutes)
 
-### Passo 1: Analisar Metadados
+### Step 1: Analyze Metadata
 
-Execute o programa com o CSV configurado:
+Run the program with the configured CSV:
 
 ```bash
 cd build_non_longevous_dataset
 python3 build_non_longevous_dataset.py --config configs/default.yaml
 ```
 
-Você verá estatísticas sobre:
-- 5 superpopulações (AFR, AMR, EAS, EUR, SAS)
-- 10 populações
-- 56 indivíduos totais
-- Distribuição por sexo em cada população
+You'll see statistics about:
+- 5 superpopulations (AFR, AMR, EAS, EUR, SAS)
+- 10 populations
+- 56 total individuals
+- Sex distribution in each population
 
-### Passo 2: Configurar Para Seu Projeto
+### Step 2: Configure For Your Project
 
-1. **Prepare seu CSV com metadados do 1000 Genomes**:
-   - Baixe de: http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/
-   - Ou use o exemplo fornecido para testes
+1. **Prepare your CSV with 1000 Genomes metadata**:
+   - Download from: http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/
+   - Or use the provided example for testing
 
-2. **Edite `configs/default.yaml`**:
+2. **Edit `configs/default.yaml`**:
 
 ```yaml
 data_sources:
-  # Seu CSV com metadados (caminho relativo ao diretório configs/)
-  metadata_csv: "../../doc/seu_arquivo.csv"
+  # Your CSV with metadata (path relative to configs/ directory)
+  metadata_csv: "../../doc/your_file.csv"
   
-  # Referência GRCh38 (caminho relativo ao diretório configs/)
+  # GRCh38 reference (path relative to configs/ directory)
   reference:
-    fasta: "../../caminho/para/GRCh38_full_analysis_set_plus_decoy_hla.fa"
+    fasta: "../../path/to/GRCh38_full_analysis_set_plus_decoy_hla.fa"
   
-  # Padrão de VCFs (por cromossomo)
-  vcf_pattern: "/caminho/para/vcfs/1kGP_high_coverage.{chrom}.vcf.gz"
+  # VCF pattern (per chromosome)
+  vcf_pattern: "/path/to/vcfs/1kGP_high_coverage.{chrom}.vcf.gz"
 
 sample_selection:
-  # Escolha: "superpopulation" ou "population"
+  # Choose: "superpopulation" or "population"
   level: "superpopulation"
   
-  # Quantas amostras por grupo
+  # How many samples per group
   samples_per_group: 2
   
-  # Filtro de sexo: "all", "male", ou "female"
+  # Sex filter: "all", "male", or "female"
   sex_filter: "all"
 
 build_window_params:
-  # Gene de interesse
-  gene: "CYP2B6"
+  # Window mode: "gene" or "snp"
+  mode: "gene"
   
-  # Executar predições AlphaGenome
+  # Gene mode settings
+  gene:
+    symbol: "CYP2B6"         # Gene of interest
+    # OR use gene_list_file: "my_genes.txt" for multiple genes
+  
+  # SNP mode settings (alternative to gene mode)
+  # snp:
+  #   snp_list_file: "../FROGAncestryCalc/SNPInfo/55_aisnps_alleles_grch38.txt"
+  
+  # Run AlphaGenome predictions
   predict: true
   
-  # Tipos de output
+  # Output types
   outputs: "RNA_SEQ,ATAC"
   
-  # Tecidos/células (CURIEs)
-  ontology: "UBERON:0002107,UBERON:0000955"  # fígado, cérebro
+  # Tissues/cells (CURIEs)
+  ontology: "UBERON:0002107,UBERON:0000955"  # liver, brain
 
 pipeline:
   steps:
-    analyze_metadata: true    # ✓ Análise
-    select_samples: true      # ✓ Seleção
-    run_predictions: true     # ✓ Executar build_window_and_predict.py
-    generate_report: true     # ✓ Relatório final
+    analyze_metadata: true    # ✓ Analysis
+    select_samples: true      # ✓ Selection
+    run_predictions: true     # ✓ Run build_window_and_predict.py
+    generate_report: true     # ✓ Final report
 ```
 
-3. **Configure a API Key do AlphaGenome** (se usar predições):
+3. **Configure AlphaGenome API Key** (if using predictions):
 
 ```bash
-export ALPHAGENOME_API_KEY="sua_chave_aqui"
+export ALPHAGENOME_API_KEY="your_key_here"
 ```
 
-### Passo 3: Executar Pipeline Completo
+### Step 3: Run Complete Pipeline
 
 ```bash
 cd build_non_longevous_dataset
 python3 build_non_longevous_dataset.py --config configs/default.yaml
 ```
 
-## 📊 Saídas Esperadas
+## 📊 Expected Outputs
 
 ```
 non_longevous_results/
-├── metadata_statistics.json              # Estatísticas do CSV
-├── selected_samples.csv                  # Amostras selecionadas
-├── non_longevous_dataset_checkpoint.json # Checkpoint (idempotência)
-├── processing_summary.txt                # Relatório final
+├── metadata_statistics.json              # CSV statistics
+├── selected_samples.csv                  # Selected samples
+├── non_longevous_dataset_checkpoint.json # Checkpoint (idempotence)
+├── processing_summary.txt                # Final report
 │
-├── HG00096__CYP2B6/                      # Resultados por amostra
-│   ├── ref.window.fa                     # Referência
-│   ├── HG00096.H1.window.fixed.fa        # Haplótipo 1
-│   ├── HG00096.H2.window.fixed.fa        # Haplótipo 2
-│   ├── predictions_H1/                   # Predições H1
+├── HG00096__CYP2B6/                      # Results per sample
+│   ├── ref.window.fa                     # Reference
+│   ├── HG00096.H1.window.fixed.fa        # Haplotype 1
+│   ├── HG00096.H2.window.fixed.fa        # Haplotype 2
+│   ├── predictions_H1/                   # H1 predictions
 │   │   ├── rna_seq.npz
 │   │   ├── rna_seq_metadata.json
 │   │   ├── atac.npz
 │   │   └── atac_metadata.json
-│   └── predictions_H2/                   # Predições H2
+│   └── predictions_H2/                   # H2 predictions
 │       └── ...
 │
-└── HG00097__CYP2B6/                      # Próxima amostra
+└── HG00097__CYP2B6/                      # Next sample
     └── ...
 ```
 
-## 🎯 Casos de Uso Comuns
+## 🎯 Common Use Cases
 
-### Caso 1: Comparar Populações Africana e Europeia
+### Case 1: Compare African and European Populations
 
 ```yaml
 sample_selection:
@@ -117,7 +126,7 @@ sample_selection:
   include_groups: ["AFR", "EUR"]
 ```
 
-### Caso 2: Apenas Mulheres de Populações Específicas
+### Case 2: Only Females from Specific Populations
 
 ```yaml
 sample_selection:
@@ -127,124 +136,173 @@ sample_selection:
   sex_filter: "female"
 ```
 
-### Caso 3: Todas as Superpopulações (Balanceado)
+### Case 3: All Superpopulations (Balanced)
 
 ```yaml
 sample_selection:
   level: "superpopulation"
   samples_per_group: 20
-  include_groups: []  # todas
+  include_groups: []  # all
   sex_filter: "all"
 ```
 
-### Caso 4: Apenas Extrair Sequências (Sem Predições)
+### Case 4: Only Extract Sequences (No Predictions)
 
 ```yaml
 build_window_params:
-  gene: "BRCA1"
-  predict: false       # Desabilita AlphaGenome
-  skip_h2: false       # Mantém ambos os haplótipos
+  mode: "gene"
+  gene:
+    symbol: "BRCA1"
+  predict: false       # Disable AlphaGenome
+  skip_h2: false       # Keep both haplotypes
 ```
 
-## 🔧 Resolução de Problemas
-
-### Erro: CSV não encontrado
-
-```
-[ERROR] Arquivo CSV não encontrado
-```
-
-**Solução**: Verifique o caminho em `data_sources.metadata_csv`
-
-### Erro: VCF pattern com {chrom}
-
-```
-[WARN] VCF pattern contém {chrom}, mas cromossomo não foi determinado
-```
-
-**Solução**: Atualmente, o programa assume que você conhece qual cromossomo contém seu gene. Para o gene CYP2B6 (cromossomo 19), configure:
+### Case 5: AISNP Ancestry Analysis (SNP Mode)
 
 ```yaml
-vcf_pattern: "/caminho/para/1kGP_high_coverage.chr19.vcf.gz"
+build_window_params:
+  mode: "snp"
+  snp:
+    snp_list_file: "../FROGAncestryCalc/SNPInfo/55_aisnps_alleles_grch38.txt"
+  predict: true
+  outputs: "ATAC,CHIP_HISTONE"
+  ontology: "UBERON:0002107"  # liver
 ```
 
-Alternativamente, deixe o `build_window_and_predict.py` determinar automaticamente baixando o GTF.
+**Result**: Creates 55 windows (one per AISNP) for each sample, ideal for comparing epigenetic profiles across ancestries.
 
-### Erro: AlphaGenome API Key
+### Case 6: Multiple Genes in Batch
+
+```yaml
+build_window_params:
+  mode: "gene"
+  gene:
+    gene_list_file: "cancer_genes.txt"  # One gene per line
+  predict: true
+```
+
+**cancer_genes.txt**:
+```
+BRCA1
+BRCA2
+TP53
+PTEN
+```
+
+## 🔧 Troubleshooting
+
+### Error: CSV not found
+
+```
+[ERROR] CSV file not found
+```
+
+**Solution**: Check the path in `data_sources.metadata_csv`
+
+### Error: VCF pattern with {chrom}
+
+```
+[WARN] VCF pattern contains {chrom}, but chromosome was not determined
+```
+
+**Solution**: Currently, the program assumes you know which chromosome contains your gene. For CYP2B6 gene (chromosome 19), configure:
+
+```yaml
+vcf_pattern: "/path/to/1kGP_high_coverage.chr19.vcf.gz"
+```
+
+Alternatively, let `build_window_and_predict.py` determine it automatically by downloading the GTF.
+
+### Error: AlphaGenome API Key
 
 ```
 RuntimeError: AlphaGenome API key not provided
 ```
 
-**Solução**:
+**Solution**:
 ```bash
-export ALPHAGENOME_API_KEY="sua_chave"
-# Ou adicione ao ~/.bashrc
+export ALPHAGENOME_API_KEY="your_key"
+# Or add to ~/.bashrc
 ```
 
-## 💡 Dicas de Performance
+### Error: SNP file not found
 
-1. **Comece pequeno**: Use `samples_per_group: 1` ou `2` para testes
-2. **Desabilite H2**: Use `skip_h2: true` para processar 2x mais rápido
-3. **Menos ontologias**: Use 1-3 tecidos específicos em vez de todos
-4. **Paralelização**: Configure `n_workers: 8` (ajuste para seu CPU)
-5. **Checkpoint**: Se interrompido, o programa continua de onde parou
+```
+FileNotFoundError: [Errno 2] No such file or directory: '55_aisnps_alleles_grch38.txt'
+```
 
-## 📚 Documentação Completa
+**Solution**: Make sure the SNP file exists. If using SNP mode with FROGAncestryCalc, generate the GRCh38 file:
+```bash
+cd FROGAncestryCalc
+python3 tools/convert_grch37_to_grch38.py
+```
 
-Veja `README_NON_LONGEVOUS_DATASET.md` para documentação detalhada.
+## 💡 Performance Tips
 
-## 🧬 Genes Comuns para Análise
+1. **Start small**: Use `samples_per_group: 1` or `2` for testing
+2. **Disable H2**: Use `skip_h2: true` to process 2x faster
+3. **Fewer ontologies**: Use 1-3 specific tissues instead of all
+4. **Parallelization**: Configure `n_workers: 8` (adjust for your CPU)
+5. **Checkpoint**: If interrupted, the program continues from where it stopped
+6. **SNP mode**: Much faster when you don't need full genes, only specific positions
 
-- **CYP2B6** (chr19): Metabolismo de drogas
-- **APOE** (chr19): Risco de Alzheimer
-- **BRCA1** (chr17): Câncer de mama
-- **BRCA2** (chr13): Câncer de mama/ovário
-- **FOXO3** (chr6): Longevidade
-- **TP53** (chr17): Supressor tumoral
+## 📚 Complete Documentation
 
-## 🎓 Exemplo Completo de Workflow
+See `README.md` for detailed documentation.
+
+## 🧬 Common Genes for Analysis
+
+- **CYP2B6** (chr19): Drug metabolism
+- **APOE** (chr19): Alzheimer's risk
+- **BRCA1** (chr17): Breast cancer
+- **BRCA2** (chr13): Breast/ovarian cancer
+- **FOXO3** (chr6): Longevity
+- **TP53** (chr17): Tumor suppressor
+
+## 🎓 Complete Workflow Example
 
 ```bash
-# 1. Entrar no diretório do módulo
+# 1. Enter module directory
 cd build_non_longevous_dataset
 
-# 2. Analisar dados disponíveis
+# 2. Analyze available data
 python3 build_non_longevous_dataset.py --config configs/default.yaml
 
-# 3. Editar configuração baseado nas estatísticas
+# 3. Edit configuration based on statistics
 nano configs/default.yaml
 
-# 4. Habilitar steps adicionais (editar YAML)
+# 4. Enable additional steps (edit YAML)
 # select_samples: true
 # run_predictions: true
 # generate_report: true
 
-# 5. Executar pipeline completo
+# 5. Run complete pipeline
 python3 build_non_longevous_dataset.py --config configs/default.yaml
 
-# 6. Verificar resultados
+# 6. Check results
 ls -lh ../non_longevous_results/
 cat ../non_longevous_results/processing_summary.txt
 
-# 7. Se interrompido, simplesmente execute novamente
-# O checkpoint garantirá que amostras já processadas sejam puladas
+# 7. If interrupted, simply run again
+# The checkpoint will ensure already processed samples are skipped
 python3 build_non_longevous_dataset.py --config configs/default.yaml
 ```
 
-## ✅ Checklist de Preparação
+## ✅ Preparation Checklist
 
-Antes de executar o pipeline completo:
+Before running the complete pipeline:
 
-- [ ] CSV com metadados preparado
-- [ ] Genoma de referência GRCh38 (.fa + .fai) disponível
-- [ ] VCFs do 1000 Genomes baixados
-- [ ] VCFs indexados (.tbi)
-- [ ] AlphaGenome API key configurada (se usar predições)
-- [ ] Espaço em disco suficiente (~500MB-2GB por amostra)
-- [ ] Configuração YAML revisada e ajustada
+- [ ] CSV with metadata prepared
+- [ ] GRCh38 reference genome (.fa + .fai) available
+- [ ] 1000 Genomes VCFs downloaded
+- [ ] VCFs indexed (.tbi)
+- [ ] AlphaGenome API key configured (if using predictions)
+- [ ] Sufficient disk space (~500MB-2GB per sample, more for SNP mode)
+- [ ] YAML configuration reviewed and adjusted
+- [ ] For SNP mode: SNP list file exists and is in GRCh38 coordinates
 
 ---
 
-**Pronto!** Você está preparado para construir seu dataset de não longevos! 🎉
+**Ready!** You're prepared to build your non-longevous dataset! 🎉
 
+For SNP/AISNP analysis, also see: [AISNP Mode Documentation](docs/AISNP_MODE.md)
