@@ -8,15 +8,26 @@ This directory contains the **Non-Longevous Dataset Builder** module completely 
 build_non_longevous_dataset/
 ├── build_non_longevous_dataset.py    # Main program
 ├── build_window_and_predict.py       # Script to extract genomic windows and predictions
+├── frog_ancestry_parser.py           # FROGAncestryCalc likelihood parser
+├── dataset_builder.py                # Individual and global metadata builders
+├── genomic_dataset.py                # PyTorch Dataset implementation
+├── __init__.py                       # Module initialization
 ├── README.md                         # Complete documentation
-├── QUICKSTART.md                     # Quick start guide
-├── IMPLEMENTATION.md                 # Technical implementation details
-├── STRUCTURE.md                      # This file
 ├── configs/
-│   └── default.yaml                  # Default configuration
+│   ├── default.yaml                  # Default configuration
+│   └── small.yaml                    # Small dataset configuration
 ├── docs/
+│   ├── AISNP_MODE.md                 # AISNP mode documentation
 │   ├── ALPHAGENOME_PREDICTIONS.md    # AlphaGenome predictions guide
-│   └── ALPHAGENOME_TISSUES.md        # AlphaGenome tissues/cells guide
+│   ├── ALPHAGENOME_TISSUES.md        # AlphaGenome tissues/cells guide
+│   ├── HAPLOTYPES.md                 # Haplotype generation guide
+│   ├── IMPLEMENTATION.md             # Technical implementation details
+│   ├── PYTORCH_DATASET.md            # PyTorch Dataset complete documentation
+│   ├── PYTORCH_DATASET_SUMMARY.md    # Implementation summary
+│   ├── QUICKSTART.md                 # Quick start guide
+│   └── STRUCTURE.md                  # This file
+├── examples/
+│   └── load_dataset_example.py       # PyTorch Dataset usage examples
 └── scripts/
     └── test.sh                       # Test script
 ```
@@ -49,9 +60,12 @@ Paths in the `configs/default.yaml` file are relative to the `configs/` director
 
 ## 📚 Documentation
 
-- **README.md**: Complete module documentation
-- **QUICKSTART.md**: Quick guide to get started
-- **IMPLEMENTATION.md**: Technical implementation details
+- **README.md** (root): Complete module documentation
+- **docs/QUICKSTART.md**: Quick guide to get started
+- **docs/IMPLEMENTATION.md**: Technical implementation details
+- **docs/PYTORCH_DATASET.md**: Complete PyTorch Dataset documentation
+- **docs/PYTORCH_DATASET_SUMMARY.md**: Implementation summary
+- **docs/STRUCTURE.md**: This file - module structure
 
 ## ✅ Tested and Working
 
@@ -70,6 +84,6 @@ This module includes `build_window_and_predict.py`, which is responsible for:
 - Running AlphaGenome predictions (optional)
 
 📚 Additional documentation:
-- [AlphaGenome Predictions Guide](docs/ALPHAGENOME_PREDICTIONS.md)
-- [Tissues/Cells Guide](docs/ALPHAGENOME_TISSUES.md)
+- [AlphaGenome Predictions Guide](ALPHAGENOME_PREDICTIONS.md)
+- [Tissues/Cells Guide](ALPHAGENOME_TISSUES.md)
 

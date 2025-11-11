@@ -401,7 +401,7 @@ plt.show()
 ## See Also
 
 - [Main README](../README.md)
-- [Quick Start Guide](../QUICKSTART.md)
+- [Quick Start Guide](QUICKSTART.md)
 - [AlphaGenome Predictions Guide](ALPHAGENOME_PREDICTIONS.md)
 - [FROGAncestryCalc Documentation](../../FROGAncestryCalc/README.md)
 

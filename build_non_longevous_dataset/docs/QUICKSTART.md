@@ -305,4 +305,4 @@ Before running the complete pipeline:
 
 **Ready!** You're prepared to build your non-longevous dataset! 🎉
 
-For SNP/AISNP analysis, also see: [AISNP Mode Documentation](docs/AISNP_MODE.md)
+For SNP/AISNP analysis, also see: [AISNP Mode Documentation](AISNP_MODE.md)
