@@ -9,6 +9,7 @@ Pipeline for building datasets from non-longevous individuals from the 1000 Geno
 - [📋 Description](#-description)
   - [build_window_and_predict.py](#build_window_and_predictpy)
   - [Window Modes: Gene vs SNP](#window-modes-gene-vs-snp)
+- [🔥 NEW: PyTorch Dataset](#-new-pytorch-dataset)
 - [🔧 Requirements](#-requirements)
 - [📊 CSV Format](#-csv-format)
 - [🚀 Basic Usage](#-basic-usage)
@@ -60,6 +61,151 @@ The pipeline supports two operating modes:
    - No GTF required
    - Uses pre-defined SNP coordinates
 
+---
+
+## 🔥 NEW: PyTorch Dataset
+
+> **✨ New**: `build_non_longevous_dataset` now automatically generates a complete PyTorch Dataset!
+
+### Features
+
+The pipeline now organizes data in a structure compatible with PyTorch Dataset/DataLoader:
+
+- ✅ **`GenomicLongevityDataset` class** ready to use
+- ✅ **Complete metadata** per individual and global
+- ✅ **Ancestry data** from FROGAncestryCalc included
+- ✅ **Lazy loading** (on-demand) to save memory
+- ✅ **AlphaGenome predictions** (.npz) for each haplotype
+- ✅ **DataLoader support** with custom collate function
+
+### Output Structure
+
+```
+non_longevous_dataset/
+├── dataset_metadata.json              # Global metadata
+└── individuals/
+    ├── HG01879/
+    │   ├── individual_metadata.json   # Metadata + FROG likelihood
+    │   └── windows/
+    │       ├── CYP2B6/               # Genomic window
+    │       │   ├── ref.window.fa
+    │       │   ├── HG01879.H1.window.fixed.fa
+    │       │   ├── HG01879.H2.window.fixed.fa
+    │       │   ├── predictions_H1/
+    │       │   │   ├── rna_seq.npz
+    │       │   │   └── atac.npz
+    │       │   └── predictions_H2/
+    │       │       ├── rna_seq.npz
+    │       │       └── atac.npz
+    │       └── rs10497191/           # Another window
+    └── HG01880/
+        └── ...
+```
+
+### Usage Example
+
+```python
+from genomic_dataset import GenomicLongevityDataset
+from torch.utils.data import DataLoader
+
+# Load dataset
+dataset = GenomicLongevityDataset(
+    dataset_dir='non_longevous_results',
+    load_predictions=True,
+    load_sequences=False
+)
+
+print(f"Total: {len(dataset)} individuals")
+
+# Access a sample
+input_data, output_data = dataset[0]
+
+print(f"Sample: {output_data['sample_id']}")
+print(f"Population: {output_data['population']}")
+print(f"Windows: {list(input_data['windows'].keys())}")
+
+# Use with DataLoader
+from genomic_dataset import collate_fn_variable_windows
+
+dataloader = DataLoader(
+    dataset,
+    batch_size=4,
+    shuffle=True,
+    collate_fn=collate_fn_variable_windows
+)
+
+for batch_input, batch_output in dataloader:
+    # Train neural network
+    pass
+```
+
+### Data Format
+
+Each sample returns `(input_data, output_data)`:
+
+**Input Data** (for neural network):
+```python
+{
+    'windows': {
+        'CYP2B6': {
+            'h1_sequence': str (optional),
+            'h2_sequence': str (optional),
+            'predictions_h1': {
+                'rna_seq': np.ndarray,  # (1000000,)
+                'atac': np.ndarray      # (1000000,)
+            },
+            'predictions_h2': {...}
+        }
+    }
+}
+```
+
+**Output Data** (labels):
+```python
+{
+    'sample_id': str,
+    'longevity': 0,  # 0 for non-longevous, 1 for longevous
+    'sex': 1,  # 1=Male, 2=Female
+    'population': 'ACB',
+    'superpopulation': 'AFR',
+    'frog_likelihood': np.ndarray  # (150,) likelihood per population
+}
+```
+
+### Complete Documentation
+
+📚 **[Complete PyTorch Dataset Documentation](docs/PYTORCH_DATASET.md)**
+
+Includes:
+- Complete API
+- Advanced examples
+- Custom transformations
+- Collate functions
+- Compression and distribution
+- FAQ
+
+### Complete Example
+
+Run the example script:
+
+```bash
+cd build_non_longevous_dataset
+python3 examples/load_dataset_example.py --dataset-dir non_longevous_results
+```
+
+### Pipeline Configuration
+
+To generate dataset metadata, enable in config YAML:
+
+```yaml
+pipeline:
+  steps:
+    run_predictions: true
+    generate_dataset_metadata: true  # New step!
+```
+
+---
+
 ## 🔧 Requirements
 
 - Python 3.8+
@@ -68,6 +214,7 @@ The pipeline supports two operating modes:
   - pyyaml
   - numpy
   - alphagenome (for predictions)
+  - **torch** (to use PyTorch Dataset - optional but recommended)
 - Tools:
   - samtools
   - bcftools
@@ -435,9 +582,11 @@ snp:
 
 ## 📚 See Also
 
+- **[PyTorch Dataset Guide](docs/PYTORCH_DATASET.md)** - Complete Dataset documentation
 - [FROGAncestryCalc](../FROGAncestryCalc/README.md) - Ancestry inference using AISNPs
 - [AlphaGenome Predictions Guide](docs/ALPHAGENOME_PREDICTIONS.md)
 - [AlphaGenome Tissues Guide](docs/ALPHAGENOME_TISSUES.md)
+- [Dataset Examples](examples/load_dataset_example.py) - Complete usage examples
 
 ## 📝 Author
 

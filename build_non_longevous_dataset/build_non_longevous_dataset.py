@@ -46,6 +46,16 @@ from typing import Dict, List, Tuple, Optional
 from collections import defaultdict, Counter
 import yaml
 import pandas as pd
+import numpy as np
+
+# Import dos novos módulos para Dataset PyTorch
+try:
+    from .frog_ancestry_parser import FROGAncestryData
+    from .dataset_builder import IndividualDatasetBuilder, DatasetMetadataBuilder
+except ImportError:
+    # Fallback para execução como script standalone
+    from frog_ancestry_parser import FROGAncestryData
+    from dataset_builder import IndividualDatasetBuilder, DatasetMetadataBuilder
 
 
 def load_config(config_path: Path) -> dict:
@@ -310,12 +320,24 @@ def validate_vcf_exists(sample_id: str, vcf_pattern: str, chromosome: str) -> Op
     return vcf_path
 
 
-def run_build_window_predict(sample_id: str, config: dict, output_dir: Path) -> bool:
+def run_build_window_predict(
+    sample_id: str, 
+    config: dict, 
+    output_dir: Path,
+    target_name: Optional[str] = None
+) -> Tuple[bool, Optional[str]]:
     """
     Run build_window_and_predict.py for a single sample.
     
+    Args:
+        sample_id: ID do sample
+        config: Configuração do pipeline
+        output_dir: Diretório de saída (será usado como base para individuals/)
+        target_name: Nome do gene/SNP sendo processado (para logging)
+    
     Returns:
-        True if successful, False otherwise
+        Tupla (success: bool, target_name: Optional[str])
+        target_name é o nome do gene/SNP processado
     """
     params = config['build_window_params']
     data_sources = config['data_sources']
@@ -325,12 +347,21 @@ def run_build_window_predict(sample_id: str, config: dict, output_dir: Path) -> 
     script_dir = Path(__file__).parent
     bwp_script = script_dir.parent / "build_window_and_predict.py"
     
+    # Determinar output directory: individuals/SAMPLE_ID/windows/
+    # O build_window_and_predict.py criará SAMPLE__TARGET dentro deste dir
+    # Então precisamos apontar para individuals/SAMPLE_ID/ e ele criará windows/
+    individual_base = output_dir / "individuals" / sample_id
+    individual_base.mkdir(parents=True, exist_ok=True)
+    
+    # O output será: individuals/SAMPLE_ID/SAMPLE__TARGET/
+    # Precisamos mover depois para: individuals/SAMPLE_ID/windows/TARGET/
+    
     cmd = [
         sys.executable,  # Use same Python interpreter
         str(bwp_script),
         "--sample", sample_id,
         "--ref-fasta", str(Path(data_sources['reference']['fasta']).expanduser()),
-        "--outdir", str(output_dir),
+        "--outdir", str(individual_base),
     ]
     
     # Add mode
@@ -418,6 +449,21 @@ def run_build_window_predict(sample_id: str, config: dict, output_dir: Path) -> 
     else:
         cmd.extend(["--vcf", vcf_pattern])
     
+    # Determinar target_name para retorno
+    extracted_target_name = None
+    mode = params.get('mode', 'gene')
+    
+    if mode == 'gene':
+        gene_config = params.get('gene', {})
+        if gene_config.get('symbol'):
+            extracted_target_name = gene_config['symbol']
+        elif gene_config.get('id'):
+            extracted_target_name = gene_config['id']
+    elif mode == 'snp':
+        # Para SNP mode, será criado múltiplos diretórios (um por SNP)
+        # Retornaremos None e o caller precisa descobrir quais foram criados
+        extracted_target_name = None
+    
     # Run command
     print(f"\n[INFO] Executando: {' '.join(cmd)}")
     
@@ -430,13 +476,65 @@ def run_build_window_predict(sample_id: str, config: dict, output_dir: Path) -> 
             check=True
         )
         print(result.stdout)
-        return True
+        
+        # Reorganizar estrutura de saída
+        # build_window_and_predict.py cria: outdir/SAMPLE__TARGET/
+        # Queremos mover para: individuals/SAMPLE/windows/TARGET/
+        _reorganize_output_structure(individual_base, sample_id)
+        
+        return True, extracted_target_name
         
     except subprocess.CalledProcessError as e:
         print(f"[ERROR] Falha ao processar amostra {sample_id}")
         print(f"[ERROR] Código de saída: {e.returncode}")
         print(f"[ERROR] stderr: {e.stderr}")
-        return False
+        return False, None
+
+
+def _reorganize_output_structure(individual_base: Path, sample_id: str) -> List[str]:
+    """
+    Reorganiza estrutura de saída do build_window_and_predict.py.
+    
+    Move de: individual_base/SAMPLE__TARGET/
+    Para: individual_base/windows/TARGET/
+    
+    Args:
+        individual_base: Diretório base do indivíduo (individuals/SAMPLE_ID/)
+        sample_id: ID do sample
+        
+    Returns:
+        Lista de nomes de targets processados
+    """
+    windows_dir = individual_base / "windows"
+    windows_dir.mkdir(exist_ok=True)
+    
+    # Encontrar diretórios SAMPLE__TARGET
+    pattern = f"{sample_id}__*"
+    target_dirs = list(individual_base.glob(pattern))
+    
+    processed_targets = []
+    
+    for target_dir in target_dirs:
+        if not target_dir.is_dir():
+            continue
+        
+        # Extrair nome do target
+        target_name = target_dir.name.replace(f"{sample_id}__", "")
+        
+        # Destino final
+        final_dir = windows_dir / target_name
+        
+        # Mover (ou sobrescrever se já existir)
+        if final_dir.exists():
+            import shutil
+            shutil.rmtree(final_dir)
+        
+        target_dir.rename(final_dir)
+        processed_targets.append(target_name)
+        
+        print(f"[INFO] Janela organizada: {target_name}")
+    
+    return processed_targets
 
 
 def generate_summary_report(config: dict, checkpoint_data: dict, output_dir: Path):
@@ -570,9 +668,29 @@ def main():
                 print("[ERROR] Nenhuma amostra selecionada. Execute o passo 'select_samples' primeiro.")
                 sys.exit(1)
         
+        # Carregar FROGAncestryCalc likelihoods
+        print("\n[INFO] Carregando dados de ancestralidade do FROGAncestryCalc...")
+        frog_data = None
+        try:
+            script_dir = Path(__file__).parent
+            project_root = script_dir.parent
+            likelihood_file = project_root / "FROGAncestryCalc/output/whole_1000genomes_55aisnps_likelihood.txt"
+            mapping_file = project_root / "FROGAncestryCalc/population_mapping_1000genomes.csv"
+            
+            if likelihood_file.exists() and mapping_file.exists():
+                frog_data = FROGAncestryData(likelihood_file, mapping_file)
+            else:
+                print("[WARN] Arquivos do FROGAncestryCalc não encontrados. Continuando sem dados de ancestralidade.")
+        except Exception as e:
+            print(f"[WARN] Erro ao carregar FROGAncestryCalc: {e}")
+            print("[WARN] Continuando sem dados de ancestralidade.")
+        
         # Load checkpoint
         checkpoint_file = output_dir / config['pipeline']['checkpoint_file']
         checkpoint_data = load_checkpoint(checkpoint_file)
+        
+        # Obter parâmetros de build_window
+        params = config['build_window_params']
         
         # Process each sample
         total_samples = len(selected_df)
@@ -589,9 +707,65 @@ def main():
             print(f"  • Superpopulação: {row['Superpopulation']}")
             print(f"  • Sexo: {'Masculino' if row['Sex'] == 1 else 'Feminino'}")
             
-            success = run_build_window_predict(sample_id, config, output_dir)
+            # Preparar informações do sample
+            sample_info = {
+                'FamilyID': row.get('FamilyID', '0'),
+                'SampleID': sample_id,
+                'Sex': int(row['Sex']),
+                'Population': row['Population'],
+                'Superpopulation': row['Superpopulation']
+            }
+            
+            # Obter likelihood FROG se disponível
+            frog_likelihood = None
+            frog_pop_names = None
+            if frog_data and frog_data.has_sample(sample_id):
+                try:
+                    frog_info = frog_data.get_individual_data(sample_id, full_frog_vector=True)
+                    frog_likelihood = frog_info['likelihood']
+                    frog_pop_names = frog_info['population_names']
+                except Exception as e:
+                    print(f"[WARN] Erro ao obter likelihood para {sample_id}: {e}")
+            
+            # Criar builder de metadados individuais
+            ind_builder = IndividualDatasetBuilder(
+                base_dir=output_dir,
+                sample_id=sample_id,
+                sample_info=sample_info,
+                frog_likelihood=frog_likelihood,
+                frog_population_names=frog_pop_names
+            )
+            ind_builder.create_structure()
+            
+            # Executar build_window_and_predict
+            success, target_name = run_build_window_predict(sample_id, config, output_dir)
             
             if success:
+                # Descobrir quais janelas foram criadas
+                windows_dir = output_dir / "individuals" / sample_id / "windows"
+                if windows_dir.exists():
+                    window_names = [d.name for d in windows_dir.iterdir() if d.is_dir()]
+                    
+                    # Adicionar metadados de cada janela
+                    for window_name in window_names:
+                        # Tentar determinar informações da janela
+                        mode = params.get('mode', 'gene')
+                        
+                        # Para simplificar, usaremos valores padrão
+                        # Em produção, poderíamos parsear os arquivos para obter estas informações
+                        ind_builder.add_window(
+                            target_name=window_name,
+                            window_type=mode,
+                            chromosome='unknown',  # Seria ideal extrair do FASTA ou metadados
+                            start=0,
+                            end=1000000,
+                            outputs=params.get('outputs', '').split(',') if params.get('outputs') else [],
+                            ontologies=params.get('ontology', '').split(',') if params.get('ontology') else []
+                        )
+                
+                # Salvar metadados individuais
+                ind_builder.save_metadata()
+                
                 checkpoint_data['completed_samples'].append(sample_id)
                 print(f"[INFO] ✓ Amostra {sample_id} processada com sucesso")
             else:
@@ -615,6 +789,37 @@ def main():
         checkpoint_data = load_checkpoint(checkpoint_file)
         
         generate_summary_report(config, checkpoint_data, output_dir)
+    
+    # Step 6: Generate dataset metadata (PyTorch Dataset)
+    if steps.get('generate_dataset_metadata', False):
+        print("\n" + "="*80)
+        print("PASSO 6: GERAÇÃO DE METADADOS DO DATASET PYTORCH")
+        print("="*80)
+        
+        try:
+            dataset_name = config['project'].get('name', 'non_longevous_dataset')
+            
+            metadata_builder = DatasetMetadataBuilder(
+                dataset_dir=output_dir,
+                dataset_name=dataset_name
+            )
+            
+            # Escanear todos os indivíduos
+            metadata_builder.scan_individuals()
+            
+            # Salvar metadados globais
+            metadata_builder.save_metadata()
+            
+            # Imprimir sumário
+            metadata_builder.print_summary()
+            
+            print(f"[INFO] ✓ Metadados do Dataset PyTorch gerados com sucesso!")
+            print(f"[INFO] Arquivo: {output_dir / 'dataset_metadata.json'}")
+            
+        except Exception as e:
+            print(f"[ERROR] Erro ao gerar metadados do dataset: {e}")
+            import traceback
+            traceback.print_exc()
     
     print("\n[DONE] Pipeline concluído!")
 
