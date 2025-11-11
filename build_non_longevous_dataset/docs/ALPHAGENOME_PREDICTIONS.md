@@ -1,15 +1,15 @@
-# AlphaGenome Predictions - Guia de Uso
+# AlphaGenome Predictions - Usage Guide
 
-## 📋 Visão Geral
+## 📋 Overview
 
-O script `build_window_and_predict.py` agora salva as predições completas do AlphaGenome como arrays NumPy, permitindo análises detalhadas dos dados de predição (ATAC-seq, RNA-seq, etc.) para cada nucleotídeo da sequência.
+The `build_window_and_predict.py` script now saves complete AlphaGenome predictions as NumPy arrays, enabling detailed analysis of prediction data (ATAC-seq, RNA-seq, etc.) for each nucleotide in the sequence.
 
-## 🚀 Executando Predições
+## 🚀 Running Predictions
 
-### Exemplo básico:
+### Basic example:
 
 ```bash
-# Do diretório build_non_longevous_dataset
+# From build_non_longevous_dataset directory
 python3 build_window_and_predict.py \
   --sample HG00096 \
   --gene CYP2B6 \
@@ -21,13 +21,13 @@ python3 build_window_and_predict.py \
   --ontology "UBERON:0002107"
 ```
 
-### Ver outputs disponíveis:
+### View available outputs:
 
 ```bash
 python3 build_window_and_predict.py --list-outputs
 ```
 
-Saída exemplo:
+Example output:
 ```
 Available OutputType attributes in AlphaGenome:
   ATAC
@@ -43,170 +43,170 @@ Available OutputType attributes in AlphaGenome:
   ...
 ```
 
-## 📁 Estrutura de Saída
+## 📁 Output Structure
 
-Após a execução, os arquivos são organizados assim:
+After execution, files are organized as follows:
 
 ```
 alphagenome/HG00096__CYP2B6/
-├── gtf_cache.feather                         # Cache do GTF (reutilizado)
-├── ref.window.fa                             # Sequência de referência (1 Mb)
-├── HG00096.window.vcf.gz                     # Variantes do sample na região
-├── HG00096.window.consensus_ready.vcf.gz     # Variantes filtradas
-├── HG00096.H1.window.raw.fa                  # Consenso H1 (antes do ajuste)
-├── HG00096.H1.window.fixed.fa                # Consenso H1 (exatos 1 milhão de bases)
-├── HG00096.H2.window.raw.fa                  # Consenso H2 (antes do ajuste)
-├── HG00096.H2.window.fixed.fa                # Consenso H2 (exatos 1 milhão de bases)
-├── predictions_H1/                           # ⭐ Predições AlphaGenome para H1
-│   ├── atac.npz                              #    Arrays NumPy (1M valores)
-│   └── atac_metadata.json                    #    Metadados dos tracks
-├── predictions_H2/                           # ⭐ Predições AlphaGenome para H2
+├── gtf_cache.feather                         # GTF cache (reused)
+├── ref.window.fa                             # Reference sequence (1 Mb)
+├── HG00096.window.vcf.gz                     # Sample variants in region
+├── HG00096.window.consensus_ready.vcf.gz     # Filtered variants
+├── HG00096.H1.window.raw.fa                  # H1 consensus (before adjustment)
+├── HG00096.H1.window.fixed.fa                # H1 consensus (exactly 1 million bases)
+├── HG00096.H2.window.raw.fa                  # H2 consensus (before adjustment)
+├── HG00096.H2.window.fixed.fa                # H2 consensus (exactly 1 million bases)
+├── predictions_H1/                           # ⭐ AlphaGenome predictions for H1
+│   ├── atac.npz                              #    NumPy arrays (1M values)
+│   └── atac_metadata.json                    #    Track metadata
+├── predictions_H2/                           # ⭐ AlphaGenome predictions for H2
 │   ├── atac.npz
 │   └── atac_metadata.json
-├── prediction_H1.ok.txt                      # Marker de conclusão H1
-└── prediction_H2.ok.txt                      # Marker de conclusão H2
+├── prediction_H1.ok.txt                      # H1 completion marker
+└── prediction_H2.ok.txt                      # H2 completion marker
 ```
 
-## 📊 Analisando os Resultados
+## 📊 Analyzing the Results
 
-### Script de análise incluído:
+### Included analysis script:
 
 ```bash
-# Análise básica de um arquivo
+# Basic file analysis
 python3 ~/genomics/read_alphagenome_predictions.py \
   alphagenome/HG00096__CYP2B6/predictions_H1/atac.npz
 
-# Gerar plot de uma região
+# Generate plot for a region
 python3 ~/genomics/read_alphagenome_predictions.py \
   alphagenome/HG00096__CYP2B6/predictions_H1/atac.npz \
   --plot --start 0 --end 10000 --output atac_plot.png
 
-# Comparar haplótipos H1 vs H2
+# Compare H1 vs H2 haplotypes
 python3 ~/genomics/read_alphagenome_predictions.py \
   alphagenome/HG00096__CYP2B6/predictions_H1/atac.npz \
   --compare alphagenome/HG00096__CYP2B6/predictions_H2/atac.npz
 ```
 
-### Exemplo em Python:
+### Python example:
 
 ```python
 import numpy as np
 import json
 from pathlib import Path
 
-# Carregar predições H1
+# Load H1 predictions
 data_h1 = np.load('alphagenome/HG00096__CYP2B6/predictions_H1/atac.npz')
 
-# Ver tracks disponíveis
+# View available tracks
 print(f"Tracks: {data_h1.files}")  # Ex: ['track_0', 'track_1', ...]
 
-# Acessar track específico
-track_0 = data_h1['track_0']  # Array com ~1 milhão de valores
+# Access specific track
+track_0 = data_h1['track_0']  # Array with ~1 million values
 
-# Estatísticas básicas
+# Basic statistics
 print(f"Shape: {track_0.shape}")
 print(f"Mean:  {track_0.mean():.6f}")
 print(f"Std:   {track_0.std():.6f}")
 print(f"Min:   {track_0.min():.6f}")
 print(f"Max:   {track_0.max():.6f}")
 
-# Carregar metadados
+# Load metadata
 with open('alphagenome/HG00096__CYP2B6/predictions_H1/atac_metadata.json') as f:
     metadata = json.load(f)
     
-print(f"Metadados: {metadata}")
+print(f"Metadata: {metadata}")
 
-# Analisar região específica (ex: primeiros 1000 nucleotídeos)
+# Analyze specific region (e.g., first 1000 nucleotides)
 region = track_0[0:1000]
-print(f"Média na região 0-1000: {region.mean():.6f}")
+print(f"Mean in region 0-1000: {region.mean():.6f}")
 
-# Comparar H1 vs H2
+# Compare H1 vs H2
 data_h2 = np.load('alphagenome/HG00096__CYP2B6/predictions_H2/atac.npz')
 track_h2 = data_h2['track_0']
 
-# Diferença absoluta
+# Absolute difference
 diff = np.abs(track_0 - track_h2)
-print(f"Diferença média entre H1 e H2: {diff.mean():.6f}")
-print(f"Posições com diferença > 0.1: {(diff > 0.1).sum()}")
+print(f"Mean difference between H1 and H2: {diff.mean():.6f}")
+print(f"Positions with difference > 0.1: {(diff > 0.1).sum()}")
 
-# Salvar resultados processados
-np.save('diferenca_h1_h2.npy', diff)
+# Save processed results
+np.save('difference_h1_h2.npy', diff)
 ```
 
-## 🧬 CURIEs de Tecidos Comuns
+## 🧬 Common Tissue CURIEs
 
-Para usar com `--tissue`:
+For use with `--tissue`:
 
-| CURIE | Tecido/Célula |
+| CURIE | Tissue/Cell |
 |-------|---------------|
-| `UBERON:0002107` | Fígado (liver) |
-| `UBERON:0000955` | Cérebro (brain) |
-| `UBERON:0000948` | Coração (heart) |
-| `UBERON:0002048` | Pulmão (lung) |
-| `UBERON:0001264` | Pâncreas (pancreas) |
-| `CL:0000182` | Hepatócito |
-| `CL:0000540` | Neurônio |
-| `CL:0000746` | Cardiomiócito |
+| `UBERON:0002107` | Liver |
+| `UBERON:0000955` | Brain |
+| `UBERON:0000948` | Heart |
+| `UBERON:0002048` | Lung |
+| `UBERON:0001264` | Pancreas |
+| `CL:0000182` | Hepatocyte |
+| `CL:0000540` | Neuron |
+| `CL:0000746` | Cardiomyocyte |
 
-Se não especificar `--tissue` ou usar um valor inválido, o AlphaGenome retorna predições para **todos** os tecidos/células disponíveis.
+If you don't specify `--tissue` or use an invalid value, AlphaGenome returns predictions for **all** available tissues/cells.
 
-## 🔄 Idempotência
+## 🔄 Idempotence
 
-O script é completamente idempotente:
+The script is completely idempotent:
 
-- ✅ Cache do GTF (reutilizado entre todos os genes)
-- ✅ Sequências FASTA (puladas se já existem)
-- ✅ VCFs processados (pulados se já existem)
-- ✅ Predições (puladas se markers `.ok.txt` existem)
+- ✅ GTF cache (reused across all genes)
+- ✅ FASTA sequences (skipped if already exist)
+- ✅ Processed VCFs (skipped if already exist)
+- ✅ Predictions (skipped if `.ok.txt` markers exist)
 
-Você pode executar o mesmo comando múltiplas vezes e apenas os passos incompletos serão executados.
+You can run the same command multiple times and only incomplete steps will be executed.
 
 ## ⚡ Performance
 
-### Primeira execução (sem cache):
-- Download GTF: ~10-30 segundos
-- Extração de referência: ~1-2 segundos
-- Subset VCF: ~2-5 segundos
-- Consensus (H1+H2): ~3-5 segundos
-- Predições AlphaGenome: ~30-60 segundos (depende da API)
-- **Total: ~1-2 minutos**
+### First execution (without cache):
+- GTF download: ~10-30 seconds
+- Reference extraction: ~1-2 seconds
+- VCF subset: ~2-5 seconds
+- Consensus (H1+H2): ~3-5 seconds
+- AlphaGenome predictions: ~30-60 seconds (depends on API)
+- **Total: ~1-2 minutes**
 
-### Execuções subsequentes (com cache):
-- Carregamento GTF: ~0.5 segundos
-- Pula todos os passos já feitos
-- **Total: ~1 segundo** (se tudo já existe)
+### Subsequent executions (with cache):
+- GTF loading: ~0.5 seconds
+- Skip all completed steps
+- **Total: ~1 second** (if everything already exists)
 
-## 💾 Espaço em Disco
+## 💾 Disk Space
 
-Por caso (sample + gene):
+Per case (sample + gene):
 
-- Sequências FASTA: ~3-5 MB
-- VCFs: ~0.5-2 MB (depende do número de variantes)
-- Predições NPZ (comprimidas): ~8-20 MB por output type por haplótipo
-- **Total estimado**: ~20-50 MB por caso
+- FASTA sequences: ~3-5 MB
+- VCFs: ~0.5-2 MB (depends on number of variants)
+- NPZ predictions (compressed): ~8-20 MB per output type per haplotype
+- **Estimated total**: ~20-50 MB per case
 
-O cache do GTF (~50-100 MB) é compartilhado entre todos os casos.
+The GTF cache (~50-100 MB) is shared across all cases.
 
-## 🎯 Casos de Uso
+## 🎯 Use Cases
 
-### 1. Análise de impacto funcional
-Compare predições entre haplótipos para identificar variantes com efeito funcional:
+### 1. Functional impact analysis
+Compare predictions between haplotypes to identify variants with functional effects:
 
 ```python
 diff = np.abs(h1_predictions - h2_predictions)
 high_impact_positions = np.where(diff > threshold)[0]
 ```
 
-### 2. Perfil epigenético de genes
-Analise o perfil de cromatina (ATAC, H3K27ac, etc.) ao redor de um gene de interesse.
+### 2. Gene epigenetic profile
+Analyze chromatin profile (ATAC, H3K27ac, etc.) around a gene of interest.
 
-### 3. Efeitos específicos de tecido
-Compare predições usando diferentes `--tissue` para ver se variantes têm efeitos tecido-específicos.
+### 3. Tissue-specific effects
+Compare predictions using different `--tissue` to see if variants have tissue-specific effects.
 
-### 4. Análise populacional
-Execute para múltiplos samples (ex: 1000 Genomes) e compare perfis entre populações.
+### 4. Population analysis
+Run for multiple samples (e.g., 1000 Genomes) and compare profiles across populations.
 
-## 📚 Referências
+## 📚 References
 
 - [AlphaGenome Documentation](https://alphafold.com/alphagenome)
 - [UBERON Ontology Browser](https://www.ebi.ac.uk/ols/ontologies/uberon)
@@ -214,15 +214,15 @@ Execute para múltiplos samples (ex: 1000 Genomes) e compare perfis entre popula
 
 ## 🐛 Troubleshooting
 
-### Erro: "Invalid ontology_curie"
-Use CURIEs no formato `TIPO:ID` (ex: `UBERON:0002107`), não texto livre.
+### Error: "Invalid ontology_curie"
+Use CURIEs in the format `TYPE:ID` (e.g., `UBERON:0002107`), not free text.
 
-### Erro: "Output type not found"
-Use `--list-outputs` para ver nomes válidos. Use o nome exato (ex: `ATAC`, não `ATAC-seq`).
+### Error: "Output type not found"
+Use `--list-outputs` to see valid names. Use the exact name (e.g., `ATAC`, not `ATAC-seq`).
 
-### Arrays vazios ou None
-Algumas combinações output/tissue podem não ter dados. Verifique os warnings no log.
+### Empty arrays or None
+Some output/tissue combinations may not have data. Check warnings in the log.
 
-### Falta memória
-As predições usam ~2-4 GB de RAM. Para múltiplos samples, processe sequencialmente.
+### Out of memory
+Predictions use ~2-4 GB of RAM. For multiple samples, process sequentially.
 

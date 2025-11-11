@@ -4,6 +4,8 @@
 
 Pipeline for building datasets from non-longevous individuals from the 1000 Genomes Project.
 
+> **🚀 Quick Start**: New to this module? Check the **[Quick Start Guide](docs/QUICKSTART.md)** for a step-by-step introduction!
+
 ## 📑 Table of Contents
 
 - [📋 Description](#-description)
@@ -43,8 +45,8 @@ The module includes `build_window_and_predict.py`, a script for:
 - Running AlphaGenome predictions for functional analysis (RNA-seq, ATAC-seq, etc.)
 
 📚 **AlphaGenome Documentation**:
-- [Predictions Guide](docs/ALPHAGENOME_PREDICTIONS.md)
-- [Tissues/Cells Guide](docs/ALPHAGENOME_TISSUES.md)
+- **[AlphaGenome Predictions Guide](docs/ALPHAGENOME_PREDICTIONS.md)** - Complete guide on running predictions, analyzing results, performance optimization, and common use cases
+- **[Tissues/Cells Guide](docs/ALPHAGENOME_TISSUES.md)** - How to discover and use tissue/cell ontologies (UBERON, CL) with AlphaGenome
 
 ### Window Modes: Gene vs SNP
 
@@ -66,6 +68,8 @@ The pipeline supports two operating modes:
 ## 🔥 NEW: PyTorch Dataset
 
 > **✨ New**: `build_non_longevous_dataset` now automatically generates a complete PyTorch Dataset!
+> 
+> **📚 Full Documentation**: See the **[Complete PyTorch Dataset Guide](docs/PYTORCH_DATASET.md)** for API reference, advanced examples, and detailed usage instructions.
 
 ### Features
 
@@ -338,6 +342,8 @@ build_window_params:
 
 Creates 1 Mb windows centered on SNP positions. Integrates with FROGAncestryCalc for ancestry analysis.
 
+> 🧬 **Complete AISNP Guide**: For detailed information about Ancestry-Informative SNPs analysis, see the **[AISNP Mode Documentation](docs/AISNP_MODE.md)**.
+
 **Configuration:**
 ```yaml
 build_window_params:
@@ -392,6 +398,8 @@ ENSG00000197894
 
 ## 📁 Output Structure
 
+The pipeline generates a well-organized directory structure with all results:
+
 ```
 non_longevous_results/
 ├── metadata_statistics.json        # CSV statistics
@@ -411,6 +419,8 @@ non_longevous_results/
 **For SNP mode with 55 AISNPs and 10 samples:**
 - Total directories: 550 (55 SNPs × 10 samples)
 - Each directory contains: reference + 2 haplotypes + predictions
+
+> 📖 **Detailed Structure Documentation**: See the **[Complete Structure Guide](docs/STRUCTURE.md)** for a comprehensive explanation of all output files, their formats, and how they integrate with the PyTorch Dataset.
 
 ## 🔄 Idempotence
 

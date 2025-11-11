@@ -1,18 +1,18 @@
-# Guia: Como Descobrir Tecidos/Células Disponíveis no AlphaGenome
+# Guide: How to Discover Available Tissues/Cells in AlphaGenome
 
-## 🔍 Nova Funcionalidade: `--list-tissues`
+## 🔍 New Feature: `--list-tissues`
 
-O script `build_window_and_predict.py` agora inclui uma funcionalidade para listar todas as ontologias de tecidos/células disponíveis no AlphaGenome!
+The `build_window_and_predict.py` script now includes functionality to list all available tissue/cell ontologies in AlphaGenome!
 
-## 📋 Comandos Disponíveis
+## 📋 Available Commands
 
-### 1. Listar TODOS os tecidos/células
+### 1. List ALL tissues/cells
 
 ```bash
 python3 ~/genomics/build_window_and_predict.py --list-tissues
 ```
 
-**Saída esperada:**
+**Expected output:**
 ```
 [INFO] Loading tissue metadata from AlphaGenome (this may take a few seconds)...
 
@@ -35,39 +35,39 @@ Usage: --tissue CURIE (e.g., --tissue UBERON:0002107)
 ================================================================================
 ```
 
-### 2. Filtrar por nome (RECOMENDADO)
+### 2. Filter by name (RECOMMENDED)
 
-Procurar apenas tecidos/células que contêm "brain":
+Search only for tissues/cells containing "brain":
 
 ```bash
 python3 ~/genomics/build_window_and_predict.py --list-tissues --filter-tissue brain
 ```
 
-Outros exemplos úteis:
+Other useful examples:
 ```bash
-# Procurar por fígado
+# Search for liver
 python3 ~/genomics/build_window_and_predict.py --list-tissues --filter-tissue liver
 
-# Procurar por coração
+# Search for heart
 python3 ~/genomics/build_window_and_predict.py --list-tissues --filter-tissue heart
 
-# Procurar por pulmão
+# Search for lung
 python3 ~/genomics/build_window_and_predict.py --list-tissues --filter-tissue lung
 
-# Procurar por células T
+# Search for T cells
 python3 ~/genomics/build_window_and_predict.py --list-tissues --filter-tissue "T cell"
 
-# Procurar por neurônio
+# Search for neuron
 python3 ~/genomics/build_window_and_predict.py --list-tissues --filter-tissue neuron
 ```
 
-### 3. Listar tipos de output disponíveis
+### 3. List available output types
 
 ```bash
 python3 ~/genomics/build_window_and_predict.py --list-outputs
 ```
 
-**Saída:**
+**Output:**
 ```
 Available OutputType attributes in AlphaGenome:
   ATAC
@@ -83,9 +83,9 @@ Available OutputType attributes in AlphaGenome:
   SPLICE_SITE_USAGE
 ```
 
-## 🎯 Usando os CURIEs nas Predições
+## 🎯 Using CURIEs in Predictions
 
-Depois de encontrar o CURIE desejado, use-o no comando de predição:
+After finding the desired CURIE, use it in the prediction command:
 
 ```bash
 python3 ~/genomics/build_window_and_predict.py \
@@ -99,110 +99,110 @@ python3 ~/genomics/build_window_and_predict.py \
   --tissue "UBERON:0002107"
 ```
 
-## 📚 Tipos de Ontologias
+## 📚 Ontology Types
 
-O AlphaGenome usa ontologias padronizadas:
+AlphaGenome uses standardized ontologies:
 
-| Prefixo | Nome | Descrição | Exemplos |
+| Prefix | Name | Description | Examples |
 |---------|------|-----------|----------|
-| **UBERON** | Uber-anatomy ontology | Anatomia e tecidos | UBERON:0002107 (liver), UBERON:0000955 (brain) |
-| **CL** | Cell Ontology | Tipos celulares | CL:0000182 (hepatocyte), CL:0000540 (neuron) |
-| **CLO** | Cell Line Ontology | Linhagens celulares | CLO:0000001 (HeLa) |
-| **EFO** | Experimental Factor Ontology | Fatores experimentais | EFO:0000001 |
-| **NTR** | New Term Requested | Termos novos solicitados | NTR:XXX |
+| **UBERON** | Uber-anatomy ontology | Anatomy and tissues | UBERON:0002107 (liver), UBERON:0000955 (brain) |
+| **CL** | Cell Ontology | Cell types | CL:0000182 (hepatocyte), CL:0000540 (neuron) |
+| **CLO** | Cell Line Ontology | Cell lines | CLO:0000001 (HeLa) |
+| **EFO** | Experimental Factor Ontology | Experimental factors | EFO:0000001 |
+| **NTR** | New Term Requested | New requested terms | NTR:XXX |
 
-## 🌐 Navegadores Online de Ontologias
+## 🌐 Online Ontology Browsers
 
-Se preferir navegar visualmente:
+If you prefer to browse visually:
 
-### UBERON (Tecidos/Anatomia)
+### UBERON (Tissues/Anatomy)
 - **URL**: https://www.ebi.ac.uk/ols/ontologies/uberon
-- **Uso**: Procure por órgãos e tecidos
-- **Exemplos comuns**:
-  - Fígado: UBERON:0002107
-  - Cérebro: UBERON:0000955
-  - Coração: UBERON:0000948
-  - Pulmão: UBERON:0002048
-  - Rim: UBERON:0002113
-  - Pâncreas: UBERON:0001264
-  - Baço: UBERON:0002106
-  - Sangue: UBERON:0000178
+- **Use**: Search for organs and tissues
+- **Common examples**:
+  - Liver: UBERON:0002107
+  - Brain: UBERON:0000955
+  - Heart: UBERON:0000948
+  - Lung: UBERON:0002048
+  - Kidney: UBERON:0002113
+  - Pancreas: UBERON:0001264
+  - Spleen: UBERON:0002106
+  - Blood: UBERON:0000178
 
-### Cell Ontology (Tipos Celulares)
+### Cell Ontology (Cell Types)
 - **URL**: https://www.ebi.ac.uk/ols/ontologies/cl
-- **Uso**: Procure por tipos específicos de células
-- **Exemplos comuns**:
-  - Hepatócito: CL:0000182
-  - Neurônio: CL:0000540
-  - Cardiomiócito: CL:0000746
-  - Célula T: CL:0000084
-  - Célula B: CL:0000236
-  - Macrófago: CL:0000235
-  - Fibroblasto: CL:0000057
+- **Use**: Search for specific cell types
+- **Common examples**:
+  - Hepatocyte: CL:0000182
+  - Neuron: CL:0000540
+  - Cardiomyocyte: CL:0000746
+  - T cell: CL:0000084
+  - B cell: CL:0000236
+  - Macrophage: CL:0000235
+  - Fibroblast: CL:0000057
 
-## 💡 Dicas de Uso
+## 💡 Usage Tips
 
-### Dica 1: Sempre filtrar por nome primeiro
-Evite listar todos os tecidos de uma vez (são centenas!). Use `--filter-tissue`:
+### Tip 1: Always filter by name first
+Avoid listing all tissues at once (there are hundreds!). Use `--filter-tissue`:
 
 ```bash
-# ❌ Ruim: Lista tudo (centenas de linhas)
+# ❌ Bad: Lists everything (hundreds of lines)
 python3 build_window_and_predict.py --list-tissues
 
-# ✅ Bom: Lista apenas o que interessa
+# ✅ Good: Lists only what matters
 python3 build_window_and_predict.py --list-tissues --filter-tissue brain
 ```
 
-### Dica 2: Salvar a lista completa para referência
+### Tip 2: Save complete list for reference
 ```bash
 python3 ~/genomics/build_window_and_predict.py --list-tissues > tissues_complete.txt
 ```
 
-### Dica 3: Combinar com grep para busca avançada
+### Tip 3: Combine with grep for advanced search
 ```bash
-# Procurar tecidos relacionados a sistema nervoso
+# Search for tissues related to nervous system
 python3 ~/genomics/build_window_and_predict.py --list-tissues | grep -i nerve
 
-# Procurar células do sistema imune
+# Search for immune system cells
 python3 ~/genomics/build_window_and_predict.py --list-tissues | grep -i "immune\|lymph\|T cell"
 ```
 
-### Dica 4: Para análises em múltiplos tecidos
-Se você precisa comparar múltiplos tecidos, execute o script múltiplas vezes com diferentes `--tissue`:
+### Tip 4: For multi-tissue analysis
+If you need to compare multiple tissues, run the script multiple times with different `--tissue`:
 
 ```bash
-# Fígado
+# Liver
 python3 build_window_and_predict.py ... --tissue "UBERON:0002107" --outdir ./results_liver
 
-# Cérebro
+# Brain
 python3 build_window_and_predict.py ... --tissue "UBERON:0000955" --outdir ./results_brain
 
-# Coração
+# Heart
 python3 build_window_and_predict.py ... --tissue "UBERON:0000948" --outdir ./results_heart
 ```
 
-## ⚠️ Importante: API Key Necessária
+## ⚠️ Important: API Key Required
 
-A opção `--list-tissues` requer uma API key válida do AlphaGenome porque precisa conectar ao servidor para obter os metadados.
+The `--list-tissues` option requires a valid AlphaGenome API key because it needs to connect to the server to fetch metadata.
 
-**Formas de fornecer a API key:**
+**Ways to provide the API key:**
 
-1. Via variável de ambiente (recomendado):
+1. Via environment variable (recommended):
    ```bash
    export ALPHAGENOME_API_KEY="your-key-here"
    python3 build_window_and_predict.py --list-tissues
    ```
 
-2. Via argumento:
+2. Via argument:
    ```bash
    python3 build_window_and_predict.py --list-tissues --api-key "your-key-here"
    ```
 
-## 📊 Estatísticas por Output Type
+## 📊 Statistics by Output Type
 
-Número de biosamples e tracks por tipo de output:
+Number of biosamples and tracks per output type:
 
-| Output Type | Biosamples Únicos | Total de Tracks |
+| Output Type | Unique Biosamples | Total Tracks |
 |-------------|-------------------|-----------------|
 | RNA_SEQ | 285 | 667 |
 | CAGE | 264 | 546 |
@@ -211,18 +211,18 @@ Número de biosamples e tracks por tipo de output:
 | CHIP_HISTONE | 219 | 1116 |
 | PROCAP | 6 | 12 |
 
-## 🚀 Workflow Completo
+## 🚀 Complete Workflow
 
 ```bash
-# 1. Ver outputs disponíveis
+# 1. View available outputs
 python3 build_window_and_predict.py --list-outputs
 
-# 2. Procurar tecido de interesse
+# 2. Search for tissue of interest
 python3 build_window_and_predict.py --list-tissues --filter-tissue liver
 
-# 3. Copiar o CURIE desejado (ex: UBERON:0002107)
+# 3. Copy the desired CURIE (e.g., UBERON:0002107)
 
-# 4. Executar predição
+# 4. Run prediction
 python3 build_window_and_predict.py \
   --sample HG00096 \
   --gene CYP2B6 \
@@ -233,12 +233,12 @@ python3 build_window_and_predict.py \
   --outputs "CAGE" \
   --tissue "UBERON:0002107"
 
-# 5. Analisar resultados
+# 5. Analyze results
 python3 read_alphagenome_predictions.py \
   alphagenome/HG00096__CYP2B6/predictions_H1/cage.npz
 ```
 
-## 📝 Referências
+## 📝 References
 
 - [AlphaGenome Documentation](https://alphafold.com/alphagenome)
 - [UBERON Ontology Browser](https://www.ebi.ac.uk/ols/ontologies/uberon)
