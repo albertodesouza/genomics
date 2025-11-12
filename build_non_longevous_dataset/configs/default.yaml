@@ -82,7 +82,7 @@ build_window_params:
     # Path to SNP list file (tab-delimited with header)
     # Format: ALFRED_UID  dbSNP_rsnumber  chrom  chrom_pos  alleles
     # Default: Uses 55 AISNPs from FROGAncestryCalc (GRCh38 coordinates)
-    snp_list_file: "../FROGAncestryCalc/SNPInfo/55_aisnps_alleles_grch38.txt"
+    snp_list_file: "../../FROGAncestryCalc/SNPInfo/55_aisnps_alleles_grch38.txt"
   
   # ═══════════════════════════════════════════════════════════════
   # Common Options (apply to both modes)
@@ -119,6 +119,22 @@ build_window_params:
   
   # Skip confirmation when requesting all tissues
   all_tissues: false
+  
+  # ═══════════════════════════════════════════════════════════════
+  # API Rate Limiting
+  # ═══════════════════════════════════════════════════════════════
+  # Delay (in seconds) AFTER EACH AlphaGenome API call to respect usage limits
+  # This delay is applied after EVERY prediction (each SNP × haplotype)
+  # Set to 0 to disable rate limiting
+  # Supports float values (e.g., 0.5 for 500ms delay)
+  # 
+  # Example calculation for 78 samples with 55 SNPs:
+  #   - Total API calls: 78 samples × 55 SNPs × 2 haplotypes = 8,580 calls
+  #   - With 0.5s delay: ~71 minutes of delays alone
+  #   - With 1.0s delay: ~143 minutes of delays alone
+  # 
+  # Recommended: 0.5 to 1.0 seconds for respectful API usage
+  api_rate_limit_delay: 1.0
 
 # ═══════════════════════════════════════════════════════════════════
 # Pipeline Execution Steps
@@ -140,6 +156,9 @@ pipeline:
     
     # Step 5: Generate summary report
     generate_report: false
+    
+    # Step 6: Generate PyTorch Dataset metadata (aggregates all individuals)
+    generate_dataset_metadata: false
   
   # Parallel processing
   parallel:

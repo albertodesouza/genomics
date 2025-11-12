@@ -484,6 +484,11 @@ def process_window(
             
             print(f"[INFO] API call completed in {elapsed:.1f} seconds", flush=True)
             
+            # Apply rate limiting delay after API call
+            if args.api_rate_limit_delay > 0:
+                print(f"[INFO] Rate limiting: waiting {args.api_rate_limit_delay}s before next API call...", flush=True)
+                time.sleep(args.api_rate_limit_delay)
+            
             predictions_dir = case_dir / f"predictions_{tag}"
             predictions_dir.mkdir(exist_ok=True)
             
@@ -569,6 +574,7 @@ def main():
     ap.add_argument("--list-tissues", action="store_true", help="List available tissue/cell ontologies and exit (requires API key)")
     ap.add_argument("--filter-tissue", help="Filter tissue list by name (case-insensitive, e.g., 'brain' or 'liver'). Use with --list-tissues")
     ap.add_argument("--all-tissues", action="store_true", help="Skip confirmation when requesting all tissues (WARNING: very slow and memory intensive)")
+    ap.add_argument("--api-rate-limit-delay", type=float, default=0.0, help="Delay (in seconds) between AlphaGenome API calls to respect usage limits. Supports float values (e.g., 0.5 for 500ms)")
     args = ap.parse_args()
     
     # Handle --list-outputs early
@@ -650,7 +656,7 @@ def main():
     prefix = detect_chr_prefix(ref_fai)
     
     sample = args.sample
-    vcf_path = Path(args.vcf).resolve()
+    vcf_pattern = args.vcf  # May contain {chrom} placeholder
     
     # Collect targets (genes or SNPs) to process
     targets = []  # List of (target_name, chrom, start, end) tuples
@@ -702,7 +708,21 @@ def main():
     
     # Process each target
     case_dirs = []
-    for target_name, chrom, start, end in targets:
+    total_targets = len(targets)
+    for idx, (target_name, chrom, start, end) in enumerate(targets, 1):
+        print(f"\n[INFO] Processing target {idx}/{total_targets}: {target_name} ({chrom}:{start}-{end})")
+        
+        # Resolve VCF path for this chromosome
+        # Replace {chrom} placeholder if present
+        vcf_path_str = vcf_pattern.replace('{chrom}', chrom)
+        vcf_path = Path(vcf_path_str).resolve()
+        
+        # Check if VCF exists for this chromosome
+        if not vcf_path.exists():
+            print(f"[ERROR] VCF not found for chromosome {chrom}: {vcf_path}", file=sys.stderr)
+            print(f"[ERROR] Skipping target {target_name}", file=sys.stderr)
+            continue
+        
         case_dir = process_window(
             sample=sample,
             target_name=target_name,

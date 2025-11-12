@@ -472,6 +472,30 @@ build_window_params:
   skip_h2: true  # skip H2, only build H1
 ```
 
+### Configure API Rate Limiting
+
+To respect AlphaGenome API usage policies, the pipeline applies a configurable delay **after each individual API call** (not just between samples):
+
+```yaml
+build_window_params:
+  api_rate_limit_delay: 0.5  # seconds between API calls
+```
+
+**Important:** Each sample requires multiple API calls:
+- **SNP mode (55 AISNPs)**: 55 SNPs × 2 haplotypes = **110 API calls per sample**
+- **Gene mode**: Number of genes × 2 haplotypes
+
+**Time estimation example** (78 samples, 55 SNPs, 0.5s delay):
+- Total API calls: 78 × 55 × 2 = **8,580 calls**
+- Delay time alone: ~71 minutes
+- API processing time (~7s/call): ~16.7 hours
+- **Total estimated time: ~18-20 hours**
+
+Recommended values:
+- `0.5` - Moderate rate limiting (recommended for most cases)
+- `1.0` - Conservative rate limiting (very respectful)
+- `0.0` - No rate limiting (use with caution, may violate API policies)
+
 ## 📊 Output Example (Step 1)
 
 ```

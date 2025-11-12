@@ -41,6 +41,7 @@ import os
 import sys
 import json
 import subprocess
+import time
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from collections import defaultdict, Counter
@@ -72,7 +73,7 @@ def load_config(config_path: Path) -> dict:
     # Expand environment variables and resolve relative paths
     def expand_env_vars(obj, is_path_field=False):
         if isinstance(obj, dict):
-            return {k: expand_env_vars(v, k in ['metadata_csv', 'fasta', 'vcf_pattern']) for k, v in obj.items()}
+            return {k: expand_env_vars(v, k in ['metadata_csv', 'fasta', 'vcf_pattern', 'snp_list_file', 'gene_list_file', 'gtf_feather']) for k, v in obj.items()}
         elif isinstance(obj, list):
             return [expand_env_vars(item) for item in obj]
         elif isinstance(obj, str):
@@ -343,9 +344,9 @@ def run_build_window_predict(
     data_sources = config['data_sources']
     
     # Build command
-    # build_window_and_predict.py está no diretório pai
+    # build_window_and_predict.py está no mesmo diretório
     script_dir = Path(__file__).parent
-    bwp_script = script_dir.parent / "build_window_and_predict.py"
+    bwp_script = script_dir / "build_window_and_predict.py"
     
     # Determinar output directory: individuals/SAMPLE_ID/windows/
     # O build_window_and_predict.py criará SAMPLE__TARGET dentro deste dir
@@ -425,29 +426,22 @@ def run_build_window_predict(
         # Add all-tissues flag
         if params.get('all_tissues'):
             cmd.append("--all-tissues")
+        
+        # Add API rate limiting delay
+        api_delay = params.get('api_rate_limit_delay', 0.0)
+        if api_delay > 0:
+            cmd.extend(["--api-rate-limit-delay", str(api_delay)])
     
-    # VCF path - we need to determine which chromosome
-    # For simplicity, we'll add a placeholder and let build_window_and_predict handle it
-    # In a real implementation, you'd need to know which chromosome contains your gene
-    
-    # IMPORTANT: We need to determine the chromosome for the VCF
-    # This requires either:
-    # 1. Loading GTF and finding the gene
-    # 2. Having the user specify it in config
-    # For now, we'll assume a single VCF or require chromosome in config
-    
-    # Check if there's a chromosome specified in config
+    # VCF path
+    # Pass the VCF pattern to build_window_and_predict.py
+    # It will handle chromosome determination based on the gene/SNP being processed
     vcf_pattern = data_sources.get('vcf_pattern', '')
     
-    # If pattern contains {chrom}, we need to determine chromosome
-    if '{chrom}' in vcf_pattern:
-        print(f"[WARN] VCF pattern contém {{chrom}}, mas cromossomo não foi determinado.")
-        print(f"[WARN] Por favor, especifique o cromossomo no config ou forneça VCF completo.")
-        # For now, try common chromosomes or skip
-        # This is a limitation that should be addressed in production
-        return False
-    else:
+    if vcf_pattern:
         cmd.extend(["--vcf", vcf_pattern])
+    else:
+        print(f"[ERROR] VCF pattern não especificado no config.")
+        return False, None
     
     # Determinar target_name para retorno
     extracted_target_name = None
@@ -466,16 +460,17 @@ def run_build_window_predict(
     
     # Run command
     print(f"\n[INFO] Executando: {' '.join(cmd)}")
+    print(f"[INFO] Processamento pode levar vários minutos (55 SNPs)...")
+    print(f"[INFO] Mostrando output em tempo real:")
+    print("-" * 80)
     
     try:
         result = subprocess.run(
             cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
             text=True,
             check=True
         )
-        print(result.stdout)
+        print("-" * 80)
         
         # Reorganizar estrutura de saída
         # build_window_and_predict.py cria: outdir/SAMPLE__TARGET/
@@ -485,9 +480,10 @@ def run_build_window_predict(
         return True, extracted_target_name
         
     except subprocess.CalledProcessError as e:
+        print("-" * 80)
         print(f"[ERROR] Falha ao processar amostra {sample_id}")
         print(f"[ERROR] Código de saída: {e.returncode}")
-        print(f"[ERROR] stderr: {e.stderr}")
+        print(f"[ERROR] Veja o output acima para detalhes do erro")
         return False, None
 
 
@@ -649,10 +645,124 @@ def main():
                 print("[ERROR] Nenhuma amostra selecionada. Execute o passo 'select_samples' primeiro.")
                 sys.exit(1)
         
-        # This step would validate VCF existence
-        # Skipped for now due to chromosome determination complexity
-        print("[INFO] Validação de VCF não implementada nesta versão.")
-        print("[INFO] VCFs serão validados durante a execução de build_window_and_predict.py")
+        # Determine which chromosomes need validation
+        params = config['build_window_params']
+        mode = params.get('mode', 'gene')
+        chromosomes_to_validate = set()
+        
+        print(f"[INFO] Modo de operação: {mode}")
+        
+        if mode == 'snp':
+            # SNP mode: read chromosomes from SNP list file
+            snp_file = params['snp'].get('snp_list_file')
+            if snp_file:
+                config_dir = config_path.parent
+                snp_path = config_dir / snp_file
+                
+                if snp_path.exists():
+                    print(f"[INFO] Lendo cromossomos do arquivo SNP: {snp_path}")
+                    with open(snp_path) as f:
+                        header = f.readline()  # Skip header
+                        for line in f:
+                            if line.strip() and not line.startswith('#'):
+                                parts = line.strip().split('\t')
+                                if len(parts) >= 3:
+                                    chrom = parts[2]  # chrom column
+                                    # Add 'chr' prefix if not present
+                                    if not chrom.startswith('chr'):
+                                        chrom = f'chr{chrom}'
+                                    chromosomes_to_validate.add(chrom)
+                    print(f"[INFO] Cromossomos identificados: {sorted(chromosomes_to_validate)}")
+                else:
+                    print(f"[WARN] Arquivo SNP não encontrado: {snp_path}")
+                    print("[WARN] Pulando validação de VCF.")
+        
+        elif mode == 'gene':
+            # Gene mode: try to infer chromosome from gene symbol/ID
+            gene_symbol = params['gene'].get('symbol')
+            gene_id = params['gene'].get('id')
+            gene_list_file = params['gene'].get('gene_list_file')
+            
+            if gene_list_file:
+                print(f"[INFO] Modo gene list detectado. Validação completa requer processamento do GTF.")
+                print("[INFO] Validando apenas os VCFs mais comuns (chr1-22, chrX, chrY).")
+                chromosomes_to_validate = {f'chr{i}' for i in range(1, 23)}
+                chromosomes_to_validate.update(['chrX', 'chrY'])
+            elif gene_symbol or gene_id:
+                print(f"[INFO] Modo gene único: {gene_symbol or gene_id}")
+                print("[INFO] Para validação completa, seria necessário consultar o GTF.")
+                print("[INFO] Validando VCFs para cromossomos comuns (chr1-22, chrX, chrY).")
+                chromosomes_to_validate = {f'chr{i}' for i in range(1, 23)}
+                chromosomes_to_validate.update(['chrX', 'chrY'])
+            else:
+                print("[WARN] Nenhum gene especificado. Pulando validação.")
+        
+        if chromosomes_to_validate:
+            vcf_pattern = config['data_sources']['vcf_pattern']
+            print(f"\n[INFO] Validando VCFs para {len(chromosomes_to_validate)} cromossomos...")
+            print(f"[INFO] Padrão VCF: {vcf_pattern}")
+            
+            # Track validation results
+            validation_results = {
+                'valid': [],
+                'missing_vcf': [],
+                'missing_index': []
+            }
+            
+            # Validate each chromosome
+            for chrom in sorted(chromosomes_to_validate):
+                vcf_path = Path(vcf_pattern.format(chrom=chrom))
+                vcf_idx = Path(str(vcf_path) + ".tbi")
+                
+                if not vcf_path.exists():
+                    validation_results['missing_vcf'].append(chrom)
+                    print(f"  ✗ {chrom}: VCF não encontrado - {vcf_path}")
+                elif not vcf_idx.exists():
+                    validation_results['missing_index'].append(chrom)
+                    print(f"  ✗ {chrom}: Índice (.tbi) não encontrado - {vcf_idx}")
+                else:
+                    validation_results['valid'].append(chrom)
+                    print(f"  ✓ {chrom}: OK")
+            
+            # Print summary
+            print("\n" + "-"*80)
+            print("RESUMO DA VALIDAÇÃO:")
+            print("-"*80)
+            print(f"✓ VCFs válidos: {len(validation_results['valid'])}/{len(chromosomes_to_validate)}")
+            
+            if validation_results['missing_vcf']:
+                print(f"✗ VCFs ausentes: {len(validation_results['missing_vcf'])}")
+                print(f"  Cromossomos: {', '.join(validation_results['missing_vcf'])}")
+            
+            if validation_results['missing_index']:
+                print(f"⚠ Índices ausentes: {len(validation_results['missing_index'])}")
+                print(f"  Cromossomos: {', '.join(validation_results['missing_index'])}")
+            
+            # Save validation report
+            validation_report = output_dir / "vcf_validation_report.json"
+            with open(validation_report, 'w') as f:
+                json.dump({
+                    'mode': mode,
+                    'chromosomes_validated': sorted(chromosomes_to_validate),
+                    'vcf_pattern': vcf_pattern,
+                    'results': validation_results,
+                    'total_samples': len(selected_df),
+                    'summary': {
+                        'valid': len(validation_results['valid']),
+                        'missing_vcf': len(validation_results['missing_vcf']),
+                        'missing_index': len(validation_results['missing_index'])
+                    }
+                }, f, indent=2)
+            print(f"\n[INFO] Relatório de validação salvo em: {validation_report}")
+            
+            # Warn if critical VCFs are missing
+            if validation_results['missing_vcf'] or validation_results['missing_index']:
+                print("\n[WARN] Alguns VCFs ou índices estão ausentes!")
+                print("[WARN] Isto pode causar falhas durante a execução do pipeline.")
+                print("[WARN] Recomenda-se corrigir antes de prosseguir para 'run_predictions'.")
+        else:
+            print("[INFO] Nenhum cromossomo identificado para validação.")
+            print("[INFO] VCFs serão validados durante a execução de build_window_and_predict.py")
     
     # Step 4: Run predictions
     if steps.get('run_predictions', False):

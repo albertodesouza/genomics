@@ -29,12 +29,12 @@ data_sources:
   
   # Reference genome
   reference:
-    fasta: "../../refs/GRCh38_full_analysis_set_plus_decoy_hla.fa"  # Relativo ao diretório configs/
+    fasta: "/dados/GENOMICS_DATA/top3/refs/GRCh38_full_analysis_set_plus_decoy_hla.fa"  # Relativo ao diretório configs/
     name: "GRCh38"
   
   # VCF files location (chromosome pattern)
   # {chrom} will be replaced by chromosome name (e.g., chr1, chr2, chrX)
-  vcf_pattern: "/path/to/1000G_vcfs/1kGP_high_coverage_Illumina.{chrom}.filtered.SNV_INDEL_SV_phased_panel.vcf.gz"
+  vcf_pattern: "/dados/GENOMICS_DATA/top3/longevity_dataset/vcf_chromosomes/1kGP_high_coverage_Illumina.{chrom}.filtered.SNV_INDEL_SV_phased_panel.vcf.gz"
 
 # ═══════════════════════════════════════════════════════════════════
 # Sample Selection
@@ -75,7 +75,7 @@ build_window_params:
   # ═══════════════════════════════════════════════════════════════
   # Window Mode: "gene" or "snp"
   # ═══════════════════════════════════════════════════════════════
-  mode: "gene"  # Options: "gene" or "snp"
+  mode: "snp"  # Options: "gene" or "snp"
   
   # ═══════════════════════════════════════════════════════════════
   # Gene Mode Options
@@ -96,7 +96,7 @@ build_window_params:
     # Path to SNP list file (tab-delimited with header)
     # Format: ALFRED_UID  dbSNP_rsnumber  chrom  chrom_pos  alleles
     # Default: Uses 55 AISNPs from FROGAncestryCalc (GRCh38 coordinates)
-    snp_list_file: "../FROGAncestryCalc/SNPInfo/55_aisnps_alleles_grch38.txt"
+    snp_list_file: "../../FROGAncestryCalc/SNPInfo/55_aisnps_alleles_grch38.txt"
   
   # ═══════════════════════════════════════════════════════════════
   # Common Options (apply to both modes)
@@ -113,7 +113,7 @@ build_window_params:
   also_iupac: false        # Set true to also build IUPAC consensus
   
   # AlphaGenome prediction options
-  predict: true            # Run AlphaGenome predictions
+  predict: false            # Run AlphaGenome predictions
   
   # API key (will use environment variable if not provided)
   api_key: "${ALPHAGENOME_API_KEY}"
@@ -133,6 +133,22 @@ build_window_params:
   
   # Skip confirmation when requesting all tissues
   all_tissues: false
+  
+  # ═══════════════════════════════════════════════════════════════
+  # API Rate Limiting
+  # ═══════════════════════════════════════════════════════════════
+  # Delay (in seconds) AFTER EACH AlphaGenome API call to respect usage limits
+  # This delay is applied after EVERY prediction (each SNP × haplotype)
+  # Set to 0 to disable rate limiting
+  # Supports float values (e.g., 0.5 for 500ms delay)
+  # 
+  # Example calculation for this config (78 samples with 55 SNPs):
+  #   - Total API calls: 78 samples × 55 SNPs × 2 haplotypes = 8,580 calls
+  #   - With 0.5s delay: ~71 minutes of delays alone (plus ~20 hours API time)
+  #   - Total estimated time: ~21-22 hours
+  # 
+  # Recommended: 0.5 to 1.0 seconds for respectful API usage
+  api_rate_limit_delay: 0.5
 
 # ═══════════════════════════════════════════════════════════════════
 # Pipeline Execution Steps
@@ -150,7 +166,7 @@ pipeline:
     validate_vcfs: true
     
     # Step 4: Run build_window_and_predict.py for each sample
-    run_predictions: false
+    run_predictions: true
     
     # Step 5: Generate summary report
     generate_report: false
