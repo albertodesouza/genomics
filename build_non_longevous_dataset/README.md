@@ -12,6 +12,7 @@ Pipeline for building datasets from non-longevous individuals from the 1000 Geno
   - [build_window_and_predict.py](#build_window_and_predictpy)
   - [Window Modes: Gene vs SNP](#window-modes-gene-vs-snp)
 - [🔥 NEW: PyTorch Dataset](#-new-pytorch-dataset)
+- [🎨 Visualization Tool](#-visualization-tool)
 - [🔧 Requirements](#-requirements)
 - [📊 CSV Format](#-csv-format)
 - [🚀 Basic Usage](#-basic-usage)
@@ -29,6 +30,7 @@ Pipeline for building datasets from non-longevous individuals from the 1000 Geno
 - [🧬 1000 Genomes Superpopulations](#-1000-genomes-superpopulations)
 - [💡 Tips](#-tips)
 - [🔍 Troubleshooting](#-troubleshooting)
+- [📚 See Also](#-see-also)
 
 ---
 
