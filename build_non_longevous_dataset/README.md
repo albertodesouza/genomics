@@ -382,7 +382,7 @@ build_window_params:
     id: "ENSG00000197894"  # ENSEMBL gene ID
 ```
 
-**Output directory:** `HG00096__CYP2B6/`
+**Output window:** `individuals/HG00096/windows/CYP2B6/`
 
 ### SNP Mode (AISNP analysis)
 
@@ -402,7 +402,7 @@ build_window_params:
 - Processes all 55 AISNPs automatically
 - No GTF annotation required
 - Creates separate windows for each SNP
-- Output directories named by rsID: `HG00096__rs10497191/`, `HG00096__rs1079597/`, etc.
+- Output windows organized hierarchically: `individuals/HG00096/windows/rs10497191/`, `individuals/HG00096/windows/rs1079597/`, etc.
 
 **SNP File Format:**
 Tab-delimited with header:
@@ -440,7 +440,7 @@ BRCA1
 ENSG00000197894
 ```
 
-**Output:** Creates one directory per gene: `HG00096__CYP2B6/`, `HG00096__APOE/`, etc.
+**Output:** Creates one window directory per gene: `individuals/HG00096/windows/CYP2B6/`, `individuals/HG00096/windows/APOE/`, etc.
 
 ## 📁 Output Structure
 
@@ -448,23 +448,57 @@ The pipeline generates a well-organized directory structure with all results:
 
 ```
 non_longevous_results/
-├── metadata_statistics.json        # CSV statistics
-├── selected_samples.csv            # Selected samples
-├── non_longevous_dataset_checkpoint.json  # Checkpoint (idempotence)
-├── processing_summary.txt          # Final report
-├── HG00096__CYP2B6/                # Results per sample/target
-│   ├── ref.window.fa
-│   ├── HG00096.H1.window.fixed.fa
-│   ├── HG00096.H2.window.fixed.fa
-│   └── predictions_H1/
-│       ├── rna_seq.npz
-│       └── rna_seq_metadata.json
-└── ...
+├── metadata_statistics.json                      # CSV statistics
+├── selected_samples.csv                          # Selected samples
+├── dataset_metadata.json                         # Global dataset metadata (if enabled)
+├── non_longevous_dataset_checkpoint.json         # Checkpoint (idempotence)
+├── processing_summary.txt                        # Final report
+└── individuals/                                  # Individual results
+    ├── HG00096/
+    │   ├── individual_metadata.json              # Metadata + ancestry data
+    │   └── windows/
+    │       ├── CYP2B6/                          # Gene mode window
+    │       │   ├── ref.window.fa
+    │       │   ├── HG00096.H1.window.fixed.fa
+    │       │   ├── HG00096.H2.window.fixed.fa
+    │       │   ├── predictions_H1/
+    │       │   │   ├── rna_seq.npz
+    │       │   │   ├── rna_seq_metadata.json
+    │       │   │   ├── atac.npz
+    │       │   │   └── atac_metadata.json
+    │       │   └── predictions_H2/
+    │       │       ├── rna_seq.npz
+    │       │       ├── rna_seq_metadata.json
+    │       │       ├── atac.npz
+    │       │       └── atac_metadata.json
+    │       └── rs10497191/                      # SNP mode window
+    │           ├── ref.window.fa
+    │           ├── HG00096.H1.window.fixed.fa
+    │           ├── HG00096.H2.window.fixed.fa
+    │           ├── predictions_H1/
+    │           │   ├── rna_seq.npz
+    │           │   └── atac.npz
+    │           └── predictions_H2/
+    │               ├── rna_seq.npz
+    │               └── atac.npz
+    └── HG00097/
+        └── ...
 ```
 
-**For SNP mode with 55 AISNPs and 10 samples:**
-- Total directories: 550 (55 SNPs × 10 samples)
-- Each directory contains: reference + 2 haplotypes + predictions
+**Key Features:**
+
+- **Hierarchical organization**: `individuals/` → `{SampleID}/` → `windows/` → `{Target}/`
+- **Multiple windows**: Each sample can have multiple windows (genes or SNPs)
+- **Complete haplotypes**: Reference sequence + H1 and H2 haplotypes per window
+- **AlphaGenome predictions**: Separate directories for H1 and H2 predictions
+- **Metadata files**: JSON metadata alongside each .npz prediction file
+- **PyTorch-ready**: Structure compatible with `GenomicLongevityDataset`
+
+**For SNP mode with 55 AISNPs and 78 samples:**
+- Total sample directories: 78 (`individuals/{SampleID}/`)
+- Total window directories: 4,290 (78 samples × 55 SNPs)
+- Each window contains: 1 reference + 2 haplotypes + 2 prediction directories
+- Total .npz files (2 outputs): ~17,160 files (78 × 55 × 2 haplotypes × 2 outputs)
 
 > 📖 **Detailed Structure Documentation**: See the **[Complete Structure Guide](docs/STRUCTURE.md)** for a comprehensive explanation of all output files, their formats, and how they integrate with the PyTorch Dataset.
 
