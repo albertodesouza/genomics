@@ -106,16 +106,22 @@ build_window_params:
   
   # Output types (comma-separated)
   # Available: RNA_SEQ, CAGE, ATAC, CHIP_HISTONE, CHIP_TF, DNASE, PROCAP, etc.
+  # Recommended for ancestry/longevity studies:
+  #   - RNA_SEQ: Gene expression (population-specific eQTLs)
+  #   - ATAC: Chromatin accessibility (regulatory variants)
   outputs: "RNA_SEQ,ATAC"
   
   # Ontology terms (tissue/cell types, comma-separated CURIEs)
+  # Recommended: CL:0000236 (B-lymphocytes/LCLs - same as 1000 Genomes Project)
   # Leave empty to use all tissues (WARNING: slow and memory intensive)
   # Examples:
+  #   CL:0000236 (B cell / lymphocyte - RECOMMENDED for population studies)
   #   UBERON:0002107 (liver)
   #   UBERON:0000955 (brain)
   #   UBERON:0000948 (heart)
-  #   CL:0002601 (senescent cell)
-  ontology: "UBERON:0002107,UBERON:0000955"
+  #   UBERON:0000178 (blood)
+  #   CL:0002601 (senescent cell - for aging studies)
+  ontology: "CL:0000236"
   
   # Skip confirmation when requesting all tissues
   all_tissues: false

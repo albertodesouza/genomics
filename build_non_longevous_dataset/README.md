@@ -210,6 +210,52 @@ pipeline:
 
 ---
 
+## 🎨 Visualization Tool
+
+> **✨ New**: Interactive visualizer for exploring AlphaGenome predictions!
+> 
+> **📚 Full Documentation**: See the **[Visualization Guide](docs/VISUALIZATION.md)** for complete keyboard controls, usage examples, and tips.
+
+### Quick Start
+
+Visualize AlphaGenome predictions interactively:
+
+```bash
+cd build_non_longevous_dataset
+python3 alphagenome_output_visualization.py configs/small.yaml
+```
+
+### Features
+
+- ⌨️ **Keyboard navigation** through thousands of .npz files
+- 🎭 **Overlay mode** to compare multiple predictions side-by-side
+- 📊 **Group mode** to view ATAC + RNA-seq together
+- 🎨 **High-contrast colors** (blue, red, green, orange, etc.)
+- 📈 **Real-time statistics** (mean, standard deviation)
+- 🚀 **Smart caching** for improved performance
+
+### Keyboard Controls
+
+| Key | Action |
+|-----|--------|
+| `Space` / `→` | Next file |
+| `←` | Previous file |
+| `a` / `A` | Activate/deactivate overlay mode |
+| `d` / `D` | Switch output type (atac ↔ rna_seq) |
+| `g` / `G` | Activate/deactivate group mode |
+| `q` / `ESC` | Exit |
+
+### Use Cases
+
+1. **Quality Control**: Verify predictions look reasonable
+2. **Compare Haplotypes**: Overlay H1 and H2 predictions
+3. **Population Analysis**: Compare functional variation across samples
+4. **Multi-omics View**: See ATAC and RNA-seq together
+
+**→ [Complete Visualization Documentation](docs/VISUALIZATION.md)**
+
+---
+
 ## 🔧 Requirements
 
 - Python 3.8+
@@ -617,6 +663,7 @@ snp:
 ## 📚 See Also
 
 - **[PyTorch Dataset Guide](docs/PYTORCH_DATASET.md)** - Complete Dataset documentation
+- **[Visualization Guide](docs/VISUALIZATION.md)** - Interactive visualization tool
 - [FROGAncestryCalc](../FROGAncestryCalc/README.md) - Ancestry inference using AISNPs
 - [AlphaGenome Predictions Guide](docs/ALPHAGENOME_PREDICTIONS.md)
 - [AlphaGenome Tissues Guide](docs/ALPHAGENOME_TISSUES.md)
