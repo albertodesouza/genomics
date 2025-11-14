@@ -50,10 +50,10 @@ The **Neural Ancestry Predictor** trains a neural network to predict the genetic
 cd genomics/neural_ancestry_predictor
 
 # Install Python dependencies
-pip install torch numpy pandas pyyaml scikit-learn rich
+pip3 install torch numpy pandas pyyaml scikit-learn rich
 
 # Optional: Weights & Biases (for tracking)
-pip install wandb
+pip3 install wandb
 wandb login  # Authenticate with your W&B account
 ```
 
@@ -68,7 +68,7 @@ This module requires a PyTorch dataset created by `build_non_longevous_dataset`:
 #   - dataset_metadata.json
 ```
 
-See `build_non_longevous_dataset/docs/PYTORCH_DATASET.md` for more information.
+See [build_non_longevous_dataset/docs/PYTORCH_DATASET.md](../build_non_longevous_dataset/docs/PYTORCH_DATASET.md) for more information.
 
 ---
 
@@ -543,7 +543,7 @@ weighted avg       0.92      0.92      0.92        78
 
 ```bash
 # Install
-pip install wandb
+pip3 install wandb
 
 # Authenticate
 wandb login
@@ -677,7 +677,7 @@ training:
 To install PyTorch with GPU:
 ```bash
 # CUDA 11.8
-pip install torch --index-url https://download.pytorch.org/whl/cu118
+pip3 install torch --index-url https://download.pytorch.org/whl/cu118
 ```
 
 ### Q: How to interpret accuracy?
@@ -801,7 +801,7 @@ neural_ancestry_predictor/
 For issues or questions:
 
 1. Check this README
-2. Consult `build_non_longevous_dataset/docs/PYTORCH_DATASET.md`
+2. Consult [build_non_longevous_dataset/docs/PYTORCH_DATASET.md](../build_non_longevous_dataset/docs/PYTORCH_DATASET.md)
 3. Run with debug mode: add prints to the code
 4. Check W&B logs (if enabled)
 
