@@ -179,10 +179,10 @@ pipeline:
     run_predictions: true
     
     # Step 5: Generate summary report
-    generate_report: false
+    generate_report: true
     
     # Step 6: Generate PyTorch Dataset metadata (aggregates all individuals)
-    generate_dataset_metadata: false
+    generate_dataset_metadata: true
   
   # Parallel processing
   parallel:
