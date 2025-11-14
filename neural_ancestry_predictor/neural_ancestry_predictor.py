@@ -834,6 +834,312 @@ class Tester:
 
 
 # ==============================================================================
+# DATASET CACHE FUNCTIONS
+# ==============================================================================
+
+def validate_cache(cache_dir: Path, config: Dict) -> bool:
+    """
+    Valida se cache existe e é compatível com configuração atual.
+    
+    Args:
+        cache_dir: Diretório do cache
+        config: Configuração atual
+        
+    Returns:
+        True se cache é válido, False caso contrário
+    """
+    cache_dir = Path(cache_dir)
+    
+    # Verificar se diretório existe
+    if not cache_dir.exists():
+        return False
+    
+    # Verificar arquivos necessários
+    required_files = [
+        'metadata.json',
+        'normalization_params.json',
+        'splits.json',
+        'train_data.pt',
+        'val_data.pt',
+        'test_data.pt'
+    ]
+    
+    for filename in required_files:
+        if not (cache_dir / filename).exists():
+            console.print(f"[yellow]Cache incompleto: falta {filename}[/yellow]")
+            return False
+    
+    # Carregar e verificar metadados
+    try:
+        with open(cache_dir / 'metadata.json', 'r') as f:
+            metadata = json.load(f)
+        
+        # Verificar compatibilidade dos parâmetros críticos
+        processing_params = metadata.get('processing_params', {})
+        current_params = {
+            'alphagenome_outputs': config['dataset_input']['alphagenome_outputs'],
+            'haplotype_mode': config['dataset_input']['haplotype_mode'],
+            'window_center_size': config['dataset_input']['window_center_size'],
+            'downsample_factor': config['dataset_input']['downsample_factor'],
+            'dataset_dir': config['dataset_input']['dataset_dir'],
+        }
+        
+        for key, current_value in current_params.items():
+            if key == 'dataset_dir':
+                # Dataset dir deve existir
+                if not Path(current_value).exists():
+                    console.print(f"[yellow]Dataset dir não existe: {current_value}[/yellow]")
+                    return False
+                # Comparar path absoluto
+                cached_dir = Path(metadata.get('dataset_dir', ''))
+                if cached_dir.resolve() != Path(current_value).resolve():
+                    console.print(f"[yellow]Dataset dir diferente: cache={metadata.get('dataset_dir')}, atual={current_value}[/yellow]")
+                    return False
+            else:
+                cached_value = processing_params.get(key)
+                if cached_value != current_value:
+                    console.print(f"[yellow]Parâmetro {key} diferente: cache={cached_value}, atual={current_value}[/yellow]")
+                    return False
+        
+        # Verificar splits
+        splits_metadata = metadata.get('splits', {})
+        current_splits = {
+            'train_split': config['data_split']['train_split'],
+            'val_split': config['data_split']['val_split'],
+            'test_split': config['data_split']['test_split'],
+            'random_seed': config['data_split']['random_seed']
+        }
+        
+        if splits_metadata.get('random_seed') != current_splits['random_seed']:
+            console.print(f"[yellow]Random seed diferente[/yellow]")
+            return False
+        
+        console.print("[green]✓ Cache válido e compatível[/green]")
+        return True
+        
+    except Exception as e:
+        console.print(f"[yellow]Erro ao validar cache: {e}[/yellow]")
+        return False
+
+
+def save_processed_dataset(
+    cache_dir: Path,
+    processed_dataset: ProcessedGenomicDataset,
+    train_indices: List[int],
+    val_indices: List[int],
+    test_indices: List[int],
+    config: Dict
+):
+    """
+    Salva dataset processado em cache.
+    
+    Args:
+        cache_dir: Diretório onde salvar cache
+        processed_dataset: Dataset processado
+        train_indices: Índices de treino
+        val_indices: Índices de validação
+        test_indices: Índices de teste
+        config: Configuração usada
+    """
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    
+    console.print(f"[cyan]Salvando cache em {cache_dir}...[/cyan]")
+    
+    # Preparar dados de cada split
+    train_data = []
+    val_data = []
+    test_data = []
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        console=console
+    ) as progress:
+        task = progress.add_task("Processando e salvando dados...", total=len(processed_dataset))
+        
+        for idx in range(len(processed_dataset)):
+            features, target = processed_dataset[idx]
+            
+            if idx in train_indices:
+                train_data.append((features, target))
+            elif idx in val_indices:
+                val_data.append((features, target))
+            elif idx in test_indices:
+                test_data.append((features, target))
+            
+            progress.update(task, advance=1)
+    
+    # Salvar dados
+    torch.save(train_data, cache_dir / 'train_data.pt')
+    torch.save(val_data, cache_dir / 'val_data.pt')
+    torch.save(test_data, cache_dir / 'test_data.pt')
+    
+    # Salvar splits
+    splits = {
+        'train_indices': train_indices,
+        'val_indices': val_indices,
+        'test_indices': test_indices
+    }
+    with open(cache_dir / 'splits.json', 'w') as f:
+        json.dump(splits, f, indent=2)
+    
+    # Salvar normalization params
+    with open(cache_dir / 'normalization_params.json', 'w') as f:
+        json.dump(processed_dataset.normalization_params, f, indent=2)
+    
+    # Salvar metadados
+    metadata = {
+        'creation_date': datetime.now().isoformat(),
+        'dataset_dir': config['dataset_input']['dataset_dir'],
+        'processing_params': {
+            'alphagenome_outputs': config['dataset_input']['alphagenome_outputs'],
+            'haplotype_mode': config['dataset_input']['haplotype_mode'],
+            'window_center_size': config['dataset_input']['window_center_size'],
+            'downsample_factor': config['dataset_input']['downsample_factor'],
+        },
+        'splits': {
+            'train_size': len(train_indices),
+            'val_size': len(val_indices),
+            'test_size': len(test_indices),
+            'train_split': config['data_split']['train_split'],
+            'val_split': config['data_split']['val_split'],
+            'test_split': config['data_split']['test_split'],
+            'random_seed': config['data_split']['random_seed']
+        },
+        'total_samples': len(processed_dataset),
+        'num_classes': processed_dataset.get_num_classes(),
+        'input_size': processed_dataset.get_input_size(),
+        'prediction_target': config['output']['prediction_target']
+    }
+    with open(cache_dir / 'metadata.json', 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
+    console.print(f"[green]✓ Cache salvo com sucesso em {cache_dir}[/green]")
+    console.print(f"  • Train: {len(train_data)} samples")
+    console.print(f"  • Val: {len(val_data)} samples")
+    console.print(f"  • Test: {len(test_data)} samples")
+
+
+class CachedProcessedDataset(Dataset):
+    """
+    Dataset wrapper para dados carregados do cache.
+    """
+    
+    def __init__(self, data_file: Path, target_to_idx: Dict, idx_to_target: Dict):
+        """
+        Inicializa dataset do cache.
+        
+        Args:
+            data_file: Arquivo .pt com dados processados
+            target_to_idx: Mapeamento target->índice
+            idx_to_target: Mapeamento índice->target
+        """
+        console.print(f"[cyan]Carregando {data_file.name}...[/cyan]")
+        self.data = torch.load(data_file)
+        self.target_to_idx = target_to_idx
+        self.idx_to_target = idx_to_target
+        console.print(f"[green]✓ {len(self.data)} samples carregados[/green]")
+    
+    def __len__(self) -> int:
+        return len(self.data)
+    
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        return self.data[idx]
+    
+    def get_num_classes(self) -> int:
+        return len(self.target_to_idx)
+    
+    def get_input_size(self) -> int:
+        if len(self.data) > 0:
+            return self.data[0][0].shape[0]
+        return 0
+
+
+def load_processed_dataset(
+    cache_dir: Path,
+    config: Dict
+) -> Tuple[CachedProcessedDataset, DataLoader, DataLoader, DataLoader]:
+    """
+    Carrega dataset processado do cache.
+    
+    Args:
+        cache_dir: Diretório do cache
+        config: Configuração atual
+        
+    Returns:
+        Tupla (full_dataset, train_loader, val_loader, test_loader)
+    """
+    cache_dir = Path(cache_dir)
+    
+    console.print(Panel.fit(f"[bold cyan]Carregando Dataset do Cache[/bold cyan]\n{cache_dir}"))
+    
+    # Carregar metadados
+    with open(cache_dir / 'metadata.json', 'r') as f:
+        metadata = json.load(f)
+    
+    console.print(f"[green]Cache criado em: {metadata['creation_date']}[/green]")
+    console.print(f"[green]Total de amostras: {metadata['total_samples']}[/green]")
+    
+    # Carregar normalization params (para referência)
+    with open(cache_dir / 'normalization_params.json', 'r') as f:
+        norm_params = json.load(f)
+    
+    console.print(f"[green]Normalização: mean={norm_params['mean']:.6f}, std={norm_params['std']:.6f}[/green]")
+    
+    # Criar mapeamentos de target (do metadata)
+    # Para cached dataset, vamos reconstruir os mapeamentos baseados no prediction_target
+    # Isso é simplificado - assumimos que os targets já estão convertidos para índices
+    target_to_idx = {}
+    idx_to_target = {}
+    
+    # Para classificação, criar mapeamentos dummy (os dados já estão como índices)
+    num_classes = metadata.get('num_classes', 0)
+    for i in range(num_classes):
+        target_to_idx[str(i)] = i
+        idx_to_target[i] = str(i)
+    
+    # Carregar datasets
+    train_dataset = CachedProcessedDataset(cache_dir / 'train_data.pt', target_to_idx, idx_to_target)
+    val_dataset = CachedProcessedDataset(cache_dir / 'val_data.pt', target_to_idx, idx_to_target)
+    test_dataset = CachedProcessedDataset(cache_dir / 'test_data.pt', target_to_idx, idx_to_target)
+    
+    # Criar dataloaders
+    batch_size = config['training']['batch_size']
+    
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=0
+    )
+    
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=0
+    )
+    
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=0
+    )
+    
+    console.print(f"[green]Dataset splits carregados:[/green]")
+    console.print(f"  • Treino: {len(train_dataset)} amostras")
+    console.print(f"  • Validação: {len(val_dataset)} amostras")
+    console.print(f"  • Teste: {len(test_dataset)} amostras")
+    
+    # Usar train_dataset como full_dataset (para compatibilidade com código existente)
+    return train_dataset, train_loader, val_loader, test_loader
+
+
+# ==============================================================================
 # MAIN EXECUTION
 # ==============================================================================
 
@@ -850,14 +1156,41 @@ def save_config(config: Dict, output_path: Path):
         json.dump(config, f, indent=2)
 
 
-def prepare_data(config: Dict) -> Tuple[ProcessedGenomicDataset, DataLoader, DataLoader, DataLoader]:
+def prepare_data(config: Dict) -> Tuple[Any, DataLoader, DataLoader, DataLoader]:
     """
     Prepara datasets e dataloaders.
+    Tenta carregar do cache se disponível, senão processa e salva.
     
     Returns:
         Tupla (full_dataset, train_loader, val_loader, test_loader)
     """
-    console.print(Panel.fit("[bold cyan]Carregando Dataset[/bold cyan]"))
+    # Verificar se cache está configurado
+    cache_dir = config['dataset_input'].get('processed_cache_dir')
+    
+    # Tentar carregar do cache
+    if cache_dir is not None:
+        cache_path = Path(cache_dir)
+        if cache_path.exists() and validate_cache(cache_path, config):
+            console.print(Panel.fit(
+                "[bold green]Cache Encontrado![/bold green]\n"
+                "Carregando dataset processado do cache para economizar tempo..."
+            ))
+            return load_processed_dataset(cache_path, config)
+        elif cache_path.exists():
+            console.print(Panel.fit(
+                "[bold yellow]Cache Inválido ou Incompatível[/bold yellow]\n"
+                "Parâmetros mudaram. Reprocessando dataset..."
+            ))
+        else:
+            console.print(Panel.fit(
+                "[bold cyan]Cache Não Encontrado[/bold cyan]\n"
+                "Primeira execução. Processando e salvando dataset..."
+            ))
+    else:
+        console.print(Panel.fit("[bold cyan]Cache Desabilitado[/bold cyan]\nProcessando dataset..."))
+    
+    # Processar dataset do zero
+    console.print("[bold cyan]Carregando Dataset Base[/bold cyan]")
     
     # Carregar dataset base
     base_dataset = GenomicLongevityDataset(
@@ -875,7 +1208,7 @@ def prepare_data(config: Dict) -> Tuple[ProcessedGenomicDataset, DataLoader, Dat
         compute_normalization=True
     )
     
-    # Salvar parâmetros de normalização
+    # Salvar parâmetros de normalização no diretório de checkpoints (para referência)
     norm_path = Path(config['checkpointing']['checkpoint_dir']) / 'normalization_params.json'
     norm_path.parent.mkdir(parents=True, exist_ok=True)
     with open(norm_path, 'w') as f:
@@ -902,6 +1235,18 @@ def prepare_data(config: Dict) -> Tuple[ProcessedGenomicDataset, DataLoader, Dat
     console.print(f"  • Treino: {len(train_indices)} amostras")
     console.print(f"  • Validação: {len(val_indices)} amostras")
     console.print(f"  • Teste: {len(test_indices)} amostras")
+    
+    # Salvar cache se configurado
+    if cache_dir is not None:
+        cache_path = Path(cache_dir)
+        save_processed_dataset(
+            cache_path,
+            processed_dataset,
+            train_indices,
+            val_indices,
+            test_indices,
+            config
+        )
     
     # Criar subsets
     train_dataset = Subset(processed_dataset, train_indices)

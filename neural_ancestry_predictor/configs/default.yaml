@@ -31,7 +31,7 @@ dataset_input:
   # - "H1": Usa apenas haplótipo 1
   # - "H2": Usa apenas haplótipo 2
   # - "H1+H2": Concatena ambos os haplótipos (dobra tamanho de entrada)
-  haplotype_mode: "H1+H2"
+  haplotype_mode: "H1"
   
   # Tamanho do trecho central (em bases) a extrair de cada janela
   # Cada janela tem ~1M bases. Este parâmetro seleciona o trecho central.
@@ -46,6 +46,16 @@ dataset_input:
   # 10 = usar 1 a cada 10 bases
   # Maior downsampling = menor dimensionalidade, mais rápido, menos informação
   downsample_factor: 1
+  
+  # Diretório para cache do dataset processado (normalizado e dividido)
+  # Se null, não usa cache (sempre reprocessa os dados)
+  # Se especificado:
+  #   - Se o cache existir e for válido, carrega de lá (economia de tempo)
+  #   - Se não existir, processa os dados e salva no cache
+  # O cache inclui: dados normalizados, splits de treino/val/teste, e metadados
+  # Ideal para múltiplas execuções com mesmo dataset e mesmos parâmetros
+  # null = desabilita cache; "processed_datasets/default_cache" = habilita
+  processed_cache_dir: null
 
 # ───────────────────────────────────────────────────────────────────
 # B) OUTPUT PARAMETERS
@@ -71,8 +81,9 @@ model:
   # Camada de entrada é determinada automaticamente pelos dados
   # Camada de saída é determinada pelo prediction_target
   hidden_layers:
-    - 128
-    - 64
+    - 20
+    # - 128
+    # - 64
   
   # Função de ativação para camadas ocultas
   # Opções: "relu", "tanh", "sigmoid"
@@ -82,7 +93,7 @@ model:
   # 0.0 = sem dropout
   # Valores típicos: 0.2 a 0.5
   # Ajuda a prevenir overfitting
-  dropout_rate: 0.2
+  dropout_rate: 0.0
 
 # ───────────────────────────────────────────────────────────────────
 # D) TRAINING PARAMETERS
@@ -107,15 +118,15 @@ training:
   # Valores maiores = treinamento mais estável, mais memória
   # Valores menores = mais atualizações, menos memória
   # Deve ser ajustado de acordo com tamanho do dataset
-  batch_size: 16
+  batch_size: 5
   
   # Número de épocas de treinamento
   # Uma época = passar por todo o dataset de treino uma vez
-  num_epochs: 100
+  num_epochs: 10
   
   # Frequência de validação (em épocas)
   # A cada N épocas, executa validação
-  validation_frequency: 5
+  validation_frequency: 1
 
 # ───────────────────────────────────────────────────────────────────
 # E) DATA SPLIT
@@ -159,7 +170,7 @@ wandb:
   
   # Frequência de logging (em batches)
   # Log a cada N batches de treino
-  log_frequency: 10
+  log_frequency: 2
 
 # ───────────────────────────────────────────────────────────────────
 # G) CHECKPOINTING
@@ -172,7 +183,7 @@ checkpointing:
   
   # Frequência de salvamento (em épocas)
   # Salva checkpoint a cada N épocas
-  save_frequency: 10
+  save_frequency: 1
   
   # Caminho para checkpoint existente (para continuar treino ou testar)
   # null = começar do zero
