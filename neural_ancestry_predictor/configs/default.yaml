@@ -1,0 +1,219 @@
+# ═══════════════════════════════════════════════════════════════════
+# Neural Ancestry Predictor - Default Configuration
+# ═══════════════════════════════════════════════════════════════════
+#
+# Este arquivo configura a rede neural para predição de ancestralidade
+# a partir de predições AlphaGenome armazenadas no dataset PyTorch.
+#
+# Uso:
+#   python3 neural_ancestry_predictor.py --config configs/default.yaml
+#
+# ═══════════════════════════════════════════════════════════════════
+
+# ───────────────────────────────────────────────────────────────────
+# A) DATASET INPUT PARAMETERS
+# ───────────────────────────────────────────────────────────────────
+# Configurações de entrada do dataset
+
+dataset_input:
+  # Caminho para o diretório do dataset PyTorch
+  # Deve conter individuals/ e dataset_metadata.json
+  dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results"
+  
+  # Lista de outputs AlphaGenome a usar como entrada
+  # Opções disponíveis: RNA_SEQ, ATAC, CAGE, CHIP_HISTONE, CHIP_TF, DNASE, etc.
+  # Quanto mais outputs, maior a dimensão de entrada
+  alphagenome_outputs:
+    - "ATAC"
+  
+  # Modo de combinação de haplótipos
+  # Opções: "H1", "H2", "H1+H2"
+  # - "H1": Usa apenas haplótipo 1
+  # - "H2": Usa apenas haplótipo 2
+  # - "H1+H2": Concatena ambos os haplótipos (dobra tamanho de entrada)
+  haplotype_mode: "H1+H2"
+  
+  # Tamanho do trecho central (em bases) a extrair de cada janela
+  # Cada janela tem ~1M bases. Este parâmetro seleciona o trecho central.
+  # Valores menores = menos features, treinamento mais rápido
+  # Valores maiores = mais informação, maior dimensionalidade
+  # Default: 100 bases (bem pequeno para começar)
+  window_center_size: 100
+  
+  # Fator de downsampling a aplicar após extração do trecho central
+  # 1 = usar todas as bases selecionadas (sem downsampling)
+  # 2 = usar 1 a cada 2 bases
+  # 10 = usar 1 a cada 10 bases
+  # Maior downsampling = menor dimensionalidade, mais rápido, menos informação
+  downsample_factor: 1
+
+# ───────────────────────────────────────────────────────────────────
+# B) OUTPUT PARAMETERS
+# ───────────────────────────────────────────────────────────────────
+# Configurações do target de predição
+
+output:
+  # Target de predição
+  # Opções:
+  #   "superpopulation": Prediz superpopulação (5 classes: AFR, AMR, EAS, EUR, SAS)
+  #   "population": Prediz população (26 classes)
+  #   "frog_likelihood": Prediz likelihood FROG (150 valores - regressão)
+  prediction_target: "superpopulation"
+
+# ───────────────────────────────────────────────────────────────────
+# C) MODEL ARCHITECTURE
+# ───────────────────────────────────────────────────────────────────
+# Configurações da arquitetura da rede neural
+
+model:
+  # Camadas ocultas: lista com número de neurônios em cada camada
+  # Exemplo: [128, 64] = 2 camadas ocultas com 128 e 64 neurônios
+  # Camada de entrada é determinada automaticamente pelos dados
+  # Camada de saída é determinada pelo prediction_target
+  hidden_layers:
+    - 128
+    - 64
+  
+  # Função de ativação para camadas ocultas
+  # Opções: "relu", "tanh", "sigmoid"
+  activation: "relu"
+  
+  # Taxa de dropout (0.0 a 1.0)
+  # 0.0 = sem dropout
+  # Valores típicos: 0.2 a 0.5
+  # Ajuda a prevenir overfitting
+  dropout_rate: 0.2
+
+# ───────────────────────────────────────────────────────────────────
+# D) TRAINING PARAMETERS
+# ───────────────────────────────────────────────────────────────────
+# Configurações de treinamento
+
+training:
+  # Otimizador
+  # Opções: "adam", "adamw", "sgd"
+  optimizer: "adam"
+  
+  # Taxa de aprendizado (learning rate)
+  # Valores típicos: 0.001 (1e-3) a 0.0001 (1e-4)
+  learning_rate: 0.001
+  
+  # Função de loss
+  # "cross_entropy": Para classificação (superpopulation, population)
+  # "mse": Para regressão (frog_likelihood)
+  loss_function: "cross_entropy"
+  
+  # Tamanho do batch (número de indivíduos por batch)
+  # Valores maiores = treinamento mais estável, mais memória
+  # Valores menores = mais atualizações, menos memória
+  # Deve ser ajustado de acordo com tamanho do dataset
+  batch_size: 16
+  
+  # Número de épocas de treinamento
+  # Uma época = passar por todo o dataset de treino uma vez
+  num_epochs: 100
+  
+  # Frequência de validação (em épocas)
+  # A cada N épocas, executa validação
+  validation_frequency: 5
+
+# ───────────────────────────────────────────────────────────────────
+# E) DATA SPLIT
+# ───────────────────────────────────────────────────────────────────
+# Configurações de divisão do dataset
+
+data_split:
+  # Fração dos dados para treinamento (0.0 a 1.0)
+  train_split: 0.7
+  
+  # Fração dos dados para validação (0.0 a 1.0)
+  val_split: 0.15
+  
+  # Fração dos dados para teste (0.0 a 1.0)
+  # Nota: train_split + val_split + test_split deve ser <= 1.0
+  test_split: 0.15
+  
+  # Seed para reprodutibilidade
+  # Use o mesmo seed para ter sempre a mesma divisão
+  # null = aleatório
+  random_seed: 42
+
+# ───────────────────────────────────────────────────────────────────
+# F) WEIGHTS & BIASES
+# ───────────────────────────────────────────────────────────────────
+# Configurações de tracking e visualização com W&B
+
+wandb:
+  # Habilitar Weights & Biases
+  # true = loga métricas, gráficos, confusion matrix no W&B
+  # false = não usa W&B
+  # Requer: pip install wandb && wandb login
+  use_wandb: false
+  
+  # Nome do projeto no W&B
+  project_name: "neural-ancestry-predictor"
+  
+  # Nome do run (opcional)
+  # null = W&B gera nome automaticamente
+  run_name: null
+  
+  # Frequência de logging (em batches)
+  # Log a cada N batches de treino
+  log_frequency: 10
+
+# ───────────────────────────────────────────────────────────────────
+# G) CHECKPOINTING
+# ───────────────────────────────────────────────────────────────────
+# Configurações de salvamento de checkpoints
+
+checkpointing:
+  # Diretório para salvar checkpoints
+  checkpoint_dir: "models"
+  
+  # Frequência de salvamento (em épocas)
+  # Salva checkpoint a cada N épocas
+  save_frequency: 10
+  
+  # Caminho para checkpoint existente (para continuar treino ou testar)
+  # null = começar do zero
+  # Exemplo: "models/best_accuracy.pt"
+  load_checkpoint: null
+
+# ───────────────────────────────────────────────────────────────────
+# H) MODE
+# ───────────────────────────────────────────────────────────────────
+# Modo de operação
+
+# Modo de execução
+# "train": Treina a rede neural
+# "test": Carrega checkpoint e testa no conjunto de teste
+# Pode ser sobrescrito via --mode na linha de comando
+mode: "train"
+
+# ═══════════════════════════════════════════════════════════════════
+# NOTAS DE USO
+# ═══════════════════════════════════════════════════════════════════
+#
+# 1. Ajuste de Dimensionalidade:
+#    - Para reduzir tempo de treino: aumente downsample_factor ou reduza window_center_size
+#    - Para mais informação: aumente window_center_size ou adicione mais alphagenome_outputs
+#
+# 2. Ajuste de Capacidade do Modelo:
+#    - Underfitting (loss alto): aumente hidden_layers ou neurônios
+#    - Overfitting (val_loss > train_loss): adicione dropout, reduza neurônios
+#
+# 3. Ajuste de Convergência:
+#    - Treino instável: reduza learning_rate
+#    - Treino muito lento: aumente learning_rate ou batch_size
+#
+# 4. Targets de Predição:
+#    - superpopulation: Mais fácil (5 classes), bom para começar
+#    - population: Mais difícil (26 classes), requer mais dados/capacidade
+#    - frog_likelihood: Regressão (150 valores), mais difícil ainda
+#
+# 5. Haplotype Mode:
+#    - H1 ou H2: Menor dimensionalidade, mais rápido
+#    - H1+H2: Mais informação (diferenças entre haplótipos), dobra dimensão
+#
+# ═══════════════════════════════════════════════════════════════════
+
