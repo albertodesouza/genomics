@@ -67,7 +67,7 @@ dataset_input:
   #             Ideal para dados com distribuição exponencial/lognormal
   #
   # Recomendado: "minmax_keep_zero" ou "log" para dados AlphaGenome
-  normalization_method: "minmax_keep_zero"
+  normalization_method: "log"
   
   # Diretório para cache do dataset processado (normalizado e dividido)
   # Se null, não usa cache (sempre reprocessa os dados)
