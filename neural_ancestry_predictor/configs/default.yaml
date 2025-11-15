@@ -21,10 +21,11 @@ dataset_input:
   dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results"
   
   # Lista de outputs AlphaGenome a usar como entrada
-  # Opções disponíveis: RNA_SEQ, ATAC, CAGE, CHIP_HISTONE, CHIP_TF, DNASE, etc.
+  # Opções disponíveis: rna_seq, atac, cage, chip_histone, chip_tf, dnase, etc.
+  # IMPORTANTE: Nomes devem estar em minúsculas (mesmo formato dos arquivos .npz)
   # Quanto mais outputs, maior a dimensão de entrada
   alphagenome_outputs:
-    - "ATAC"
+    - "atac"
   
   # Modo de combinação de haplótipos
   # Opções: "H1", "H2", "H1+H2"
@@ -47,6 +48,27 @@ dataset_input:
   # Maior downsampling = menor dimensionalidade, mais rápido, menos informação
   downsample_factor: 1
   
+  # Método de normalização dos dados
+  # Opções:
+  #   "zscore": Normalização Z-score padrão (mean=0, std=1)
+  #             Usa mean e std globais de todos os dados
+  #             Pode ter problemas com outliers extremos
+  #
+  #   "minmax_keep_zero": Min-Max mantendo zeros
+  #             Zeros permanecem zeros (importante para dados esparsos)
+  #             Valores não-zero são divididos pelo máximo não-zero
+  #             Resultado: valores em [0, 1]
+  #             Ideal para dados com muitos zeros (ATAC-seq, RNA-seq)
+  #
+  #   "log": Normalização logarítmica com log1p
+  #             Aplica log1p (log(1+x)) e divide pelo log1p(max)
+  #             Zeros permanecem zeros automaticamente
+  #             Comprime outliers extremos
+  #             Ideal para dados com distribuição exponencial/lognormal
+  #
+  # Recomendado: "minmax_keep_zero" ou "log" para dados AlphaGenome
+  normalization_method: "minmax_keep_zero"
+  
   # Diretório para cache do dataset processado (normalizado e dividido)
   # Se null, não usa cache (sempre reprocessa os dados)
   # Se especificado:
@@ -55,7 +77,7 @@ dataset_input:
   # O cache inclui: dados normalizados, splits de treino/val/teste, e metadados
   # Ideal para múltiplas execuções com mesmo dataset e mesmos parâmetros
   # null = desabilita cache; "processed_datasets/default_cache" = habilita
-  processed_cache_dir: null
+  processed_cache_dir: /dados/GENOMICS_DATA/top3/non_longevous_results_dataset_cache
 
 # ───────────────────────────────────────────────────────────────────
 # B) OUTPUT PARAMETERS
@@ -77,15 +99,20 @@ output:
 
 model:
   # Camadas ocultas: lista com número de neurônios em cada camada
-  # Exemplo: [128, 64] = 2 camadas ocultas com 128 e 64 neurônios
+  # Exemplo: [256, 128, 64] = 3 camadas ocultas
+  # - As camadas exceto a ÚLTIMA usam activation configurável (relu/tanh/sigmoid)
+  # - A ÚLTIMA camada é sempre LINEAR (pré-softmax) automaticamente
+  # - Para 5 classes de saída, recomendado: última camada >= 32 neurônios
+  # 
   # Camada de entrada é determinada automaticamente pelos dados
   # Camada de saída é determinada pelo prediction_target
   hidden_layers:
+    - 100
     - 20
-    # - 128
     # - 64
   
-  # Função de ativação para camadas ocultas
+  # Função de ativação para camadas ocultas INTERMEDIÁRIAS apenas
+  # (a última hidden layer é sempre linear antes do softmax)
   # Opções: "relu", "tanh", "sigmoid"
   activation: "relu"
   
@@ -118,11 +145,11 @@ training:
   # Valores maiores = treinamento mais estável, mais memória
   # Valores menores = mais atualizações, menos memória
   # Deve ser ajustado de acordo com tamanho do dataset
-  batch_size: 5
+  batch_size: 1
   
   # Número de épocas de treinamento
   # Uma época = passar por todo o dataset de treino uma vez
-  num_epochs: 10
+  num_epochs: 100
   
   # Frequência de validação (em épocas)
   # A cada N épocas, executa validação
@@ -183,7 +210,7 @@ checkpointing:
   
   # Frequência de salvamento (em épocas)
   # Salva checkpoint a cada N épocas
-  save_frequency: 1
+  save_frequency: 10
   
   # Caminho para checkpoint existente (para continuar treino ou testar)
   # null = começar do zero
@@ -191,7 +218,32 @@ checkpointing:
   load_checkpoint: null
 
 # ───────────────────────────────────────────────────────────────────
-# H) MODE
+# H) DEBUG/VISUALIZATION
+# ───────────────────────────────────────────────────────────────────
+# Opções de debug e visualização
+
+debug:
+  # Habilitar visualização interativa dos dados durante treinamento
+  # true = mostra gráfico com entrada/saída após cada batch (pressione Enter para continuar)
+  # false = treino normal sem visualização
+  # IMPORTANTE: Quando true, força batch_size=1 automaticamente
+  enable_visualization: false
+  
+  # Número máximo de amostras a visualizar por época
+  # null = visualiza todas as amostras da época
+  # N = visualiza apenas as primeiras N amostras
+  max_samples_per_epoch: null
+  
+  # Tainting de amostras para debug
+  # Marca amostras com valor sentinela (-2) em posições específicas
+  # baseadas na classe de saída, para verificar se rede aprende corretamente
+  # Fórmula: posição = classe * (input_vector_size / num_classes)
+  # Exemplo: 5 classes, 5500 features -> classe 0→pos 0, classe 1→pos 1100, etc.
+  taint_at_cache_save: false  # Taintar ao salvar no cache (dados salvos já vêm marcados)
+  taint_at_runtime: true      # Taintar durante __getitem__ (marca em tempo de execução)
+
+# ───────────────────────────────────────────────────────────────────
+# I) MODE
 # ───────────────────────────────────────────────────────────────────
 # Modo de operação
 
@@ -199,7 +251,7 @@ checkpointing:
 # "train": Treina a rede neural
 # "test": Carrega checkpoint e testa no conjunto de teste
 # Pode ser sobrescrito via --mode na linha de comando
-mode: "train"
+mode: "test"
 
 # ═══════════════════════════════════════════════════════════════════
 # NOTAS DE USO

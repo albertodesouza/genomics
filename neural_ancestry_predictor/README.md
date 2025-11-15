@@ -14,6 +14,7 @@ This module implements a YAML-configurable neural network that predicts ancestry
 - [Data Processing](#data-processing)
 - [Processed Dataset Cache](#processed-dataset-cache)
 - [Training](#training)
+- [Debug and Visualization](#debug-and-visualization)
 - [Testing and Evaluation](#testing-and-evaluation)
 - [Weights & Biases](#weights--biases)
 - [Hyperparameter Tuning](#hyperparameter-tuning)
@@ -39,6 +40,7 @@ The **Neural Ancestry Predictor** trains a neural network to predict the genetic
 - ✅ **Automatic checkpointing** to save trained models
 - ✅ **Detailed metrics** (accuracy, precision, recall, F1, confusion matrix)
 - ✅ **Automatic normalization** with parameter caching
+- ✅ **Interactive debug visualization** to inspect inputs and predictions sample-by-sample
 
 ---
 
@@ -657,6 +659,88 @@ To continue from a checkpoint:
 # configs/default.yaml
 checkpointing:
   load_checkpoint: "models/epoch_50.pt"
+```
+
+---
+
+## Debug and Visualization
+
+### Interactive Data Inspection
+
+The module includes a **debug visualization mode** that lets you inspect input data and network predictions sample-by-sample during training. This is invaluable for debugging when the network isn't learning.
+
+### Enable Visualization
+
+```yaml
+# configs/default.yaml
+debug:
+  enable_visualization: true
+  max_samples_per_epoch: 10  # Optional: limit to first N samples
+```
+
+**Important:** When enabled, `batch_size` is automatically forced to 1.
+
+### What You'll See
+
+For each training sample, a visualization window will display:
+
+**Upper Panel - Input Features:**
+- Line plot of all input feature values (x=feature index, y=feature value)
+- Feature statistics (min, max, mean, std)
+- Total number of features
+
+**Lower Panel - Network Output:**
+- Bar chart of predicted probabilities for each class
+- **Green bar**: True class (target)
+- **Red border**: Predicted class
+- Correctness indicator (✓ CORRETO or ✗ ERRADO)
+- Class names and probabilities
+
+### Usage
+
+1. **Enable in config:**
+   ```yaml
+   debug:
+     enable_visualization: true
+     max_samples_per_epoch: 20  # Visualize only first 20 samples
+   ```
+
+2. **Run training:**
+   ```bash
+   python3 neural_ancestry_predictor.py --config configs/default.yaml
+   ```
+
+3. **Inspect each sample:**
+   - The visualization window will appear
+   - Press **any key** in the graph window to proceed to next sample
+   - Analyze patterns in features and predictions
+
+### Use Cases
+
+- **Network not learning:** Check if input features look reasonable (not all zeros/NaN)
+- **Always wrong:** See if predictions are stuck on one class
+- **Data quality:** Verify normalization is working correctly
+- **Class imbalance:** Observe distribution of true labels
+- **Feature patterns:** Look for distinguishable patterns between classes
+
+### Example Workflow
+
+```bash
+# 1. Enable visualization for debugging
+vim configs/default.yaml  # Set enable_visualization: true
+
+# 2. Limit to first 10 samples per epoch
+#    (saves time while debugging)
+#    max_samples_per_epoch: 10
+
+# 3. Run with small number of epochs
+#    num_epochs: 2
+
+# 4. Inspect visualizations and press any key in graph window to advance
+
+# 5. Once issue identified, disable and train normally
+#    enable_visualization: false
+#    num_epochs: 100
 ```
 
 ---
