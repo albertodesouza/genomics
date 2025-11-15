@@ -632,26 +632,19 @@ class AncestryPredictor(nn.Module):
             raise ValueError(f"Ativação não suportada: {activation_type}")
         
         # Construir camadas
-        # Arquitetura: camadas intermediárias (com ativação) + última hidden (LINEAR) + saída
+        # Arquitetura: camadas hidden (TODAS com ativação) + camada de saída (LINEAR antes do softmax)
         layers = []
         prev_size = input_size
         
-        # Camadas intermediárias (todas exceto última)
-        for i, hidden_size in enumerate(hidden_layers[:-1]):
+        # TODAS as camadas hidden (com ativação configurada)
+        for hidden_size in hidden_layers:
             layers.append(nn.Linear(prev_size, hidden_size))
             layers.append(self.activation)
             if dropout_rate > 0:
                 layers.append(nn.Dropout(dropout_rate))
             prev_size = hidden_size
         
-        # Última camada hidden (pré-softmax): sempre LINEAR (sem ativação)
-        if len(hidden_layers) > 0:
-            pre_softmax_size = hidden_layers[-1]
-            layers.append(nn.Linear(prev_size, pre_softmax_size))
-            # Sem ativação aqui - linear para softmax
-            prev_size = pre_softmax_size
-        
-        # Camada de saída
+        # Camada de saída (sempre LINEAR, sem ativação - o softmax é aplicado depois)
         layers.append(nn.Linear(prev_size, num_classes))
         
         # Softmax para classificação (aplicado no forward)
@@ -666,7 +659,8 @@ class AncestryPredictor(nn.Module):
         console.print(f"[green]Modelo criado:[/green]")
         console.print(f"  • Input size: {input_size}")
         console.print(f"  • Hidden layers: {hidden_layers}")
-        console.print(f"  • Arquitetura: camadas intermediárias ({activation_type}) + pré-softmax (linear) + saída")
+        console.print(f"  • Ativação: {activation_type} (em todas as camadas hidden)")
+        console.print(f"  • Arquitetura: camadas hidden + saída (linear→softmax)")
         console.print(f"  • Output size: {num_classes}")
         console.print(f"  • Dropout: {dropout_rate}")
         console.print(f"  • Total parameters: {self.count_parameters():,}")
@@ -690,14 +684,14 @@ class AncestryPredictor(nn.Module):
         Inicializa pesos apropriadamente de acordo com tipo de ativação.
         
         Estratégia:
-        - Camadas intermediárias (com ativação):
+        - Camadas hidden (com ativação):
             * ReLU: He/Kaiming initialization (fan_in)
             * Tanh/Sigmoid: Xavier/Glorot initialization
-        - Últimas 2 camadas (pré-softmax linear + saída): Xavier initialization
+        - Última camada (saída, linear antes do softmax): Xavier initialization
         - Bias: zeros (padrão recomendado)
         
         Args:
-            activation_type: Tipo de função de ativação das camadas intermediárias
+            activation_type: Tipo de função de ativação das camadas hidden
         """
         layer_count = 0
         total_layers = sum(1 for m in self.modules() if isinstance(m, nn.Linear))
@@ -706,11 +700,11 @@ class AncestryPredictor(nn.Module):
             if isinstance(m, nn.Linear):
                 layer_count += 1
                 
-                # Últimas 2 camadas (pré-softmax + saída): sempre Xavier
-                # (independente da ativação das camadas anteriores)
-                if layer_count >= total_layers - 1:
+                # Última camada (saída): sempre Xavier
+                # (linear antes do softmax, sem ativação adicional)
+                if layer_count == total_layers:
                     nn.init.xavier_normal_(m.weight)
-                # Camadas intermediárias: depende da ativação configurada
+                # Camadas hidden: depende da ativação configurada
                 elif activation_type == 'relu':
                     # He initialization (Kaiming) para ReLU
                     # Usa fan_in para manter variância durante forward pass
@@ -727,8 +721,8 @@ class AncestryPredictor(nn.Module):
                     nn.init.constant_(m.bias, 0)
         
         console.print(f"[green]✓ Pesos inicializados:[/green]")
-        console.print(f"  • Camadas intermediárias: {activation_type} initialization")
-        console.print(f"  • Pré-softmax + saída: Xavier initialization")
+        console.print(f"  • Camadas hidden: {activation_type} initialization")
+        console.print(f"  • Camada de saída: Xavier initialization")
         console.print(f"  • Bias: zeros")
 
 
@@ -1027,6 +1021,11 @@ class Trainer:
             f"Learning rate: {self.config['training']['learning_rate']}"
         ))
         
+        # Imprimir arquitetura da rede
+        console.print("\n[bold cyan]═══ ARQUITETURA DA REDE ═══[/bold cyan]")
+        console.print(self.model)
+        console.print()
+        
         for epoch in range(num_epochs):
             # Treinar
             train_loss = self.train_epoch(epoch)
@@ -1096,15 +1095,133 @@ class Tester:
         dataset: ProcessedGenomicDataset,
         config: Dict,
         device: torch.device,
-        wandb_run: Optional[Any] = None
+        wandb_run: Optional[Any] = None,
+        dataset_name: str = "Teste"
     ):
-        """Inicializa tester."""
+        """Inicializa tester.
+        
+        Args:
+            model: Modelo a testar
+            test_loader: DataLoader com dados
+            dataset: Dataset completo
+            config: Configuração
+            device: Device (CPU ou GPU)
+            wandb_run: Run do W&B (opcional)
+            dataset_name: Nome do conjunto de dados sendo testado (ex: "Teste", "Treino", "Validação")
+        """
         self.model = model
         self.test_loader = test_loader
         self.dataset = dataset
         self.config = config
         self.device = device
         self.wandb_run = wandb_run
+        self.dataset_name = dataset_name
+        
+        # Debug/visualização
+        self.enable_visualization = config.get('debug', {}).get('enable_visualization', False)
+        self.max_samples = config.get('debug', {}).get('max_samples_per_epoch', None)
+        
+        # Forçar modo interativo do matplotlib se visualização habilitada
+        if self.enable_visualization:
+            plt.ion()
+            self._key_pressed = False
+    
+    def _on_key_press(self, event):
+        """Callback para detectar tecla pressionada."""
+        self._key_pressed = True
+        plt.close()
+    
+    def _visualize_sample(self, features: torch.Tensor, targets: torch.Tensor, 
+                         outputs: torch.Tensor, sample_idx: int):
+        """
+        Visualiza uma amostra de teste e suas predições.
+        
+        Args:
+            features: Tensor de entrada (1, num_features)
+            targets: Target verdadeiro (1,)
+            outputs: Saída da rede (1, num_classes)
+            sample_idx: Índice da amostra
+        """
+        # Converter para CPU e numpy
+        features_np = features.cpu().detach().numpy().flatten()
+        target_idx = targets.cpu().item()
+        output_probs = torch.softmax(outputs, dim=1).cpu().detach().numpy()[0]
+        predicted_idx = output_probs.argmax()
+        
+        # Obter nomes das classes (se disponível)
+        class_names = ['AFR', 'AMR', 'EAS', 'EUR', 'SAS']  # Para superpopulation
+        if target_idx < len(class_names):
+            target_name = class_names[target_idx]
+            predicted_name = class_names[predicted_idx]
+        else:
+            target_name = f"Class {target_idx}"
+            predicted_name = f"Class {predicted_idx}"
+        
+        # Criar figura
+        plt.clf()
+        fig = plt.gcf()
+        fig.set_size_inches(16, 8)
+        
+        # Plot das features de entrada
+        plt.subplot(2, 1, 1)
+        plt.plot(features_np, linewidth=0.5, alpha=0.7)
+        plt.xlabel('Feature Index', fontsize=12)
+        plt.ylabel('Feature Value', fontsize=12)
+        plt.title(f'{self.dataset_name.upper()} | Amostra {sample_idx + 1} | Input Features (n={len(features_np)})', 
+                 fontsize=14, fontweight='bold')
+        plt.grid(True, alpha=0.3)
+        
+        # Estatísticas das features
+        stats_text = (f'Min: {features_np.min():.3f} | Max: {features_np.max():.3f} | '
+                     f'Mean: {features_np.mean():.3f} | Std: {features_np.std():.3f}')
+        plt.text(0.02, 0.98, stats_text, transform=plt.gca().transAxes,
+                fontsize=10, verticalalignment='top',
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+        
+        # Plot das probabilidades de saída
+        plt.subplot(2, 1, 2)
+        bars = plt.bar(range(len(output_probs)), output_probs, color='steelblue', alpha=0.7)
+        bars[target_idx].set_color('green')
+        bars[predicted_idx].set_edgecolor('red')
+        bars[predicted_idx].set_linewidth(3)
+        
+        plt.xlabel('Class', fontsize=12)
+        plt.ylabel('Probability', fontsize=12)
+        plt.title('Network Output Probabilities', fontsize=14, fontweight='bold')
+        plt.xticks(range(len(output_probs)), 
+                  class_names[:len(output_probs)] if len(output_probs) <= len(class_names) 
+                  else [str(i) for i in range(len(output_probs))])
+        plt.grid(True, alpha=0.3, axis='y')
+        plt.ylim([0, 1])
+        
+        # Texto com predição e target
+        correct = "✓ CORRETO" if predicted_idx == target_idx else "✗ ERRADO"
+        color = 'green' if predicted_idx == target_idx else 'red'
+        result_text = (f'{correct}\n'
+                      f'Target: {target_name} (classe {target_idx})\n'
+                      f'Predito: {predicted_name} (classe {predicted_idx}, prob={output_probs[predicted_idx]:.3f})')
+        
+        plt.text(0.98, 0.98, result_text, transform=plt.gca().transAxes,
+                fontsize=11, verticalalignment='top', horizontalalignment='right',
+                bbox=dict(boxstyle='round', facecolor=color, alpha=0.3))
+        
+        # Adicionar instruções no canto superior direito da figura
+        fig.text(0.98, 0.98, 'Pressione qualquer tecla para continuar...', 
+                ha='right', va='top', fontsize=11, style='italic',
+                bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.6))
+        
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.95)  # Dar espaço no topo
+        
+        # Conectar callback de tecla
+        self._key_pressed = False
+        cid = fig.canvas.mpl_connect('key_press_event', self._on_key_press)
+        
+        # Mostrar e aguardar tecla
+        plt.show(block=True)
+        
+        # Desconectar callback
+        fig.canvas.mpl_disconnect(cid)
     
     def test(self) -> Dict:
         """
@@ -1113,7 +1230,20 @@ class Tester:
         Returns:
             Dict com resultados
         """
-        console.print(Panel.fit("[bold cyan]Executando Teste[/bold cyan]"))
+        console.print(Panel.fit(
+            f"[bold cyan]Executando Teste[/bold cyan]\n"
+            f"Conjunto: {self.dataset_name}"
+        ))
+        
+        # Imprimir arquitetura da rede
+        console.print("\n[bold cyan]═══ ARQUITETURA DA REDE ═══[/bold cyan]")
+        console.print(self.model)
+        console.print()
+        
+        if self.enable_visualization:
+            console.print("[yellow]📊 Modo de visualização habilitado - mostrando gráficos interativos[/yellow]")
+            if self.max_samples:
+                console.print(f"[yellow]   Limitado a {self.max_samples} amostras[/yellow]")
         
         self.model.eval()
         all_predictions = []
@@ -1121,23 +1251,17 @@ class Tester:
         all_probs = []
         
         with torch.no_grad():
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                console=console
-            ) as progress:
-                task = progress.add_task(
-                    "[cyan]Testando modelo...",
-                    total=len(self.test_loader)
-                )
-                
-                for features, targets in self.test_loader:
+            # Se visualização está habilitada, não usar progress bar
+            if self.enable_visualization:
+                sample_count = 0
+                for batch_idx, (features, targets) in enumerate(self.test_loader):
                     features = features.to(self.device, non_blocking=True)
                     targets = targets.to(self.device, non_blocking=True)
                     
                     outputs = self.model(features)
+                    
+                    # Visualizar amostra
+                    self._visualize_sample(features, targets, outputs, batch_idx)
                     
                     if self.config['output']['prediction_target'] != 'frog_likelihood':
                         predictions = torch.argmax(outputs, dim=1)
@@ -1145,7 +1269,39 @@ class Tester:
                         all_targets.extend(targets.cpu().numpy())
                         all_probs.append(outputs.cpu().numpy())
                     
-                    progress.update(task, advance=1)
+                    sample_count += 1
+                    
+                    # Limitar número de amostras se especificado
+                    if self.max_samples is not None and sample_count >= self.max_samples:
+                        console.print(f"[yellow]⚠ Limitado a {self.max_samples} amostras (debug)[/yellow]")
+                        break
+            else:
+                # Modo normal com progress bar
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                    console=console
+                ) as progress:
+                    task = progress.add_task(
+                        "[cyan]Testando modelo...",
+                        total=len(self.test_loader)
+                    )
+                    
+                    for features, targets in self.test_loader:
+                        features = features.to(self.device, non_blocking=True)
+                        targets = targets.to(self.device, non_blocking=True)
+                        
+                        outputs = self.model(features)
+                        
+                        if self.config['output']['prediction_target'] != 'frog_likelihood':
+                            predictions = torch.argmax(outputs, dim=1)
+                            all_predictions.extend(predictions.cpu().numpy())
+                            all_targets.extend(targets.cpu().numpy())
+                            all_probs.append(outputs.cpu().numpy())
+                        
+                        progress.update(task, advance=1)
         
         # Calcular métricas
         results = {}
@@ -1958,13 +2114,22 @@ def main():
         config['mode'] = args.mode
     
     # Banner
-    console.print(Panel.fit(
+    banner_text = (
         "[bold cyan]Neural Ancestry Predictor[/bold cyan]\n"
         f"Modo: {config['mode']}\n"
+    )
+    
+    # Adicionar info do conjunto de teste se modo for test
+    if config['mode'] == 'test':
+        test_dataset = config.get('test_dataset', 'test')
+        banner_text += f"Conjunto: {test_dataset}\n"
+    
+    banner_text += (
         f"Target: {config['output']['prediction_target']}\n"
-        f"Config: {args.config}",
-        title="🧬 Genomics"
-    ))
+        f"Config: {args.config}"
+    )
+    
+    console.print(Panel.fit(banner_text, title="🧬 Genomics"))
     
     # Configurar device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -2031,8 +2196,23 @@ def main():
         checkpoint = torch.load(checkpoint_path, map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
         
+        # Selecionar conjunto de dados para teste
+        test_dataset_choice = config.get('test_dataset', 'test').lower()
+        
+        if test_dataset_choice == 'train':
+            selected_loader = train_loader
+            dataset_name = "Treino"
+        elif test_dataset_choice == 'val':
+            selected_loader = val_loader
+            dataset_name = "Validação"
+        else:  # 'test' é o padrão
+            selected_loader = test_loader
+            dataset_name = "Teste"
+        
+        console.print(f"[cyan]Testando no conjunto de: {dataset_name}[/cyan]")
+        
         # Testar
-        tester = Tester(model, test_loader, full_dataset, config, device, wandb_run)
+        tester = Tester(model, selected_loader, full_dataset, config, device, wandb_run, dataset_name)
         results = tester.test()
     
     # Finalizar W&B

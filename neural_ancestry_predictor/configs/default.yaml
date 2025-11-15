@@ -25,7 +25,7 @@ dataset_input:
   # IMPORTANTE: Nomes devem estar em minúsculas (mesmo formato dos arquivos .npz)
   # Quanto mais outputs, maior a dimensão de entrada
   alphagenome_outputs:
-    - "atac"
+    - "rna_seq"
   
   # Modo de combinação de haplótipos
   # Opções: "H1", "H2", "H1+H2"
@@ -108,7 +108,7 @@ model:
   # Camada de saída é determinada pelo prediction_target
   hidden_layers:
     - 100
-    - 20
+    - 40
     # - 64
   
   # Função de ativação para camadas ocultas INTERMEDIÁRIAS apenas
@@ -249,9 +249,15 @@ debug:
 
 # Modo de execução
 # "train": Treina a rede neural
-# "test": Carrega checkpoint e testa no conjunto de teste
+# "test": Carrega checkpoint e testa no conjunto especificado em test_dataset
 # Pode ser sobrescrito via --mode na linha de comando
 mode: "test"
+
+# Conjunto de dados a ser usado no modo test
+# "test": Conjunto de teste (padrão)
+# "train": Conjunto de treinamento
+# "val": Conjunto de validação
+test_dataset: "test"
 
 # ═══════════════════════════════════════════════════════════════════
 # NOTAS DE USO
