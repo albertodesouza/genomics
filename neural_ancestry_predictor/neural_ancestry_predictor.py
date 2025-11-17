@@ -26,6 +26,9 @@ import json
 import os
 import shutil
 import sys
+import signal
+import io
+import contextlib
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 import warnings
@@ -54,6 +57,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "build_non_longevous_datas
 from genomic_dataset import GenomicLongevityDataset
 
 console = Console()
+
+# Global flag para capturar CTRL+C
+class InterruptState:
+    """Estado global para interrupção de treinamento."""
+    interrupted = False
+
+interrupt_state = InterruptState()
 
 # ==============================================================================
 # DATA PROCESSING FUNCTIONS
@@ -147,6 +157,82 @@ def taint_sample(features: torch.Tensor, target_class: int, num_classes: int) ->
             features.view(-1)[position] = -2.0
     
     return features
+
+
+def generate_experiment_name(config: Dict) -> str:
+    """
+    Gera nome do experimento baseado nos parâmetros de configuração.
+    
+    Formato: <tipo_de_rede>_<alphagenome_outputs>_<haplotype_mode>_<window_center_size>_
+             <normalization_method>_<hidden_layers>_<activation>_<dropout_rate>_<optimizer>
+    
+    Exemplo: nn_atac_H1_100_log_L100-40_relu_0.0_adam
+    
+    Args:
+        config: Dicionário de configuração
+        
+    Returns:
+        Nome do experimento
+    """
+    # Tipo de rede (sempre 'nn' por enquanto)
+    network_type = "nn"
+    
+    # Parâmetros de entrada de dados
+    alphagenome_outputs = '_'.join(config['dataset_input']['alphagenome_outputs'])
+    haplotype_mode = config['dataset_input']['haplotype_mode']
+    window_center_size = config['dataset_input']['window_center_size']
+    normalization_method = config['dataset_input'].get('normalization_method', 'zscore')
+    
+    # Parâmetros do modelo
+    hidden_layers = config['model']['hidden_layers']
+    # Formatar hidden_layers como L100-40
+    hidden_layers_str = 'L' + '-'.join(map(str, hidden_layers))
+    
+    activation = config['model']['activation']
+    dropout_rate = config['model']['dropout_rate']
+    
+    # Parâmetros de treinamento
+    optimizer = config['training']['optimizer']
+    
+    # Montar nome do experimento
+    experiment_name = (
+        f"{network_type}_{alphagenome_outputs}_{haplotype_mode}_{window_center_size}_"
+        f"{normalization_method}_{hidden_layers_str}_{activation}_{dropout_rate}_{optimizer}"
+    )
+    
+    return experiment_name
+
+
+def setup_experiment_dir(config: Dict, config_path: str) -> Path:
+    """
+    Cria e configura diretório do experimento.
+    
+    Args:
+        config: Dicionário de configuração
+        config_path: Caminho do arquivo de configuração original
+        
+    Returns:
+        Path do diretório do experimento
+    """
+    # Gerar nome do experimento
+    experiment_name = generate_experiment_name(config)
+    
+    # Criar path do experimento
+    base_cache_dir = Path(config['dataset_input']['processed_cache_dir'])
+    experiment_dir = base_cache_dir / experiment_name
+    
+    # Criar diretórios
+    experiment_dir.mkdir(parents=True, exist_ok=True)
+    (experiment_dir / 'models').mkdir(exist_ok=True)
+    
+    # Copiar arquivo de configuração
+    config_copy_path = experiment_dir / 'config.yaml'
+    shutil.copy(config_path, config_copy_path)
+    
+    console.print(f"[green]📁 Diretório do experimento:[/green] {experiment_dir}")
+    console.print(f"[green]   Nome:[/green] {experiment_name}")
+    
+    return experiment_dir
 
 
 class ProcessedGenomicDataset(Dataset):
@@ -740,6 +826,7 @@ class Trainer:
         val_loader: DataLoader,
         config: Dict,
         device: torch.device,
+        experiment_dir: Path,
         wandb_run: Optional[Any] = None
     ):
         """
@@ -751,6 +838,7 @@ class Trainer:
             val_loader: DataLoader de validação
             config: Configuração
             device: Device (CPU ou GPU)
+            experiment_dir: Diretório do experimento
             wandb_run: Run do W&B (opcional)
         """
         self.model = model
@@ -758,6 +846,7 @@ class Trainer:
         self.val_loader = val_loader
         self.config = config
         self.device = device
+        self.experiment_dir = experiment_dir
         self.wandb_run = wandb_run
         
         # Configurações de visualização/debug
@@ -782,6 +871,58 @@ class Trainer:
             self.optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
         else:
             raise ValueError(f"Otimizador não suportado: {optimizer_type}")
+        
+        # Configurar learning rate scheduler
+        self.scheduler = None
+        if config['training'].get('lr_scheduler', {}).get('enabled', False):
+            scheduler_config = config['training']['lr_scheduler']
+            scheduler_type = scheduler_config.get('type', 'plateau').lower()
+            
+            if scheduler_type == 'plateau':
+                self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                    self.optimizer,
+                    mode=scheduler_config.get('mode', 'min'),
+                    factor=scheduler_config.get('factor', 0.5),
+                    patience=scheduler_config.get('patience', 10),
+                    min_lr=scheduler_config.get('min_lr', 1e-6)
+                )
+                console.print(f"[green]✓ LR Scheduler: ReduceLROnPlateau (mode={scheduler_config.get('mode', 'min')}, patience={scheduler_config.get('patience', 10)}, factor={scheduler_config.get('factor', 0.5)})[/green]")
+            
+            elif scheduler_type == 'step':
+                self.scheduler = optim.lr_scheduler.StepLR(
+                    self.optimizer,
+                    step_size=scheduler_config.get('step_size', 30),
+                    gamma=scheduler_config.get('gamma', 0.1)
+                )
+                console.print(f"[green]✓ LR Scheduler: StepLR (step_size={scheduler_config.get('step_size', 30)})[/green]")
+            
+            elif scheduler_type == 'cosine':
+                T_max = scheduler_config.get('T_max', config['training']['num_epochs'])
+                self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                    self.optimizer,
+                    T_max=T_max,
+                    eta_min=scheduler_config.get('eta_min', 1e-6)
+                )
+                console.print(f"[green]✓ LR Scheduler: CosineAnnealingLR (T_max={T_max})[/green]")
+            
+            elif scheduler_type == 'exponential':
+                self.scheduler = optim.lr_scheduler.ExponentialLR(
+                    self.optimizer,
+                    gamma=scheduler_config.get('gamma', 0.95)
+                )
+                console.print(f"[green]✓ LR Scheduler: ExponentialLR (gamma={scheduler_config.get('gamma', 0.95)})[/green]")
+            
+            elif scheduler_type == 'multistep':
+                self.scheduler = optim.lr_scheduler.MultiStepLR(
+                    self.optimizer,
+                    milestones=scheduler_config.get('milestones', [30, 60, 90]),
+                    gamma=scheduler_config.get('gamma', 0.1)
+                )
+                console.print(f"[green]✓ LR Scheduler: MultiStepLR (milestones={scheduler_config.get('milestones', [30, 60, 90])})[/green]")
+            
+            else:
+                console.print(f"[yellow]⚠ Scheduler type '{scheduler_type}' não reconhecido, continuando sem scheduler[/yellow]")
+                self.scheduler = None
         
         # Configurar loss function
         loss_type = config['training']['loss_function']
@@ -999,7 +1140,9 @@ class Trainer:
         else:
             accuracy = 0.0
         
-        console.print(f"[green]Validação - Época {epoch + 1}:[/green] Loss={avg_loss:.4f}, Accuracy={accuracy:.4f}")
+        # Obter learning rate atual
+        current_lr = self.optimizer.param_groups[0]['lr']
+        console.print(f"[green]Validação - Época {epoch + 1}:[/green] Loss={avg_loss:.4f}, Accuracy={accuracy:.4f}, LR={current_lr:.2e}")
         
         return avg_loss, accuracy
     
@@ -1027,6 +1170,11 @@ class Trainer:
         console.print()
         
         for epoch in range(num_epochs):
+            # Verificar se houve interrupção (CTRL+C)
+            if interrupt_state.interrupted:
+                console.print("\n[yellow]⚠ Treinamento interrompido pelo usuário (CTRL+C)[/yellow]")
+                break
+            
             # Treinar
             train_loss = self.train_epoch(epoch)
             
@@ -1042,32 +1190,59 @@ class Trainer:
                 
                 # Log no W&B
                 if self.wandb_run:
-                    self.wandb_run.log({
+                    log_dict = {
                         'epoch': epoch + 1,
                         'train_loss': train_loss,
                         'val_loss': val_loss,
                         'val_accuracy': val_accuracy
-                    })
+                    }
+                    # Adicionar learning rate atual
+                    current_lr = self.optimizer.param_groups[0]['lr']
+                    log_dict['learning_rate'] = current_lr
+                    
+                    self.wandb_run.log(log_dict)
                 
-                # Salvar melhor modelo
+                # Atualizar e salvar melhores métricas (apenas se habilitado)
+                save_during_training = self.config['checkpointing'].get('save_during_training', True)
+                
                 if val_loss < self.best_val_loss:
                     self.best_val_loss = val_loss
-                    self.save_checkpoint(epoch, 'best_loss')
+                    if save_during_training:
+                        self.save_checkpoint(epoch, 'best_loss')
                 
                 if val_accuracy > self.best_val_accuracy:
                     self.best_val_accuracy = val_accuracy
-                    self.save_checkpoint(epoch, 'best_accuracy')
+                    if save_during_training:
+                        self.save_checkpoint(epoch, 'best_accuracy')
+                
+                # Atualizar learning rate scheduler
+                if self.scheduler is not None:
+                    if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+                        # ReduceLROnPlateau precisa da métrica monitorada
+                        scheduler_config = self.config['training']['lr_scheduler']
+                        if scheduler_config.get('mode', 'min') == 'min':
+                            self.scheduler.step(val_loss)
+                        else:  # mode == 'max'
+                            self.scheduler.step(val_accuracy)
+                    else:
+                        # Outros schedulers não precisam de métrica
+                        self.scheduler.step()
             
-            # Salvar checkpoint periódico
-            if (epoch + 1) % save_frequency == 0:
+            # Salvar checkpoint periódico (apenas se habilitado)
+            save_during_training = self.config['checkpointing'].get('save_during_training', True)
+            if save_during_training and (epoch + 1) % save_frequency == 0:
                 self.save_checkpoint(epoch, f'epoch_{epoch + 1}')
+        
+        # Salvar checkpoint final (sempre)
+        console.print("[yellow]Salvando checkpoint final...[/yellow]")
+        self.save_checkpoint(num_epochs - 1, 'final')
         
         console.print("[bold green]✓ Treinamento concluído![/bold green]")
         return self.history
     
     def save_checkpoint(self, epoch: int, name: str):
         """Salva checkpoint do modelo."""
-        checkpoint_dir = Path(self.config['checkpointing']['checkpoint_dir'])
+        checkpoint_dir = self.experiment_dir / 'models'
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         
         checkpoint_path = checkpoint_dir / f"{name}.pt"
@@ -1849,16 +2024,20 @@ def save_config(config: Dict, output_path: Path):
         json.dump(config, f, indent=2)
 
 
-def prepare_data(config: Dict) -> Tuple[Any, DataLoader, DataLoader, DataLoader]:
+def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, DataLoader, DataLoader]:
     """
     Prepara datasets e dataloaders.
     Tenta carregar do cache se disponível, senão processa e salva.
     
+    Args:
+        config: Configuração do experimento
+        experiment_dir: Diretório do experimento (onde salvar cache e resultados)
+    
     Returns:
         Tupla (full_dataset, train_loader, val_loader, test_loader)
     """
-    # Verificar se cache está configurado
-    cache_dir = config['dataset_input'].get('processed_cache_dir')
+    # Usar experiment_dir como cache_dir
+    cache_dir = experiment_dir
     
     # Tentar carregar do cache
     if cache_dir is not None:
@@ -1951,8 +2130,8 @@ def prepare_data(config: Dict) -> Tuple[Any, DataLoader, DataLoader, DataLoader]
         compute_normalization=(normalization_params is None)
     )
     
-    # Salvar parâmetros de normalização no diretório de checkpoints (para referência)
-    norm_path = Path(config['checkpointing']['checkpoint_dir']) / 'normalization_params.json'
+    # Salvar parâmetros de normalização no diretório models do experimento (para referência)
+    norm_path = experiment_dir / 'models' / 'normalization_params.json'
     norm_path.parent.mkdir(parents=True, exist_ok=True)
     with open(norm_path, 'w') as f:
         json.dump(processed_dataset.normalization_params, f, indent=2)
@@ -2086,6 +2265,175 @@ def prepare_data(config: Dict) -> Tuple[Any, DataLoader, DataLoader, DataLoader]
     return processed_dataset, train_loader, val_loader, test_loader
 
 
+def run_test_and_save(
+    model: nn.Module,
+    loader: DataLoader,
+    full_dataset: Any,
+    config: Dict,
+    device: torch.device,
+    dataset_name: str,
+    experiment_dir: Path
+) -> Dict:
+    """
+    Executa teste e salva resultados em arquivos.
+    
+    Args:
+        model: Modelo treinado
+        loader: DataLoader com dados de teste
+        full_dataset: Dataset completo
+        config: Configuração
+        device: Device (CPU ou GPU)
+        dataset_name: Nome do conjunto ('train', 'val', 'test')
+        experiment_dir: Diretório do experimento
+        
+    Returns:
+        Dict com métricas do teste
+    """
+    # Criar tester
+    tester = Tester(model, loader, full_dataset, config, device, None, dataset_name.capitalize())
+    
+    # Executar teste (a saída vai para o console normalmente)
+    results = tester.test()
+    
+    # Converter arrays numpy para listas para serialização JSON
+    results_serializable = {}
+    for key, value in results.items():
+        if isinstance(value, np.ndarray):
+            results_serializable[key] = value.tolist()
+        elif isinstance(value, (list, tuple)):
+            # Converter elementos que possam ser numpy arrays
+            results_serializable[key] = [
+                item.tolist() if isinstance(item, np.ndarray) else item
+                for item in value
+            ]
+        else:
+            results_serializable[key] = value
+    
+    # Salvar resultados em JSON
+    json_file = experiment_dir / f'{dataset_name}_results.json'
+    with open(json_file, 'w') as f:
+        json.dump(results_serializable, f, indent=2)
+    
+    console.print(f"[green]✓ Resultados de {dataset_name} salvos em: {json_file}[/green]\n")
+    
+    return results
+
+
+def summarize_experiments(config: Dict):
+    """
+    Sumariza resultados de todos os experimentos e cria gráfico comparativo.
+    
+    Args:
+        config: Configuração (para obter processed_cache_dir)
+    """
+    base_cache_dir = Path(config['dataset_input']['processed_cache_dir'])
+    
+    if not base_cache_dir.exists():
+        console.print(f"[red]Erro: Diretório base não encontrado: {base_cache_dir}[/red]")
+        return
+    
+    # Listar todos os subdiretórios (experimentos)
+    experiments = []
+    for exp_dir in base_cache_dir.iterdir():
+        if exp_dir.is_dir():
+            # Verificar se tem resultados
+            train_json = exp_dir / 'train_results.json'
+            val_json = exp_dir / 'val_results.json'
+            test_json = exp_dir / 'test_results.json'
+            
+            if train_json.exists() and val_json.exists() and test_json.exists():
+                try:
+                    with open(train_json) as f:
+                        train_results = json.load(f)
+                    with open(val_json) as f:
+                        val_results = json.load(f)
+                    with open(test_json) as f:
+                        test_results = json.load(f)
+                    
+                    experiments.append({
+                        'name': exp_dir.name,
+                        'train_accuracy': train_results.get('accuracy', 0),
+                        'val_accuracy': val_results.get('accuracy', 0),
+                        'test_accuracy': test_results.get('accuracy', 0)
+                    })
+                except Exception as e:
+                    console.print(f"[yellow]⚠ Erro ao ler resultados de {exp_dir.name}: {e}[/yellow]")
+    
+    if not experiments:
+        console.print("[yellow]Nenhum experimento completo encontrado![/yellow]")
+        return
+    
+    console.print(f"[green]Encontrados {len(experiments)} experimentos completos[/green]")
+    
+    # Criar gráfico
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    exp_names = [exp['name'] for exp in experiments]
+    train_accs = [exp['train_accuracy'] for exp in experiments]
+    val_accs = [exp['val_accuracy'] for exp in experiments]
+    test_accs = [exp['test_accuracy'] for exp in experiments]
+    
+    # Configurar gráfico
+    x = np.arange(len(exp_names))
+    width = 0.25
+    
+    fig, ax = plt.subplots(figsize=(max(12, len(exp_names) * 2), 8))
+    
+    bars1 = ax.bar(x - width, train_accs, width, label='Train', color='#1f77b4')
+    bars2 = ax.bar(x, val_accs, width, label='Validation', color='#ff7f0e')
+    bars3 = ax.bar(x + width, test_accs, width, label='Test', color='#2ca02c')
+    
+    # Configurar eixos
+    ax.set_xlabel('Experimento', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Accuracy', fontsize=12, fontweight='bold')
+    ax.set_title('Comparação de Experimentos - Accuracy', fontsize=14, fontweight='bold')
+    ax.set_xticks(x)
+    ax.set_xticklabels(exp_names, rotation=45, ha='right', fontsize=8)
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.3, axis='y')
+    ax.set_ylim(0, 1.0)
+    
+    # Adicionar valores nas barras
+    def add_value_labels(bars):
+        for bar in bars:
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height,
+                   f'{height:.3f}',
+                   ha='center', va='bottom', fontsize=7)
+    
+    add_value_labels(bars1)
+    add_value_labels(bars2)
+    add_value_labels(bars3)
+    
+    plt.tight_layout()
+    
+    # Salvar gráfico
+    output_path = base_cache_dir / 'experiments_summary.png'
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    console.print(f"[green]✓ Gráfico salvo em: {output_path}[/green]")
+    
+    # Mostrar gráfico
+    plt.show()
+    
+    # Imprimir tabela resumo
+    table = Table(title="Resumo dos Experimentos")
+    table.add_column("Experimento", style="cyan")
+    table.add_column("Train Acc", justify="right", style="blue")
+    table.add_column("Val Acc", justify="right", style="yellow")
+    table.add_column("Test Acc", justify="right", style="green")
+    
+    for exp in experiments:
+        table.add_row(
+            exp['name'],
+            f"{exp['train_accuracy']:.4f}",
+            f"{exp['val_accuracy']:.4f}",
+            f"{exp['test_accuracy']:.4f}"
+        )
+    
+    console.print(table)
+
+
 def main():
     """Função principal."""
     parser = argparse.ArgumentParser(
@@ -2103,11 +2451,31 @@ def main():
         choices=['train', 'test'],
         help='Modo de operação (sobrescreve config)'
     )
+    parser.add_argument(
+        '--summarize_results',
+        action='store_true',
+        help='Sumariza resultados de todos os experimentos e gera gráfico comparativo'
+    )
     
     args = parser.parse_args()
     
     # Carregar configuração
     config = load_config(Path(args.config))
+    
+    # Se flag --summarize_results, executar e sair
+    if args.summarize_results:
+        summarize_experiments(config)
+        return
+    
+    # Configurar signal handler para CTRL+C
+    def signal_handler(sig, frame):
+        """Handler para capturar CTRL+C."""
+        console.print("\n[yellow]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/yellow]")
+        console.print("[yellow]⚠ CTRL+C detectado - Finalizando treino graciosamente...[/yellow]")
+        console.print("[yellow]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/yellow]")
+        interrupt_state.interrupted = True
+    
+    signal.signal(signal.SIGINT, signal_handler)
     
     # Sobrescrever modo se fornecido
     if args.mode:
@@ -2135,8 +2503,22 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     console.print(f"[green]Device: {device}[/green]")
     
+    # Setup do diretório do experimento (apenas para treino)
+    if config['mode'] == 'train':
+        experiment_dir = setup_experiment_dir(config, args.config)
+    else:
+        # Para teste, precisa reconstruir o experiment_dir a partir dos parâmetros
+        experiment_name = generate_experiment_name(config)
+        base_cache_dir = Path(config['dataset_input']['processed_cache_dir'])
+        experiment_dir = base_cache_dir / experiment_name
+        
+        if not experiment_dir.exists():
+            console.print(f"[red]Erro: Experimento não encontrado: {experiment_dir}[/red]")
+            console.print("[yellow]Execute o treinamento primeiro![/yellow]")
+            sys.exit(1)
+    
     # Preparar dados
-    full_dataset, train_loader, val_loader, test_loader = prepare_data(config)
+    full_dataset, train_loader, val_loader, test_loader = prepare_data(config, experiment_dir)
     
     # Calcular tamanhos
     input_size = full_dataset.get_input_size()
@@ -2175,22 +2557,64 @@ def main():
                 model.load_state_dict(checkpoint['model_state_dict'])
         
         # Treinar
-        trainer = Trainer(model, train_loader, val_loader, config, device, wandb_run)
+        trainer = Trainer(model, train_loader, val_loader, config, device, experiment_dir, wandb_run)
         history = trainer.train()
         
         # Salvar histórico
-        history_path = Path(config['checkpointing']['checkpoint_dir']) / 'training_history.json'
+        history_path = experiment_dir / 'models' / 'training_history.json'
         with open(history_path, 'w') as f:
             json.dump(history, f, indent=2)
         console.print(f"[green]✓ Histórico salvo em {history_path}[/green]")
         
+        # Executar testes automáticos após o treino (não interromper se CTRL+C durante testes)
+        if not interrupt_state.interrupted:
+            console.print("\n[bold cyan]═══════════════════════════════════════════════[/bold cyan]")
+            console.print("[bold cyan]Executando Testes Automáticos Após Treinamento[/bold cyan]")
+            console.print("[bold cyan]═══════════════════════════════════════════════[/bold cyan]\n")
+            
+            # Determinar qual checkpoint usar
+            models_dir = experiment_dir / 'models'
+            if (models_dir / 'best_accuracy.pt').exists():
+                checkpoint_path = models_dir / 'best_accuracy.pt'
+                console.print(f"[green]Carregando melhor modelo (accuracy): {checkpoint_path}[/green]")
+            elif (models_dir / 'final.pt').exists():
+                checkpoint_path = models_dir / 'final.pt'
+                console.print(f"[green]Carregando modelo final: {checkpoint_path}[/green]")
+            else:
+                console.print("[yellow]⚠ Nenhum checkpoint encontrado para teste automático[/yellow]")
+                checkpoint_path = None
+            
+            if checkpoint_path:
+                checkpoint = torch.load(checkpoint_path, map_location=device)
+                model.load_state_dict(checkpoint['model_state_dict'])
+                
+                # Teste no conjunto de treino
+                console.print("\n[cyan]━━━ Testando no conjunto de TREINO ━━━[/cyan]")
+                train_results = run_test_and_save(model, train_loader, full_dataset, config, device, 'train', experiment_dir)
+                
+                # Teste no conjunto de validação
+                console.print("\n[cyan]━━━ Testando no conjunto de VALIDAÇÃO ━━━[/cyan]")
+                val_results = run_test_and_save(model, val_loader, full_dataset, config, device, 'val', experiment_dir)
+                
+                # Teste no conjunto de teste
+                console.print("\n[cyan]━━━ Testando no conjunto de TESTE ━━━[/cyan]")
+                test_results = run_test_and_save(model, test_loader, full_dataset, config, device, 'test', experiment_dir)
+                
+                console.print("\n[bold green]✓ Testes automáticos concluídos![/bold green]")
+        else:
+            console.print("\n[yellow]⚠ Testes automáticos pulados devido à interrupção[/yellow]")
+        
     elif config['mode'] == 'test':
-        # Carregar melhor checkpoint
-        checkpoint_path = Path(config['checkpointing']['checkpoint_dir']) / 'best_accuracy.pt'
+        # Carregar melhor checkpoint do experiment_dir
+        models_dir = experiment_dir / 'models'
+        checkpoint_path = models_dir / 'best_accuracy.pt'
         
         if not checkpoint_path.exists():
-            console.print(f"[red]ERRO: Checkpoint não encontrado: {checkpoint_path}[/red]")
-            sys.exit(1)
+            # Tentar final.pt como fallback
+            checkpoint_path = models_dir / 'final.pt'
+            if not checkpoint_path.exists():
+                console.print(f"[red]ERRO: Nenhum checkpoint encontrado em: {models_dir}[/red]")
+                sys.exit(1)
         
         console.print(f"[yellow]Carregando checkpoint: {checkpoint_path}[/yellow]")
         checkpoint = torch.load(checkpoint_path, map_location=device)

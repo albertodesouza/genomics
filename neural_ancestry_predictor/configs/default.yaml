@@ -25,7 +25,7 @@ dataset_input:
   # IMPORTANTE: Nomes devem estar em minúsculas (mesmo formato dos arquivos .npz)
   # Quanto mais outputs, maior a dimensão de entrada
   alphagenome_outputs:
-    - "rna_seq"
+    - "atac"
   
   # Modo de combinação de haplótipos
   # Opções: "H1", "H2", "H1+H2"
@@ -39,7 +39,7 @@ dataset_input:
   # Valores menores = menos features, treinamento mais rápido
   # Valores maiores = mais informação, maior dimensionalidade
   # Default: 100 bases (bem pequeno para começar)
-  window_center_size: 100
+  window_center_size: 50000
   
   # Fator de downsampling a aplicar após extração do trecho central
   # 1 = usar todas as bases selecionadas (sem downsampling)
@@ -77,7 +77,7 @@ dataset_input:
   # O cache inclui: dados normalizados, splits de treino/val/teste, e metadados
   # Ideal para múltiplas execuções com mesmo dataset e mesmos parâmetros
   # null = desabilita cache; "processed_datasets/default_cache" = habilita
-  processed_cache_dir: /dados/GENOMICS_DATA/top3/non_longevous_results_dataset_cache
+  processed_cache_dir: /dados/GENOMICS_DATA/top3/non_longevous_results_runs
 
 # ───────────────────────────────────────────────────────────────────
 # B) OUTPUT PARAMETERS
@@ -149,11 +149,64 @@ training:
   
   # Número de épocas de treinamento
   # Uma época = passar por todo o dataset de treino uma vez
-  num_epochs: 100
+  num_epochs: 500
   
   # Frequência de validação (em épocas)
   # A cada N épocas, executa validação
   validation_frequency: 1
+  
+  # ─────────────────────────────────────────────────────────────────
+  # Learning Rate Scheduler
+  # ─────────────────────────────────────────────────────────────────
+  # Ajusta a taxa de aprendizado durante o treinamento
+  
+  lr_scheduler:
+    # Habilitar scheduler
+    enabled: true
+    
+    # Tipo de scheduler
+    # "plateau": Reduz quando métrica para de melhorar (recomendado)
+    # "step": Reduz em intervalos fixos de épocas
+    # "cosine": Redução suave seguindo curva cosseno
+    # "exponential": Redução exponencial constante
+    # "multistep": Reduz em épocas específicas
+    type: "plateau"
+    
+    # ─── Configurações para ReduceLROnPlateau ───
+    # Monitora melhoria de loss ("min") ou accuracy ("max")
+    mode: "min"
+    
+    # Fator de redução (novo_lr = lr * factor)
+    factor: 0.5
+    
+    # Número de épocas sem melhora antes de reduzir
+    patience: 10
+    
+    # Learning rate mínimo (não reduz abaixo disso)
+    min_lr: 0.000001
+    
+    # ─── Configurações para StepLR ───
+    # Reduz a cada N épocas
+    step_size: 30
+    
+    # Fator de redução para StepLR
+    # gamma: 0.1
+    
+    # ─── Configurações para CosineAnnealingLR ───
+    # Número de épocas para completar o ciclo
+    # T_max: 100
+    
+    # LR mínimo no final do ciclo
+    # eta_min: 0.000001
+    
+    # ─── Configurações para ExponentialLR ───
+    # Fator de decaimento por época (lr = lr * gamma)
+    # gamma: 0.95
+    
+    # ─── Configurações para MultiStepLR ───
+    # Épocas onde reduzir o LR
+    # milestones: [30, 60, 90]
+    # gamma: 0.1
 
 # ───────────────────────────────────────────────────────────────────
 # E) DATA SPLIT
@@ -208,9 +261,14 @@ checkpointing:
   # Diretório para salvar checkpoints
   checkpoint_dir: "models"
   
+  # Salvar checkpoints durante o treinamento
+  # true: Salva best_accuracy.pt, best_loss.pt e epoch_N.pt durante o treino + final.pt no fim
+  # false: Salva APENAS final.pt no fim do treinamento (máxima economia de espaço em disco)
+  save_during_training: true
+  
   # Frequência de salvamento (em épocas)
-  # Salva checkpoint a cada N épocas
-  save_frequency: 10
+  # Salva checkpoint a cada N épocas (apenas se save_during_training = true)
+  save_frequency: 50
   
   # Caminho para checkpoint existente (para continuar treino ou testar)
   # null = começar do zero
@@ -240,7 +298,7 @@ debug:
   # Fórmula: posição = classe * (input_vector_size / num_classes)
   # Exemplo: 5 classes, 5500 features -> classe 0→pos 0, classe 1→pos 1100, etc.
   taint_at_cache_save: false  # Taintar ao salvar no cache (dados salvos já vêm marcados)
-  taint_at_runtime: true      # Taintar durante __getitem__ (marca em tempo de execução)
+  taint_at_runtime: false      # Taintar durante __getitem__ (marca em tempo de execução)
 
 # ───────────────────────────────────────────────────────────────────
 # I) MODE
@@ -251,7 +309,7 @@ debug:
 # "train": Treina a rede neural
 # "test": Carrega checkpoint e testa no conjunto especificado em test_dataset
 # Pode ser sobrescrito via --mode na linha de comando
-mode: "test"
+mode: "train"
 
 # Conjunto de dados a ser usado no modo test
 # "test": Conjunto de teste (padrão)
