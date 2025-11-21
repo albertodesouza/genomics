@@ -25,7 +25,7 @@ dataset_input:
   # IMPORTANTE: Nomes devem estar em minúsculas (mesmo formato dos arquivos .npz)
   # Quanto mais outputs, maior a dimensão de entrada
   alphagenome_outputs:
-    - "atac"
+    - "rna_seq"
   
   # Modo de combinação de haplótipos
   # Opções: "H1", "H2", "H1+H2"
@@ -69,6 +69,23 @@ dataset_input:
   # Recomendado: "minmax_keep_zero" ou "log" para dados AlphaGenome
   normalization_method: "log"
   
+  # Valor pré-definido para normalização (otimização de performance)
+  # Se 0 ou null: Computa automaticamente (demorado, ~30s-60s)
+  # Se diferente de 0: Usa este valor diretamente (instantâneo)
+  # 
+  # IMPORTANTE: Só funciona com métodos "log" e "minmax_keep_zero"
+  # Para "zscore" sempre computa (precisa mean e std)
+  # 
+  # Como usar:
+  # 1. Execute uma vez com 0 para computar
+  # 2. Veja o valor no log (ex: "log1p(max): 4.337291")
+  # 3. Configure aqui para próximas execuções
+  # 
+  # Valores típicos (ATAC-seq, 11 windows):
+  #   - log: ~4.33 a 4.34
+  #   - minmax_keep_zero: varia mais (ver log)
+  normalization_value: 0.0
+  
   # Diretório para cache do dataset processado (normalizado e dividido)
   # Se null, não usa cache (sempre reprocessa os dados)
   # Se especificado:
@@ -91,6 +108,22 @@ output:
   #   "population": Prediz população (26 classes)
   #   "frog_likelihood": Prediz likelihood FROG (150 valores - regressão)
   prediction_target: "superpopulation"
+  
+  # Classes conhecidas (otimização de performance)
+  # Se especificado, usa estas classes diretamente sem escanear o dataset (~30s economia)
+  # Se null ou vazio, escaneia o dataset para descobrir classes automaticamente
+  # 
+  # Para superpopulation (5 classes):
+  known_classes: ["AFR", "AMR", "EAS", "EUR", "SAS"]
+  # 
+  # Para population (26 classes), descomente e complete:
+  # known_classes: ["ACB", "ASW", "BEB", "CDX", "CEU", "CHB", "CHS", "CLM", 
+  #                 "ESN", "FIN", "GBR", "GIH", "GWD", "IBS", "ITU", "JPT", 
+  #                 "KHV", "LWK", "MSL", "MXL", "PEL", "PJL", "PUR", "STU", 
+  #                 "TSI", "YRI"]
+  # 
+  # Para frog_likelihood (regressão), deixe como null:
+  # known_classes: null
 
 # ───────────────────────────────────────────────────────────────────
 # C) MODEL ARCHITECTURE
@@ -98,6 +131,12 @@ output:
 # Configurações da arquitetura da rede neural
 
 model:
+  # Tipo de rede neural
+  # Opções:
+  #   "NN": Rede neural totalmente conectada (fully connected)
+  #   "CNN": Rede neural convolucional (convolutional)
+  type: "CNN"
+  
   # Camadas ocultas: lista com número de neurônios em cada camada
   # Exemplo: [256, 128, 64] = 3 camadas ocultas
   # - As camadas exceto a ÚLTIMA usam activation configurável (relu/tanh/sigmoid)
@@ -120,7 +159,63 @@ model:
   # 0.0 = sem dropout
   # Valores típicos: 0.2 a 0.5
   # Ajuda a prevenir overfitting
-  dropout_rate: 0.0
+  dropout_rate: 0.2
+  
+  # Parâmetros específicos para CNN (ignorados se type='NN')
+  cnn:
+    # Tamanho do kernel de convolução [height, width]
+    # Exemplos:
+    #   [5, 5]  - Kernel 5x5 (convolução 2D, mistura linhas e colunas)
+    #   [1, 20] - Kernel 1x20 (convolução 1D sobre cada linha/SNP, não mistura linhas)
+    #   [3, 1]  - Kernel 3x1 (convolução 1D vertical, mistura 3 SNPs adjacentes)
+    kernel_size: [1, 20]
+    
+    # Número de filtros/kernels convolucionais
+    # Cada filtro aprende um padrão diferente
+    # Mais filtros = mais features detectadas, mais parâmetros
+    num_filters: 5
+    
+    # Stride (passo) da convolução - pode ser escalar ou lista [vertical, horizontal]
+    # Escalar: 20 = stride 20 em ambas dimensões
+    # Lista: [1, 20] = stride 1 vertical (preserva linhas), stride 20 horizontal
+    # 
+    # Exemplos:
+    #   1 ou [1, 1]   - Mover 1 posição por vez (overlap máximo)
+    #   [1, 20]       - Para kernel [1, 20]: sem overlap (cada posição processada 1x)
+    #   [2, 2]        - Redução agressiva em ambas dimensões
+    stride: [1, 20]
+    
+    # Padding - pode ser escalar ou lista [vertical, horizontal]
+    # Adiciona zeros nas bordas da entrada antes da convolução
+    # 
+    # Escalar: 0 = sem padding em nenhuma dimensão
+    # Escalar: 1 = padding de 1 pixel em todas as bordas
+    # Lista: [0, 10] = sem padding vertical, padding 10 horizontal
+    # 
+    # Fórmula de dimensão de saída:
+    #   out_size = (in_size + 2*padding - kernel_size) / stride + 1
+    # 
+    # Para manter dimensão original (quando stride=1):
+    #   padding = (kernel_size - 1) / 2
+    #   Exemplo: kernel 5x5, stride 1 → padding 2 mantém dimensão
+    #   Exemplo: kernel [1, 20], stride [1, 1] → padding [0, 9] mantém dimensão horizontal
+    # 
+    # Valores comuns:
+    #   0 ou [0, 0]  - Sem padding (dimensão reduz)
+    #   1 ou [1, 1]  - Padding mínimo
+    #   [0, 9]       - Para kernel [1, 20]: sem padding vertical, preserva ~dimensão horizontal
+    padding: 1
+    
+    # Tamanho do pooling [height, width] ou null para desabilitar
+    # Reduz dimensionalidade após convolução através de MaxPooling
+    # 
+    # Exemplos:
+    #   null        - Sem pooling (mantém dimensão pós-convolução)
+    #   [2, 2]      - MaxPool 2x2 (reduz ambas dimensões pela metade)
+    #   [1, 2]      - MaxPool vertical 1, horizontal 2 (reduz só largura)
+    # 
+    # ATENÇÃO: Pooling pode causar perda de informação, use com cautela
+    pool_size: null
 
 # ───────────────────────────────────────────────────────────────────
 # D) TRAINING PARAMETERS
@@ -291,6 +386,13 @@ debug:
   # null = visualiza todas as amostras da época
   # N = visualiza apenas as primeiras N amostras
   max_samples_per_epoch: null
+  
+  # Parâmetros de visualização da entrada 2D
+  visualization:
+    # Dimensões para rescale da imagem de entrada (apenas para visualização)
+    # A rede recebe os dados na forma 2D original, não rescalada
+    width: 600   # Largura da imagem visualizada
+    height: 300  # Altura da imagem visualizada
   
   # Tainting de amostras para debug
   # Marca amostras com valor sentinela (-2) em posições específicas

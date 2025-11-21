@@ -35,6 +35,7 @@ import warnings
 from datetime import datetime
 
 import numpy as np
+from scipy import ndimage
 import yaml
 import torch
 import torch.nn as nn
@@ -163,10 +164,15 @@ def generate_experiment_name(config: Dict) -> str:
     """
     Gera nome do experimento baseado nos parâmetros de configuração.
     
-    Formato: <tipo_de_rede>_<alphagenome_outputs>_<haplotype_mode>_<window_center_size>_
-             <normalization_method>_<hidden_layers>_<activation>_<dropout_rate>_<optimizer>
+    Formato NN: nn_<alphagenome_outputs>_<haplotype_mode>_<window_center_size>_
+                <normalization_method>_<hidden_layers>_<activation>_<dropout_rate>_<optimizer>
     
-    Exemplo: nn_atac_H1_100_log_L100-40_relu_0.0_adam
+    Formato CNN: cnn_<alphagenome_outputs>_<haplotype_mode>_<window_center_size>_
+                 <normalization_method>_k<kernel>_f<filters>_s<stride>_p<padding>_[pool<size>_]
+                 <hidden_layers>_<activation>_<dropout_rate>_<optimizer>
+    
+    Exemplo NN:  nn_atac_H1_1002_log_L100-40_relu_0.0_adam
+    Exemplo CNN: cnn_atac_H1_1002_log_k5x5_f20_s5_p0_L100-40_relu_0.0_adam
     
     Args:
         config: Dicionário de configuração
@@ -174,8 +180,8 @@ def generate_experiment_name(config: Dict) -> str:
     Returns:
         Nome do experimento
     """
-    # Tipo de rede (sempre 'nn' por enquanto)
-    network_type = "nn"
+    # Tipo de rede
+    model_type = config['model'].get('type', 'NN').lower()
     
     # Parâmetros de entrada de dados
     alphagenome_outputs = '_'.join(config['dataset_input']['alphagenome_outputs'])
@@ -185,7 +191,6 @@ def generate_experiment_name(config: Dict) -> str:
     
     # Parâmetros do modelo
     hidden_layers = config['model']['hidden_layers']
-    # Formatar hidden_layers como L100-40
     hidden_layers_str = 'L' + '-'.join(map(str, hidden_layers))
     
     activation = config['model']['activation']
@@ -194,18 +199,114 @@ def generate_experiment_name(config: Dict) -> str:
     # Parâmetros de treinamento
     optimizer = config['training']['optimizer']
     
-    # Montar nome do experimento
-    experiment_name = (
-        f"{network_type}_{alphagenome_outputs}_{haplotype_mode}_{window_center_size}_"
-        f"{normalization_method}_{hidden_layers_str}_{activation}_{dropout_rate}_{optimizer}"
-    )
+    # Construir parte específica do modelo
+    if model_type == 'cnn':
+        # Parâmetros CNN
+        cnn_config = config['model']['cnn']
+        kernel_size = cnn_config['kernel_size']
+        kernel_str = f"k{kernel_size[0]}x{kernel_size[1]}"
+        
+        num_filters = cnn_config['num_filters']
+        filters_str = f"f{num_filters}"
+        
+        stride = cnn_config['stride']
+        if isinstance(stride, list):
+            stride_str = f"s{stride[0]}x{stride[1]}"
+        else:
+            stride_str = f"s{stride}"
+        
+        padding = cnn_config['padding']
+        if isinstance(padding, list):
+            padding_str = f"p{padding[0]}x{padding[1]}"
+        else:
+            padding_str = f"p{padding}"
+        
+        # Pool (opcional)
+        pool_size = cnn_config.get('pool_size')
+        if pool_size is not None:
+            pool_str = f"pool{pool_size[0]}x{pool_size[1]}_"
+        else:
+            pool_str = ""
+        
+        # Montar nome CNN
+        experiment_name = (
+            f"cnn_{alphagenome_outputs}_{haplotype_mode}_{window_center_size}_"
+            f"{normalization_method}_{kernel_str}_{filters_str}_{stride_str}_{padding_str}_{pool_str}"
+            f"{hidden_layers_str}_{activation}_{dropout_rate}_{optimizer}"
+        )
+    else:
+        # Montar nome NN (default)
+        experiment_name = (
+            f"nn_{alphagenome_outputs}_{haplotype_mode}_{window_center_size}_"
+            f"{normalization_method}_{hidden_layers_str}_{activation}_{dropout_rate}_{optimizer}"
+        )
     
     return experiment_name
 
 
+def generate_dataset_name(config: Dict) -> str:
+    """
+    Gera nome único para o dataset baseado apenas nos parâmetros de processamento.
+    
+    Experimentos com os mesmos parâmetros de dataset compartilharão o mesmo cache.
+    
+    Formato: <alphagenome_outputs>_<haplotype_mode>_<window_center_size>_
+             ds<downsample_factor>_<normalization_method>_
+             split<train>-<val>-<test>_seed<random_seed>
+    
+    Exemplo: atac_H1_1002_ds1_log_split0.7-0.15-0.15_seed42
+    
+    Args:
+        config: Dicionário de configuração
+        
+    Returns:
+        Nome do dataset
+    """
+    # Parâmetros de entrada de dados
+    alphagenome_outputs = '_'.join(config['dataset_input']['alphagenome_outputs'])
+    haplotype_mode = config['dataset_input']['haplotype_mode']
+    window_center_size = config['dataset_input']['window_center_size']
+    downsample_factor = config['dataset_input']['downsample_factor']
+    normalization_method = config['dataset_input'].get('normalization_method', 'zscore')
+    
+    # Parâmetros de split
+    train_split = config['data_split']['train_split']
+    val_split = config['data_split']['val_split']
+    test_split = config['data_split']['test_split']
+    random_seed = config['data_split']['random_seed']
+    
+    # Montar nome do dataset
+    dataset_name = (
+        f"{alphagenome_outputs}_{haplotype_mode}_{window_center_size}_"
+        f"ds{downsample_factor}_{normalization_method}_"
+        f"split{train_split}-{val_split}-{test_split}_seed{random_seed}"
+    )
+    
+    return dataset_name
+
+
+def get_dataset_cache_dir(config: Dict) -> Path:
+    """
+    Retorna o diretório onde o dataset deve ser cacheado.
+    
+    O cache do dataset é compartilhado entre experimentos com mesmos parâmetros de dados.
+    
+    Args:
+        config: Dicionário de configuração
+        
+    Returns:
+        Path do diretório de cache do dataset
+    """
+    base_cache_dir = Path(config['dataset_input']['processed_cache_dir'])
+    dataset_name = generate_dataset_name(config)
+    dataset_cache_dir = base_cache_dir / 'datasets' / dataset_name
+    
+    return dataset_cache_dir
+
+
 def setup_experiment_dir(config: Dict, config_path: str) -> Path:
     """
-    Cria e configura diretório do experimento.
+    Cria e configura diretório do experimento (sem cache de dataset).
     
     Args:
         config: Dicionário de configuração
@@ -293,9 +394,38 @@ class ProcessedGenomicDataset(Dataset):
         """
         Computa média e desvio padrão de todos os dados para normalização.
         
+        Se normalization_value estiver configurado no YAML (diferente de 0 ou null),
+        usa esse valor diretamente sem computar.
+        
         Returns:
-            Dict com 'mean' e 'std'
+            Dict com parâmetros de normalização
         """
+        # Verificar se há valor pré-definido no config
+        predefined_value = self.config['dataset_input'].get('normalization_value', 0)
+        
+        if predefined_value != 0 and predefined_value is not None:
+            # Usar valor pré-definido
+            params = {'method': self.normalization_method}
+            
+            if self.normalization_method == 'zscore':
+                console.print(f"[yellow]⚠ AVISO: normalization_value não é aplicável para método 'zscore'[/yellow]")
+                console.print(f"[yellow]  Computando normalmente...[/yellow]")
+            elif self.normalization_method == 'minmax_keep_zero':
+                params['max'] = float(predefined_value)
+                console.print(f"\n[bold cyan]✓ Usando valor de normalização pré-definido:[/bold cyan]")
+                console.print(f"  • Método: MinMax (mantendo zeros)")
+                console.print(f"  • Máximo não-zero: {predefined_value:.6f}")
+                console.print(f"  • [dim](Valor do config, não computado)[/dim]")
+                return params
+            elif self.normalization_method == 'log':
+                params['log_max'] = float(predefined_value)
+                console.print(f"\n[bold cyan]✓ Usando valor de normalização pré-definido:[/bold cyan]")
+                console.print(f"  • Método: Logarítmico")
+                console.print(f"  • log1p(max): {predefined_value:.6f}")
+                console.print(f"  • [dim](Valor do config, não computado)[/dim]")
+                return params
+        
+        # Se não há valor pré-definido ou método é zscore, computar normalmente
         all_values = []
         num_processed = 0
         num_errors = 0
@@ -418,7 +548,24 @@ class ProcessedGenomicDataset(Dataset):
     
     def _create_target_mappings(self):
         """Cria mapeamentos entre targets e índices."""
+        # Verificar se há classes conhecidas no config
+        known_classes = self.config.get('output', {}).get('known_classes')
+        
+        if known_classes is not None and len(known_classes) > 0:
+            # Usar classes pré-definidas (rápido!)
+            console.print(f"\n[cyan]Usando classes conhecidas do config (pula escaneamento)...[/cyan]")
+            sorted_targets = sorted(known_classes)
+            
+            self.target_to_idx = {target: idx for idx, target in enumerate(sorted_targets)}
+            self.idx_to_target = {idx: target for target, idx in self.target_to_idx.items()}
+            
+            console.print(f"[green]✓ Mapeamento de targets criado: {len(self.target_to_idx)} classes[/green]")
+            console.print(f"[cyan]Classes: {sorted_targets}[/cyan]")
+            return
+        
+        # Caso contrário, escanear o dataset (demorado)
         console.print(f"\n[cyan]Criando mapeamento de classes...[/cyan]")
+        console.print(f"[yellow]  (Para acelerar, defina 'known_classes' no YAML)[/yellow]")
         unique_targets = set()
         
         with Progress(
@@ -473,38 +620,44 @@ class ProcessedGenomicDataset(Dataset):
     
     def _process_windows(self, windows: Dict) -> np.ndarray:
         """
-        Processa todas as janelas e concatena em um único array.
+        Processa todas as janelas e retorna matriz 2D.
+        
+        Cada linha da matriz representa um haplótipo de um único tipo de saída.
         
         Args:
             windows: Dicionário de janelas do input_data
             
         Returns:
-            Array numpy concatenado com todos os features
+            Array numpy 2D com shape [num_rows, effective_size]
+            onde num_rows = num_windows * num_outputs * num_haplotypes
         """
-        processed_arrays = []
+        processed_rows = []
         
         for window_name, window_data in windows.items():
             # Processar cada haplótipo
             if self.haplotype_mode in ['H1', 'H1+H2']:
-                h1_array = self._process_haplotype(window_data.get('predictions_h1', {}))
-                if h1_array is not None:
-                    processed_arrays.append(h1_array)
+                h1_rows = self._process_haplotype(window_data.get('predictions_h1', {}))
+                if h1_rows is not None:
+                    # h1_rows pode ser 1D (um output) ou 2D (múltiplos outputs)
+                    if h1_rows.ndim == 1:
+                        processed_rows.append(h1_rows.reshape(1, -1))
+                    else:
+                        processed_rows.append(h1_rows)
             
             if self.haplotype_mode in ['H2', 'H1+H2']:
-                h2_array = self._process_haplotype(window_data.get('predictions_h2', {}))
-                if h2_array is not None:
-                    processed_arrays.append(h2_array)
+                h2_rows = self._process_haplotype(window_data.get('predictions_h2', {}))
+                if h2_rows is not None:
+                    if h2_rows.ndim == 1:
+                        processed_rows.append(h2_rows.reshape(1, -1))
+                    else:
+                        processed_rows.append(h2_rows)
         
-        if len(processed_arrays) == 0:
-            # Retornar array vazio com dimensão correta
-            return np.array([])
+        if len(processed_rows) == 0:
+            # Retornar array vazio 2D
+            return np.array([[]]).reshape(0, 0)
         
-        # Concatenar todos os arrays
-        result = np.concatenate(processed_arrays)
-        
-        # Garantir que resultado é 1D
-        if result.ndim > 1:
-            result = result.flatten()
+        # Empilhar todas as linhas verticalmente para criar matriz 2D
+        result = np.vstack(processed_rows)
         
         return result
     
@@ -512,13 +665,16 @@ class ProcessedGenomicDataset(Dataset):
         """
         Processa predições de um haplótipo.
         
+        Cada tipo de saída (ex: atac, rna_seq) gera uma linha separada.
+        
         Args:
             predictions: Dict com {output_type: array}
             
         Returns:
-            Array processado ou None
+            Array 2D com shape [num_outputs, effective_size] ou None
+            Se apenas um output, retorna array 1D com shape [effective_size]
         """
-        arrays_to_concat = []
+        rows = []
         
         for output_type in self.alphagenome_outputs:
             if output_type in predictions:
@@ -534,12 +690,17 @@ class ProcessedGenomicDataset(Dataset):
                 # Aplicar downsampling
                 downsampled = self._downsample(center_array)
                 
-                arrays_to_concat.append(downsampled)
+                rows.append(downsampled)
         
-        if len(arrays_to_concat) == 0:
+        if len(rows) == 0:
             return None
         
-        return np.concatenate(arrays_to_concat)
+        # Se múltiplos outputs, empilhar como matriz 2D
+        # Se apenas um output, retornar como array 1D (será convertido para 2D em _process_windows)
+        if len(rows) == 1:
+            return rows[0]
+        else:
+            return np.vstack(rows)
     
     def _extract_center(self, array: np.ndarray) -> np.ndarray:
         """
@@ -586,17 +747,14 @@ class ProcessedGenomicDataset(Dataset):
         
         Returns:
             Tupla (features_tensor, target_tensor)
+            features_tensor tem shape [num_rows, effective_size] (2D)
         """
         input_data, output_data = self.base_dataset[idx]
         
-        # Processar janelas
+        # Processar janelas (retorna matriz 2D)
         features = self._process_windows(input_data['windows'])
         
-        # Garantir que features é 1D (flatten se necessário)
-        if features.ndim > 1:
-            features = features.flatten()
-        
-        # Converter para tensor
+        # Converter para tensor 2D
         features_tensor = torch.FloatTensor(features)
         
         # Aplicar normalização conforme método escolhido
@@ -652,13 +810,19 @@ class ProcessedGenomicDataset(Dataset):
         """Retorna número de classes."""
         return len(self.target_to_idx)
     
-    def get_input_size(self) -> int:
-        """Calcula tamanho da entrada da rede."""
+    def get_input_shape(self) -> Tuple[int, int]:
+        """
+        Calcula shape da entrada da rede.
+        
+        Returns:
+            Tupla (num_rows, effective_size)
+            onde num_rows = num_windows * num_outputs * num_haplotypes
+        """
         # Pegar primeira amostra válida para calcular
         for idx in range(len(self.base_dataset)):
             try:
                 features, _ = self[idx]
-                return features.shape[0]
+                return tuple(features.shape)
             except Exception:
                 continue
         
@@ -668,37 +832,48 @@ class ProcessedGenomicDataset(Dataset):
         num_haplotypes = 2 if self.haplotype_mode == 'H1+H2' else 1
         
         effective_size = self.window_center_size // self.downsample_factor
+        num_rows = num_windows * num_outputs * num_haplotypes
         
-        return num_windows * num_outputs * num_haplotypes * effective_size
+        return (num_rows, effective_size)
+    
+    def get_input_size(self) -> int:
+        """
+        DEPRECATED: Retorna tamanho total da entrada (para retrocompatibilidade).
+        Use get_input_shape() para obter shape 2D.
+        """
+        num_rows, effective_size = self.get_input_shape()
+        return num_rows * effective_size
 
 
 # ==============================================================================
 # MODEL ARCHITECTURE
 # ==============================================================================
 
-class AncestryPredictor(nn.Module):
+class NNAncestryPredictor(nn.Module):
     """
-    Rede neural para predição de ancestralidade.
+    Rede neural totalmente conectada (NN) para predição de ancestralidade.
     
     Arquitetura:
+    - Flatten (converte entrada 2D para 1D)
     - Camada de entrada (tamanho variável)
     - Camadas ocultas (configurável)
     - Camada de saída (softmax para classificação ou linear para regressão)
     """
     
-    def __init__(self, config: Dict, input_size: int, num_classes: int):
+    def __init__(self, config: Dict, input_shape: Tuple[int, int], num_classes: int):
         """
         Inicializa o modelo.
         
         Args:
             config: Configuração do YAML
-            input_size: Tamanho da entrada
+            input_shape: Tupla (num_rows, effective_size) do shape de entrada 2D
             num_classes: Número de classes (ou tamanho da saída para regressão)
         """
-        super(AncestryPredictor, self).__init__()
+        super(NNAncestryPredictor, self).__init__()
         
         self.config = config
-        self.input_size = input_size
+        self.input_shape = input_shape
+        self.input_size = input_shape[0] * input_shape[1]  # Tamanho após flatten
         self.num_classes = num_classes
         self.is_classification = config['output']['prediction_target'] != 'frog_likelihood'
         
@@ -720,7 +895,7 @@ class AncestryPredictor(nn.Module):
         # Construir camadas
         # Arquitetura: camadas hidden (TODAS com ativação) + camada de saída (LINEAR antes do softmax)
         layers = []
-        prev_size = input_size
+        prev_size = self.input_size
         
         # TODAS as camadas hidden (com ativação configurada)
         for hidden_size in hidden_layers:
@@ -742,17 +917,29 @@ class AncestryPredictor(nn.Module):
         # Inicializar pesos apropriadamente
         self._initialize_weights(activation_type)
         
-        console.print(f"[green]Modelo criado:[/green]")
-        console.print(f"  • Input size: {input_size}")
+        console.print(f"[green]Modelo NN criado:[/green]")
+        console.print(f"  • Input shape: {input_shape[0]} x {input_shape[1]}")
+        console.print(f"  • Input size (após flatten): {self.input_size}")
         console.print(f"  • Hidden layers: {hidden_layers}")
         console.print(f"  • Ativação: {activation_type} (em todas as camadas hidden)")
-        console.print(f"  • Arquitetura: camadas hidden + saída (linear→softmax)")
+        console.print(f"  • Arquitetura: flatten → camadas hidden → saída (linear→softmax)")
         console.print(f"  • Output size: {num_classes}")
         console.print(f"  • Dropout: {dropout_rate}")
         console.print(f"  • Total parameters: {self.count_parameters():,}")
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass."""
+        """
+        Forward pass.
+        
+        Args:
+            x: Input tensor com shape [batch, num_rows, effective_size] (2D)
+               
+        Returns:
+            Output tensor com shape [batch, num_classes]
+        """
+        # Flatten: [batch, num_rows, effective_size] -> [batch, num_rows * effective_size]
+        x = x.view(x.size(0), -1)
+        
         logits = self.network(x)
         
         if self.is_classification and not self.training:
@@ -808,6 +995,244 @@ class AncestryPredictor(nn.Module):
         
         console.print(f"[green]✓ Pesos inicializados:[/green]")
         console.print(f"  • Camadas hidden: {activation_type} initialization")
+        console.print(f"  • Camada de saída: Xavier initialization")
+        console.print(f"  • Bias: zeros")
+
+
+class CNNAncestryPredictor(nn.Module):
+    """
+    Rede neural convolucional (CNN) para predição de ancestralidade.
+    
+    Arquitetura:
+    - Input: [batch, num_rows, effective_size] como imagem com 1 canal
+    - Conv2D: camada convolucional com kernel configurável
+    - Ativação (ReLU/Tanh/Sigmoid)
+    - MaxPool2D (opcional)
+    - Flatten
+    - Camadas fully connected (hidden_layers)
+    - Output linear → Softmax (classificação)
+    """
+    
+    def __init__(self, config: Dict, input_shape: Tuple[int, int], num_classes: int):
+        """
+        Inicializa o modelo CNN.
+        
+        Args:
+            config: Configuração do YAML
+            input_shape: Tupla (num_rows, effective_size) do shape de entrada 2D
+            num_classes: Número de classes (ou tamanho da saída para regressão)
+        """
+        super(CNNAncestryPredictor, self).__init__()
+        
+        self.config = config
+        self.input_shape = input_shape
+        self.num_classes = num_classes
+        self.is_classification = config['output']['prediction_target'] != 'frog_likelihood'
+        
+        # Parâmetros CNN
+        cnn_config = config['model']['cnn']
+        kernel_size = tuple(cnn_config['kernel_size'])  # [height, width]
+        num_filters = cnn_config['num_filters']
+        
+        # Stride pode ser escalar ou lista [vertical, horizontal]
+        stride_config = cnn_config['stride']
+        if isinstance(stride_config, list):
+            stride = tuple(stride_config)
+        else:
+            stride = (stride_config, stride_config)  # Usar mesmo valor para ambas dimensões
+        
+        # Padding pode ser escalar ou lista [vertical, horizontal]
+        padding_config = cnn_config['padding']
+        if isinstance(padding_config, list):
+            padding = tuple(padding_config)
+        else:
+            padding = padding_config  # PyTorch aceita int ou tuple
+        
+        pool_size = cnn_config.get('pool_size')  # Pode ser None
+        
+        # Parâmetros gerais
+        activation_type = config['model']['activation']
+        dropout_rate = config['model']['dropout_rate']
+        hidden_layers = config['model']['hidden_layers']
+        
+        # Escolher função de ativação
+        if activation_type == 'relu':
+            self.activation = nn.ReLU()
+        elif activation_type == 'tanh':
+            self.activation = nn.Tanh()
+        elif activation_type == 'sigmoid':
+            self.activation = nn.Sigmoid()
+        else:
+            raise ValueError(f"Ativação não suportada: {activation_type}")
+        
+        # Camada convolucional
+        # Input: [batch, 1, num_rows, effective_size]
+        # Output: [batch, num_filters, out_height, out_width]
+        self.conv1 = nn.Conv2d(
+            in_channels=1,
+            out_channels=num_filters,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding
+        )
+        
+        # Calcular dimensões após convolução
+        num_rows, effective_size = input_shape
+        
+        # Extrair padding como tupla
+        if isinstance(padding, int):
+            pad_h, pad_w = padding, padding
+        else:
+            pad_h, pad_w = padding
+        
+        # Extrair stride como tupla
+        if isinstance(stride, int):
+            stride_h, stride_w = stride, stride
+        else:
+            stride_h, stride_w = stride
+        
+        # Fórmula: out_size = (in_size + 2*padding - kernel_size) / stride + 1
+        conv_out_h = (num_rows + 2*pad_h - kernel_size[0]) // stride_h + 1
+        conv_out_w = (effective_size + 2*pad_w - kernel_size[1]) // stride_w + 1
+        
+        # Pooling (opcional)
+        if pool_size is not None:
+            pool_size = tuple(pool_size)
+            self.pool = nn.MaxPool2d(kernel_size=pool_size)
+            pool_out_h = conv_out_h // pool_size[0]
+            pool_out_w = conv_out_w // pool_size[1]
+        else:
+            self.pool = None
+            pool_out_h = conv_out_h
+            pool_out_w = conv_out_w
+        
+        # Tamanho após flatten
+        flattened_size = num_filters * pool_out_h * pool_out_w
+        
+        # Camadas fully connected
+        fc_layers = []
+        prev_size = flattened_size
+        
+        for hidden_size in hidden_layers:
+            fc_layers.append(nn.Linear(prev_size, hidden_size))
+            fc_layers.append(self.activation)
+            if dropout_rate > 0:
+                fc_layers.append(nn.Dropout(dropout_rate))
+            prev_size = hidden_size
+        
+        # Camada de saída (linear, sem ativação)
+        fc_layers.append(nn.Linear(prev_size, num_classes))
+        
+        self.fc_network = nn.Sequential(*fc_layers)
+        
+        # Softmax para classificação
+        if self.is_classification:
+            self.softmax = nn.Softmax(dim=1)
+        
+        # Inicializar pesos
+        self._initialize_weights(activation_type)
+        
+        console.print(f"[green]Modelo CNN criado:[/green]")
+        console.print(f"  • Input shape: {input_shape[0]} x {input_shape[1]} (1 canal)")
+        console.print(f"  • Conv2D: {num_filters} filters, kernel={kernel_size}, stride={stride}, padding={padding}")
+        console.print(f"  • Após Conv2D: {num_filters} x {conv_out_h} x {conv_out_w}")
+        if pool_size:
+            console.print(f"  • MaxPool2D: kernel={pool_size}")
+            console.print(f"  • Após Pool: {num_filters} x {pool_out_h} x {pool_out_w}")
+        console.print(f"  • Flatten size: {flattened_size}")
+        console.print(f"  • FC hidden layers: {hidden_layers}")
+        console.print(f"  • Ativação: {activation_type}")
+        console.print(f"  • Output size: {num_classes}")
+        console.print(f"  • Dropout: {dropout_rate}")
+        console.print(f"  • Total parameters: {self.count_parameters():,}")
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass.
+        
+        Args:
+            x: Input tensor com shape [batch, num_rows, effective_size] (2D)
+               
+        Returns:
+            Output tensor com shape [batch, num_classes]
+        """
+        # Adicionar dimensão de canal: [batch, num_rows, effective_size] -> [batch, 1, num_rows, effective_size]
+        x = x.unsqueeze(1)
+        
+        # Convolução + Ativação
+        x = self.conv1(x)
+        x = self.activation(x)
+        
+        # Pooling (se habilitado)
+        if self.pool is not None:
+            x = self.pool(x)
+        
+        # Flatten
+        x = x.view(x.size(0), -1)
+        
+        # Camadas fully connected
+        logits = self.fc_network(x)
+        
+        if self.is_classification and not self.training:
+            # Aplicar softmax apenas durante inferência
+            return self.softmax(logits)
+        
+        return logits
+    
+    def count_parameters(self) -> int:
+        """Conta número total de parâmetros treináveis."""
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+    
+    def _initialize_weights(self, activation_type: str):
+        """
+        Inicializa pesos apropriadamente de acordo com tipo de ativação.
+        
+        Estratégia:
+        - Conv2D: He/Kaiming para ReLU, Xavier para Tanh/Sigmoid
+        - FC hidden layers: He/Kaiming para ReLU, Xavier para Tanh/Sigmoid
+        - Última camada FC (saída): Xavier initialization
+        - Bias: zeros
+        
+        Args:
+            activation_type: Tipo de função de ativação
+        """
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                # Inicialização convolucional
+                if activation_type == 'relu':
+                    nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                elif activation_type in ['tanh', 'sigmoid']:
+                    nn.init.xavier_normal_(m.weight)
+                else:
+                    nn.init.xavier_normal_(m.weight)
+                
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            
+            elif isinstance(m, nn.Linear):
+                # Contar quantas camadas lineares existem
+                linear_layers = [module for module in self.fc_network.modules() if isinstance(module, nn.Linear)]
+                total_layers = len(linear_layers)
+                layer_count = sum(1 for module in self.fc_network.modules() 
+                                 if isinstance(module, nn.Linear) and id(module) <= id(m))
+                
+                # Última camada (saída): Xavier
+                if layer_count == total_layers:
+                    nn.init.xavier_normal_(m.weight)
+                # Camadas hidden
+                elif activation_type == 'relu':
+                    nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                elif activation_type in ['tanh', 'sigmoid']:
+                    nn.init.xavier_normal_(m.weight)
+                else:
+                    nn.init.xavier_normal_(m.weight)
+                
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+        
+        console.print(f"[green]✓ Pesos CNN inicializados:[/green]")
+        console.print(f"  • Conv2D: {activation_type} initialization")
+        console.print(f"  • FC hidden layers: {activation_type} initialization")
         console.print(f"  • Camada de saída: Xavier initialization")
         console.print(f"  • Bias: zeros")
 
@@ -955,14 +1380,14 @@ class Trainer:
         Visualiza uma amostra de entrada e suas predições.
         
         Args:
-            features: Tensor de entrada (1, num_features)
+            features: Tensor de entrada com shape (1, num_rows, effective_size) para 2D
             targets: Target verdadeiro (1,)
             outputs: Saída da rede (1, num_classes)
             batch_idx: Índice do batch
             epoch: Número da época
         """
         # Converter para CPU e numpy
-        features_np = features.cpu().detach().numpy().flatten()
+        features_cpu = features.cpu().detach()
         target_idx = targets.cpu().item()
         output_probs = torch.softmax(outputs, dim=1).cpu().detach().numpy()[0]
         predicted_idx = output_probs.argmax()
@@ -983,16 +1408,52 @@ class Trainer:
         
         # Plot das features de entrada
         plt.subplot(2, 1, 1)
-        plt.plot(features_np, linewidth=0.5, alpha=0.7)
-        plt.xlabel('Feature Index', fontsize=12)
-        plt.ylabel('Feature Value', fontsize=12)
-        plt.title(f'Época {epoch + 1} | Amostra {batch_idx + 1} | Input Features (n={len(features_np)})', 
-                 fontsize=14, fontweight='bold')
-        plt.grid(True, alpha=0.3)
         
-        # Estatísticas das features
-        stats_text = (f'Min: {features_np.min():.3f} | Max: {features_np.max():.3f} | '
-                     f'Mean: {features_np.mean():.3f} | Std: {features_np.std():.3f}')
+        # Detectar se entrada é 2D ou 1D
+        if features_cpu.ndim == 3 and features_cpu.shape[0] == 1:
+            # Entrada 2D: [1, num_rows, effective_size]
+            img_data = features_cpu[0].numpy()  # [num_rows, effective_size]
+            
+            # Rescale para visualização
+            viz_height = self.config.get('debug', {}).get('visualization', {}).get('height', 300)
+            viz_width = self.config.get('debug', {}).get('visualization', {}).get('width', 600)
+            
+            # Calcular fatores de zoom
+            zoom_factors = (viz_height / img_data.shape[0], viz_width / img_data.shape[1])
+            img_resized = ndimage.zoom(img_data, zoom_factors, order=1)  # order=1 = bilinear
+            
+            # Normalizar para visualização (0=preto, 1=branco)
+            img_min, img_max = img_resized.min(), img_resized.max()
+            if img_max > img_min:
+                img_normalized = (img_resized - img_min) / (img_max - img_min)
+            else:
+                img_normalized = np.zeros_like(img_resized)
+            
+            # Plotar como imagem
+            plt.imshow(img_normalized, cmap='gray', aspect='auto', interpolation='nearest')
+            plt.xlabel('Posição Genômica (rescaled)', fontsize=12)
+            plt.ylabel('SNP/Window (rescaled)', fontsize=12)
+            plt.title(f'Época {epoch + 1} | Amostra {batch_idx + 1} | Input 2D ({img_data.shape[0]}x{img_data.shape[1]} → {viz_height}x{viz_width})', 
+                     fontsize=14, fontweight='bold')
+            plt.colorbar(label='Valor Normalizado')
+            
+            # Estatísticas das features (dados originais)
+            stats_text = (f'Min: {img_data.min():.3f} | Max: {img_data.max():.3f} | '
+                         f'Mean: {img_data.mean():.3f} | Std: {img_data.std():.3f}')
+        else:
+            # Entrada 1D (fallback para retrocompatibilidade)
+            features_np = features_cpu.numpy().flatten()
+            plt.plot(features_np, linewidth=0.5, alpha=0.7)
+            plt.xlabel('Feature Index', fontsize=12)
+            plt.ylabel('Feature Value', fontsize=12)
+            plt.title(f'Época {epoch + 1} | Amostra {batch_idx + 1} | Input Features (n={len(features_np)})', 
+                     fontsize=14, fontweight='bold')
+            plt.grid(True, alpha=0.3)
+            
+            # Estatísticas das features
+            stats_text = (f'Min: {features_np.min():.3f} | Max: {features_np.max():.3f} | '
+                         f'Mean: {features_np.mean():.3f} | Std: {features_np.std():.3f}')
+        
         plt.text(0.02, 0.98, stats_text, transform=plt.gca().transAxes,
                 fontsize=10, verticalalignment='top',
                 bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
@@ -1167,6 +1628,7 @@ class Trainer:
         # Imprimir arquitetura da rede
         console.print("\n[bold cyan]═══ ARQUITETURA DA REDE ═══[/bold cyan]")
         console.print(self.model)
+        console.print(f"\n[bold green]Total de parâmetros treináveis: {self.model.count_parameters():,}[/bold green]")
         console.print()
         
         for epoch in range(num_epochs):
@@ -1312,13 +1774,13 @@ class Tester:
         Visualiza uma amostra de teste e suas predições.
         
         Args:
-            features: Tensor de entrada (1, num_features)
+            features: Tensor de entrada com shape (1, num_rows, effective_size) para 2D
             targets: Target verdadeiro (1,)
             outputs: Saída da rede (1, num_classes)
             sample_idx: Índice da amostra
         """
         # Converter para CPU e numpy
-        features_np = features.cpu().detach().numpy().flatten()
+        features_cpu = features.cpu().detach()
         target_idx = targets.cpu().item()
         output_probs = torch.softmax(outputs, dim=1).cpu().detach().numpy()[0]
         predicted_idx = output_probs.argmax()
@@ -1339,16 +1801,52 @@ class Tester:
         
         # Plot das features de entrada
         plt.subplot(2, 1, 1)
-        plt.plot(features_np, linewidth=0.5, alpha=0.7)
-        plt.xlabel('Feature Index', fontsize=12)
-        plt.ylabel('Feature Value', fontsize=12)
-        plt.title(f'{self.dataset_name.upper()} | Amostra {sample_idx + 1} | Input Features (n={len(features_np)})', 
-                 fontsize=14, fontweight='bold')
-        plt.grid(True, alpha=0.3)
         
-        # Estatísticas das features
-        stats_text = (f'Min: {features_np.min():.3f} | Max: {features_np.max():.3f} | '
-                     f'Mean: {features_np.mean():.3f} | Std: {features_np.std():.3f}')
+        # Detectar se entrada é 2D ou 1D
+        if features_cpu.ndim == 3 and features_cpu.shape[0] == 1:
+            # Entrada 2D: [1, num_rows, effective_size]
+            img_data = features_cpu[0].numpy()  # [num_rows, effective_size]
+            
+            # Rescale para visualização
+            viz_height = self.config.get('debug', {}).get('visualization', {}).get('height', 300)
+            viz_width = self.config.get('debug', {}).get('visualization', {}).get('width', 600)
+            
+            # Calcular fatores de zoom
+            zoom_factors = (viz_height / img_data.shape[0], viz_width / img_data.shape[1])
+            img_resized = ndimage.zoom(img_data, zoom_factors, order=1)  # order=1 = bilinear
+            
+            # Normalizar para visualização (0=preto, 1=branco)
+            img_min, img_max = img_resized.min(), img_resized.max()
+            if img_max > img_min:
+                img_normalized = (img_resized - img_min) / (img_max - img_min)
+            else:
+                img_normalized = np.zeros_like(img_resized)
+            
+            # Plotar como imagem
+            plt.imshow(img_normalized, cmap='gray', aspect='auto', interpolation='nearest')
+            plt.xlabel('Posição Genômica (rescaled)', fontsize=12)
+            plt.ylabel('SNP/Window (rescaled)', fontsize=12)
+            plt.title(f'{self.dataset_name.upper()} | Amostra {sample_idx + 1} | Input 2D ({img_data.shape[0]}x{img_data.shape[1]} → {viz_height}x{viz_width})', 
+                     fontsize=14, fontweight='bold')
+            plt.colorbar(label='Valor Normalizado')
+            
+            # Estatísticas das features (dados originais)
+            stats_text = (f'Min: {img_data.min():.3f} | Max: {img_data.max():.3f} | '
+                         f'Mean: {img_data.mean():.3f} | Std: {img_data.std():.3f}')
+        else:
+            # Entrada 1D (fallback para retrocompatibilidade)
+            features_np = features_cpu.numpy().flatten()
+            plt.plot(features_np, linewidth=0.5, alpha=0.7)
+            plt.xlabel('Feature Index', fontsize=12)
+            plt.ylabel('Feature Value', fontsize=12)
+            plt.title(f'{self.dataset_name.upper()} | Amostra {sample_idx + 1} | Input Features (n={len(features_np)})', 
+                     fontsize=14, fontweight='bold')
+            plt.grid(True, alpha=0.3)
+            
+            # Estatísticas das features
+            stats_text = (f'Min: {features_np.min():.3f} | Max: {features_np.max():.3f} | '
+                         f'Mean: {features_np.mean():.3f} | Std: {features_np.std():.3f}')
+        
         plt.text(0.02, 0.98, stats_text, transform=plt.gca().transAxes,
                 fontsize=10, verticalalignment='top',
                 bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
@@ -1413,6 +1911,7 @@ class Tester:
         # Imprimir arquitetura da rede
         console.print("\n[bold cyan]═══ ARQUITETURA DA REDE ═══[/bold cyan]")
         console.print(self.model)
+        console.print(f"\n[bold green]Total de parâmetros treináveis: {self.model.count_parameters():,}[/bold green]")
         console.print()
         
         if self.enable_visualization:
@@ -1614,6 +2113,12 @@ def validate_cache(cache_dir: Path, config: Dict) -> bool:
         
         # Verificar compatibilidade dos parâmetros críticos
         processing_params = metadata.get('processing_params', {})
+        
+        # Verificar formato de entrada (1D vs 2D)
+        cached_input_shape = processing_params.get('input_shape', '1D')
+        if cached_input_shape != '2D':
+            console.print(f"[yellow]Cache invalidado: formato de entrada mudou de 1D para 2D[/yellow]")
+            return False
         current_params = {
             'alphagenome_outputs': config['dataset_input']['alphagenome_outputs'],
             'haplotype_mode': config['dataset_input']['haplotype_mode'],
@@ -1622,6 +2127,7 @@ def validate_cache(cache_dir: Path, config: Dict) -> bool:
             'normalization_method': config['dataset_input'].get('normalization_method', 'zscore'),
             'dataset_dir': config['dataset_input']['dataset_dir'],
             'taint_at_cache_save': config.get('debug', {}).get('taint_at_cache_save', False),
+            'input_shape': '2D',
         }
         
         for key, current_value in current_params.items():
@@ -1785,6 +2291,7 @@ def save_processed_dataset(
                 'downsample_factor': config['dataset_input']['downsample_factor'],
                 'normalization_method': config['dataset_input'].get('normalization_method', 'zscore'),
                 'taint_at_cache_save': config.get('debug', {}).get('taint_at_cache_save', False),
+                'input_shape': '2D',
             },
             'splits': {
                 'train_size': len(train_indices),
@@ -1877,10 +2384,28 @@ class CachedProcessedDataset(Dataset):
     def get_num_classes(self) -> int:
         return len(self.target_to_idx)
     
-    def get_input_size(self) -> int:
+    def get_input_shape(self) -> Tuple[int, int]:
+        """
+        Retorna shape da entrada.
+        
+        Returns:
+            Tupla (num_rows, effective_size) para dados 2D
+        """
         if len(self.data) > 0:
-            return self.data[0][0].shape[0]
-        return 0
+            features_shape = self.data[0][0].shape
+            if len(features_shape) == 2:
+                return tuple(features_shape)
+            else:
+                # Fallback para dados 1D antigos (retrocompatibilidade)
+                return (1, features_shape[0])
+        return (0, 0)
+    
+    def get_input_size(self) -> int:
+        """
+        DEPRECATED: Retorna tamanho total da entrada (para retrocompatibilidade).
+        """
+        num_rows, effective_size = self.get_input_shape()
+        return num_rows * effective_size
 
 
 def load_processed_dataset(
@@ -2027,17 +2552,18 @@ def save_config(config: Dict, output_path: Path):
 def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, DataLoader, DataLoader]:
     """
     Prepara datasets e dataloaders.
-    Tenta carregar do cache se disponível, senão processa e salva.
+    Tenta carregar do cache compartilhado se disponível, senão processa e salva.
     
     Args:
         config: Configuração do experimento
-        experiment_dir: Diretório do experimento (onde salvar cache e resultados)
+        experiment_dir: Diretório do experimento (onde salvar resultados)
     
     Returns:
         Tupla (full_dataset, train_loader, val_loader, test_loader)
     """
-    # Usar experiment_dir como cache_dir
-    cache_dir = experiment_dir
+    # Cache do dataset é compartilhado em datasets/
+    dataset_cache_dir = get_dataset_cache_dir(config)
+    cache_dir = dataset_cache_dir
     
     # Tentar carregar do cache
     if cache_dir is not None:
@@ -2045,18 +2571,30 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
         if cache_path.exists() and validate_cache(cache_path, config):
             console.print(Panel.fit(
                 "[bold green]Cache Encontrado![/bold green]\n"
-                "Carregando dataset processado do cache para economizar tempo..."
+                f"Carregando dataset do cache compartilhado: {cache_path.name}"
             ))
-            return load_processed_dataset(cache_path, config)
+            result = load_processed_dataset(cache_path, config)
+            
+            # Copiar normalization_params para o diretório do experimento (referência)
+            (experiment_dir / 'models').mkdir(exist_ok=True)
+            norm_source = cache_path / 'normalization_params.json'
+            norm_dest = experiment_dir / 'models' / 'normalization_params.json'
+            if norm_source.exists() and not norm_dest.exists():
+                shutil.copy(norm_source, norm_dest)
+                console.print(f"[green]✓ Parâmetros de normalização copiados para o experimento[/green]")
+            
+            return result
         elif cache_path.exists():
             console.print(Panel.fit(
                 "[bold yellow]Cache Inválido ou Incompatível[/bold yellow]\n"
                 "Parâmetros mudaram. Reprocessando dataset..."
             ))
         else:
+            dataset_name = generate_dataset_name(config)
             console.print(Panel.fit(
                 "[bold cyan]Cache Não Encontrado[/bold cyan]\n"
-                "Primeira execução. Processando e salvando dataset..."
+                f"Primeira execução. Processando e salvando em cache compartilhado:\n"
+                f"datasets/{dataset_name}"
             ))
     else:
         console.print(Panel.fit("[bold cyan]Cache Desabilitado[/bold cyan]\nProcessando dataset..."))
@@ -2196,7 +2734,17 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
         # IMPORTANTE: Agora que o cache foi salvo, carregar dele para usar
         # o CachedProcessedDataset (rápido) em vez do ProcessedGenomicDataset (lento)
         console.print("\n[cyan]✓ Cache salvo! Recarregando do cache para treino rápido...[/cyan]")
-        return load_processed_dataset(cache_path, config)
+        result = load_processed_dataset(cache_path, config)
+        
+        # Copiar normalization_params para o diretório do experimento (referência)
+        (experiment_dir / 'models').mkdir(exist_ok=True)
+        norm_source = cache_path / 'normalization_params.json'
+        norm_dest = experiment_dir / 'models' / 'normalization_params.json'
+        if norm_source.exists():
+            shutil.copy(norm_source, norm_dest)
+            console.print(f"[green]✓ Parâmetros de normalização copiados para {norm_dest}[/green]")
+        
+        return result
     
     # Se cache não está configurado, criar subsets do ProcessedGenomicDataset
     # (será lento porque processa on-the-fly)
@@ -2319,12 +2867,14 @@ def run_test_and_save(
     return results
 
 
-def summarize_experiments(config: Dict):
+def summarize_experiments(config: Dict, sort_by: str = 'test_acc'):
     """
     Sumariza resultados de todos os experimentos e cria gráfico comparativo.
     
     Args:
         config: Configuração (para obter processed_cache_dir)
+        sort_by: Métrica(s) para ordenação, separada por vírgula para ordenação composta
+                 Ex: 'test_acc' ou 'val_acc,test_acc'
     """
     base_cache_dir = Path(config['dataset_input']['processed_cache_dir'])
     
@@ -2364,6 +2914,39 @@ def summarize_experiments(config: Dict):
         return
     
     console.print(f"[green]Encontrados {len(experiments)} experimentos completos[/green]")
+    
+    # Parsear métricas de ordenação (pode ter múltiplas separadas por vírgula)
+    sort_metrics = [s.strip() for s in sort_by.split(',')]
+    
+    # Mapear nomes curtos para nomes de campos
+    sort_key_map = {
+        'train_acc': 'train_accuracy',
+        'val_acc': 'val_accuracy',
+        'test_acc': 'test_accuracy'
+    }
+    
+    # Validar todas as métricas
+    sort_keys = []
+    for metric in sort_metrics:
+        if metric not in sort_key_map:
+            console.print(f"[red]Erro: Métrica inválida '{metric}'. Use: train_acc, val_acc ou test_acc[/red]")
+            return
+        sort_keys.append(sort_key_map[metric])
+    
+    # Ordenar experimentos (maior para menor para todas as métricas)
+    # Para ordenação composta, usamos tupla como chave
+    def sort_key_func(exp):
+        # Retorna tupla negativa para ordenar decrescente (maior primeiro)
+        return tuple(-exp[key] for key in sort_keys)
+    
+    experiments = sorted(experiments, key=sort_key_func)
+    
+    # Mensagem de ordenação
+    if len(sort_metrics) == 1:
+        console.print(f"[cyan]Ordenando por: {sort_metrics[0]} (maior para menor)[/cyan]")
+    else:
+        sort_desc = " → ".join(sort_metrics)
+        console.print(f"[cyan]Ordenando por: {sort_desc} (prioridade da esquerda para direita, maior para menor)[/cyan]")
     
     # Criar gráfico
     import matplotlib.pyplot as plt
@@ -2456,6 +3039,14 @@ def main():
         action='store_true',
         help='Sumariza resultados de todos os experimentos e gera gráfico comparativo'
     )
+    parser.add_argument(
+        '--sort_by',
+        type=str,
+        default='test_acc',
+        help='Métrica(s) para ordenar experimentos (padrão: test_acc). '
+             'Aceita ordenação simples (ex: val_acc) ou composta separada por vírgula '
+             '(ex: val_acc,test_acc ordena por val_acc, depois test_acc como desempate)'
+    )
     
     args = parser.parse_args()
     
@@ -2464,22 +3055,28 @@ def main():
     
     # Se flag --summarize_results, executar e sair
     if args.summarize_results:
-        summarize_experiments(config)
+        summarize_experiments(config, sort_by=args.sort_by)
         return
-    
-    # Configurar signal handler para CTRL+C
-    def signal_handler(sig, frame):
-        """Handler para capturar CTRL+C."""
-        console.print("\n[yellow]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/yellow]")
-        console.print("[yellow]⚠ CTRL+C detectado - Finalizando treino graciosamente...[/yellow]")
-        console.print("[yellow]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/yellow]")
-        interrupt_state.interrupted = True
-    
-    signal.signal(signal.SIGINT, signal_handler)
     
     # Sobrescrever modo se fornecido
     if args.mode:
         config['mode'] = args.mode
+    
+    # Configurar signal handler para CTRL+C (diferente para train vs test)
+    if config['mode'] == 'train':
+        def signal_handler(sig, frame):
+            """Handler para capturar CTRL+C durante treinamento."""
+            console.print("\n[yellow]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/yellow]")
+            console.print("[yellow]⚠ CTRL+C detectado - Finalizando treino graciosamente...[/yellow]")
+            console.print("[yellow]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/yellow]")
+            interrupt_state.interrupted = True
+    else:
+        def signal_handler(sig, frame):
+            """Handler para capturar CTRL+C durante teste - interrompe imediatamente."""
+            console.print("\n[yellow]⚠ CTRL+C detectado - Interrompendo...[/yellow]")
+            sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
     
     # Banner
     banner_text = (
@@ -2520,15 +3117,24 @@ def main():
     # Preparar dados
     full_dataset, train_loader, val_loader, test_loader = prepare_data(config, experiment_dir)
     
-    # Calcular tamanhos
-    input_size = full_dataset.get_input_size()
+    # Calcular dimensões de entrada
+    input_shape = full_dataset.get_input_shape()
     num_classes = full_dataset.get_num_classes() if config['output']['prediction_target'] != 'frog_likelihood' else 150
     
-    console.print(f"[green]Input size: {input_size}[/green]")
+    console.print(f"[green]Input shape: {input_shape[0]} x {input_shape[1]} (2D)[/green]")
     console.print(f"[green]Number of classes: {num_classes}[/green]")
     
-    # Criar modelo
-    model = AncestryPredictor(config, input_size, num_classes).to(device)
+    # Criar modelo baseado no tipo configurado
+    model_type = config['model'].get('type', 'NN').upper()
+    
+    if model_type == 'NN':
+        console.print(f"[cyan]Criando modelo: Neural Network (NN) totalmente conectada[/cyan]")
+        model = NNAncestryPredictor(config, input_shape, num_classes).to(device)
+    elif model_type == 'CNN':
+        console.print(f"[cyan]Criando modelo: Convolutional Neural Network (CNN)[/cyan]")
+        model = CNNAncestryPredictor(config, input_shape, num_classes).to(device)
+    else:
+        raise ValueError(f"Tipo de modelo não suportado: {model_type}. Use 'NN' ou 'CNN'.")
     
     # Inicializar W&B
     wandb_run = None
@@ -2553,7 +3159,12 @@ def main():
             checkpoint_path = Path(config['checkpointing']['load_checkpoint'])
             if checkpoint_path.exists():
                 console.print(f"[yellow]Carregando checkpoint: {checkpoint_path}[/yellow]")
-                checkpoint = torch.load(checkpoint_path, map_location=device)
+                
+                # Limpar memória GPU e carregar na CPU primeiro
+                if device.type == 'cuda':
+                    torch.cuda.empty_cache()
+                
+                checkpoint = torch.load(checkpoint_path, map_location='cpu')
                 model.load_state_dict(checkpoint['model_state_dict'])
         
         # Treinar
@@ -2585,7 +3196,12 @@ def main():
                 checkpoint_path = None
             
             if checkpoint_path:
-                checkpoint = torch.load(checkpoint_path, map_location=device)
+                # Limpar memória GPU antes de carregar checkpoint
+                if device.type == 'cuda':
+                    torch.cuda.empty_cache()
+                
+                # Carregar checkpoint na CPU, depois aplicar ao modelo (já na GPU)
+                checkpoint = torch.load(checkpoint_path, map_location='cpu')
                 model.load_state_dict(checkpoint['model_state_dict'])
                 
                 # Teste no conjunto de treino
@@ -2617,7 +3233,13 @@ def main():
                 sys.exit(1)
         
         console.print(f"[yellow]Carregando checkpoint: {checkpoint_path}[/yellow]")
-        checkpoint = torch.load(checkpoint_path, map_location=device)
+        
+        # Limpar memória GPU antes de carregar checkpoint
+        if device.type == 'cuda':
+            torch.cuda.empty_cache()
+        
+        # Carregar checkpoint na CPU, depois aplicar ao modelo (já na GPU)
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
         model.load_state_dict(checkpoint['model_state_dict'])
         
         # Selecionar conjunto de dados para teste
