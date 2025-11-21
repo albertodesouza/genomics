@@ -3105,6 +3105,10 @@ def set_random_seeds(seed: int, strict_determinism: bool = True):
                           Se False, determinismo parcial (mais rápido, ~99% reprodutível).
     """
     import random
+    import os
+    
+    # Python hash seed (para dicts e sets)
+    os.environ['PYTHONHASHSEED'] = str(seed)
     
     # Python random
     random.seed(seed)
@@ -3119,17 +3123,40 @@ def set_random_seeds(seed: int, strict_determinism: bool = True):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)  # Para multi-GPU
+        
+        # Limpar cache da GPU para eliminar estado residual
+        torch.cuda.empty_cache()
     
     # Configurar determinismo estrito do PyTorch
     if strict_determinism:
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+        
+        # Forçar algoritmos determinísticos (PyTorch 1.8+)
+        try:
+            torch.use_deterministic_algorithms(True)
+        except AttributeError:
+            # PyTorch < 1.8
+            torch.set_deterministic(True)
+        
+        # Configurar cuBLAS para operações determinísticas
+        os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
+        
         console.print(f"[green]🎲 Semente randômica configurada: {seed} (determinismo ESTRITO - 100% reprodutível)[/green]")
         console.print(f"[yellow]   ⚠ Treinamento pode ser 10-30% mais lento devido ao determinismo estrito[/yellow]")
     else:
         # Permite operações não-determinísticas para melhor performance
         torch.backends.cudnn.deterministic = False
         torch.backends.cudnn.benchmark = True
+        
+        try:
+            torch.use_deterministic_algorithms(False)
+        except AttributeError:
+            try:
+                torch.set_deterministic(False)
+            except AttributeError:
+                pass
+        
         console.print(f"[green]🎲 Semente randômica configurada: {seed} (determinismo PARCIAL - ~99% reprodutível)[/green]")
         console.print(f"[green]   ✓ Performance otimizada, pequenas variações podem ocorrer[/green]")
 
@@ -3170,12 +3197,29 @@ def main():
     # Carregar configuração
     config = load_config(Path(args.config))
     
+    # Limpeza agressiva de estado CUDA ANTES de qualquer coisa
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        try:
+            torch.cuda.reset_peak_memory_stats()
+            torch.cuda.reset_accumulated_memory_stats()
+        except:
+            pass  # Versões antigas do PyTorch podem não ter essas funções
+        console.print(f"[green]✓ Estado CUDA limpo (pré-inicialização)[/green]")
+    
     # Configurar semente randômica para reprodutibilidade (ANTES de qualquer operação)
     if config['data_split']['random_seed'] is not None:
         strict_determinism = config['data_split'].get('strict_determinism', True)
         set_random_seeds(config['data_split']['random_seed'], strict_determinism)
     else:
         console.print("[yellow]⚠ Semente randômica não configurada - resultados não serão reprodutíveis[/yellow]")
+    
+    # Limpeza adicional APÓS configurar seeds
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        console.print(f"[green]✓ Estado CUDA re-sincronizado (pós-seeds)[/green]")
     
     # Se flag --summarize_results, executar e sair
     if args.summarize_results:
@@ -3238,6 +3282,11 @@ def main():
             console.print("[yellow]Execute o treinamento primeiro![/yellow]")
             sys.exit(1)
     
+    # Limpeza CUDA antes de preparar dados
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+    
     # Preparar dados
     full_dataset, train_loader, val_loader, test_loader = prepare_data(config, experiment_dir)
     
@@ -3247,6 +3296,12 @@ def main():
     
     console.print(f"[green]Input shape: {input_shape[0]} x {input_shape[1]} (2D)[/green]")
     console.print(f"[green]Number of classes: {num_classes}[/green]")
+    
+    # Limpeza CUDA antes de criar modelo
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        console.print(f"[green]✓ Estado CUDA limpo (pré-modelo)[/green]")
     
     # Criar modelo baseado no tipo configurado
     model_type = config['model'].get('type', 'NN').upper()
@@ -3297,6 +3352,12 @@ def main():
                 
                 checkpoint = torch.load(checkpoint_path, map_location='cpu')
                 model.load_state_dict(checkpoint['model_state_dict'])
+        
+        # Limpeza CUDA final antes de treinar
+        if device.type == 'cuda':
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            console.print(f"[green]✓ Estado CUDA limpo (pré-treino)[/green]")
         
         # Treinar
         trainer = Trainer(model, train_loader, val_loader, config, device, experiment_dir, wandb_run)
@@ -3387,6 +3448,12 @@ def main():
             dataset_name = "Teste"
         
         console.print(f"[cyan]Testando no conjunto de: {dataset_name}[/cyan]")
+        
+        # Limpeza CUDA final antes de testar
+        if device.type == 'cuda':
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            console.print(f"[green]✓ Estado CUDA limpo (pré-teste)[/green]")
         
         # Testar
         tester = Tester(model, selected_loader, full_dataset, config, device, wandb_run, dataset_name)

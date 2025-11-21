@@ -322,7 +322,7 @@ data_split:
   # Seed para reprodutibilidade
   # Use o mesmo seed para ter sempre a mesma divisão e inicialização de pesos
   # null = aleatório (resultados não reprodutíveis)
-  random_seed: 13
+  random_seed: 3
   
   # Determinismo estrito para reprodutibilidade perfeita
   # true = Determinismo ESTRITO - 100% reprodutível entre execuções
