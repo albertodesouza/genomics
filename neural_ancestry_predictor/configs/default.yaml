@@ -204,7 +204,7 @@ model:
     #   0 ou [0, 0]  - Sem padding (dimensão reduz)
     #   1 ou [1, 1]  - Padding mínimo
     #   [0, 9]       - Para kernel [1, 20]: sem padding vertical, preserva ~dimensão horizontal
-    padding: 1
+    padding: 0
     
     # Tamanho do pooling [height, width] ou null para desabilitar
     # Reduz dimensionalidade após convolução através de MaxPooling
@@ -334,7 +334,7 @@ wandb:
   # true = loga métricas, gráficos, confusion matrix no W&B
   # false = não usa W&B
   # Requer: pip install wandb && wandb login
-  use_wandb: false
+  use_wandb: true
   
   # Nome do projeto no W&B
   project_name: "neural-ancestry-predictor"
@@ -345,7 +345,7 @@ wandb:
   
   # Frequência de logging (em batches)
   # Log a cada N batches de treino
-  log_frequency: 2
+  log_frequency: 50
 
 # ───────────────────────────────────────────────────────────────────
 # G) CHECKPOINTING
@@ -363,7 +363,7 @@ checkpointing:
   
   # Frequência de salvamento (em épocas)
   # Salva checkpoint a cada N épocas (apenas se save_during_training = true)
-  save_frequency: 50
+  save_frequency: 100
   
   # Caminho para checkpoint existente (para continuar treino ou testar)
   # null = começar do zero
