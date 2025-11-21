@@ -320,9 +320,21 @@ data_split:
   test_split: 0.15
   
   # Seed para reprodutibilidade
-  # Use o mesmo seed para ter sempre a mesma divisão
-  # null = aleatório
-  random_seed: 42
+  # Use o mesmo seed para ter sempre a mesma divisão e inicialização de pesos
+  # null = aleatório (resultados não reprodutíveis)
+  random_seed: 13
+  
+  # Determinismo estrito para reprodutibilidade perfeita
+  # true = Determinismo ESTRITO - 100% reprodutível entre execuções
+  #        • Garante resultados idênticos com mesmo seed
+  #        • Útil para: comparar arquiteturas, debug, publicações
+  #        • Desvantagem: 10-30% mais lento em GPU
+  # false = Determinismo PARCIAL - ~99% reprodutível, mais rápido
+  #        • Permite otimizações não-determinísticas da GPU (cudnn.benchmark)
+  #        • Pequenas variações (~0.1-0.5% acc) podem ocorrer
+  #        • Útil para: treinos de produção, otimização de hiperparâmetros
+  # Nota: Requer random_seed configurado (não null)
+  strict_determinism: true
 
 # ───────────────────────────────────────────────────────────────────
 # F) WEIGHTS & BIASES

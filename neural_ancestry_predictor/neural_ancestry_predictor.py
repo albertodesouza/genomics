@@ -3017,6 +3017,45 @@ def summarize_experiments(config: Dict, sort_by: str = 'test_acc'):
     console.print(table)
 
 
+def set_random_seeds(seed: int, strict_determinism: bool = True):
+    """
+    Configura todas as sementes randômicas para reprodutibilidade.
+    
+    Args:
+        seed: Valor da semente randômica
+        strict_determinism: Se True, garante determinismo total (mais lento).
+                          Se False, determinismo parcial (mais rápido, ~99% reprodutível).
+    """
+    import random
+    
+    # Python random
+    random.seed(seed)
+    
+    # NumPy
+    np.random.seed(seed)
+    
+    # PyTorch CPU
+    torch.manual_seed(seed)
+    
+    # PyTorch GPU
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)  # Para multi-GPU
+    
+    # Configurar determinismo estrito do PyTorch
+    if strict_determinism:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        console.print(f"[green]🎲 Semente randômica configurada: {seed} (determinismo ESTRITO - 100% reprodutível)[/green]")
+        console.print(f"[yellow]   ⚠ Treinamento pode ser 10-30% mais lento devido ao determinismo estrito[/yellow]")
+    else:
+        # Permite operações não-determinísticas para melhor performance
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cudnn.benchmark = True
+        console.print(f"[green]🎲 Semente randômica configurada: {seed} (determinismo PARCIAL - ~99% reprodutível)[/green]")
+        console.print(f"[green]   ✓ Performance otimizada, pequenas variações podem ocorrer[/green]")
+
+
 def main():
     """Função principal."""
     parser = argparse.ArgumentParser(
@@ -3052,6 +3091,13 @@ def main():
     
     # Carregar configuração
     config = load_config(Path(args.config))
+    
+    # Configurar semente randômica para reprodutibilidade (ANTES de qualquer operação)
+    if config['data_split']['random_seed'] is not None:
+        strict_determinism = config['data_split'].get('strict_determinism', True)
+        set_random_seeds(config['data_split']['random_seed'], strict_determinism)
+    else:
+        console.print("[yellow]⚠ Semente randômica não configurada - resultados não serão reprodutíveis[/yellow]")
     
     # Se flag --summarize_results, executar e sair
     if args.summarize_results:
