@@ -3141,12 +3141,19 @@ def main():
     if config['wandb']['use_wandb']:
         try:
             import wandb
+            
+            # Se run_name não for especificado, usar o nome do experimento
+            run_name = config['wandb'].get('run_name')
+            if run_name is None:
+                run_name = experiment_dir.name  # Nome do diretório do experimento
+            
             wandb_run = wandb.init(
                 project=config['wandb']['project_name'],
-                name=config['wandb'].get('run_name'),
+                name=run_name,
                 config=config
             )
             console.print("[green]✓ Weights & Biases inicializado[/green]")
+            console.print(f"  • Run name: {run_name}")
         except ImportError:
             console.print("[yellow]⚠ Weights & Biases não disponível. Instale com: pip install wandb[/yellow]")
         except Exception as e:

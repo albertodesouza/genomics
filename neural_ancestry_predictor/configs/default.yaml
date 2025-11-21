@@ -168,7 +168,7 @@ model:
     #   [5, 5]  - Kernel 5x5 (convolução 2D, mistura linhas e colunas)
     #   [1, 20] - Kernel 1x20 (convolução 1D sobre cada linha/SNP, não mistura linhas)
     #   [3, 1]  - Kernel 3x1 (convolução 1D vertical, mistura 3 SNPs adjacentes)
-    kernel_size: [1, 20]
+    kernel_size: [20, 20]
     
     # Número de filtros/kernels convolucionais
     # Cada filtro aprende um padrão diferente
@@ -183,7 +183,7 @@ model:
     #   1 ou [1, 1]   - Mover 1 posição por vez (overlap máximo)
     #   [1, 20]       - Para kernel [1, 20]: sem overlap (cada posição processada 1x)
     #   [2, 2]        - Redução agressiva em ambas dimensões
-    stride: [1, 20]
+    stride: [20, 20]
     
     # Padding - pode ser escalar ou lista [vertical, horizontal]
     # Adiciona zeros nas bordas da entrada antes da convolução
@@ -340,7 +340,8 @@ wandb:
   project_name: "neural-ancestry-predictor"
   
   # Nome do run (opcional)
-  # null = W&B gera nome automaticamente
+  # null = usa o nome do experimento automaticamente (ex: cnn_atac_H1_1002_log_k5x5_f20_s5_p0_L100-40_relu_0.0_adam)
+  # "custom_name" = especifica um nome customizado para o run no W&B
   run_name: null
   
   # Frequência de logging (em batches)
