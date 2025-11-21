@@ -1361,6 +1361,7 @@ class Trainer:
         # Histórico
         self.history = {
             'train_loss': [],
+            'train_accuracy': [],
             'val_loss': [],
             'val_accuracy': [],
             'epoch': []
@@ -1565,6 +1566,35 @@ class Trainer:
         avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
         return avg_loss
     
+    def evaluate_train_accuracy(self) -> float:
+        """
+        Avalia acurácia no conjunto de treino sem atualizar pesos.
+        
+        O modelo é colocado em modo eval() (sem dropout, BatchNorm em inference),
+        garantindo avaliação justa e consistente com a validação.
+        
+        Chamado apenas quando for logar métricas (não a cada época).
+        
+        Returns:
+            Acurácia em porcentagem
+        """
+        self.model.eval()
+        correct = 0
+        total = 0
+        
+        with torch.no_grad():
+            for features, targets in self.train_loader:
+                features = features.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
+                
+                outputs = self.model(features)
+                _, predicted = torch.max(outputs.data, 1)
+                total += targets.size(0)
+                correct += (predicted == targets).sum().item()
+        
+        accuracy = 100.0 * correct / total if total > 0 else 0.0
+        return accuracy
+    
     def validate(self, epoch: int) -> Tuple[float, float]:
         """
         Valida o modelo.
@@ -1639,13 +1669,20 @@ class Trainer:
             
             # Treinar
             train_loss = self.train_epoch(epoch)
+            console.print(f"[cyan]Treino - Época {epoch + 1}:[/cyan] Loss={train_loss:.4f}")
             
             # Validar
             if (epoch + 1) % val_frequency == 0:
                 val_loss, val_accuracy = self.validate(epoch)
                 
+                # Avaliar acurácia de treino (apenas quando validar)
+                console.print(f"[cyan]Avaliando acurácia no conjunto de treino...[/cyan]")
+                train_accuracy = self.evaluate_train_accuracy()
+                console.print(f"[green]Treino - Acurácia: {train_accuracy:.2f}%[/green]")
+                
                 # Salvar histórico
                 self.history['train_loss'].append(train_loss)
+                self.history['train_accuracy'].append(train_accuracy)
                 self.history['val_loss'].append(val_loss)
                 self.history['val_accuracy'].append(val_accuracy)
                 self.history['epoch'].append(epoch + 1)
@@ -1655,6 +1692,7 @@ class Trainer:
                     log_dict = {
                         'epoch': epoch + 1,
                         'train_loss': train_loss,
+                        'train_accuracy': train_accuracy,
                         'val_loss': val_loss,
                         'val_accuracy': val_accuracy
                     }

@@ -244,7 +244,7 @@ training:
   
   # Número de épocas de treinamento
   # Uma época = passar por todo o dataset de treino uma vez
-  num_epochs: 500
+  num_epochs: 250
   
   # Frequência de validação (em épocas)
   # A cada N épocas, executa validação
@@ -358,7 +358,7 @@ wandb:
   
   # Frequência de logging (em batches)
   # Log a cada N batches de treino
-  log_frequency: 50
+  log_frequency: 100
 
 # ───────────────────────────────────────────────────────────────────
 # G) CHECKPOINTING
