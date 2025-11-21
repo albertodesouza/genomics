@@ -2530,6 +2530,12 @@ def load_processed_dataset(
         
         return features_batch, targets_batch
     
+    # Criar generator para shuffle determinístico (se seed configurada)
+    generator = None
+    if config['data_split']['random_seed'] is not None:
+        generator = torch.Generator()
+        generator.manual_seed(config['data_split']['random_seed'])
+    
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
@@ -2537,7 +2543,9 @@ def load_processed_dataset(
         num_workers=4,
         pin_memory=True,
         collate_fn=collate_fn,
-        persistent_workers=True
+        persistent_workers=True,
+        generator=generator,
+        worker_init_fn=worker_init_fn
     )
     
     val_loader = DataLoader(
@@ -2547,7 +2555,8 @@ def load_processed_dataset(
         num_workers=2,
         pin_memory=True,
         collate_fn=collate_fn,
-        persistent_workers=True
+        persistent_workers=True,
+        worker_init_fn=worker_init_fn
     )
     
     test_loader = DataLoader(
@@ -2557,7 +2566,8 @@ def load_processed_dataset(
         num_workers=2,
         pin_memory=True,
         collate_fn=collate_fn,
-        persistent_workers=True
+        persistent_workers=True,
+        worker_init_fn=worker_init_fn
     )
     
     console.print(f"[green]✓ DataLoaders criados com sucesso![/green]\n")
@@ -2818,6 +2828,12 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
         
         return features_batch, targets_batch
     
+    # Criar generator para shuffle determinístico (se seed configurada)
+    generator = None
+    if config['data_split']['random_seed'] is not None:
+        generator = torch.Generator()
+        generator.manual_seed(config['data_split']['random_seed'])
+    
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
@@ -2825,7 +2841,9 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
         num_workers=4,
         pin_memory=True,
         collate_fn=collate_fn,
-        persistent_workers=True
+        persistent_workers=True,
+        generator=generator,
+        worker_init_fn=worker_init_fn
     )
     
     val_loader = DataLoader(
@@ -2835,7 +2853,8 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
         num_workers=2,
         pin_memory=True,
         collate_fn=collate_fn,
-        persistent_workers=True
+        persistent_workers=True,
+        worker_init_fn=worker_init_fn
     )
     
     test_loader = DataLoader(
@@ -2845,7 +2864,8 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
         num_workers=2,
         pin_memory=True,
         collate_fn=collate_fn,
-        persistent_workers=True
+        persistent_workers=True,
+        worker_init_fn=worker_init_fn
     )
     
     return processed_dataset, train_loader, val_loader, test_loader
@@ -3053,6 +3073,26 @@ def summarize_experiments(config: Dict, sort_by: str = 'test_acc'):
         )
     
     console.print(table)
+
+
+def worker_init_fn(worker_id: int):
+    """
+    Inicializa a seed de cada worker do DataLoader de forma determinística.
+    
+    Essencial para reprodutibilidade com num_workers > 0 e persistent_workers=True.
+    Sem isso, cada worker pode ter seeds aleatórias diferentes em cada execução.
+    
+    Args:
+        worker_id: ID do worker (0, 1, 2, ...)
+    """
+    import random
+    
+    # Obter a seed base do PyTorch (configurada por set_random_seeds)
+    worker_seed = torch.initial_seed() % 2**32
+    
+    # Configurar seeds específicas para este worker
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 
 def set_random_seeds(seed: int, strict_determinism: bool = True):
