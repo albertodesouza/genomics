@@ -392,6 +392,7 @@ if [ "$NEED_DOWNLOAD" = true ]; then
         VCF_FILE="${VCF_BASE}.vcf.gz"
         VCF_FILE_V2="${VCF_BASE}.v2.vcf.gz"
         TBI_FILE="${VCF_FILE}.tbi"
+        TBI_FILE_V2="${VCF_BASE}.v2.vcf.gz.tbi"
         
         # Check if file already exists (with or without .v2)
         if [ -f "$VCF_FILE" ] || [ -f "$VCF_FILE_V2" ]; then
@@ -400,10 +401,25 @@ if [ "$NEED_DOWNLOAD" = true ]; then
             echo -e "${BLUE}→ Downloading chromosome ${chr}...${NC}"
             
             # Download VCF file
+            download_success=false
             if download_file_robust "${FTP_BASE}/${VCF_FILE}" "$VCF_FILE"; then
+                download_success=true
+                FINAL_VCF_FILE="$VCF_FILE"
+                FINAL_TBI_FILE="$TBI_FILE"
+            else
+                # Try with .v2 suffix (some chromosomes like X use this)
+                echo -e "${YELLOW}  → Trying alternative filename with .v2 suffix...${NC}"
+                if download_file_robust "${FTP_BASE}/${VCF_FILE_V2}" "$VCF_FILE_V2"; then
+                    download_success=true
+                    FINAL_VCF_FILE="$VCF_FILE_V2"
+                    FINAL_TBI_FILE="$TBI_FILE_V2"
+                fi
+            fi
+            
+            if [ "$download_success" = true ]; then
                 # Download index file (with retry)
                 echo -e "${BLUE}  → Downloading index...${NC}"
-                if ! download_file_robust "${FTP_BASE}/${TBI_FILE}" "$TBI_FILE"; then
+                if ! download_file_robust "${FTP_BASE}/${FINAL_TBI_FILE}" "$FINAL_TBI_FILE"; then
                     echo -e "${YELLOW}  ⚠ Warning: Failed to download index for chr${chr}${NC}"
                     echo -e "${YELLOW}  Will try to create index locally later${NC}"
                 fi
