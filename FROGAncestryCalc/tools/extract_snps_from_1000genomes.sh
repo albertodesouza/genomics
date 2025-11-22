@@ -93,7 +93,7 @@ fi
 if [ "$BUILD" = "grch38" ]; then
     ALLELES_FILE="SNPInfo/55_aisnps_alleles_grch38.txt"
     SNP_BED="tools/aisnps_55_grch38.bed"
-    FTP_BASE="ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20201028_3202_phased"
+    FTP_BASE="https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV"
     VCF_PATTERN="1kGP_high_coverage_Illumina"
     BUILD_DISPLAY="GRCh38/hg38 (High Coverage)"
 else
