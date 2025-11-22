@@ -186,8 +186,13 @@ echo -e "${YELLOW}Step 1: Checking for existing VCF files...${NC}"
 get_vcf_filename() {
     local chr=$1
     if [ "$BUILD" = "grch38" ]; then
-        # High Coverage pattern (might have .v2 suffix for some chromosomes)
-        echo "1kGP_high_coverage_Illumina.chr${chr}.filtered.SNV_INDEL_SV_phased_panel"
+        # High Coverage pattern
+        # Note: chrX uses .v2 suffix (special case)
+        if [ "$chr" = "X" ]; then
+            echo "1kGP_high_coverage_Illumina.chr${chr}.filtered.SNV_INDEL_SV_phased_panel.v2"
+        else
+            echo "1kGP_high_coverage_Illumina.chr${chr}.filtered.SNV_INDEL_SV_phased_panel"
+        fi
     else
         # Phase 3 pattern
         # Note: chrX uses v1c instead of v5b
