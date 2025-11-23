@@ -1,0 +1,34 @@
+# Configuração para verificar apenas o gene TYR
+cache_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes/datasets/rna_seq_H1_10000_ds1_log_split0.7-0.15-0.15_seed-1"
+dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes"
+
+split: "test"
+index: 0
+sample_id: null
+
+# Genes disponíveis:
+#   SLC24A5, SLC45A2, OCA2, HERC2, MC1R, EDAR, 
+#   MFSD12, DDB1, TCHH, TYR, TYRP1
+gene_filter: "MC1R"  # Mostrar apenas gene TYR (6 tracks)
+
+# AlphaGenome API verification mode (opcional)
+alphagenome_api:
+  enabled: false
+  api_key: null
+  rate_limit_delay: 0.5
+  ontology_terms: ["CL:1000458", "CL:0000346", "CL:2000092"]
+
+# Raw visualization mode (AlphaGenome only, no cache comparison)
+raw_mode:
+  enabled: false  # When true, skips cache loading and normalization
+  source: "files"  # "files" (read .npz) or "api" (call AlphaGenome API)
+  window_size_key: "SEQUENCE_LENGTH_100KB"  # One of: SEQUENCE_LENGTH_16KB, SEQUENCE_LENGTH_100KB, SEQUENCE_LENGTH_500KB, SEQUENCE_LENGTH_1MB
+
+output_dir: null
+save_plots: false
+output_prefix: "verify"
+interactive_mode: true
+show_navigation_help: true
+verbose_metrics: true
+show_stats_in_plot: true
+

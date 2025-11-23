@@ -396,6 +396,9 @@ def run_build_window_predict(
     if params.get('gtf_feather'):
         cmd.extend(["--gtf-feather", params['gtf_feather']])
     
+    # Add GTF cache directory (shared across all samples)
+    cmd.extend(["--gtf-cache-dir", str(output_dir)])
+    
     # Add window size
     if params.get('window_size'):
         cmd.extend(["--window-size", str(params['window_size'])])
@@ -460,7 +463,17 @@ def run_build_window_predict(
     
     # Run command
     print(f"\n[INFO] Executando: {' '.join(cmd)}")
-    print(f"[INFO] Processamento pode levar vários minutos (55 SNPs)...")
+    
+    # Mensagem de tempo estimado adaptada ao modo
+    if mode == 'gene':
+        gene_config = params.get('gene', {})
+        if gene_config.get('gene_list_file'):
+            print(f"[INFO] Processamento de múltiplos genes (pode levar vários minutos)...")
+        else:
+            print(f"[INFO] Processamento de 1 gene (pode levar alguns minutos)...")
+    elif mode == 'snp':
+        print(f"[INFO] Processamento de 55 SNPs (pode levar vários minutos)...")
+    
     print(f"[INFO] Mostrando output em tempo real:")
     print("-" * 80)
     

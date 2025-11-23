@@ -1,0 +1,148 @@
+# ═══════════════════════════════════════════════════════════════════
+# Verify Processed Dataset - Configuration
+# ═══════════════════════════════════════════════════════════════════
+#
+# Configuração para o programa verify_processed_dataset.py
+# Compara dados processados em cache com dados originais do AlphaGenome
+#
+# Uso:
+#   python3 verify_processed_dataset.py --config configs/verify_processed_dataset.yaml
+#
+# ═══════════════════════════════════════════════════════════════════
+
+# ───────────────────────────────────────────────────────────────────
+# DIRETÓRIOS
+# ───────────────────────────────────────────────────────────────────
+
+# Diretório do cache processado (contém train_data.pt, metadata.json, etc.)
+cache_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes/datasets/rna_seq_H1_100000_ds1_log_split0.7-0.15-0.15_seed5"
+
+# Diretório do dataset original (contém individuals/, dataset_metadata.json)
+dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes"
+
+# ───────────────────────────────────────────────────────────────────
+# SELEÇÃO DE AMOSTRA
+# ───────────────────────────────────────────────────────────────────
+
+# Conjunto de dados a verificar
+# Opções: "train", "val", "test"
+split: "test"
+
+# Índice inicial do indivíduo no split (padrão: 0)
+# Pode ser alterado com teclas ← → durante visualização
+index: 0
+
+# ID do indivíduo (opcional)
+# Se fornecido, ignora 'split' e 'index'
+# Exemplo: "HG00120"
+sample_id: null
+
+# ───────────────────────────────────────────────────────────────────
+# FILTRO DE GENES
+# ───────────────────────────────────────────────────────────────────
+
+# Filtro de genes a visualizar
+# null = mostrar todos os 11 genes (66 tracks)
+# "GENE_NAME" = mostrar apenas um gene específico (6 tracks)
+# ["GENE1", "GENE2"] = mostrar múltiplos genes específicos
+#
+# Genes disponíveis:
+#   SLC24A5, SLC45A2, OCA2, HERC2, MC1R, EDAR, 
+#   MFSD12, DDB1, TCHH, TYR, TYRP1
+#
+# Exemplos:
+#   gene_filter: null              # Todos os genes (66 tracks)
+#   gene_filter: "TYR"             # Apenas gene TYR (6 tracks)
+#   gene_filter: ["TYR", "TYRP1"]  # Genes TYR e TYRP1 (12 tracks)
+gene_filter: null
+
+# ───────────────────────────────────────────────────────────────────
+# ALPHAGENOME API (OPCIONAL)
+# ───────────────────────────────────────────────────────────────────
+
+# AlphaGenome API verification mode
+# Quando habilitado, busca predições diretamente da API do AlphaGenome
+# ao invés de ler dos arquivos .npz em dataset_dir
+alphagenome_api:
+  # Enable API verification (default: false, reads from dataset_dir)
+  enabled: false
+  
+  # API key (reads from environment ALPHAGENOME_API_KEY if not set)
+  api_key: null
+  
+  # Rate limit delay in seconds between API calls
+  rate_limit_delay: 0.5
+  
+  # Ontology terms to use for predictions (must match dataset creation)
+  # Exemplo: ["CL:1000458", "CL:0000346", "CL:2000092"]
+  ontology_terms: ["CL:1000458", "CL:0000346", "CL:2000092"]
+
+# ───────────────────────────────────────────────────────────────────
+# RAW MODE (OPCIONAL)
+# ───────────────────────────────────────────────────────────────────
+
+# Raw visualization mode (AlphaGenome only, no cache comparison)
+raw_mode:
+  enabled: false  # When true, skips cache loading and normalization
+  source: "files"  # "files" (read .npz) or "api" (call AlphaGenome API)
+  window_size_key: "SEQUENCE_LENGTH_100KB"  # One of: SEQUENCE_LENGTH_16KB, SEQUENCE_LENGTH_100KB, SEQUENCE_LENGTH_500KB, SEQUENCE_LENGTH_1MB
+
+# ───────────────────────────────────────────────────────────────────
+# VISUALIZAÇÃO
+# ───────────────────────────────────────────────────────────────────
+
+# Diretório para salvar gráficos (opcional)
+# null = não salvar automaticamente
+# "path/to/dir" = salvar gráficos neste diretório
+output_dir: null
+
+# Salvar gráfico individual ao visualizar
+# true = salva cada gráfico visitado
+# false = apenas visualiza (não salva)
+save_plots: false
+
+# Prefixo para nomes de arquivos salvos
+# Exemplo: "verify" gera "verify_HG00120.png"
+output_prefix: "verify"
+
+# ───────────────────────────────────────────────────────────────────
+# NAVEGAÇÃO INTERATIVA
+# ───────────────────────────────────────────────────────────────────
+
+# Habilitar navegação interativa com teclado
+# true = permite navegar entre amostras com ← →, sair com 'q'
+# false = visualiza apenas uma amostra e sai
+interactive_mode: true
+
+# Mostrar instruções de navegação no gráfico
+show_navigation_help: true
+
+# ───────────────────────────────────────────────────────────────────
+# MÉTRICAS
+# ───────────────────────────────────────────────────────────────────
+
+# Mostrar métricas detalhadas no console
+verbose_metrics: true
+
+# Mostrar estatísticas resumidas no gráfico
+show_stats_in_plot: true
+
+# ═══════════════════════════════════════════════════════════════════
+# EXEMPLOS DE CONFIGURAÇÕES
+# ═══════════════════════════════════════════════════════════════════
+#
+# Visualizar apenas gene TYR, modo interativo:
+#   gene_filter: "TYR"
+#   interactive_mode: true
+#
+# Visualizar todos os genes de uma amostra específica:
+#   sample_id: "HG00120"
+#   gene_filter: null
+#
+# Percorrer conjunto de treino, salvando gráficos:
+#   split: "train"
+#   save_plots: true
+#   output_dir: "verification_plots"
+#
+# ═══════════════════════════════════════════════════════════════════
+

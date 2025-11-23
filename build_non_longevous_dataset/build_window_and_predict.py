@@ -175,13 +175,28 @@ def load_snp_list(snp_file: Path, chr_prefix: str) -> list:
 
 
 def load_gene_list(gene_file: Path) -> list:
-    """Load gene list from file (one gene symbol or ID per line)."""
+    """
+    Load gene list from file (one gene symbol or ID per line).
+    
+    Supports inline comments:
+      - Lines starting with # are ignored (full-line comments)
+      - Text after # on a line is ignored (inline comments)
+      - Empty lines are ignored
+    
+    Example file format:
+      SLC24A5 # solute carrier family 24 member 5
+      SLC45A2 # solute carrier family 45 member 2
+      OCA2    # OCA2 melanosomal transmembrane protein
+    """
     genes = []
     with open(gene_file, 'r') as f:
         for line in f:
-            gene = line.strip()
-            if gene and not gene.startswith('#'):
-                genes.append(gene)
+            # Remove inline comments (everything after #)
+            line = line.split('#')[0].strip()
+            
+            # Skip empty lines
+            if line:
+                genes.append(line)
     return genes
 
 
@@ -190,8 +205,20 @@ def to_region_1based(chrom_0based: str, start0: int, end0: int) -> str:
     return f"{chrom_0based}:{start0 + 1}-{end0}"
 
 
-def get_gtf_cache_path(outdir: Path) -> Path:
-    """Get path to GTF cache file in output directory."""
+def get_gtf_cache_path(outdir: Path, cache_dir: Optional[Path] = None) -> Path:
+    """
+    Get path to GTF cache file.
+    
+    Args:
+        outdir: Default output directory (used if cache_dir is None)
+        cache_dir: Optional dedicated cache directory (for shared cache across samples)
+    
+    Returns:
+        Path to gtf_cache.feather
+    """
+    if cache_dir:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir / "gtf_cache.feather"
     return outdir / "gtf_cache.feather"
 
 
@@ -562,6 +589,7 @@ def main():
     ap.add_argument("--snp-list-file", help="Path to SNP list file (tab-delimited: ALFRED_UID, dbSNP_rsnumber, chrom, chrom_pos, alleles) - for snp mode")
     ap.add_argument("--vcf", help="Path to chromosome-level 1000G VCF.gz (indexed) containing the sample")
     ap.add_argument("--gtf-feather", help="Path to GENCODE v46 GTF feather (optional; will use public URL if omitted)")
+    ap.add_argument("--gtf-cache-dir", help="Directory to store shared GTF cache (optional; defaults to --outdir)")
     ap.add_argument("--window-size", type=int, default=SEQLEN_1MB, help="Window size; default is AlphaGenome 1Mb")
     ap.add_argument("--outdir", default="./out", help="Output directory")
     ap.add_argument("--predict", action="store_true", help="Run AlphaGenome predictions on haplotypes (H1/H2)")
@@ -663,7 +691,8 @@ def main():
     
     if args.mode == 'gene':
         # Load GTF with caching (only needed for gene mode)
-        gtf_cache_path = get_gtf_cache_path(outdir)
+        cache_dir = Path(args.gtf_cache_dir) if args.gtf_cache_dir else None
+        gtf_cache_path = get_gtf_cache_path(outdir, cache_dir)
         gtf = load_gtf_with_cache(args.gtf_feather, gtf_cache_path)
         
         # Collect genes to process

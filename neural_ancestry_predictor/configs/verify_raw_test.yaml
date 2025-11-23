@@ -1,0 +1,34 @@
+# Test configuration for raw mode visualization
+dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes"
+
+# Not needed in raw mode, but required by schema
+cache_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes/datasets/rna_seq_H1_10000_ds1_log_split0.7-0.15-0.15_seed-1"
+
+split: "test"
+index: 0
+sample_id: null
+
+# Test with single gene
+gene_filter: "MC1R"
+
+# AlphaGenome API mode (not used in files mode)
+alphagenome_api:
+  enabled: true
+  api_key: null
+  rate_limit_delay: 0.5
+  ontology_terms: ["CL:1000458", "CL:0000346", "CL:2000092"]
+
+# Raw visualization mode - ENABLED
+raw_mode:
+  enabled: true
+  source: "api"  # files -> Read from .npz files; api -> Call AlphaGenome API
+  window_size_key: "SEQUENCE_LENGTH_16KB"  # One of: SEQUENCE_LENGTH_16KB, SEQUENCE_LENGTH_100KB, SEQUENCE_LENGTH_500KB, SEQUENCE_LENGTH_1MB
+
+output_dir: null
+save_plots: false
+output_prefix: "raw"
+interactive_mode: false
+show_navigation_help: false
+verbose_metrics: true
+show_stats_in_plot: true
+

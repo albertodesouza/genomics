@@ -13,9 +13,9 @@
 # ═══════════════════════════════════════════════════════════════════
 
 project:
-  name: "non_longevous_dataset_small"
+  name: "non_longevous_dataset_genes"
   description: "Small dataset with ~3 individuals per population (~78 total)"
-  output_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results"
+  output_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes"
 
 # ═══════════════════════════════════════════════════════════════════
 # Data Sources
@@ -75,7 +75,7 @@ build_window_params:
   # ═══════════════════════════════════════════════════════════════
   # Window Mode: "gene" or "snp"
   # ═══════════════════════════════════════════════════════════════
-  mode: "snp"  # Options: "gene" or "snp"
+  mode: "gene"  # Options: "gene" or "snp"
   
   # ═══════════════════════════════════════════════════════════════
   # Gene Mode Options
@@ -106,7 +106,7 @@ build_window_params:
   gtf_feather: null
   
   # Window size (must match AlphaGenome supported sizes)
-  window_size: 1000000     # 1 Mb (default for AlphaGenome)
+  window_size: 524288     # ver AlphaGenome documentation
   
   # Haplotype options
   skip_h2: false           # Set true to only build H1 (faster)
@@ -123,7 +123,7 @@ build_window_params:
   # Using RNA_SEQ + ATAC for ancestry validation:
   #   - RNA_SEQ: Gene expression (population-specific eQTLs)
   #   - ATAC: Chromatin accessibility (regulatory variants)
-  outputs: "RNA_SEQ,ATAC"
+  outputs: "RNA_SEQ"
   
   # Ontology terms (tissue/cell types, comma-separated CURIEs)
   # Using B-lymphocytes (LCLs) - the SAME cell type used in 1000 Genomes Project
@@ -139,7 +139,7 @@ build_window_params:
   #   UBERON:0000948 (heart)
   #   UBERON:0000178 (blood)
   #   CL:0002601 (senescent cell)
-  ontology: "CL:0000236"
+  ontology: "CL:1000458, CL:0000346, CL:2000092"
   
   # Skip confirmation when requesting all tissues
   all_tissues: false
@@ -191,7 +191,7 @@ pipeline:
   
   # Resume from checkpoint
   resume_from_checkpoint: true
-  checkpoint_file: "non_longevous_dataset_small_checkpoint.json"
+  checkpoint_file: "non_longevous_dataset_genes_checkpoint.json"
 
 # ═══════════════════════════════════════════════════════════════════
 # Logging

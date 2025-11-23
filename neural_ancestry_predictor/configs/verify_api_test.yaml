@@ -1,0 +1,32 @@
+# Test configuration for AlphaGenome API mode
+cache_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes/datasets/rna_seq_H1_10000_ds1_log_split0.7-0.15-0.15_seed-1"
+dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes"
+
+split: "test"
+index: 0
+sample_id: null
+
+# Test with single gene
+gene_filter: "MC1R"
+
+# AlphaGenome API mode - ENABLED for testing
+alphagenome_api:
+  enabled: true
+  api_key: null  # Will read from ALPHAGENOME_API_KEY env var
+  rate_limit_delay: 0.5
+  ontology_terms: ["CL:1000458", "CL:0000346", "CL:2000092"]
+
+# Raw visualization mode (AlphaGenome only, no cache comparison)
+raw_mode:
+  enabled: false  # When true, skips cache loading and normalization
+  source: "files"  # "files" (read .npz) or "api" (call AlphaGenome API)
+  window_size_key: "SEQUENCE_LENGTH_100KB"  # One of: SEQUENCE_LENGTH_16KB, SEQUENCE_LENGTH_100KB, SEQUENCE_LENGTH_500KB, SEQUENCE_LENGTH_1MB
+
+output_dir: null
+save_plots: false
+output_prefix: "verify_api"
+interactive_mode: false  # Non-interactive for testing
+show_navigation_help: false
+verbose_metrics: true
+show_stats_in_plot: true
+

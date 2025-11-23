@@ -665,14 +665,20 @@ class ProcessedGenomicDataset(Dataset):
         """
         Processa predições de um haplótipo.
         
-        Cada tipo de saída (ex: atac, rna_seq) gera uma linha separada.
+        Cada tipo de saída (ex: atac, rna_seq) pode ter múltiplas tracks.
+        - Se array é 1D: uma única track
+        - Se array é 2D com shape (bases, num_tracks): cada coluna é uma track
+        
+        Cada track gera uma linha separada no output.
         
         Args:
-            predictions: Dict com {output_type: array}
+            predictions: Dict com {output_type: np.ndarray}
+                         array pode ser 1D (1 track) ou 2D (múltiplas tracks)
             
         Returns:
-            Array 2D com shape [num_outputs, effective_size] ou None
-            Se apenas um output, retorna array 1D com shape [effective_size]
+            Array 2D com shape [num_rows, effective_size] ou None
+            num_rows = total de tracks de todos os output_types
+            Se apenas uma track, retorna array 1D com shape [effective_size]
         """
         rows = []
         
@@ -680,23 +686,40 @@ class ProcessedGenomicDataset(Dataset):
             if output_type in predictions:
                 array = predictions[output_type]
                 
-                # Garantir que é 1D
-                if array.ndim > 1:
-                    array = array.flatten()
-                
-                # Extrair trecho central
-                center_array = self._extract_center(array)
-                
-                # Aplicar downsampling
-                downsampled = self._downsample(center_array)
-                
-                rows.append(downsampled)
+                # Verificar se é 2D com múltiplas colunas (tracks)
+                if array.ndim == 2 and array.shape[1] > 1:
+                    # Array 2D: cada coluna é uma track separada
+                    num_tracks = array.shape[1]
+                    
+                    for track_idx in range(num_tracks):
+                        # Extrair coluna (track específica)
+                        track_array = array[:, track_idx]
+                        
+                        # Extrair trecho central
+                        center_array = self._extract_center(track_array)
+                        
+                        # Aplicar downsampling
+                        downsampled = self._downsample(center_array)
+                        
+                        rows.append(downsampled)
+                else:
+                    # Array 1D ou 2D com apenas 1 coluna: track única
+                    if array.ndim > 1:
+                        array = array.flatten()
+                    
+                    # Extrair trecho central
+                    center_array = self._extract_center(array)
+                    
+                    # Aplicar downsampling
+                    downsampled = self._downsample(center_array)
+                    
+                    rows.append(downsampled)
         
         if len(rows) == 0:
             return None
         
-        # Se múltiplos outputs, empilhar como matriz 2D
-        # Se apenas um output, retornar como array 1D (será convertido para 2D em _process_windows)
+        # Se múltiplas tracks, empilhar como matriz 2D
+        # Se apenas uma track, retornar como array 1D (será convertido para 2D em _process_windows)
         if len(rows) == 1:
             return rows[0]
         else:
@@ -2754,9 +2777,21 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
     
     # Criar índices
     indices = list(range(total_size))
-    if config['data_split']['random_seed'] is not None:
-        np.random.seed(config['data_split']['random_seed'])
+    random_seed = config['data_split']['random_seed']
+    
+    # random_seed == -1 significa NÃO embaralhar (modo debug)
+    # random_seed == None significa embaralhar aleatoriamente (não reprodutível)
+    # random_seed >= 0 significa embaralhar com seed (reprodutível)
+    if random_seed is not None and random_seed != -1:
+        np.random.seed(random_seed)
         np.random.shuffle(indices)
+        console.print(f"[cyan]📊 Dados embaralhados com seed {random_seed}[/cyan]")
+    elif random_seed == -1:
+        console.print(f"[yellow]⚠ MODO DEBUG: Dados NÃO serão embaralhados (random_seed=-1)[/yellow]")
+        console.print(f"[yellow]  Ordem será: dataset_dir → cache_dir (mesma sequência)[/yellow]")
+    else:
+        np.random.shuffle(indices)
+        console.print(f"[yellow]⚠ Dados embaralhados aleatoriamente (sem seed)[/yellow]")
     
     train_indices = indices[:train_size]
     val_indices = indices[train_size:train_size + val_size]
@@ -3209,9 +3244,15 @@ def main():
         console.print(f"[green]✓ Estado CUDA limpo (pré-inicialização)[/green]")
     
     # Configurar semente randômica para reprodutibilidade (ANTES de qualquer operação)
-    if config['data_split']['random_seed'] is not None:
+    random_seed = config['data_split']['random_seed']
+    if random_seed is not None and random_seed != -1:
         strict_determinism = config['data_split'].get('strict_determinism', True)
-        set_random_seeds(config['data_split']['random_seed'], strict_determinism)
+        set_random_seeds(random_seed, strict_determinism)
+    elif random_seed == -1:
+        console.print("[yellow]⚠ MODO DEBUG: random_seed=-1 (dados não serão embaralhados)[/yellow]")
+        # Ainda configurar determinismo para outras operações
+        strict_determinism = config['data_split'].get('strict_determinism', True)
+        set_random_seeds(0, strict_determinism)  # Usar seed 0 para outras operações
     else:
         console.print("[yellow]⚠ Semente randômica não configurada - resultados não serão reprodutíveis[/yellow]")
     

@@ -209,6 +209,8 @@ class GenomicLongevityDataset(Dataset):
         Returns:
             Dicionário com {output_type: array}
             Ex: {'rna_seq': array(...), 'atac': array(...)}
+            
+            Arrays podem ser 1D (1 track) ou 2D (múltiplas tracks como colunas).
         """
         if not predictions_dir.exists():
             return {}
