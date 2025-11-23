@@ -115,76 +115,149 @@ def load_haplotype_sequence(
     return sequence
 
 
-def predict_with_alphagenome_OLD(
-    sequence: str,
-    sample_id: str,
+def _extract_reference_sequence_from_interval(
+    interval,
     gene_name: str,
-    config: Dict,
-    ontology_terms: List[str]
-) -> Optional[np.ndarray]:
+) -> Optional[str]:
     """
-    Get predictions from AlphaGenome API (OLD VERSION - usando predict_sequence).
+    Extrai a sequência de referência do intervalo usando samtools faidx.
     
     Args:
-        sequence: DNA sequence
-        sample_id: Sample ID
-        gene_name: Gene name
-        config: Configuration dict
-        ontology_terms: List of ontology term CURIEs
+        interval: AlphaGenome Interval object
+        gene_name: Nome do gene
+        fasta_path: Caminho para o arquivo FASTA de referência
     
     Returns:
-        Array shape [sequence_length, num_ontologies] with RNA-seq predictions or None
+        Sequência de referência como string, ou None se falhar
     """
-    if not ALPHAGENOME_AVAILABLE:
-        raise ImportError("alphagenome package not available. Install with: pip install alphagenome")
-    
-    api_key = config['alphagenome_api'].get('api_key') or os.environ.get('ALPHAGENOME_API_KEY')
-    if not api_key:
-        raise ValueError("AlphaGenome API key not provided. Set alphagenome_api.api_key in config or ALPHAGENOME_API_KEY environment variable")
-    
-    # Initialize client
-    client = dna_client.create(api_key)
-    
-    console.print(f"[cyan]  Calling AlphaGenome API for {gene_name} ({len(sequence)} bp)...[/cyan]")
-    
-    # Make prediction using predict_sequence
+    fasta_path = Path("/dados/GENOMICS_DATA/top3/refs/GRCh38_full_analysis_set_plus_decoy_hla.fa")
     try:
-        # Convert ontology terms for API
-        requested_outputs = [dna_client.OutputType.RNA_SEQ]
+        import subprocess
         
-        start_time = time.time()
-        outputs = client.predict_sequence(
-            sequence,
-            requested_outputs=requested_outputs,
-            ontology_terms=ontology_terms
-        )
-        elapsed = time.time() - start_time
-        
-        console.print(f"[cyan]  API call completed in {elapsed:.1f}s[/cyan]")
-        
-        # Extract RNA-seq data
-        rna_data = outputs.rna_seq
-        if rna_data is None:
-            console.print(f"[red]  No RNA-seq data returned from API[/red]")
+        if not fasta_path.exists():
+            console.print(f"[yellow]  Reference FASTA not found at {fasta_path}, skipping FASTA export[/yellow]")
             return None
         
-        # Convert to numpy array [sequence_length, num_ontologies]
-        values = np.array(rna_data.values)
+        # Alguns objetos Interval usam .chrom, outros .chromosome; tentamos ambos
+        chrom = getattr(interval, "chrom", None)
+        if chrom is None:
+            chrom = getattr(interval, "chromosome", None)
+        if chrom is None:
+            raise AttributeError("Interval object has no 'chrom' or 'chromosome' attribute")
         
-        console.print(f"[green]  ✓ Received predictions shape: {values.shape}[/green]")
+        # AlphaGenome usa coordenadas 0-based [start, end),
+        # samtools faidx usa 1-based inclusivo: start+1 .. end
+        start_1based = interval.start + 1
+        end_1based = interval.end
+        region = f"{chrom}:{start_1based}-{end_1based}"
         
-        # Apply rate limiting
-        delay = config['alphagenome_api'].get('rate_limit_delay', 0.5)
-        if delay > 0:
-            time.sleep(delay)
+        console.print(f"[cyan]  Extracting reference interval with samtools faidx: {region}[/cyan]")
         
-        return values
+        interval_fasta_result = subprocess.run(
+            ["samtools", "faidx", str(fasta_path), region],
+            capture_output=True,
+            text=True
+        )
+        
+        if interval_fasta_result.returncode != 0:
+            console.print(f"[red]  samtools faidx failed: {interval_fasta_result.stderr}[/red]")
+            return None
+        
+        # Salvar FASTA em arquivo
+        interval_fasta_output_path = Path("reference_interval.fasta")
+        with open(interval_fasta_output_path, "w") as f:
+            f.write(interval_fasta_result.stdout)
+        console.print(f"[green]  ✓ Saved interval FASTA to: {interval_fasta_output_path}[/green]")
+        
+        # Converter FASTA para sequência contínua
+        fasta_text = interval_fasta_result.stdout
+        seq_lines = []
+        for line in fasta_text.split("\n"):
+            if not line or line.startswith(">"):
+                continue
+            seq_lines.append(line.strip())
+        
+        seq = "".join(seq_lines)
+               
+        if seq is None:
+            console.print("[red]  Cannot call predict_sequence: reference extraction failed[/red]")
+            sys.exit(1)
+
+        return seq
         
     except Exception as e:
-        console.print(f"[red]  API error: {e}[/red]")
+        console.print(f"[red]  Error extracting reference sequence: {e}[/red]")
         import traceback
         traceback.print_exc()
-        return None
+        sys.exit(1)
+
+
+# def _load_individual_haplotype_sequence(
+#     sample_id: str,
+#     gene_name: str,
+#     target_length: int,
+#     config: Dict
+# ) -> Optional[str]:
+#     """
+#     Carrega a sequência do haplótipo H1 do indivíduo de dataset_dir.
+    
+#     Args:
+#         sample_id: ID do indivíduo
+#         gene_name: Nome do gene
+#         dataset_dir: Diretório raiz do dataset
+#         target_length: Tamanho da janela a extrair do centro
+    
+#     Returns:
+#         Sequência do haplótipo como string, ou None se falhar
+#     """
+#     dataset_dir = Path(config.get('dataset_dir', '/dados/GENOMICS_DATA/top3/non_longevous_results_genes'))
+#     try:
+#         console.print(f"[cyan]  Loading individual's haplotype sequence from dataset_dir...[/cyan]")
+        
+#         # Caminho para a sequência do haplótipo H1
+#         # Padrão: dataset_dir/individuals/SAMPLE_ID/windows/GENE_NAME/SAMPLE_ID.H1.window.fixed.fa
+#         haplotype_file = dataset_dir / "individuals" / sample_id / "windows" / gene_name / f"{sample_id}.H1.window.fixed.fa"
+        
+#         if not haplotype_file.exists():
+#             console.print(f"[yellow]  Haplotype file not found: {haplotype_file}[/yellow]")
+#             return None
+        
+#         # Ler o arquivo FASTA do haplótipo
+#         console.print(f"[cyan]  Reading: {haplotype_file}[/cyan]")
+        
+#         with open(haplotype_file, 'r') as f:
+#             haplotype_lines = []
+#             for line in f:
+#                 if not line or line.startswith(">"):
+#                     continue
+#                 haplotype_lines.append(line.strip())
+        
+#         haplotype_seq = "".join(haplotype_lines)
+        
+#         # Extrair a janela central correspondente ao target_length
+#         seq_length = len(haplotype_seq)
+        
+#         console.print(f"[dim]  Haplotype full length: {seq_length} bp[/dim]")
+#         console.print(f"[dim]  Target length: {target_length} bp[/dim]")
+        
+#         # Extrair centro
+#         center_idx = seq_length // 2
+#         half_size = target_length // 2
+#         start_idx = max(0, center_idx - half_size)
+#         end_idx = min(seq_length, start_idx + target_length)
+        
+#         individual_seq = haplotype_seq[start_idx:end_idx]
+        
+#         console.print(f"[green]  ✓ Loaded individual sequence: {len(individual_seq)} bp (from position {start_idx} to {end_idx})[/green]")
+#         console.print(f"[green]  ✓ Using {sample_id}'s H1 haplotype sequence[/green]")
+        
+#         return individual_seq
+        
+#     except Exception as e:
+#         console.print(f"[yellow]  Warning: Could not load individual sequence: {e}[/yellow]")
+#         import traceback
+#         traceback.print_exc()
+#         return None
 
 
 def predict_with_alphagenome(
@@ -192,7 +265,8 @@ def predict_with_alphagenome(
     config: Dict,
     ontology_terms: List[str],
     window_size_key: str = "SEQUENCE_LENGTH_16KB",
-    return_full_output: bool = False
+    return_full_output: bool = False,
+    sample_id: Optional[str] = None
 ) -> Optional[np.ndarray]:
     """
     Get predictions from AlphaGenome API usando predict_interval com genoma de referência (como no Colab).
@@ -203,6 +277,7 @@ def predict_with_alphagenome(
         ontology_terms: List of ontology term CURIEs
         window_size_key: Tamanho da janela (e.g., 'SEQUENCE_LENGTH_16KB')
         return_full_output: If True, return (output_object, gtf) tuple instead of just values array
+        sample_id: Optional sample ID to load individual's haplotype sequence instead of reference
     
     Returns:
         If return_full_output=False: Array shape [sequence_length, num_ontologies] with RNA-seq predictions or None
@@ -259,66 +334,12 @@ def predict_with_alphagenome(
         console.print(f"[cyan]  Calling AlphaGenome API...[/cyan]")
         console.print(f"[dim]  Ontology terms: {ontology_terms}[/dim]")
         
-        # --------------------------------------------------------------
-        # NOVO TRECHO: usa o FASTA extraído (interval_fasta_result)
-        # --------------------------------------------------------------
-
-        # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-        # <<< computa esalva o FASTA do intervalo em reference_interval.fasta >>>
-
-        try:
-            # Caminho do FASTA de referência (ajuste se necessário)
-            fasta_path = Path("/dados/GENOMICS_DATA/top3/refs/GRCh38_full_analysis_set_plus_decoy_hla.fa")
-            if not fasta_path.exists():
-                console.print(f"[yellow]  Reference FASTA not found at {fasta_path}, skipping FASTA export[/yellow]")
-            else:
-                # Alguns objetos Interval usam .chrom, outros .chromosome; tentamos ambos
-                chrom = getattr(interval, "chrom", None)
-                if chrom is None:
-                    chrom = getattr(interval, "chromosome", None)
-                if chrom is None:
-                    raise AttributeError("Interval object has no 'chrom' or 'chromosome' attribute")
-                
-                # AlphaGenome usa coordenadas 0-based [start, end),
-                # samtools faidx usa 1-based inclusivo: start+1 .. end
-                start_1based = interval.start + 1
-                end_1based = interval.end
-                region = f"{chrom}:{start_1based}-{end_1based}"
-                
-                console.print(f"[cyan]  Extracting reference interval with samtools faidx: {region}[/cyan]")
-                
-                interval_fasta_result = subprocess.run(
-                    ["samtools", "faidx", str(fasta_path), region],
-                    capture_output=True,
-                    text=True
-                )
-                if interval_fasta_result.returncode != 0:
-                    console.print(f"[red]  samtools faidx failed: {interval_fasta_result.stderr}[/red]")
-                else:
-                    interval_fasta_output_path = Path("reference_interval.fasta")
-                    with open(interval_fasta_output_path, "w") as f:
-                        f.write(interval_fasta_result.stdout)
-                    console.print(f"[green]  ✓ Saved interval FASTA to: {interval_fasta_output_path}[/green]")
-        except Exception as e:
-            console.print(f"[red]  Error saving interval FASTA: {e}[/red]")
-        
-        if interval_fasta_result.returncode != 0:
-            console.print("[red]  Cannot call predict_sequence: interval FASTA extraction failed[/red]")
-            return None
-
-        # Converte FASTA para sequência contínua
-        fasta_text = interval_fasta_result.stdout
-        seq_lines = []
-        for line in fasta_text.split("\n"):
-            if not line or line.startswith(">"):
-                continue
-            seq_lines.append(line.strip())
-
-        seq = "".join(seq_lines)
-        
-        # <<< fim de computa e salva o FASTA do intervalo em reference_interval.fasta >>>
-        # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-        
+        # 1. Extrair sequência de referência do intervalo
+        seq = _extract_reference_sequence_from_interval(interval, gene_name)
+         
+        # 2. Se sample_id fornecido, sobrescrever com sequência do indivíduo
+        # seq = _load_individual_haplotype_sequence(sample_id, gene_name, interval.end - interval.start, config)
+     
         console.print(f"[cyan]  Calling AlphaGenome API (predict_sequence) on FASTA interval...[/cyan]")
         start_time = time.time()
         output = client.predict_sequence(
@@ -674,12 +695,13 @@ def _load_from_alphagenome_api(
     console.print(f"[dim]  Window size: {window_size_key} (center: {window_center_size} bp)[/dim]")
     
     for gene_name in genes_to_load:
-        # Call AlphaGenome API with reference genome (como no Colab)
+        # Call AlphaGenome API with individual's sequence from dataset_dir
         values = predict_with_alphagenome(
             gene_name=gene_name,
             config=config,
             ontology_terms=ontology_terms,
-            window_size_key=window_size_key
+            window_size_key=window_size_key,
+            sample_id=sample_id  # Pass sample_id to load individual's sequence
         )
         if values is None:
             raise RuntimeError(f"API prediction failed for {gene_name}")
@@ -759,7 +781,8 @@ def load_raw_alphagenome_data(
             config=config,
             ontology_terms=ontology_terms,
             window_size_key=window_size_key,
-            return_full_output=True  # Get full output for Colab-style plotting
+            return_full_output=True,  # Get full output for Colab-style plotting
+            sample_id=sample_id  # Pass sample_id to load individual's sequence
         )
         if result is None:
             raise RuntimeError(f"API prediction failed for {gene_name}")
