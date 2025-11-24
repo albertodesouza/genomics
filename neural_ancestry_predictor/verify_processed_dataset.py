@@ -206,12 +206,22 @@ def _extract_reference_sequence_from_interval(
         Sequência de referência como string, ou None se falhar
     """
     fasta_path = Path("/dados/GENOMICS_DATA/top3/refs/GRCh38_full_analysis_set_plus_decoy_hla.fa")
+    fai_path = Path(str(fasta_path) + ".fai")
+    
     try:
         import subprocess
         
         if not fasta_path.exists():
             console.print(f"[yellow]  Reference FASTA not found at {fasta_path}, skipping FASTA export[/yellow]")
             return None
+        
+        # Ler tamanhos dos cromossomos do .fai
+        chrom_sizes = {}
+        with open(fai_path, 'r') as f:
+            for line in f:
+                parts = line.strip().split('\t')
+                if len(parts) >= 2:
+                    chrom_sizes[parts[0]] = int(parts[1])
         
         # Alguns objetos Interval usam .chrom, outros .chromosome; tentamos ambos
         chrom = getattr(interval, "chrom", None)
@@ -220,13 +230,30 @@ def _extract_reference_sequence_from_interval(
         if chrom is None:
             raise AttributeError("Interval object has no 'chrom' or 'chromosome' attribute")
         
+        chrom_size = chrom_sizes.get(chrom)
+        
+        # Coordenadas solicitadas (0-based)
+        requested_start = interval.start
+        requested_end = interval.end
+        
+        # Clipar coordenadas para valores válidos
+        actual_start = max(0, requested_start)
+        actual_end = requested_end
+        if chrom_size is not None:
+            actual_end = min(requested_end, chrom_size)
+        
         # AlphaGenome usa coordenadas 0-based [start, end),
         # samtools faidx usa 1-based inclusivo: start+1 .. end
-        start_1based = interval.start + 1
-        end_1based = interval.end
+        start_1based = actual_start + 1
+        end_1based = actual_end
         region = f"{chrom}:{start_1based}-{end_1based}"
         
         console.print(f"[cyan]  Extracting reference interval with samtools faidx: {region}[/cyan]")
+        
+        if requested_start < 0:
+            console.print(f"[yellow]  Warning: Requested start was negative ({requested_start}), clipped to {actual_start}[/yellow]")
+        if chrom_size and requested_end > chrom_size:
+            console.print(f"[yellow]  Warning: Requested end exceeded chromosome size ({requested_end} > {chrom_size}), clipped to {actual_end}[/yellow]")
         
         interval_fasta_result = subprocess.run(
             ["samtools", "faidx", str(fasta_path), region],
@@ -238,12 +265,6 @@ def _extract_reference_sequence_from_interval(
             console.print(f"[red]  samtools faidx failed: {interval_fasta_result.stderr}[/red]")
             return None
         
-        # Salvar FASTA em arquivo
-        interval_fasta_output_path = Path("reference_interval.fasta")
-        with open(interval_fasta_output_path, "w") as f:
-            f.write(interval_fasta_result.stdout)
-        console.print(f"[green]  ✓ Saved interval FASTA to: {interval_fasta_output_path}[/green]")
-        
         # Converter FASTA para sequência contínua
         fasta_text = interval_fasta_result.stdout
         seq_lines = []
@@ -252,9 +273,39 @@ def _extract_reference_sequence_from_interval(
                 continue
             seq_lines.append(line.strip())
         
-        seq = "".join(seq_lines)
+        seq_raw = "".join(seq_lines)
+        
+        # Aplicar padding se necessário
+        expected_length = requested_end - requested_start
+        actual_length = actual_end - actual_start
+        
+        # Calcular N's no início (quando próximo ao início do cromossomo)
+        n_prefix = 0
+        if requested_start < 0:
+            n_prefix = actual_start - requested_start  # Ex: 0 - (-100) = 100
+        
+        # Calcular N's no final (quando próximo ao final do cromossomo)
+        n_suffix = 0
+        if actual_length < expected_length:
+            n_suffix = expected_length - actual_length - n_prefix
+        
+        # Construir sequência com padding
+        seq = 'N' * n_prefix + seq_raw + 'N' * n_suffix
+        
+        if n_prefix > 0 or n_suffix > 0:
+            console.print(f"[yellow]  Applied padding: {n_prefix} N's at start, {n_suffix} N's at end[/yellow]")
+            console.print(f"[yellow]  Final sequence length: {len(seq)} bp (expected: {expected_length})[/yellow]")
+        
+        # Salvar FASTA em arquivo com sequência padded
+        interval_fasta_output_path = Path("reference_interval.fasta")
+        with open(interval_fasta_output_path, "w") as f:
+            f.write(f">{chrom}:{requested_start}-{requested_end}\n")
+            # Wrap at 60 characters per line
+            for i in range(0, len(seq), 60):
+                f.write(seq[i:i+60] + '\n')
+        console.print(f"[green]  ✓ Saved interval FASTA to: {interval_fasta_output_path}[/green]")
                
-        if seq is None:
+        if seq is None or len(seq) == 0:
             console.print("[red]  Cannot call predict_sequence: reference extraction failed[/red]")
             sys.exit(1)
 
@@ -333,23 +384,60 @@ def _load_individual_haplotype_sequence(
         return None
 
 
+def _detect_window_size_key_from_length(length: int) -> str:
+    """
+    Detecta a window_size_key correspondente ao tamanho em bp.
+    
+    Args:
+        length: Tamanho em base pairs
+    
+    Returns:
+        window_size_key correspondente (ex: "SEQUENCE_LENGTH_1MB")
+    """
+    length_to_key = {
+        2048: "SEQUENCE_LENGTH_2KB",
+        4096: "SEQUENCE_LENGTH_4KB",
+        8192: "SEQUENCE_LENGTH_8KB",
+        16384: "SEQUENCE_LENGTH_16KB",
+        32768: "SEQUENCE_LENGTH_32KB",
+        65536: "SEQUENCE_LENGTH_64KB",
+        102400: "SEQUENCE_LENGTH_100KB",
+        131072: "SEQUENCE_LENGTH_100KB",  # AlphaGenome usa 100KB para 128KB
+        262144: "SEQUENCE_LENGTH_256KB",
+        512000: "SEQUENCE_LENGTH_500KB",
+        524288: "SEQUENCE_LENGTH_500KB",  # AlphaGenome usa 500KB para 512KB (524288 bp)
+        1048576: "SEQUENCE_LENGTH_1MB",
+    }
+    
+    key = length_to_key.get(length)
+    if key is None:
+        raise ValueError(f"Unsupported length: {length}. Supported: {list(length_to_key.keys())}")
+    
+    return key
+
+
 def _load_dataset_dir_predictions(
     dataset_dir: Path,
     sample_id: str,
     gene_name: str,
-    window_size_key: str
-) -> np.ndarray:
+    window_size_key: Optional[str] = None
+) -> Tuple[np.ndarray, int]:
     """
-    Carrega predições do dataset_dir e extrai janela central.
+    Carrega predições do dataset_dir.
+    Se window_size_key for None, retorna dados completos.
+    Se window_size_key for especificado, extrai janela central.
     
     Args:
         dataset_dir: Diretório raiz do dataset
         sample_id: ID do indivíduo
         gene_name: Nome do gene
-        window_size_key: Chave do tamanho da janela (ex: "SEQUENCE_LENGTH_16KB")
+        window_size_key: Chave do tamanho da janela (ex: "SEQUENCE_LENGTH_16KB"), 
+                        ou None para retornar dados completos
     
     Returns:
-        Array [window_size, 6] com valores de RNA-seq
+        Tuple (values, full_length):
+        - values: Array [window_size, 6] (se window_size_key) ou [full_length, 6] (se None)
+        - full_length: Tamanho completo original dos dados
     """
     # Caminho para o arquivo de predições
     predictions_file = (dataset_dir / "individuals" / sample_id / "windows" / 
@@ -364,8 +452,15 @@ def _load_dataset_dir_predictions(
     data = np.load(predictions_file)
     values = data['values']  # Shape esperado: [sequence_length, 6]
     
-    console.print(f"[dim]  Loaded shape: {values.shape}[/dim]")
+    full_length = values.shape[0]
+    console.print(f"[dim]  Loaded shape: {values.shape} (full length: {full_length} bp)[/dim]")
     
+    # Se window_size_key não especificado, retornar dados completos
+    if window_size_key is None:
+        console.print(f"[green]  ✓ Returning full data (no windowing)[/green]")
+        return values, full_length
+    
+    # Caso contrário, extrair janela central
     # Mapa de window_size_key para número de bases
     window_size_map = {
         "SEQUENCE_LENGTH_2KB": 2048,
@@ -374,11 +469,11 @@ def _load_dataset_dir_predictions(
         "SEQUENCE_LENGTH_16KB": 16384,
         "SEQUENCE_LENGTH_32KB": 32768,
         "SEQUENCE_LENGTH_64KB": 65536,
-        "SEQUENCE_LENGTH_100KB": 102400,
+        "SEQUENCE_LENGTH_100KB": 131072,  # AlphaGenome: 100KB = 131072 bp (128 KB)
         "SEQUENCE_LENGTH_128KB": 131072,
         "SEQUENCE_LENGTH_256KB": 262144,
-        "SEQUENCE_LENGTH_500KB": 512000,
-        "SEQUENCE_LENGTH_512KB": 524288,
+        "SEQUENCE_LENGTH_500KB": 524288,  # AlphaGenome: 500KB = 524288 bp (512 KB)
+        "SEQUENCE_LENGTH_512KB": 524288,  # Alias (use 500KB)
         "SEQUENCE_LENGTH_1MB": 1048576,
     }
     
@@ -391,7 +486,7 @@ def _load_dataset_dir_predictions(
     
     console.print(f"[green]  ✓ Extracted center window: {window_values.shape}[/green]")
     
-    return window_values
+    return window_values, full_length
 
 
 def predict_with_alphagenome_interval(
@@ -577,7 +672,7 @@ def predict_with_alphagenome(
         console.print(f"[cyan]  Calling AlphaGenome API...[/cyan]")
         console.print(f"[dim]  Ontology terms: {ontology_terms}[/dim]")
         
-        # 1. Extrair sequência de referência do intervalo
+        # 1. Extrair sequência de referência do intervalo - usado nos comparison_mode: com alphagenome_ref   
         seq = _extract_reference_sequence_from_interval(interval, gene_name)
          
         # 2. Se sample_id fornecido, sobrescrever com sequência do indivíduo
@@ -592,24 +687,6 @@ def predict_with_alphagenome(
             ontology_terms=ontology_terms
         )
         elapsed = time.time() - start_time
-
-        # fim do NOVO TRECHO: usa o FASTA extraído (interval_fasta_result)
-        # --------------------------------------------------------------
-        
-        # --------------------------------------------------------------
-        # TRECHO ANTIGO: usa o interval (interval)
-        # --------------------------------------------------------------
-        # console.print(f"[cyan]  Calling AlphaGenome API (predict_interval) on interval...[/cyan]")
-        # start_time = time.time()
-        # output = client.predict_interval(
-        #     interval=interval,
-        #     requested_outputs=requested_outputs,
-        #     ontology_terms=ontology_terms
-        # )
-        # elapsed = time.time() - start_time
-        
-        # Fim do trecho antigo: usa o interval (interval)
-        # --------------------------------------------------------------
 
         console.print(f"[cyan]  API call completed in {elapsed:.1f}s[/cyan]")
         
@@ -921,8 +998,8 @@ def _load_from_alphagenome_api(
     # Map common sizes to AlphaGenome constants
     window_size_map = {
         10000: "SEQUENCE_LENGTH_16KB",      # 10k fits in 16k
-        100000: "SEQUENCE_LENGTH_128KB",    # 100k fits in 128k  
-        524288: "SEQUENCE_LENGTH_512KB",    # 512k exact
+        100000: "SEQUENCE_LENGTH_100KB",    # 100k = 131072 bp (AlphaGenome)
+        524288: "SEQUENCE_LENGTH_500KB",    # 512k = 524288 bp (AlphaGenome)
         1048576: "SEQUENCE_LENGTH_1MB",     # 1MB exact
     }
     
@@ -930,7 +1007,7 @@ def _load_from_alphagenome_api(
     if 'window_center_size_key' in config:
         window_size_key = config['window_center_size_key']
     else:
-        window_size_key = window_size_map.get(window_center_size, "SEQUENCE_LENGTH_512KB")
+        window_size_key = window_size_map.get(window_center_size, "SEQUENCE_LENGTH_500KB")
     
     all_gene_data = []
     
@@ -1002,9 +1079,9 @@ def load_raw_alphagenome_data(
             16384: "SEQUENCE_LENGTH_16KB",
             32768: "SEQUENCE_LENGTH_32KB",
             65536: "SEQUENCE_LENGTH_64KB",
-            131072: "SEQUENCE_LENGTH_128KB",
+            131072: "SEQUENCE_LENGTH_100KB",  # AlphaGenome: 100KB = 131072 bp
             262144: "SEQUENCE_LENGTH_256KB",
-            524288: "SEQUENCE_LENGTH_512KB",
+            524288: "SEQUENCE_LENGTH_500KB",  # AlphaGenome: 500KB = 524288 bp
             1048576: "SEQUENCE_LENGTH_1MB",
         }
         
@@ -1637,15 +1714,28 @@ def process_sample_comparison_mode(
         try:
             if comparison_mode == "alphagenome_x_alphagenome_ref":
                 # Mode: AlphaGenome (predict_interval) vs AlphaGenome (predict_sequence com FASTA)
-                console.print(f"[dim]  Loading AlphaGenome via predict_interval...[/dim]")
+                # Ambos devem usar o mesmo tamanho do dataset_dir, mas visualizar apenas window_size_key
+                
+                console.print(f"[dim]  Detecting dataset_dir window size...[/dim]")
                 ontology_terms = config['alphagenome_api']['ontology_terms']
                 
-                # AlphaGenome usando predict_interval (sem FASTA)
+                # Primeiro, carregar dataset_dir SEM extrair janela, só para detectar tamanho
+                data1_full, full_length = _load_dataset_dir_predictions(
+                    dataset_dir, sample_id, gene_name, window_size_key=None
+                )
+                
+                # Detectar o window_size_key usado no dataset_dir
+                window_size_key_dataset = _detect_window_size_key_from_length(full_length)
+                console.print(f"[cyan]  Dataset was generated with: {window_size_key_dataset} ({full_length} bp)[/cyan]")
+                console.print(f"[cyan]  Will visualize center: {window_size_key}[/cyan]")
+                
+                # AlphaGenome usando predict_interval (sem FASTA) - COM O TAMANHO DO DATASET
+                console.print(f"[dim]  Loading AlphaGenome via predict_interval ({window_size_key_dataset})...[/dim]")
                 result_interval = predict_with_alphagenome_interval(
                     gene_name=gene_name,
                     config=config,
                     ontology_terms=ontology_terms,
-                    window_size_key=window_size_key,
+                    window_size_key=window_size_key_dataset,  # USAR TAMANHO DO DATASET
                     return_full_output=False
                 )
                 
@@ -1653,14 +1743,13 @@ def process_sample_comparison_mode(
                     console.print(f"[red]  Failed to load AlphaGenome data (predict_interval)[/red]")
                     continue
                 
-                console.print(f"[dim]  Loading AlphaGenome via predict_sequence (FASTA)...[/dim]")
-                
-                # AlphaGenome usando predict_sequence com FASTA extraído
+                # AlphaGenome usando predict_sequence (com FASTA extraído) - COM O TAMANHO DO DATASET
+                console.print(f"[dim]  Loading AlphaGenome via predict_sequence ({window_size_key_dataset})...[/dim]")
                 result_fasta = predict_with_alphagenome(
                     gene_name=gene_name,
                     config=config,
                     ontology_terms=ontology_terms,
-                    window_size_key=window_size_key,
+                    window_size_key=window_size_key_dataset,  # USAR TAMANHO DO DATASET
                     return_full_output=False,
                     sample_id=None  # Reference genome
                 )
@@ -1669,23 +1758,56 @@ def process_sample_comparison_mode(
                     console.print(f"[red]  Failed to load AlphaGenome data (predict_sequence)[/red]")
                     continue
                 
-                # Transpose both to [6, window_size] for plotting
-                data1 = np.array(result_interval).T  # [6, window_size]
-                data2 = np.array(result_fasta).T  # [6, window_size]
+                # result_interval: [full_length, 6]
+                # result_fasta: [full_length, 6]
+                
+                # Transpor ambos para [6, full_length]
+                data_interval_T = np.array(result_interval).T  # [6, full_length]
+                data_fasta_T = np.array(result_fasta).T  # [6, full_length]
+                
+                # EXTRAIR JANELA CENTRAL APENAS PARA VISUALIZAÇÃO
+                window_size_map = {
+                    "SEQUENCE_LENGTH_2KB": 2048,
+                    "SEQUENCE_LENGTH_16KB": 16384,
+                    "SEQUENCE_LENGTH_100KB": 102400,
+                    "SEQUENCE_LENGTH_500KB": 512000,
+                    "SEQUENCE_LENGTH_1MB": 1048576
+                }
+                viz_length = window_size_map.get(window_size_key, 16384)
+                
+                console.print(f"[dim]  Extracting center window for visualization: {viz_length} bp[/dim]")
+                data1 = extract_center_window(data_interval_T, viz_length, axis=1)
+                data2 = extract_center_window(data_fasta_T, viz_length, axis=1)
+                
+                console.print(f"[dim]  data1 shape: {data1.shape}, data2 shape: {data2.shape}[/dim]")
                 
                 label1 = "AlphaGenome (predict_interval)"
                 label2 = "AlphaGenome (predict_sequence/FASTA)"
                 
             elif comparison_mode == "alphagenome_ref_x_dataset_dir":
                 # Mode 1: AlphaGenome (reference) vs dataset_dir
-                console.print(f"[dim]  Loading AlphaGenome (reference genome)...[/dim]")
+                # USAR TAMANHO DO DATASET, VISUALIZAR window_size_key
+                
+                console.print(f"[dim]  Detecting dataset_dir window size...[/dim]")
                 ontology_terms = config['alphagenome_api']['ontology_terms']
                 
+                # Carregar dataset_dir SEM extrair janela
+                data_dataset_full, full_length = _load_dataset_dir_predictions(
+                    dataset_dir, sample_id, gene_name, window_size_key=None
+                )
+                
+                # Detectar o window_size_key usado no dataset_dir
+                window_size_key_dataset = _detect_window_size_key_from_length(full_length)
+                console.print(f"[cyan]  Dataset was generated with: {window_size_key_dataset} ({full_length} bp)[/cyan]")
+                console.print(f"[cyan]  Will visualize center: {window_size_key}[/cyan]")
+                
+                # AlphaGenome (reference) - COM O TAMANHO DO DATASET
+                console.print(f"[dim]  Loading AlphaGenome reference ({window_size_key_dataset})...[/dim]")
                 result = predict_with_alphagenome(
                     gene_name=gene_name,
                     config=config,
                     ontology_terms=ontology_terms,
-                    window_size_key=window_size_key,
+                    window_size_key=window_size_key_dataset,  # USAR TAMANHO DO DATASET
                     return_full_output=False,
                     sample_id=None  # Use reference genome
                 )
@@ -1694,30 +1816,57 @@ def process_sample_comparison_mode(
                     console.print(f"[red]  Failed to load AlphaGenome data[/red]")
                     continue
                 
-                alphagenome_data = np.array(result)  # Shape: [window_size, 6]
+                # result: [full_length, 6]
+                # data_dataset_full: [full_length, 6]
+                alphagenome_data = np.array(result)
                 
-                # Load dataset_dir data
-                dataset_data = _load_dataset_dir_predictions(
-                    dataset_dir, sample_id, gene_name, window_size_key
-                )
+                # Transpor ambos para [6, full_length]
+                alphagenome_data_T = alphagenome_data.T
+                data_dataset_full_T = data_dataset_full.T
                 
-                # Transpose both to [6, window_size] for plotting
-                data1 = alphagenome_data.T  # [6, window_size]
-                data2 = dataset_data.T  # [6, window_size]
+                # EXTRAIR JANELA CENTRAL APENAS PARA VISUALIZAÇÃO
+                window_size_map = {
+                    "SEQUENCE_LENGTH_2KB": 2048,
+                    "SEQUENCE_LENGTH_16KB": 16384,
+                    "SEQUENCE_LENGTH_100KB": 102400,
+                    "SEQUENCE_LENGTH_500KB": 512000,
+                    "SEQUENCE_LENGTH_1MB": 1048576
+                }
+                viz_length = window_size_map.get(window_size_key, 16384)
+                
+                console.print(f"[dim]  Extracting center window for visualization: {viz_length} bp[/dim]")
+                data1 = extract_center_window(alphagenome_data_T, viz_length, axis=1)
+                data2 = extract_center_window(data_dataset_full_T, viz_length, axis=1)
+                
+                console.print(f"[dim]  AlphaGenome shape: {data1.shape}, Dataset shape: {data2.shape}[/dim]")
                 
                 label1 = "AlphaGenome (Ref)"
                 label2 = "Dataset Dir"
                 
             elif comparison_mode == "alphagenome_ind_x_dataset_dir":
                 # Mode 2: AlphaGenome (individual) vs dataset_dir
-                console.print(f"[dim]  Loading AlphaGenome (individual genome)...[/dim]")
+                # USAR TAMANHO DO DATASET, VISUALIZAR window_size_key
+                
+                console.print(f"[dim]  Detecting dataset_dir window size...[/dim]")
                 ontology_terms = config['alphagenome_api']['ontology_terms']
                 
+                # Carregar dataset_dir SEM extrair janela
+                data_dataset_full, full_length = _load_dataset_dir_predictions(
+                    dataset_dir, sample_id, gene_name, window_size_key=None
+                )
+                
+                # Detectar o window_size_key usado no dataset_dir
+                window_size_key_dataset = _detect_window_size_key_from_length(full_length)
+                console.print(f"[cyan]  Dataset was generated with: {window_size_key_dataset} ({full_length} bp)[/cyan]")
+                console.print(f"[cyan]  Will visualize center: {window_size_key}[/cyan]")
+                
+                # AlphaGenome (individual) - COM O TAMANHO DO DATASET
+                console.print(f"[dim]  Loading AlphaGenome individual ({window_size_key_dataset})...[/dim]")
                 result = predict_with_alphagenome(
                     gene_name=gene_name,
                     config=config,
                     ontology_terms=ontology_terms,
-                    window_size_key=window_size_key,
+                    window_size_key=window_size_key_dataset,  # USAR TAMANHO DO DATASET
                     return_full_output=False,
                     sample_id=sample_id  # Use individual's genome
                 )
@@ -1726,16 +1875,29 @@ def process_sample_comparison_mode(
                     console.print(f"[red]  Failed to load AlphaGenome data[/red]")
                     continue
                 
-                alphagenome_data = np.array(result)  # Shape: [window_size, 6]
+                # result: [full_length, 6]
+                # data_dataset_full: [full_length, 6]
+                alphagenome_data = np.array(result)
                 
-                # Load dataset_dir data
-                dataset_data = _load_dataset_dir_predictions(
-                    dataset_dir, sample_id, gene_name, window_size_key
-                )
+                # Transpor ambos para [6, full_length]
+                alphagenome_data_T = alphagenome_data.T
+                data_dataset_full_T = data_dataset_full.T
                 
-                # Transpose both to [6, window_size] for plotting
-                data1 = alphagenome_data.T  # [6, window_size]
-                data2 = dataset_data.T  # [6, window_size]
+                # EXTRAIR JANELA CENTRAL APENAS PARA VISUALIZAÇÃO
+                window_size_map = {
+                    "SEQUENCE_LENGTH_2KB": 2048,
+                    "SEQUENCE_LENGTH_16KB": 16384,
+                    "SEQUENCE_LENGTH_100KB": 102400,
+                    "SEQUENCE_LENGTH_500KB": 512000,
+                    "SEQUENCE_LENGTH_1MB": 1048576
+                }
+                viz_length = window_size_map.get(window_size_key, 16384)
+                
+                console.print(f"[dim]  Extracting center window for visualization: {viz_length} bp[/dim]")
+                data1 = extract_center_window(alphagenome_data_T, viz_length, axis=1)
+                data2 = extract_center_window(data_dataset_full_T, viz_length, axis=1)
+                
+                console.print(f"[dim]  AlphaGenome shape: {data1.shape}, Dataset shape: {data2.shape}[/dim]")
                 
                 label1 = f"AlphaGenome ({sample_id})"
                 label2 = "Dataset Dir"
@@ -1745,7 +1907,7 @@ def process_sample_comparison_mode(
                 console.print(f"[dim]  Loading dataset_dir data...[/dim]")
                 
                 # Load dataset_dir data
-                dataset_data = _load_dataset_dir_predictions(
+                dataset_data, _ = _load_dataset_dir_predictions(
                     dataset_dir, sample_id, gene_name, window_size_key
                 )
                 

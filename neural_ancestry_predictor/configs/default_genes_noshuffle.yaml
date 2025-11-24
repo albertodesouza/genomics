@@ -1,0 +1,88 @@
+# ═══════════════════════════════════════════════════════════════════
+# Neural Ancestry Predictor - Debug Configuration (NO SHUFFLE)
+# ═══════════════════════════════════════════════════════════════════
+#
+# MODO DEBUG: random_seed: -1 NÃO embaralha os dados
+# Dados em cache_dir ficam na MESMA ORDEM que em dataset_dir
+# Útil para debugar e comparar dados exatos
+#
+# ═══════════════════════════════════════════════════════════════════
+
+dataset_input:
+  dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes"
+  alphagenome_outputs:
+    - "rna_seq"
+  haplotype_mode: "H1"
+  window_center_size: 100000
+  downsample_factor: 1
+  normalization_method: "log"
+  normalization_value: 0.834945
+  processed_cache_dir: /dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes_debug
+
+output:
+  prediction_target: "superpopulation"
+  known_classes: ["AFR", "AMR", "EAS", "EUR", "SAS"]
+
+model:
+  type: "CNN"
+  hidden_layers:
+    - 100
+    - 40
+  activation: "relu"
+  dropout_rate: 0.2
+  cnn:
+    kernel_size: [11, 20]
+    num_filters: 5
+    stride: [11, 20]
+    padding: 0
+    pool_size: null
+
+training:
+  optimizer: "adam"
+  learning_rate: 0.001
+  loss_function: "cross_entropy"
+  batch_size: 1
+  num_epochs: 150
+  validation_frequency: 1
+  lr_scheduler:
+    enabled: true
+    type: "plateau"
+    mode: "min"
+    factor: 0.5
+    patience: 10
+    min_lr: 0.000001
+    step_size: 30
+
+data_split:
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  # random_seed: -1 = MODO DEBUG - NÃO EMBARALHA
+  # Dados ficam na mesma ordem de dataset_dir
+  random_seed: -1
+  strict_determinism: true
+
+wandb:
+  use_wandb: false
+  project_name: "neural-ancestry-predictor-genes-debug"
+  run_name: null
+  log_frequency: 100
+
+checkpointing:
+  checkpoint_dir: "models"
+  save_during_training: false
+  save_frequency: 100
+  load_checkpoint: null
+
+debug:
+  enable_visualization: false
+  max_samples_per_epoch: null
+  visualization:
+    width: 600
+    height: 660
+  taint_at_cache_save: false
+  taint_at_runtime: false
+
+mode: "train"
+test_dataset: "test"
+

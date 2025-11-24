@@ -84,7 +84,7 @@ import subprocess
 import tempfile
 import json
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict
 
 import pandas as pd
 import numpy as np
@@ -124,6 +124,19 @@ def coerce_chromosome_name(chrom: str, desired_prefix: str) -> str:
     if desired_prefix == '' and has_chr:
         return chrom.replace('chr', '', 1)
     return chrom
+
+
+def read_chromosome_sizes(fasta_fai: Path) -> Dict[str, int]:
+    """Read chromosome sizes from FASTA index (.fai) file."""
+    chrom_sizes = {}
+    with open(fasta_fai, 'r') as f:
+        for line in f:
+            parts = line.strip().split('\t')
+            if len(parts) >= 2:
+                chrom_name = parts[0]
+                chrom_length = int(parts[1])
+                chrom_sizes[chrom_name] = chrom_length
+    return chrom_sizes
 
 
 def load_gtf_feather(gtf_feather: Optional[str]) -> pd.DataFrame:
@@ -201,9 +214,33 @@ def load_gene_list(gene_file: Path) -> list:
     return genes
 
 
-def to_region_1based(chrom_0based: str, start0: int, end0: int) -> str:
-    """Convert 0-based [start, end) to 1-based inclusive region string chrom:start-end."""
-    return f"{chrom_0based}:{start0 + 1}-{end0}"
+def to_region_1based(chrom_0based: str, start0: int, end0: int, 
+                    chrom_size: Optional[int] = None) -> Tuple[str, int, int]:
+    """
+    Convert 0-based [start, end) to 1-based inclusive region string.
+    Clips coordinates to valid range [0, chrom_size).
+    
+    Args:
+        chrom_0based: Chromosome name
+        start0: Start position (0-based, may be negative)
+        end0: End position (0-based, exclusive)
+        chrom_size: Chromosome size for validation (optional)
+    
+    Returns:
+        Tuple of (region_string, actual_start_0based, actual_end_0based)
+    """
+    # Clip start to >= 0
+    actual_start_0based = max(0, start0)
+    
+    # Clip end to chromosome size if provided
+    actual_end_0based = end0
+    if chrom_size is not None:
+        actual_end_0based = min(end0, chrom_size)
+    
+    # Convert to 1-based
+    region_str = f"{chrom_0based}:{actual_start_0based + 1}-{actual_end_0based}"
+    
+    return region_str, actual_start_0based, actual_end_0based
 
 
 def get_gtf_cache_path(outdir: Path, cache_dir: Optional[Path] = None) -> Path:
@@ -259,29 +296,73 @@ def write_fasta(seq: str, path: Path, header: str = "seq"):
             f.write(seq[i:i+60] + "\n")
 
 
-def adjust_to_target_size(consensus_seq: str, ref_window_seq: str, target_size: int) -> str:
+def adjust_to_target_size(consensus_seq: str, ref_window_seq: str, target_size: int,
+                         requested_start: int, requested_end: int,
+                         actual_start: int, actual_end: int,
+                         use_ref_only: bool = False) -> str:
     """
-    Ensure final sequence is exactly target_size nt.
-    - If longer: trim the end.
-    - If shorter: pad with reference bases from the right; if still short, pad 'N'.
+    Ensure final sequence is exactly target_size nt, preserving alignment.
     
     Args:
-        consensus_seq: The consensus sequence to adjust
-        ref_window_seq: Reference window sequence for padding
+        consensus_seq: The consensus sequence to adjust (ignored if use_ref_only=True)
+        ref_window_seq: Reference window sequence extracted by samtools.
+                       When use_ref_only=True, this is the sequence to pad.
+                       When use_ref_only=False, this is used as padding source for consensus_seq.
+                       Note: ref_window_seq may be shorter than target_size (boundary cases).
         target_size: Target sequence length (e.g., 524288, 1048576)
+        requested_start: The start coordinate requested (0-based, may be negative)
+        requested_end: The end coordinate requested (0-based)
+        actual_start: The actual start coordinate returned by samtools (0-based, >= 0)
+        actual_end: The actual end coordinate returned by samtools (0-based)
+        use_ref_only: If True, return padded reference; if False, use consensus logic
     
     Returns:
-        Adjusted sequence of exactly target_size nucleotides
+        Adjusted sequence of exactly target_size nucleotides with proper alignment
+        
+    Note:
+        When use_ref_only=True, consensus_seq is completely ignored. The function
+        pads ref_window_seq with 'N' at the beginning/end to reach target_size,
+        based on the difference between requested and actual coordinates.
     """
-
-    return ref_window_seq
+    if use_ref_only:
+        # Mode: return reference genome only (debug mode)
+        ref_len = len(ref_window_seq)
+        
+        # Calculate N padding needed at beginning (when near chromosome start)
+        n_prefix = 0
+        if requested_start < 0:
+            # requested_start is negative, actual_start will be 0
+            n_prefix = actual_start - requested_start  # e.g., 0 - (-193642) = 193642
+        
+        # Calculate N padding needed at end (when near chromosome end)
+        expected_length = requested_end - requested_start
+        actual_length = actual_end - actual_start
+        n_suffix = 0
+        if actual_length < expected_length:
+            # Missing bases at the end
+            n_suffix = expected_length - actual_length - n_prefix
+        
+        # Build the properly aligned sequence
+        result = 'N' * n_prefix + ref_window_seq + 'N' * n_suffix
+        
+        # Final validation and adjustment
+        if len(result) == target_size:
+            return result
+        elif len(result) > target_size:
+            # Shouldn't happen often, but truncate if needed
+            return result[:target_size]
+        else:
+            # Still missing some bases (edge case)
+            still_missing = target_size - len(result)
+            return result + 'N' * still_missing
     
+    # Original consensus logic (when use_ref_only=False)
     L = len(consensus_seq)
     if L == target_size:
         return consensus_seq
     if L > target_size:
         return consensus_seq[:target_size]
-
+    
     # Need to pad
     needed = target_size - L
     # take from ref window tail following the current length (best-effort alignment)
@@ -337,8 +418,23 @@ def process_window(
         Path to the case directory
     """
     # 0-based to 1-based region
-    region = to_region_1based(chrom, start, end)
+    # Read chromosome sizes for validation
+    ref_fai = Path(str(ref_fa) + ".fai")
+    chrom_sizes = read_chromosome_sizes(ref_fai)
+    chrom_size = chrom_sizes.get(chrom)
+    
+    # Clip coordinates and get actual values
+    region, actual_start, actual_end = to_region_1based(chrom, start, end, chrom_size)
+    
+    # Store requested coordinates for later use in adjust_to_target_size
+    requested_start = start
+    requested_end = end
+    
     print(f"\n[INFO] Processing {target_name}: {region} (window={window_size})")
+    if requested_start < 0:
+        print(f"[INFO] Requested start was negative ({requested_start}), clipped to {actual_start}")
+    if chrom_size and requested_end > chrom_size:
+        print(f"[INFO] Requested end exceeded chromosome size ({requested_end} > {chrom_size}), clipped to {actual_end}")
     
     # Prepare sample/target-specific subdir
     case_dir = outdir / f"{sample}__{target_name}"
@@ -412,30 +508,59 @@ def process_window(
     
     # 4) Enforce exact length
     print(f"[INFO] Enforcing exact length ({window_size} bp) for outputs ...")
-    ref_seq = read_fasta_seq_only(ref_window_fa)
+    ref_seq_raw = read_fasta_seq_only(ref_window_fa)
     
-    def fix_and_write(raw_path: Path, fixed_path: Path, header: str):
+    # Ajustar ref_seq para target_size com padding correto
+    # Nota: Passamos ref_seq_raw duas vezes porque quando use_ref_only=True,
+    # o primeiro argumento (consensus_seq) é ignorado. A função usa apenas
+    # ref_window_seq (segundo argumento) para criar a sequência com padding.
+    ref_seq = adjust_to_target_size(
+        ref_seq_raw, ref_seq_raw, window_size,
+        requested_start, requested_end,
+        actual_start, actual_end,
+        use_ref_only=True
+    )
+    
+    def fix_and_write(raw_path: Path, fixed_path: Path, header: str, ref_adjusted: str, use_ref: bool = False):
+        # Se use_ref=True, não precisamos do arquivo raw
+        if use_ref:
+            if fixed_path.exists():
+                print(f"[INFO] Fixed sequence already exists: {fixed_path}")
+                return fixed_path
+            # Usar referência já ajustada (não precisa chamar adjust_to_target_size novamente)
+            write_fasta(ref_adjusted, fixed_path, header=header)
+            print(f"[INFO] Building a debug dataset with reference genome only")
+            return fixed_path
+        
+        # Modo normal: precisa do arquivo raw
         if not raw_path.exists():
             return None
         if fixed_path.exists():
             print(f"[INFO] Fixed sequence already exists: {fixed_path}")
             return fixed_path
         seq = read_fasta_seq_only(raw_path)
-        fixed = adjust_to_target_size(seq, ref_seq, window_size)
+        fixed = adjust_to_target_size(
+            seq, ref_adjusted, window_size,
+            requested_start, requested_end,
+            actual_start, actual_end,
+            use_ref_only=False
+        )
         write_fasta(fixed, fixed_path, header=header)
         return fixed_path
     
+    # Aplicar ajuste de tamanho para H1, H2, IUPAC
+    # Se args.reference_only, usa apenas referência; senão usa consensus do VCF
     h1_fixed = fix_and_write(h1_fa, case_dir / f"{sample}.H1.window.fixed.fa", 
-                             header=f"{sample}_H1_{target_name}")
+                             header=f"{sample}_H1_{target_name}", ref_adjusted=ref_seq, use_ref=args.reference_only)
     h2_fixed = None
     if not args.skip_h2:
         h2_fixed = fix_and_write(h2_fa, case_dir / f"{sample}.H2.window.fixed.fa", 
-                                 header=f"{sample}_H2_{target_name}")
+                                 header=f"{sample}_H2_{target_name}", ref_adjusted=ref_seq, use_ref=args.reference_only)
     
     iupac_fixed = None
     if args.also_iupac:
         iupac_fixed = fix_and_write(iupac_fa, case_dir / f"{sample}.IUPAC.window.fixed.fa", 
-                                     header=f"{sample}_IUPAC_{target_name}")
+                                     header=f"{sample}_IUPAC_{target_name}", ref_adjusted=ref_seq, use_ref=args.reference_only)
     
     # 5) Optional: AlphaGenome predictions
     if args.predict:
@@ -608,6 +733,8 @@ def main():
     ap.add_argument("--predict", action="store_true", help="Run AlphaGenome predictions on haplotypes (H1/H2)")
     ap.add_argument("--skip-h2", action="store_true", help="Skip building H2 (haplotype 2)")
     ap.add_argument("--also-iupac", action="store_true", help="Also build an IUPAC-coded window")
+    ap.add_argument("--reference-only", action="store_true", 
+                    help="Use reference genome only (ignore VCFs, for debug)")
     ap.add_argument("--api-key", help="AlphaGenome API key (or set ALPHAGENOME_API_KEY env var)")
     ap.add_argument("--ontology", "--tissue", dest="ontology", help="Ontology CURIE(s) for tissue/cell type. Single: UBERON:0002107. Multiple (comma-separated): UBERON:0002107,CL:0002601. If not provided, uses all tissues/cells.")
     ap.add_argument("--outputs", default="RNA-seq", help="Comma-separated requested outputs (e.g., RNA-seq,ATAC-seq)")

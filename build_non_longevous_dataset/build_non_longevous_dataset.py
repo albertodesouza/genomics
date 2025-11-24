@@ -440,6 +440,14 @@ def run_build_window_predict(
     # It will handle chromosome determination based on the gene/SNP being processed
     vcf_pattern = data_sources.get('vcf_pattern', '')
     
+    # Check for debug mode
+    debug_config = config.get('debug', {})
+    reference_only = debug_config.get('create_dataset_with_reference_genome_only', False)
+    
+    if reference_only:
+        print(f"[DEBUG] Reference-only mode enabled for {sample_id}")
+        cmd.append("--reference-only")
+    
     if vcf_pattern:
         cmd.extend(["--vcf", vcf_pattern])
     else:
