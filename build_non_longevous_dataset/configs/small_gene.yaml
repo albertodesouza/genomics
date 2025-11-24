@@ -106,7 +106,8 @@ build_window_params:
   gtf_feather: null
   
   # Window size (must match AlphaGenome supported sizes)
-  window_size: 524288     # ver AlphaGenome documentation
+  # Valid sizes: 524288 (512KB), 1048576 (1MB)
+  window_size: 1048576     # 512 KB = 2^19 (AlphaGenome SEQUENCE_LENGTH_512KB)
   
   # Haplotype options
   skip_h2: false           # Set true to only build H1 (faster)

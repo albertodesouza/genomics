@@ -50,6 +50,81 @@ console = Console()
 NUM_ONTOLOGIES = 6  # Número de ontologias RNA-seq por gene
 
 
+# ═══════════════════════════════════════════════════════════════════
+# Helper Function: Center Window Extraction
+# ═══════════════════════════════════════════════════════════════════
+
+def extract_center_window(
+    data: np.ndarray,
+    target_size: int,
+    axis: int = 0
+) -> np.ndarray:
+    """
+    Extrai janela central de um array numpy de forma consistente.
+    
+    IMPORTANTE: Usa sempre a fórmula end_idx = start_idx + target_size
+    para garantir que o tamanho extraído seja EXATAMENTE target_size,
+    mesmo com números ímpares.
+    
+    Args:
+        data: Array numpy de entrada
+        target_size: Tamanho desejado da janela central
+        axis: Eixo ao longo do qual extrair (default: 0)
+    
+    Returns:
+        Array com janela central extraída
+        
+    Examples:
+        # Para array 1D ou extração ao longo do primeiro eixo
+        >>> data = np.arange(1000000)
+        >>> window = extract_center_window(data, 500000)
+        >>> window.shape
+        (500000,)
+        
+        # Para array 2D, extraindo ao longo de colunas
+        >>> data = np.random.rand(6, 1048576)
+        >>> window = extract_center_window(data, 524288, axis=1)
+        >>> window.shape
+        (6, 524288)
+    """
+    sequence_length = data.shape[axis]
+    
+    # Se já tem o tamanho correto, retorna direto
+    if sequence_length == target_size:
+        return data
+    
+    # Se é menor, retorna o que tem (com warning)
+    if sequence_length < target_size:
+        console.print(f"[yellow]  Warning: sequence_length ({sequence_length}) < target_size ({target_size})[/yellow]")
+        console.print(f"[yellow]  Using full sequence[/yellow]")
+        return data
+    
+    # Calcular índices da janela central
+    # SEMPRE usar: end_idx = start_idx + target_size (não center_idx + half_size!)
+    center_idx = sequence_length // 2
+    half_size = target_size // 2
+    start_idx = center_idx - half_size
+    end_idx = start_idx + target_size
+    
+    # Garantir que não ultrapassa os limites
+    if start_idx < 0:
+        start_idx = 0
+        end_idx = target_size
+    elif end_idx > sequence_length:
+        end_idx = sequence_length
+        start_idx = end_idx - target_size
+    
+    # Extrair ao longo do eixo especificado
+    if axis == 0:
+        return data[start_idx:end_idx]
+    elif axis == 1:
+        return data[:, start_idx:end_idx]
+    elif axis == 2:
+        return data[:, :, start_idx:end_idx]
+    else:
+        raise ValueError(f"Axis {axis} not supported")
+
+
 def get_genes_in_dataset_order(dataset_dir: Path, sample_id: str) -> List[str]:
     """
     Obtém a lista de genes na mesma ordem que o GenomicLongevityDataset processa.
@@ -192,72 +267,240 @@ def _extract_reference_sequence_from_interval(
         sys.exit(1)
 
 
-# def _load_individual_haplotype_sequence(
-#     sample_id: str,
-#     gene_name: str,
-#     target_length: int,
-#     config: Dict
-# ) -> Optional[str]:
-#     """
-#     Carrega a sequência do haplótipo H1 do indivíduo de dataset_dir.
+def _load_individual_haplotype_sequence(
+    sample_id: str,
+    gene_name: str,
+    target_length: int,
+    config: Dict
+) -> Optional[str]:
+    """
+    Carrega a sequência do haplótipo H1 do indivíduo de dataset_dir.
     
-#     Args:
-#         sample_id: ID do indivíduo
-#         gene_name: Nome do gene
-#         dataset_dir: Diretório raiz do dataset
-#         target_length: Tamanho da janela a extrair do centro
+    Args:
+        sample_id: ID do indivíduo
+        gene_name: Nome do gene
+        target_length: Tamanho da janela a extrair do centro
+        config: Configuration dict
     
-#     Returns:
-#         Sequência do haplótipo como string, ou None se falhar
-#     """
-#     dataset_dir = Path(config.get('dataset_dir', '/dados/GENOMICS_DATA/top3/non_longevous_results_genes'))
-#     try:
-#         console.print(f"[cyan]  Loading individual's haplotype sequence from dataset_dir...[/cyan]")
+    Returns:
+        Sequência do haplótipo como string, ou None se falhar
+    """
+    dataset_dir = Path(config.get('dataset_dir', '/dados/GENOMICS_DATA/top3/non_longevous_results_genes'))
+    try:
+        console.print(f"[cyan]  Loading individual's haplotype sequence from dataset_dir...[/cyan]")
         
-#         # Caminho para a sequência do haplótipo H1
-#         # Padrão: dataset_dir/individuals/SAMPLE_ID/windows/GENE_NAME/SAMPLE_ID.H1.window.fixed.fa
-#         haplotype_file = dataset_dir / "individuals" / sample_id / "windows" / gene_name / f"{sample_id}.H1.window.fixed.fa"
+        # Caminho para a sequência do haplótipo H1
+        # Padrão: dataset_dir/individuals/SAMPLE_ID/windows/GENE_NAME/SAMPLE_ID.H1.window.fixed.fa
+        haplotype_file = dataset_dir / "individuals" / sample_id / "windows" / gene_name / f"{sample_id}.H1.window.fixed.fa"
         
-#         if not haplotype_file.exists():
-#             console.print(f"[yellow]  Haplotype file not found: {haplotype_file}[/yellow]")
-#             return None
+        if not haplotype_file.exists():
+            console.print(f"[yellow]  Haplotype file not found: {haplotype_file}[/yellow]")
+            return None
         
-#         # Ler o arquivo FASTA do haplótipo
-#         console.print(f"[cyan]  Reading: {haplotype_file}[/cyan]")
+        # Ler o arquivo FASTA do haplótipo
+        console.print(f"[cyan]  Reading: {haplotype_file}[/cyan]")
         
-#         with open(haplotype_file, 'r') as f:
-#             haplotype_lines = []
-#             for line in f:
-#                 if not line or line.startswith(">"):
-#                     continue
-#                 haplotype_lines.append(line.strip())
+        with open(haplotype_file, 'r') as f:
+            haplotype_lines = []
+            for line in f:
+                if not line or line.startswith(">"):
+                    continue
+                haplotype_lines.append(line.strip())
         
-#         haplotype_seq = "".join(haplotype_lines)
+        haplotype_seq = "".join(haplotype_lines)
         
-#         # Extrair a janela central correspondente ao target_length
-#         seq_length = len(haplotype_seq)
+        # Extrair a janela central correspondente ao target_length
+        seq_length = len(haplotype_seq)
         
-#         console.print(f"[dim]  Haplotype full length: {seq_length} bp[/dim]")
-#         console.print(f"[dim]  Target length: {target_length} bp[/dim]")
+        console.print(f"[dim]  Haplotype full length: {seq_length} bp[/dim]")
+        console.print(f"[dim]  Target length: {target_length} bp[/dim]")
         
-#         # Extrair centro
-#         center_idx = seq_length // 2
-#         half_size = target_length // 2
-#         start_idx = max(0, center_idx - half_size)
-#         end_idx = min(seq_length, start_idx + target_length)
+        # Extrair centro usando função centralizada
+        # Converter string para array, extrair, converter de volta
+        seq_array = np.array(list(haplotype_seq))
+        seq_array_center = extract_center_window(seq_array, target_length, axis=0)
+        individual_seq = ''.join(seq_array_center)
         
-#         individual_seq = haplotype_seq[start_idx:end_idx]
+        console.print(f"[green]  ✓ Loaded individual sequence: {len(individual_seq)} bp[/green]")
+        console.print(f"[green]  ✓ Using {sample_id}'s H1 haplotype sequence[/green]")
         
-#         console.print(f"[green]  ✓ Loaded individual sequence: {len(individual_seq)} bp (from position {start_idx} to {end_idx})[/green]")
-#         console.print(f"[green]  ✓ Using {sample_id}'s H1 haplotype sequence[/green]")
+        return individual_seq
         
-#         return individual_seq
+    except Exception as e:
+        console.print(f"[yellow]  Warning: Could not load individual sequence: {e}[/yellow]")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def _load_dataset_dir_predictions(
+    dataset_dir: Path,
+    sample_id: str,
+    gene_name: str,
+    window_size_key: str
+) -> np.ndarray:
+    """
+    Carrega predições do dataset_dir e extrai janela central.
+    
+    Args:
+        dataset_dir: Diretório raiz do dataset
+        sample_id: ID do indivíduo
+        gene_name: Nome do gene
+        window_size_key: Chave do tamanho da janela (ex: "SEQUENCE_LENGTH_16KB")
+    
+    Returns:
+        Array [window_size, 6] com valores de RNA-seq
+    """
+    # Caminho para o arquivo de predições
+    predictions_file = (dataset_dir / "individuals" / sample_id / "windows" / 
+                       gene_name / "predictions_H1" / "rna_seq.npz")
+    
+    if not predictions_file.exists():
+        raise FileNotFoundError(f"Predictions file not found: {predictions_file}")
+    
+    console.print(f"[cyan]  Loading predictions from: {predictions_file}[/cyan]")
+    
+    # Carregar arquivo .npz
+    data = np.load(predictions_file)
+    values = data['values']  # Shape esperado: [sequence_length, 6]
+    
+    console.print(f"[dim]  Loaded shape: {values.shape}[/dim]")
+    
+    # Mapa de window_size_key para número de bases
+    window_size_map = {
+        "SEQUENCE_LENGTH_2KB": 2048,
+        "SEQUENCE_LENGTH_4KB": 4096,
+        "SEQUENCE_LENGTH_8KB": 8192,
+        "SEQUENCE_LENGTH_16KB": 16384,
+        "SEQUENCE_LENGTH_32KB": 32768,
+        "SEQUENCE_LENGTH_64KB": 65536,
+        "SEQUENCE_LENGTH_100KB": 102400,
+        "SEQUENCE_LENGTH_128KB": 131072,
+        "SEQUENCE_LENGTH_256KB": 262144,
+        "SEQUENCE_LENGTH_500KB": 512000,
+        "SEQUENCE_LENGTH_512KB": 524288,
+        "SEQUENCE_LENGTH_1MB": 1048576,
+    }
+    
+    target_length = window_size_map.get(window_size_key)
+    if target_length is None:
+        raise ValueError(f"Invalid window_size_key: {window_size_key}")
+    
+    # Extrair janela central usando função centralizada
+    window_values = extract_center_window(values, target_length, axis=0)
+    
+    console.print(f"[green]  ✓ Extracted center window: {window_values.shape}[/green]")
+    
+    return window_values
+
+
+def predict_with_alphagenome_interval(
+    gene_name: str,
+    config: Dict,
+    ontology_terms: List[str],
+    window_size_key: str = "SEQUENCE_LENGTH_16KB",
+    return_full_output: bool = False
+) -> Optional[np.ndarray]:
+    """
+    Get predictions from AlphaGenome API usando predict_interval (sem extrair FASTA).
+    
+    Esta função usa predict_interval diretamente, deixando o AlphaGenome buscar
+    a sequência do genoma de referência internamente. 
+    
+    Comparado a predict_with_alphagenome, esta função:
+    - NÃO extrai o FASTA do genoma de referência
+    - Chama client.predict_interval() diretamente
+    - Deixa o AlphaGenome buscar a sequência internamente
+    
+    Args:
+        gene_name: Nome do gene (e.g., 'MC1R')
+        config: Dicionário de configuração
+        ontology_terms: Lista de termos de ontologia (tissue/cell types)
+        window_size_key: Tamanho da janela (e.g., 'SEQUENCE_LENGTH_16KB')
+        return_full_output: Se True, retorna (values, output, gtf) ao invés de apenas values
+    
+    Returns:
+        Array numpy com predições [window_size, 6] ou None se falhar
+        Se return_full_output=True, retorna (values, output, gtf)
+    """
+    if not ALPHAGENOME_AVAILABLE:
+        raise ImportError("alphagenome package not available")
+    
+    try:
+        import pandas as pd
+        from alphagenome.data import gene_annotation
+        import time
+    except ImportError as e:
+        console.print(f"[red]Error importing required modules: {e}[/red]")
+        return None
+    
+    api_key = config['alphagenome_api'].get('api_key') or os.environ.get('ALPHAGENOME_API_KEY')
+    if not api_key:
+        raise ValueError("AlphaGenome API key not provided")
+    
+    # Initialize client
+    client = dna_client.create(api_key)
+    
+    console.print(f"[cyan]  Loading GTF for gene {gene_name}...[/cyan]")
+    
+    try:
+        # Load GTF from local cache
+        gtf_cache_path = Path("/dados/GENOMICS_DATA/top3/non_longevous_results_genes/gtf_cache.feather")
+        if not gtf_cache_path.exists():
+            console.print(f"[red]GTF cache not found: {gtf_cache_path}[/red]")
+            return None
         
-#     except Exception as e:
-#         console.print(f"[yellow]  Warning: Could not load individual sequence: {e}[/yellow]")
-#         import traceback
-#         traceback.print_exc()
-#         return None
+        console.print(f"[dim]  Loading GTF from cache: {gtf_cache_path}[/dim]")
+        gtf = pd.read_feather(gtf_cache_path)
+        
+        # Get gene interval
+        interval = gene_annotation.get_gene_interval(gtf, gene_symbol=gene_name)
+        console.print(f"[dim]  ✓ Found gene interval: {interval}[/dim]")
+        
+        # Resize to desired window
+        window_size_enum = getattr(dna_client, window_size_key)
+        interval = interval.resize(window_size_enum)
+        console.print(f"[dim]  ✓ Resized to {window_size_key}: {interval}[/dim]")
+        
+        # Get requested outputs
+        requested_outputs = [dna_client.OutputType.RNA_SEQ]
+        
+        console.print(f"[cyan]  Calling AlphaGenome API (predict_interval)...[/cyan]")
+        console.print(f"[dim]  Ontology terms: {ontology_terms}[/dim]")
+        
+        # Call AlphaGenome API using predict_interval
+        start_time = time.time()
+        output = client.predict_interval(
+            interval=interval,
+            requested_outputs=requested_outputs,
+            ontology_terms=ontology_terms
+        )
+        elapsed = time.time() - start_time
+        
+        console.print(f"[cyan]  API call completed in {elapsed:.1f}s[/cyan]")
+        
+        # Extract values from output
+        if hasattr(output, 'rna_seq') and hasattr(output.rna_seq, 'values'):
+            values = output.rna_seq.values
+            console.print(f"[dim]  ✓ Received predictions shape: {values.shape}[/dim]")
+            
+            # Apply rate limiting
+            delay = config['alphagenome_api'].get('rate_limit_delay', 0.5)
+            if delay > 0:
+                time.sleep(delay)
+            
+            if return_full_output:
+                return (values, output, gtf)
+            return values
+        else:
+            console.print(f"[red]No RNA-seq data in output[/red]")
+            return None
+            
+    except Exception as e:
+        console.print(f"[red]Error in predict_with_alphagenome_interval: {e}[/red]")
+        import traceback
+        traceback.print_exc()
+        return None
 
 
 def predict_with_alphagenome(
@@ -711,16 +954,8 @@ def _load_from_alphagenome_api(
         for ont_idx in range(values.shape[1]):
             track_array = values[:, ont_idx]
             
-            # Extract center if needed
-            if len(track_array) > window_center_size:
-                sequence_length = len(track_array)
-                center_idx = sequence_length // 2
-                half_size = window_center_size // 2
-                start_idx = max(0, center_idx - half_size)
-                end_idx = min(sequence_length, center_idx + half_size)
-                central_track = track_array[start_idx:end_idx]
-            else:
-                central_track = track_array
+            # Extract center if needed using centralized function
+            central_track = extract_center_window(track_array, window_center_size, axis=0)
             
             gene_tracks.append(central_track)
         
@@ -812,14 +1047,8 @@ def load_raw_alphagenome_data(
         for ont_idx in range(values.shape[1]):
             track_array = values[:, ont_idx]
             
-            # Extract center
-            sequence_length = len(track_array)
-            center_idx = sequence_length // 2
-            half_size = center_bp // 2
-            start_idx = max(0, center_idx - half_size)
-            end_idx = min(sequence_length, center_idx + half_size)
-            
-            central_track = track_array[start_idx:end_idx]
+            # Extract center using centralized function
+            central_track = extract_center_window(track_array, center_bp, axis=0)
             gene_tracks.append(central_track)
         
         return (np.array(gene_tracks), None, None)  # Shape: [6, center_bp], no AlphaGenome objects in file mode
@@ -897,14 +1126,8 @@ def _load_from_files(
             # Extrair coluna (uma ontologia por vez)
             track_array = values[:, ont_idx]
             
-            # Extrair trecho central desta coluna
-            sequence_length = len(track_array)
-            center_idx = sequence_length // 2
-            half_size = window_center_size // 2
-            start_idx = max(0, center_idx - half_size)
-            end_idx = min(sequence_length, center_idx + half_size)
-            
-            central_track = track_array[start_idx:end_idx]
+            # Extrair trecho central usando função centralizada
+            central_track = extract_center_window(track_array, window_center_size, axis=0)
             gene_tracks.append(central_track)
         
         # Empilhar as tracks como linhas (shape: [6, window_center_size])
@@ -1050,7 +1273,9 @@ def plot_comparison(
     metrics: Dict,
     genes_displayed: List[str],
     config: Dict,
-    viewer: Optional[InteractiveViewer] = None
+    viewer: Optional[InteractiveViewer] = None,
+    label1: str = "Cache",
+    label2: str = "AlphaGenome"
 ) -> plt.Figure:
     """
     Plota gráfico de comparação com subplots independentes para cada track.
@@ -1063,6 +1288,8 @@ def plot_comparison(
         genes_displayed: Lista de genes exibidos
         config: Configuração do programa
         viewer: Viewer interativo (opcional)
+        label1: Label for first dataset
+        label2: Label for second dataset
         
     Returns:
         Figura matplotlib
@@ -1090,9 +1317,9 @@ def plot_comparison(
         
         # Plotar
         ax.plot(x_positions, cache_track, 
-                color='blue', linewidth=1.0, alpha=0.7, label='Cache')
+                color='blue', linewidth=1.0, alpha=0.7, label=label1)
         ax.plot(x_positions, alpha_track,
-                color='red', linewidth=1.0, linestyle='--', alpha=0.7, label='AlphaGenome')
+                color='red', linewidth=1.0, linestyle='--', alpha=0.7, label=label2)
         
         # Criar label com gene e ontologia
         gene_idx = track_idx // NUM_ONTOLOGIES
@@ -1347,6 +1574,328 @@ def process_sample_raw_mode(
     return True
 
 
+def process_sample_comparison_mode(
+    config: Dict,
+    index: int,
+    dataset_metadata: Dict,
+    splits_data: Optional[Dict] = None,
+    norm_params: Optional[Dict] = None,
+    viewer: Optional[InteractiveViewer] = None
+) -> bool:
+    """
+    Process sample in comparison mode (3 modes available).
+    
+    Modes:
+    - alphagenome_ref_x_dataset_dir: Compare AlphaGenome (reference) vs dataset_dir
+    - alphagenome_ind_x_dataset_dir: Compare AlphaGenome (individual) vs dataset_dir
+    - dataset_dir_x_cache_dir: Compare dataset_dir (normalized) vs cache_dir
+    """
+    comparison_mode = config.get('comparison_mode', 'dataset_dir_x_cache_dir')
+    dataset_dir = Path(config['dataset_dir'])
+    
+    # Determine sample_id
+    if config.get('sample_id'):
+        sample_id = config['sample_id']
+    else:
+        # If comparison_mode is dataset_dir_x_cache_dir, use index from splits
+        if comparison_mode == 'dataset_dir_x_cache_dir' and splits_data:
+            split = config.get('split', 'train')
+            # splits_data has keys like 'train_indices', 'val_indices', 'test_indices'
+            split_key = f"{split}_indices"
+            split_indices = splits_data.get(split_key, [])
+            if index >= len(split_indices):
+                console.print(f"[red]Index {index} out of range for split {split} (size: {len(split_indices)})[/red]")
+                return False
+            # Get the actual index in dataset_metadata['individuals']
+            dataset_index = split_indices[index]
+            sample_id = dataset_metadata['individuals'][dataset_index]
+        else:
+            sample_id = dataset_metadata['individuals'][index]
+    
+    console.print(f"\n[bold cyan]COMPARISON MODE: {comparison_mode}[/bold cyan]")
+    console.print(f"[green]✓ Sample: {sample_id}[/green]")
+    
+    # Get gene filter
+    gene_filter = config.get('gene_filter')
+    genes_in_order = get_genes_in_dataset_order(dataset_dir, sample_id)
+    
+    if gene_filter is None:
+        genes_to_process = genes_in_order
+    elif isinstance(gene_filter, str):
+        genes_to_process = [gene_filter]
+    elif isinstance(gene_filter, list):
+        genes_to_process = gene_filter
+    else:
+        raise ValueError(f"Invalid gene_filter: {gene_filter}")
+    
+    # Get window size
+    window_size_key = config.get('raw_mode', {}).get('window_size_key', 'SEQUENCE_LENGTH_16KB')
+    
+    for gene_name in genes_to_process:
+        console.print(f"\n[cyan]Processing {gene_name}...[/cyan]")
+        
+        try:
+            if comparison_mode == "alphagenome_x_alphagenome_ref":
+                # Mode: AlphaGenome (predict_interval) vs AlphaGenome (predict_sequence com FASTA)
+                console.print(f"[dim]  Loading AlphaGenome via predict_interval...[/dim]")
+                ontology_terms = config['alphagenome_api']['ontology_terms']
+                
+                # AlphaGenome usando predict_interval (sem FASTA)
+                result_interval = predict_with_alphagenome_interval(
+                    gene_name=gene_name,
+                    config=config,
+                    ontology_terms=ontology_terms,
+                    window_size_key=window_size_key,
+                    return_full_output=False
+                )
+                
+                if result_interval is None:
+                    console.print(f"[red]  Failed to load AlphaGenome data (predict_interval)[/red]")
+                    continue
+                
+                console.print(f"[dim]  Loading AlphaGenome via predict_sequence (FASTA)...[/dim]")
+                
+                # AlphaGenome usando predict_sequence com FASTA extraído
+                result_fasta = predict_with_alphagenome(
+                    gene_name=gene_name,
+                    config=config,
+                    ontology_terms=ontology_terms,
+                    window_size_key=window_size_key,
+                    return_full_output=False,
+                    sample_id=None  # Reference genome
+                )
+                
+                if result_fasta is None:
+                    console.print(f"[red]  Failed to load AlphaGenome data (predict_sequence)[/red]")
+                    continue
+                
+                # Transpose both to [6, window_size] for plotting
+                data1 = np.array(result_interval).T  # [6, window_size]
+                data2 = np.array(result_fasta).T  # [6, window_size]
+                
+                label1 = "AlphaGenome (predict_interval)"
+                label2 = "AlphaGenome (predict_sequence/FASTA)"
+                
+            elif comparison_mode == "alphagenome_ref_x_dataset_dir":
+                # Mode 1: AlphaGenome (reference) vs dataset_dir
+                console.print(f"[dim]  Loading AlphaGenome (reference genome)...[/dim]")
+                ontology_terms = config['alphagenome_api']['ontology_terms']
+                
+                result = predict_with_alphagenome(
+                    gene_name=gene_name,
+                    config=config,
+                    ontology_terms=ontology_terms,
+                    window_size_key=window_size_key,
+                    return_full_output=False,
+                    sample_id=None  # Use reference genome
+                )
+                
+                if result is None:
+                    console.print(f"[red]  Failed to load AlphaGenome data[/red]")
+                    continue
+                
+                alphagenome_data = np.array(result)  # Shape: [window_size, 6]
+                
+                # Load dataset_dir data
+                dataset_data = _load_dataset_dir_predictions(
+                    dataset_dir, sample_id, gene_name, window_size_key
+                )
+                
+                # Transpose both to [6, window_size] for plotting
+                data1 = alphagenome_data.T  # [6, window_size]
+                data2 = dataset_data.T  # [6, window_size]
+                
+                label1 = "AlphaGenome (Ref)"
+                label2 = "Dataset Dir"
+                
+            elif comparison_mode == "alphagenome_ind_x_dataset_dir":
+                # Mode 2: AlphaGenome (individual) vs dataset_dir
+                console.print(f"[dim]  Loading AlphaGenome (individual genome)...[/dim]")
+                ontology_terms = config['alphagenome_api']['ontology_terms']
+                
+                result = predict_with_alphagenome(
+                    gene_name=gene_name,
+                    config=config,
+                    ontology_terms=ontology_terms,
+                    window_size_key=window_size_key,
+                    return_full_output=False,
+                    sample_id=sample_id  # Use individual's genome
+                )
+                
+                if result is None:
+                    console.print(f"[red]  Failed to load AlphaGenome data[/red]")
+                    continue
+                
+                alphagenome_data = np.array(result)  # Shape: [window_size, 6]
+                
+                # Load dataset_dir data
+                dataset_data = _load_dataset_dir_predictions(
+                    dataset_dir, sample_id, gene_name, window_size_key
+                )
+                
+                # Transpose both to [6, window_size] for plotting
+                data1 = alphagenome_data.T  # [6, window_size]
+                data2 = dataset_data.T  # [6, window_size]
+                
+                label1 = f"AlphaGenome ({sample_id})"
+                label2 = "Dataset Dir"
+                
+            elif comparison_mode == "dataset_dir_x_cache_dir":
+                # Mode 3: dataset_dir (normalized) vs cache_dir
+                console.print(f"[dim]  Loading dataset_dir data...[/dim]")
+                
+                # Load dataset_dir data
+                dataset_data = _load_dataset_dir_predictions(
+                    dataset_dir, sample_id, gene_name, window_size_key
+                )
+                
+                # Apply normalization
+                console.print(f"[dim]  Applying normalization...[/dim]")
+                norm_result = apply_normalization(
+                    dataset_data,  # Already numpy array
+                    norm_params['method'],
+                    norm_params
+                )
+                # Convert to numpy if it's a tensor
+                if torch.is_tensor(norm_result):
+                    dataset_data_normalized = norm_result.numpy()
+                else:
+                    dataset_data_normalized = norm_result
+                
+                # Load cache data
+                console.print(f"[dim]  Loading cache data...[/dim]")
+                cache_dir = Path(config['cache_dir'])
+                split = config['split']
+                
+                # Find index in split
+                if splits_data is None:
+                    splits_file = cache_dir / 'splits.json'
+                    with open(splits_file) as f:
+                        splits_data = json.load(f)
+                
+                # splits_data has keys like 'train_indices', not 'train'
+                # We need to find which split contains the sample and its position
+                # The sample_id was determined from dataset_metadata['individuals'][dataset_index]
+                # So we need to find dataset_index in one of the split_indices arrays
+                split_found = None
+                cache_index = None
+                
+                # Get dataset_index from sample_id
+                dataset_index = dataset_metadata['individuals'].index(sample_id)
+                
+                for split_name in ['train', 'val', 'test']:
+                    split_key = f"{split_name}_indices"
+                    if split_key in splits_data:
+                        split_indices = splits_data[split_key]
+                        try:
+                            cache_index = split_indices.index(dataset_index)
+                            split_found = split_name
+                            break
+                        except ValueError:
+                            continue
+                
+                if split_found is None:
+                    console.print(f"[red]  Sample {sample_id} (index {dataset_index}) not found in any split[/red]")
+                    continue
+                
+                console.print(f"[dim]  Sample found in {split_found} split at cache index {cache_index}[/dim]")
+                split = split_found
+                
+                # Load cache data (returns all genes, need to filter)
+                cache_features_all, cache_metadata, _ = load_cache_data(
+                    cache_dir, split, cache_index, gene_filter=None  # Load all genes first
+                )
+                
+                console.print(f"[dim]  cache_features_all shape: {cache_features_all.shape}[/dim]")
+                
+                # Find the gene index in the cache
+                # If genes_in_order is not in metadata, get it from dataset_dir
+                if 'genes_in_order' in cache_metadata:
+                    genes_in_cache = cache_metadata['genes_in_order']
+                else:
+                    genes_in_cache = get_genes_in_dataset_order(dataset_dir, sample_id)
+                
+                console.print(f"[dim]  Genes in cache: {genes_in_cache}[/dim]")
+                
+                try:
+                    gene_idx_in_cache = genes_in_cache.index(gene_name)
+                except ValueError:
+                    console.print(f"[red]  Gene {gene_name} not found in cache[/red]")
+                    continue
+                
+                # Extract the 6 tracks for this gene
+                start_track = gene_idx_in_cache * 6
+                end_track = start_track + 6
+                cache_features = cache_features_all[start_track:end_track, :]
+                
+                console.print(f"[dim]  Extracted cache tracks [{start_track}:{end_track}], shape: {cache_features.shape}[/dim]")
+                
+                # Transpose both to [6, window_size] for plotting
+                dataset_data_normalized_T = dataset_data_normalized.T  # [6, window_size]
+                
+                console.print(f"[dim]  dataset_data_normalized_T type: {type(dataset_data_normalized_T)}, cache_features type: {type(cache_features)}[/dim]")
+                
+                # Make sure cache_features is a numpy array
+                if torch.is_tensor(cache_features):
+                    cache_features_np = cache_features.numpy()
+                else:
+                    cache_features_np = cache_features
+                
+                # Extract central region from dataset_data to match cache window_size
+                dataset_window_size = dataset_data_normalized_T.shape[1]  # e.g., 102400
+                cache_window_size = cache_features_np.shape[1]  # e.g., 10000
+                
+                console.print(f"[dim]  Dataset window: {dataset_window_size}, Cache window: {cache_window_size}[/dim]")
+                
+                if dataset_window_size > cache_window_size:
+                    # Extract center from dataset_data using centralized function
+                    dataset_data_trimmed = extract_center_window(dataset_data_normalized_T, cache_window_size, axis=1)
+                    console.print(f"[dim]  Trimmed dataset_data to cache window size: {dataset_data_trimmed.shape}[/dim]")
+                else:
+                    dataset_data_trimmed = dataset_data_normalized_T
+                
+                data1 = dataset_data_trimmed  # [6, cache_window_size]
+                data2 = cache_features_np  # [6, cache_window_size]
+                
+                label1 = "Dataset Dir (normalized)"
+                label2 = "Cache Dir"
+                
+            else:
+                console.print(f"[red]  Invalid comparison_mode: {comparison_mode}[/red]")
+                continue
+            
+            # Compute metrics first
+            console.print(f"[dim]  data1 shape: {data1.shape}, data2 shape: {data2.shape}[/dim]")
+            metrics = compute_metrics(data1, data2, config.get('verbose_metrics', True))
+            
+            # Plot comparison
+            fig = plot_comparison(
+                data1, data2, sample_id, metrics, [gene_name], config, viewer,
+                label1=label1, label2=label2
+            )
+            
+            # Save if requested
+            if config.get('save_plots', False):
+                output_dir = config.get('output_dir')
+                if output_dir:
+                    output_path = Path(output_dir)
+                    output_path.mkdir(parents=True, exist_ok=True)
+                    filename = f"{config.get('output_prefix', 'compare')}_{sample_id}_{gene_name}.png"
+                    fig.savefig(output_path / filename, dpi=150, bbox_inches='tight')
+                    console.print(f"[green]✓ Saved: {output_path / filename}[/green]")
+            
+            plt.show()
+            
+        except Exception as e:
+            console.print(f"[red]  Error processing {gene_name}: {e}[/red]")
+            import traceback
+            traceback.print_exc()
+            continue
+    
+    console.print(f"\n[green]✓ Comparison mode processing completed![/green]")
+    return True
+
+
 def process_sample(
     config: Dict,
     index: int,
@@ -1501,6 +2050,68 @@ def main():
     console.print("\n[bold green]════════════════════════════════════════════════════════════[/bold green]")
     console.print("[bold green]       VERIFICAÇÃO DE DATASET PROCESSADO                   [/bold green]")
     console.print("[bold green]════════════════════════════════════════════════════════════[/bold green]\n")
+    
+    # Check for comparison mode first
+    comparison_mode = config.get('comparison_mode')
+    if comparison_mode:
+        # Validate comparison_mode
+        valid_modes = [
+            'alphagenome_x_alphagenome_ref',
+            'alphagenome_ref_x_dataset_dir', 
+            'alphagenome_ind_x_dataset_dir', 
+            'dataset_dir_x_cache_dir'
+        ]
+        if comparison_mode not in valid_modes:
+            console.print(f"[red]Invalid comparison_mode: {comparison_mode}[/red]")
+            console.print(f"[yellow]Valid modes: {', '.join(valid_modes)}[/yellow]")
+            sys.exit(1)
+        
+        # Validate required configs for each mode
+        if 'alphagenome' in comparison_mode:
+            if not config.get('alphagenome_api', {}).get('enabled', False):
+                console.print(f"[red]AlphaGenome API must be enabled for mode: {comparison_mode}[/red]")
+                sys.exit(1)
+        
+        if comparison_mode == 'dataset_dir_x_cache_dir':
+            cache_dir = Path(config.get('cache_dir', ''))
+            if not cache_dir or not cache_dir.exists():
+                console.print(f"[red]cache_dir must exist for mode: {comparison_mode}[/red]")
+                console.print(f"[yellow]cache_dir: {cache_dir}[/yellow]")
+                sys.exit(1)
+        
+        # Load dataset metadata
+        dataset_dir = Path(config['dataset_dir'])
+        dataset_metadata_file = dataset_dir / 'dataset_metadata.json'
+        with open(dataset_metadata_file) as f:
+            dataset_metadata = json.load(f)
+        
+        # Load splits and norm_params if needed
+        splits_data = None
+        norm_params = None
+        if comparison_mode == 'dataset_dir_x_cache_dir':
+            cache_dir = Path(config['cache_dir'])
+            splits_file = cache_dir / 'splits.json'
+            with open(splits_file) as f:
+                splits_data = json.load(f)
+            
+            norm_params_file = cache_dir / 'normalization_params.json'
+            with open(norm_params_file) as f:
+                norm_params = json.load(f)
+        
+        # Process sample in comparison mode
+        index = config.get('index', 0)
+        success = process_sample_comparison_mode(
+            config, index, dataset_metadata, 
+            splits_data=splits_data,
+            norm_params=norm_params
+        )
+        
+        if success:
+            console.print("\n[bold green]✓ Comparison completed successfully![/bold green]\n")
+        else:
+            sys.exit(1)
+        
+        return
     
     # Validar diretórios
     dataset_dir = Path(config['dataset_dir'])

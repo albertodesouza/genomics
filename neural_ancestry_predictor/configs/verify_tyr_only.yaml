@@ -4,12 +4,15 @@ dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes"
 
 split: "test"
 index: 0
-sample_id: null
+sample_id: "HG02445"  # Usar sample existente
 
 # Genes disponíveis:
 #   SLC24A5, SLC45A2, OCA2, HERC2, MC1R, EDAR, 
 #   MFSD12, DDB1, TCHH, TYR, TYRP1
 gene_filter: "MC1R"  # Mostrar apenas gene TYR (6 tracks)
+
+# Comparison mode: alphagenome_ref_x_dataset_dir, alphagenome_ind_x_dataset_dir, or dataset_dir_x_cache_dir
+comparison_mode: "dataset_dir_x_cache_dir"
 
 # AlphaGenome API verification mode (opcional)
 alphagenome_api:

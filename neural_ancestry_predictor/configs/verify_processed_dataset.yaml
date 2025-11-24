@@ -57,6 +57,16 @@ sample_id: null
 gene_filter: null
 
 # ───────────────────────────────────────────────────────────────────
+# MODO DE COMPARAÇÃO
+# ───────────────────────────────────────────────────────────────────
+
+# Comparison mode options:
+# - alphagenome_ref_x_dataset_dir: Compare AlphaGenome (reference genome) vs dataset_dir
+# - alphagenome_ind_x_dataset_dir: Compare AlphaGenome (individual's genome) vs dataset_dir  
+# - dataset_dir_x_cache_dir: Compare dataset_dir (normalized) vs cache_dir
+comparison_mode: "dataset_dir_x_cache_dir"
+
+# ───────────────────────────────────────────────────────────────────
 # ALPHAGENOME API (OPCIONAL)
 # ───────────────────────────────────────────────────────────────────
 

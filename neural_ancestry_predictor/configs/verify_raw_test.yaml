@@ -6,12 +6,15 @@ cache_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes/datasets/
 
 split: "test"
 index: 0
-sample_id: null
+sample_id: HG02445
 
 # Test with single gene
-gene_filter: "MC1R"
+gene_filter: "SLC24A5"
 
-# AlphaGenome API mode (not used in files mode)
+# Comparison mode: alphagenome_x_alphagenome_ref, alphagenome_ref_x_dataset_dir, alphagenome_ind_x_dataset_dir, or dataset_dir_x_cache_dir
+comparison_mode: "alphagenome_ref_x_dataset_dir"
+
+# For alphagenome modes, specify API settings
 alphagenome_api:
   enabled: true
   api_key: null

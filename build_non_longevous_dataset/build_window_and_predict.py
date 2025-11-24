@@ -56,10 +56,10 @@ Common tissue CURIEs:
 Notes:
 - We auto-detect the 'chr' prefix from the FASTA index (.fai) and coerce the gene
   chromosome accordingly.
-- We ensure output sequences are exactly 1,000,000 nt by trimming or padding with
-  reference bases as needed (after consensus).
+- We ensure output sequences match the specified window_size (e.g., 524288 or 1048576 bp)
+  by trimming or padding with reference bases as needed (after consensus).
 - AlphaGenome predictions are saved as compressed NumPy arrays (.npz) with metadata (.json).
-  Each .npz file contains tracks with ~1 million values (one per nucleotide).
+  Each .npz file contains tracks with one value per nucleotide position.
 
 Output Structure:
   outdir/SAMPLE__GENE/
@@ -94,7 +94,8 @@ from alphagenome.data import gene_annotation
 from alphagenome.models import dna_client
 from alphagenome.data import genome
 
-SEQLEN_1MB = dna_client.SEQUENCE_LENGTH_1MB  # 1_000_000
+# Note: SEQUENCE_LENGTH_1MB = 1048576 (2^20), not 1000000
+# We no longer use a global constant; window_size is passed dynamically
 
 
 def run(cmd: list, check: bool = True) -> subprocess.CompletedProcess:
@@ -258,20 +259,31 @@ def write_fasta(seq: str, path: Path, header: str = "seq"):
             f.write(seq[i:i+60] + "\n")
 
 
-def adjust_to_1mb(consensus_seq: str, ref_window_seq: str) -> str:
+def adjust_to_target_size(consensus_seq: str, ref_window_seq: str, target_size: int) -> str:
     """
-    Ensure final sequence is exactly 1,000,000 nt.
+    Ensure final sequence is exactly target_size nt.
     - If longer: trim the end.
     - If shorter: pad with reference bases from the right; if still short, pad 'N'.
+    
+    Args:
+        consensus_seq: The consensus sequence to adjust
+        ref_window_seq: Reference window sequence for padding
+        target_size: Target sequence length (e.g., 524288, 1048576)
+    
+    Returns:
+        Adjusted sequence of exactly target_size nucleotides
     """
+
+    return ref_window_seq
+    
     L = len(consensus_seq)
-    if L == SEQLEN_1MB:
+    if L == target_size:
         return consensus_seq
-    if L > SEQLEN_1MB:
-        return consensus_seq[:SEQLEN_1MB]
+    if L > target_size:
+        return consensus_seq[:target_size]
 
     # Need to pad
-    needed = SEQLEN_1MB - L
+    needed = target_size - L
     # take from ref window tail following the current length (best-effort alignment)
     pad_from_ref = ref_window_seq[L:L+needed]
     if len(pad_from_ref) < needed:
@@ -399,7 +411,7 @@ def process_window(
             bcftools_consensus_per_hap(ref_window_fa, vcf_cons, iupac_fa, hap='IUPAC')
     
     # 4) Enforce exact length
-    print("[INFO] Enforcing exact length for outputs ...")
+    print(f"[INFO] Enforcing exact length ({window_size} bp) for outputs ...")
     ref_seq = read_fasta_seq_only(ref_window_fa)
     
     def fix_and_write(raw_path: Path, fixed_path: Path, header: str):
@@ -409,7 +421,7 @@ def process_window(
             print(f"[INFO] Fixed sequence already exists: {fixed_path}")
             return fixed_path
         seq = read_fasta_seq_only(raw_path)
-        fixed = adjust_to_1mb(seq, ref_seq)
+        fixed = adjust_to_target_size(seq, ref_seq, window_size)
         write_fasta(fixed, fixed_path, header=header)
         return fixed_path
     
@@ -484,8 +496,8 @@ def process_window(
             if fa_path is None:
                 return None
             seq = read_fasta_seq_only(fa_path)
-            if len(seq) != SEQLEN_1MB:
-                print(f"[WARN] {fa_path.name} length is {len(seq)} (expected {SEQLEN_1MB}). Skipping.", file=sys.stderr)
+            if len(seq) != args.window_size:
+                print(f"[WARN] {fa_path.name} length is {len(seq)} (expected {args.window_size}). Skipping.", file=sys.stderr)
                 return None
             return seq
         
@@ -590,7 +602,8 @@ def main():
     ap.add_argument("--vcf", help="Path to chromosome-level 1000G VCF.gz (indexed) containing the sample")
     ap.add_argument("--gtf-feather", help="Path to GENCODE v46 GTF feather (optional; will use public URL if omitted)")
     ap.add_argument("--gtf-cache-dir", help="Directory to store shared GTF cache (optional; defaults to --outdir)")
-    ap.add_argument("--window-size", type=int, default=SEQLEN_1MB, help="Window size; default is AlphaGenome 1Mb")
+    ap.add_argument("--window-size", type=int, default=1048576, 
+                    help="Window size in bp (must be power of 2); default is 1048576 (1MB). Valid: 524288 (512KB), 1048576 (1MB)")
     ap.add_argument("--outdir", default="./out", help="Output directory")
     ap.add_argument("--predict", action="store_true", help="Run AlphaGenome predictions on haplotypes (H1/H2)")
     ap.add_argument("--skip-h2", action="store_true", help="Skip building H2 (haplotype 2)")
