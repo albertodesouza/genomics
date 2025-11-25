@@ -245,7 +245,8 @@ class DatasetMetadataBuilder:
     def __init__(
         self,
         dataset_dir: Path,
-        dataset_name: str = "non_longevous_1000g"
+        dataset_name: str = "non_longevous_1000g",
+        window_size: Optional[int] = None
     ):
         """
         Inicializa builder de metadados globais.
@@ -253,6 +254,7 @@ class DatasetMetadataBuilder:
         Args:
             dataset_dir: Diretório base do dataset
             dataset_name: Nome do dataset
+            window_size: Tamanho da janela em pares de base (ex: 524288, 1048576)
         """
         self.dataset_dir = Path(dataset_dir)
         self.dataset_name = dataset_name
@@ -263,15 +265,70 @@ class DatasetMetadataBuilder:
             'creation_date': datetime.now().isoformat(),
             'last_updated': datetime.now().isoformat(),
             'total_individuals': 0,
-            'window_size': 1000000,
+            'window_size': window_size,
             'individuals': [],
+            'individuals_pedigree': {},
+            'genes': [],
             'population_distribution': {},
             'superpopulation_distribution': {},
+            'sex_distribution': {'male': 0, 'female': 0},
             'window_types': set(),
             'alphagenome_outputs': set(),
             'ontologies': set(),
+            'ontology_details': {},
+            'gene_strands': {},
             'frog_population_count': 0
         }
+    
+    def _parse_prediction_metadata(self, predictions_dir: Path) -> Dict:
+        """
+        Parse prediction metadata files to extract ontology details and strand info.
+        
+        Args:
+            predictions_dir: Path to predictions_H1 or predictions_H2 directory
+            
+        Returns:
+            Dictionary with ontology details and strands
+        """
+        result = {
+            'ontology_details': {},
+            'strands': set()
+        }
+        
+        # Look for rna_seq_metadata.json (or other output type metadata)
+        metadata_files = list(predictions_dir.glob('*_metadata.json'))
+        
+        for metadata_file in metadata_files:
+            try:
+                with open(metadata_file, 'r') as f:
+                    metadata = json.load(f)
+                
+                # Extract metadata entries
+                if 'metadata' in metadata:
+                    for entry in metadata['metadata']:
+                        ontology_curie = entry.get('ontology_curie', '')
+                        strand = entry.get('strand', '')
+                        
+                        # Store strand
+                        if strand:
+                            result['strands'].add(strand)
+                        
+                        # Store ontology details (only once per ontology)
+                        if ontology_curie and ontology_curie not in result['ontology_details']:
+                            result['ontology_details'][ontology_curie] = {
+                                'biosample_name': entry.get('biosample_name', ''),
+                                'biosample_type': entry.get('biosample_type', ''),
+                                'biosample_life_stage': entry.get('biosample_life_stage', ''),
+                                'gtex_tissue': entry.get('gtex_tissue', ''),
+                                'data_source': entry.get('data_source', ''),
+                                'endedness': entry.get('endedness', ''),
+                                'genetically_modified': entry.get('genetically_modified', False)
+                            }
+            except Exception as e:
+                print(f"[WARN] Error parsing {metadata_file}: {e}")
+                continue
+        
+        return result
     
     def scan_individuals(self) -> None:
         """
@@ -290,9 +347,14 @@ class DatasetMetadataBuilder:
         
         population_counts = {}
         superpopulation_counts = {}
+        sex_counts = {'male': 0, 'female': 0}
+        individuals_pedigree = {}
+        all_genes = set()
         all_outputs = set()
         all_ontologies = set()
         all_window_types = set()
+        all_ontology_details = {}
+        gene_strands = {}
         frog_pop_count = 0
         
         valid_individuals = []
@@ -318,11 +380,59 @@ class DatasetMetadataBuilder:
                 population_counts[pop] = population_counts.get(pop, 0) + 1
                 superpopulation_counts[superpop] = superpopulation_counts.get(superpop, 0) + 1
                 
+                # Contar sexo (1=Male, 2=Female)
+                sex = ind_metadata.get('sex', 0)
+                if sex == 1:
+                    sex_counts['male'] += 1
+                elif sex == 2:
+                    sex_counts['female'] += 1
+                
+                # Adicionar pedigree do indivíduo
+                sex_label = 'Male' if sex == 1 else ('Female' if sex == 2 else 'Unknown')
+                individuals_pedigree[sample_id] = {
+                    'sex': sex,
+                    'sex_label': sex_label,
+                    'superpopulation': superpop,
+                    'population': pop
+                }
+                
+                # Coletar genes/targets
+                windows = ind_metadata.get('windows', [])
+                all_genes.update(windows)
+                
                 # Coletar tipos de janela e outputs
                 for window_name, window_info in ind_metadata.get('window_metadata', {}).items():
                     all_window_types.add(window_info.get('type', 'unknown'))
-                    all_outputs.update(window_info.get('outputs', []))
-                    all_ontologies.update(window_info.get('ontologies', []))
+                    # Remove espaços indevidos dos outputs e ontologias
+                    outputs = window_info.get('outputs', [])
+                    all_outputs.update([out.strip() for out in outputs if out.strip()])
+                    ontologies = window_info.get('ontologies', [])
+                    all_ontologies.update([ont.strip() for ont in ontologies if ont.strip()])
+                
+                # Parse prediction metadata for ontology details and strand info
+                windows_dir = ind_dir / "windows"
+                if windows_dir.exists():
+                    for window_dir in windows_dir.iterdir():
+                        if not window_dir.is_dir():
+                            continue
+                        
+                        gene_name = window_dir.name
+                        
+                        # Check predictions_H1 directory
+                        predictions_h1 = window_dir / "predictions_H1"
+                        if predictions_h1.exists():
+                            parsed_data = self._parse_prediction_metadata(predictions_h1)
+                            
+                            # Merge ontology details
+                            all_ontology_details.update(parsed_data['ontology_details'])
+                            
+                            # Store gene strand (use first strand found)
+                            if gene_name not in gene_strands and parsed_data['strands']:
+                                # Both + and - might be present; we'll store the main one
+                                # For genes, both strands are technically present in predictions
+                                # but we can indicate this
+                                strands_list = sorted(list(parsed_data['strands']))
+                                gene_strands[gene_name] = strands_list[0] if len(strands_list) == 1 else 'both'
                 
                 # Contar populações FROG
                 if 'frog_population_names' in ind_metadata:
@@ -335,20 +445,29 @@ class DatasetMetadataBuilder:
         # Atualizar metadados globais
         self.metadata['total_individuals'] = len(valid_individuals)
         self.metadata['individuals'] = sorted(valid_individuals)
+        # Ordenar individuals_pedigree por chave para manter mesma ordem de 'individuals'
+        self.metadata['individuals_pedigree'] = {k: individuals_pedigree[k] for k in sorted(individuals_pedigree.keys())}
+        self.metadata['genes'] = sorted(list(all_genes))
         self.metadata['population_distribution'] = population_counts
         self.metadata['superpopulation_distribution'] = superpopulation_counts
+        self.metadata['sex_distribution'] = sex_counts
         self.metadata['window_types'] = list(all_window_types)
         self.metadata['alphagenome_outputs'] = sorted(list(all_outputs))
         self.metadata['ontologies'] = sorted(list(all_ontologies))
+        self.metadata['ontology_details'] = all_ontology_details
+        self.metadata['gene_strands'] = gene_strands
         self.metadata['frog_population_count'] = frog_pop_count
         self.metadata['last_updated'] = datetime.now().isoformat()
         
         print(f"[INFO] Escaneamento completo:")
         print(f"  • Indivíduos válidos: {len(valid_individuals)}")
+        print(f"  • Genes/Targets: {len(all_genes)}")
         print(f"  • Populações: {len(population_counts)}")
         print(f"  • Superpopulações: {len(superpopulation_counts)}")
+        print(f"  • Sexo: {sex_counts['male']} masculino, {sex_counts['female']} feminino")
         print(f"  • Tipos de janela: {all_window_types}")
         print(f"  • AlphaGenome outputs: {len(all_outputs)}")
+        print(f"  • Ontologias detalhadas: {len(all_ontology_details)}")
     
     def save_metadata(self) -> None:
         """
@@ -384,7 +503,28 @@ class DatasetMetadataBuilder:
         print(f"Nome: {self.metadata['dataset_name']}")
         print(f"Data de criação: {self.metadata['creation_date']}")
         print(f"Total de indivíduos: {self.metadata['total_individuals']}")
-        print(f"Tamanho da janela: {self.metadata['window_size']:,} bp")
+        
+        window_size = self.metadata.get('window_size')
+        if window_size:
+            print(f"Tamanho da janela: {window_size:,} bp")
+        else:
+            print(f"Tamanho da janela: Não especificado")
+        
+        print(f"\nGenes/Targets: {len(self.metadata.get('genes', []))}")
+        if self.metadata.get('genes'):
+            genes_display = ', '.join(self.metadata['genes'][:10])
+            if len(self.metadata['genes']) > 10:
+                genes_display += f" ... (+{len(self.metadata['genes']) - 10} mais)"
+            print(f"  {genes_display}")
+        
+        print(f"\nPedigree de indivíduos: {len(self.metadata.get('individuals_pedigree', {}))}")
+        if self.metadata.get('individuals_pedigree'):
+            print(f"  (sexo, superpopulação e população para cada indivíduo)")
+        
+        print(f"\nDistribuição por sexo:")
+        sex_dist = self.metadata.get('sex_distribution', {})
+        print(f"  • Masculino: {sex_dist.get('male', 0)}")
+        print(f"  • Feminino: {sex_dist.get('female', 0)}")
         
         print(f"\nDistribuição por superpopulação:")
         for superpop, count in sorted(self.metadata['superpopulation_distribution'].items()):
@@ -396,7 +536,12 @@ class DatasetMetadataBuilder:
         
         print(f"\nAlphaGenome outputs: {', '.join(self.metadata['alphagenome_outputs'])}")
         print(f"Ontologias usadas: {', '.join(self.metadata['ontologies'])}")
-        print(f"Populações FROG: {self.metadata['frog_population_count']}")
+        print(f"Ontologias detalhadas: {len(self.metadata.get('ontology_details', {}))}")
+        
+        if self.metadata.get('gene_strands'):
+            print(f"\nGenes com informação de strand: {len(self.metadata['gene_strands'])}")
+        
+        print(f"\nPopulações FROG: {self.metadata['frog_population_count']}")
         print("="*80 + "\n")
 
 

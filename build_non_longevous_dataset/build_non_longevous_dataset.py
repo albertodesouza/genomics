@@ -285,6 +285,46 @@ def save_checkpoint(checkpoint_file: Path, checkpoint_data: dict):
         json.dump(checkpoint_data, f, indent=2)
 
 
+def parse_fasta_header(fasta_file: Path) -> Tuple[Optional[str], Optional[int], Optional[int]]:
+    """
+    Parse FASTA header to extract chromosome, start, and end positions.
+    
+    Expected header format: >chr11:88974674-89498961
+    
+    Args:
+        fasta_file: Path to FASTA file
+        
+    Returns:
+        Tuple of (chromosome, start, end) or (None, None, None) if parsing fails
+    """
+    try:
+        with open(fasta_file, 'r') as f:
+            header = f.readline().strip()
+        
+        if not header.startswith('>'):
+            return None, None, None
+        
+        # Remove '>' prefix
+        header = header[1:]
+        
+        # Parse format: chr11:88974674-89498961
+        if ':' in header and '-' in header:
+            chrom_part, pos_part = header.split(':', 1)
+            start_str, end_str = pos_part.split('-', 1)
+            
+            chromosome = chrom_part.strip()
+            start = int(start_str.strip())
+            end = int(end_str.strip())
+            
+            return chromosome, start, end
+        
+        return None, None, None
+        
+    except Exception as e:
+        print(f"[WARN] Error parsing FASTA header from {fasta_file}: {e}")
+        return None, None, None
+
+
 def get_chromosome_for_gene(config: dict) -> str:
     """
     Determine which chromosome contains the target gene.
@@ -879,19 +919,42 @@ def main():
                     
                     # Adicionar metadados de cada janela
                     for window_name in window_names:
-                        # Tentar determinar informações da janela
+                        # Extrair informações da janela
                         mode = params.get('mode', 'gene')
+                        window_dir = windows_dir / window_name
+                        ref_fasta = window_dir / "ref.window.fa"
                         
-                        # Para simplificar, usaremos valores padrão
-                        # Em produção, poderíamos parsear os arquivos para obter estas informações
+                        # Parse FASTA header to get real chromosome/start/end
+                        chromosome = 'unknown'
+                        start = 0
+                        end = 0
+                        
+                        if ref_fasta.exists():
+                            chromosome, start, end = parse_fasta_header(ref_fasta)
+                            if chromosome is None:
+                                # Fallback to defaults if parsing fails
+                                chromosome = 'unknown'
+                                start = 0
+                                end = params.get('window_size', 1000000)
+                        else:
+                            # Use window_size from config as fallback
+                            end = params.get('window_size', 1000000)
+                        
+                        # Parse outputs and ontologies, removing extra whitespace
+                        outputs_str = params.get('outputs', '')
+                        outputs = [o.strip() for o in outputs_str.split(',') if o.strip()] if outputs_str else []
+                        
+                        ontology_str = params.get('ontology', '')
+                        ontologies = [ont.strip() for ont in ontology_str.split(',') if ont.strip()] if ontology_str else []
+                        
                         ind_builder.add_window(
                             target_name=window_name,
                             window_type=mode,
-                            chromosome='unknown',  # Seria ideal extrair do FASTA ou metadados
-                            start=0,
-                            end=1000000,
-                            outputs=params.get('outputs', '').split(',') if params.get('outputs') else [],
-                            ontologies=params.get('ontology', '').split(',') if params.get('ontology') else []
+                            chromosome=chromosome,
+                            start=start,
+                            end=end,
+                            outputs=outputs,
+                            ontologies=ontologies
                         )
                 
                 # Salvar metadados individuais
@@ -929,10 +992,12 @@ def main():
         
         try:
             dataset_name = config['project'].get('name', 'non_longevous_dataset')
+            window_size = config['build_window_params'].get('window_size')
             
             metadata_builder = DatasetMetadataBuilder(
                 dataset_dir=output_dir,
-                dataset_name=dataset_name
+                dataset_name=dataset_name,
+                window_size=window_size
             )
             
             # Escanear todos os indivíduos

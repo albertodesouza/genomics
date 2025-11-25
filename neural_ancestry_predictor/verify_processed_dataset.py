@@ -48,17 +48,108 @@ except ImportError:
 
 console = Console()
 
-NUM_ONTOLOGIES = 6  # Número de ontologias RNA-seq por gene
+# ═══════════════════════════════════════════════════════════════════════════
+# Constantes Globais - Tamanhos de Janela AlphaGenome
+# ═══════════════════════════════════════════════════════════════════════════
 
-# Labels das ontologias com strand (3 ontologias × 2 strands = 6 tracks)
-ONTOLOGY_LABELS = [
-    "CL:1000458 (+)\nMelanocyte",
-    "CL:0000346 (+)\nDermal Papilla",
-    "CL:2000092 (+)\nKeratinocyte",
-    "CL:1000458 (-)\nMelanocyte",
-    "CL:0000346 (-)\nDermal Papilla",
-    "CL:2000092 (-)\nKeratinocyte"
-]
+# Tamanhos de janela suportados pelo AlphaGenome (em pares de base)
+WINDOW_SIZE_4KB = 4096
+WINDOW_SIZE_8KB = 8192
+WINDOW_SIZE_16KB = 16384
+WINDOW_SIZE_32KB = 32768
+WINDOW_SIZE_64KB = 65536
+WINDOW_SIZE_128KB = 131072
+WINDOW_SIZE_256KB = 262144
+WINDOW_SIZE_512KB = 524288   # AlphaGenome: "500KB" = 524288 bp (512 KB real)
+WINDOW_SIZE_1MB = 1048576
+
+# Mapeamento de nomes de sequência para tamanhos (usado para validação)
+SEQUENCE_LENGTH_MAP = {
+    "SEQUENCE_LENGTH_4KB": WINDOW_SIZE_4KB,
+    "SEQUENCE_LENGTH_8KB": WINDOW_SIZE_8KB,
+    "SEQUENCE_LENGTH_16KB": WINDOW_SIZE_16KB,
+    "SEQUENCE_LENGTH_32KB": WINDOW_SIZE_32KB,
+    "SEQUENCE_LENGTH_64KB": WINDOW_SIZE_64KB,
+    "SEQUENCE_LENGTH_128KB": WINDOW_SIZE_128KB,
+    "SEQUENCE_LENGTH_256KB": WINDOW_SIZE_256KB,
+    "SEQUENCE_LENGTH_500KB": WINDOW_SIZE_512KB,
+    "SEQUENCE_LENGTH_512KB": WINDOW_SIZE_512KB,  # Alias
+    "SEQUENCE_LENGTH_1MB": WINDOW_SIZE_1MB,
+}
+
+# Mapeamento reverso: tamanho -> nome de sequência
+SIZE_TO_SEQUENCE_NAME = {
+    WINDOW_SIZE_4KB: "SEQUENCE_LENGTH_4KB",
+    WINDOW_SIZE_8KB: "SEQUENCE_LENGTH_8KB",
+    WINDOW_SIZE_16KB: "SEQUENCE_LENGTH_16KB",
+    WINDOW_SIZE_32KB: "SEQUENCE_LENGTH_32KB",
+    WINDOW_SIZE_64KB: "SEQUENCE_LENGTH_64KB",
+    WINDOW_SIZE_128KB: "SEQUENCE_LENGTH_128KB",
+    WINDOW_SIZE_256KB: "SEQUENCE_LENGTH_256KB",
+    WINDOW_SIZE_512KB: "SEQUENCE_LENGTH_500KB",
+    WINDOW_SIZE_1MB: "SEQUENCE_LENGTH_1MB",
+}
+
+NUM_ONTOLOGIES = 6  # Número de ontologias RNA-seq por gene (valor padrão)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Helper Function: Generate Ontology Labels from Dataset Metadata
+# ═══════════════════════════════════════════════════════════════════════════
+
+def generate_ontology_labels(dataset_metadata: Dict) -> List[str]:
+    """
+    Gera labels de ontologias dinamicamente a partir dos metadados do dataset.
+    
+    Args:
+        dataset_metadata: Dicionário com metadados do dataset (deve conter 'ontology_details')
+        
+    Returns:
+        Lista de labels formatados para visualização (com strand + e -)
+        
+    Example:
+        >>> labels = generate_ontology_labels(metadata)
+        >>> labels[0]
+        'CL:1000458 (+)\\nmelanocyte of skin'
+    """
+    ontology_details = dataset_metadata.get('ontology_details', {})
+    
+    if not ontology_details:
+        # Fallback para labels padrão se metadados não tiverem ontology_details
+        console.print("[yellow]⚠ Campo 'ontology_details' não encontrado nos metadados, usando labels padrão[/yellow]")
+        return [
+            "CL:1000458 (+)\nMelanocyte",
+            "CL:0000346 (+)\nDermal Papilla",
+            "CL:2000092 (+)\nKeratinocyte",
+            "CL:1000458 (-)\nMelanocyte",
+            "CL:0000346 (-)\nDermal Papilla",
+            "CL:2000092 (-)\nKeratinocyte"
+        ]
+    
+    # Ordenar ontologias para ordem consistente
+    sorted_ontologies = sorted(ontology_details.keys())
+    
+    labels = []
+    # Primeiro todas as ontologias com strand +
+    for ontology_curie in sorted_ontologies:
+        details = ontology_details[ontology_curie]
+        biosample_name = details.get('biosample_name', ontology_curie)
+        # Simplificar nome se muito longo
+        if len(biosample_name) > 30:
+            # Pegar apenas a primeira parte antes de vírgula ou "of"
+            biosample_name = biosample_name.split(',')[0].split(' of ')[0]
+        label = f"{ontology_curie} (+)\n{biosample_name}"
+        labels.append(label)
+    
+    # Depois todas as ontologias com strand -
+    for ontology_curie in sorted_ontologies:
+        details = ontology_details[ontology_curie]
+        biosample_name = details.get('biosample_name', ontology_curie)
+        if len(biosample_name) > 30:
+            biosample_name = biosample_name.split(',')[0].split(' of ')[0]
+        label = f"{ontology_curie} (-)\n{biosample_name}"
+        labels.append(label)
+    
+    return labels
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -454,14 +545,8 @@ def _get_alphagenome_predictions_for_individual(
         gtf = pd.read_feather(gtf_cache_path)
         interval = gene_annotation.get_gene_interval(gtf, gene_symbol=gene_name)
         
-        # Mapear window_size_key para número de bases
-        window_size_map = {
-            "SEQUENCE_LENGTH_2KB": 2048,
-            "SEQUENCE_LENGTH_16KB": 16384,
-            "SEQUENCE_LENGTH_100KB": 131072,
-            "SEQUENCE_LENGTH_500KB": 524288,
-            "SEQUENCE_LENGTH_1MB": 1048576,
-        }
+        # Mapear window_size_key para número de bases usando constantes globais
+        window_size_map = SEQUENCE_LENGTH_MAP
         window_size = window_size_map.get(window_size_key)
         if window_size is None:
             console.print(f"[red]  Invalid window_size_key: {window_size_key}[/red]")
@@ -546,20 +631,7 @@ def _detect_window_size_key_from_length(length: int) -> str:
     Returns:
         window_size_key correspondente (ex: "SEQUENCE_LENGTH_1MB")
     """
-    length_to_key = {
-        2048: "SEQUENCE_LENGTH_2KB",
-        4096: "SEQUENCE_LENGTH_4KB",
-        8192: "SEQUENCE_LENGTH_8KB",
-        16384: "SEQUENCE_LENGTH_16KB",
-        32768: "SEQUENCE_LENGTH_32KB",
-        65536: "SEQUENCE_LENGTH_64KB",
-        102400: "SEQUENCE_LENGTH_100KB",
-        131072: "SEQUENCE_LENGTH_100KB",  # AlphaGenome usa 100KB para 128KB
-        262144: "SEQUENCE_LENGTH_256KB",
-        512000: "SEQUENCE_LENGTH_500KB",
-        524288: "SEQUENCE_LENGTH_500KB",  # AlphaGenome usa 500KB para 512KB (524288 bp)
-        1048576: "SEQUENCE_LENGTH_1MB",
-    }
+    length_to_key = SIZE_TO_SEQUENCE_NAME
     
     key = length_to_key.get(length)
     if key is None:
@@ -614,22 +686,8 @@ def _load_dataset_dir_predictions(
     
     # Caso contrário, extrair janela central
     # Mapa de window_size_key para número de bases
-    window_size_map = {
-        "SEQUENCE_LENGTH_2KB": 2048,
-        "SEQUENCE_LENGTH_4KB": 4096,
-        "SEQUENCE_LENGTH_8KB": 8192,
-        "SEQUENCE_LENGTH_16KB": 16384,
-        "SEQUENCE_LENGTH_32KB": 32768,
-        "SEQUENCE_LENGTH_64KB": 65536,
-        "SEQUENCE_LENGTH_100KB": 131072,  # AlphaGenome: 100KB = 131072 bp (128 KB)
-        "SEQUENCE_LENGTH_128KB": 131072,
-        "SEQUENCE_LENGTH_256KB": 262144,
-        "SEQUENCE_LENGTH_500KB": 524288,  # AlphaGenome: 500KB = 524288 bp (512 KB)
-        "SEQUENCE_LENGTH_512KB": 524288,  # Alias (use 500KB)
-        "SEQUENCE_LENGTH_1MB": 1048576,
-    }
-    
-    target_length = window_size_map.get(window_size_key)
+    # Usar mapeamento global de constantes
+    target_length = SEQUENCE_LENGTH_MAP.get(window_size_key)
     if target_length is None:
         raise ValueError(f"Invalid window_size_key: {window_size_key}")
     
@@ -954,9 +1012,18 @@ class InteractiveComparisonViewer:
         self.should_exit = False
         self.fig = None
         
-        # Lista de genes disponíveis
-        self.available_genes = ["SLC24A5", "SLC45A2", "OCA2", "HERC2", "MC1R", 
-                               "EDAR", "MFSD12", "DDB1", "TCHH", "TYR", "TYRP1"]
+        # Ler lista de genes disponíveis dos metadados do dataset
+        self.available_genes = dataset_metadata.get('genes', [])
+        if not self.available_genes:
+            # Erro: campo 'genes' não encontrado nos metadados
+            console.print("[red]❌ ERRO: Campo 'genes' não encontrado nos metadados do dataset![/red]")
+            console.print("[yellow]Os metadados do dataset precisam ser regenerados com a versão atualizada do dataset_builder.py[/yellow]")
+            console.print("[cyan]Execute: python3 build_non_longevous_dataset.py --config <seu_config.yaml>[/cyan]")
+            console.print("[cyan]Com generate_dataset_metadata: true no config[/cyan]")
+            raise ValueError(
+                "Campo 'genes' não encontrado nos metadados do dataset. "
+                "Regenere os metadados do dataset com a versão atualizada do dataset builder"
+            )
         
         # Carregar metadata de superpopulação
         self.superpopulation_map = self._load_superpopulation_map(metadata_csv_path)
@@ -1250,19 +1317,14 @@ def _load_from_alphagenome_api(
     ontology_terms = config['alphagenome_api']['ontology_terms']
     
     # Determine window size from window_center_size
-    # Map common sizes to AlphaGenome constants
-    window_size_map = {
-        10000: "SEQUENCE_LENGTH_16KB",      # 10k fits in 16k
-        100000: "SEQUENCE_LENGTH_100KB",    # 100k = 131072 bp (AlphaGenome)
-        524288: "SEQUENCE_LENGTH_500KB",    # 512k = 524288 bp (AlphaGenome)
-        1048576: "SEQUENCE_LENGTH_1MB",     # 1MB exact
-    }
+    # Map common sizes to AlphaGenome constants (usando constantes globais)
+    window_size_map = SIZE_TO_SEQUENCE_NAME
     
     # Use window_center_size_key from config if available, otherwise infer from window_center_size
     if 'window_center_size_key' in config:
         window_size_key = config['window_center_size_key']
     else:
-        window_size_key = window_size_map.get(window_center_size, "SEQUENCE_LENGTH_500KB")
+        window_size_key = window_size_map.get(window_center_size, "SEQUENCE_LENGTH_16KB")
     
     all_gene_data = []
     
@@ -1325,22 +1387,11 @@ def load_raw_alphagenome_data(
         # Call API with reference genome (como no Colab)
         ontology_terms = config['alphagenome_api']['ontology_terms']
         
-        # Determine window size key from center_bp
-        # Map common sizes to AlphaGenome constants
-        window_size_map = {
-            2048: "SEQUENCE_LENGTH_2KB",
-            4096: "SEQUENCE_LENGTH_4KB",
-            8192: "SEQUENCE_LENGTH_8KB",
-            16384: "SEQUENCE_LENGTH_16KB",
-            32768: "SEQUENCE_LENGTH_32KB",
-            65536: "SEQUENCE_LENGTH_64KB",
-            131072: "SEQUENCE_LENGTH_100KB",  # AlphaGenome: 100KB = 131072 bp
-            262144: "SEQUENCE_LENGTH_256KB",
-            524288: "SEQUENCE_LENGTH_500KB",  # AlphaGenome: 500KB = 524288 bp
-            1048576: "SEQUENCE_LENGTH_1MB",
-        }
+        # Determinar window size key usando mapeamento global
+        # Criar dicionário completo com tamanhos adicionais que não estão no SIZE_TO_SEQUENCE_NAME
+        extended_size_map = SIZE_TO_SEQUENCE_NAME
         
-        window_size_key = window_size_map.get(center_bp, "SEQUENCE_LENGTH_16KB")
+        window_size_key = extended_size_map.get(center_bp, "SEQUENCE_LENGTH_16KB")
         console.print(f"[cyan]  Using window size: {window_size_key} ({center_bp} bp)[/cyan]")
         
         result = predict_with_alphagenome(
@@ -1607,7 +1658,8 @@ def plot_comparison(
     config: Dict,
     viewer: Optional[InteractiveViewer] = None,
     label1: str = "Cache",
-    label2: str = "AlphaGenome"
+    label2: str = "AlphaGenome",
+    dataset_metadata: Optional[Dict] = None
 ) -> plt.Figure:
     """
     Plota gráfico de comparação com subplots independentes para cada track.
@@ -1654,15 +1706,21 @@ def plot_comparison(
                 color='red', linewidth=1.0, linestyle='--', alpha=0.7, label=label2)
         
         # Criar label apenas com ontologia (gene já está no título)
-        gene_idx = track_idx // NUM_ONTOLOGIES
-        ont_idx = track_idx % NUM_ONTOLOGIES
-        if ont_idx < len(ONTOLOGY_LABELS):
-            ylabel = ONTOLOGY_LABELS[ont_idx]
+        # Gerar labels dinamicamente dos metadados
+        if dataset_metadata:
+            ontology_labels = generate_ontology_labels(dataset_metadata)
+        else:
+            ontology_labels = generate_ontology_labels({})  # Usa fallback
+        
+        gene_idx = track_idx // len(ontology_labels)
+        ont_idx = track_idx % len(ontology_labels)
+        if ont_idx < len(ontology_labels):
+            ylabel = ontology_labels[ont_idx]
         else:
             ylabel = f"Track {track_idx}"
         
         # Configurar subplot
-        ax.set_ylabel(ylabel, fontsize=9, fontweight='bold')
+        ax.set_ylabel(ylabel, fontsize=5, fontweight='bold')
         ax.grid(True, alpha=0.3, linestyle='--')
         ax.legend(loc='upper right', fontsize=8)
         
@@ -1717,7 +1775,8 @@ def plot_individual_comparison(
     superpop_2: str,
     gene_name: str,
     config: Dict,
-    viewer: Optional['InteractiveComparisonViewer'] = None
+    viewer: Optional['InteractiveComparisonViewer'] = None,
+    dataset_metadata: Optional[Dict] = None
 ) -> plt.Figure:
     """
     Plota comparação entre dois indivíduos.
@@ -1761,8 +1820,14 @@ def plot_individual_comparison(
         ax.plot(features_2[i], color='red', linewidth=1.5, linestyle='--', 
                 label=label_2, alpha=0.8)
         
-        # Usar nome da ontologia como ylabel
-        ax.set_ylabel(ONTOLOGY_LABELS[i], fontsize=10, fontweight='bold')
+        # Usar nome da ontologia como ylabel (gerar dinamicamente dos metadados)
+        if dataset_metadata:
+            ontology_labels = generate_ontology_labels(dataset_metadata)
+        else:
+            ontology_labels = generate_ontology_labels({})  # Usa fallback
+        
+        ylabel = ontology_labels[i] if i < len(ontology_labels) else f"Track {i}"
+        ax.set_ylabel(ylabel, fontsize=5, fontweight='bold')
         ax.set_xlabel('Position', fontsize=8)
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=8, loc='best')
@@ -1818,7 +1883,9 @@ def plot_raw_data_colab_style(
         for ont_idx in range(values.shape[1]):
             gene_tracks.append(values[:, ont_idx])
         raw_data = np.array(gene_tracks)
-        return plot_raw_data(raw_data, sample_id, gene_name, config, viewer)
+        # Tentar obter dataset_metadata do viewer se disponível
+        dataset_metadata = getattr(viewer, 'dataset_metadata', None) if viewer else None
+        return plot_raw_data(raw_data, sample_id, gene_name, config, viewer, dataset_metadata)
     
     console.print(f"[cyan]Creating Colab-style visualization...[/cyan]")
     
@@ -1857,7 +1924,8 @@ def plot_raw_data(
     sample_id: str,
     gene_name: str,
     config: Dict,
-    viewer: Optional[InteractiveViewer] = None
+    viewer: Optional[InteractiveViewer] = None,
+    dataset_metadata: Optional[Dict] = None
 ) -> plt.Figure:
     """
     Plot raw AlphaGenome data without comparison (simple subplot style).
@@ -1888,12 +1956,14 @@ def plot_raw_data(
         # Plot raw data
         ax.plot(track_data, linewidth=0.8, color='blue', alpha=0.8)
         
-        # Labels - usar labels corretos das ontologias
-        if idx < len(ONTOLOGY_LABELS):
-            ylabel = ONTOLOGY_LABELS[idx]
+        # Labels - gerar dinamicamente dos metadados do dataset
+        if dataset_metadata:
+            ontology_labels = generate_ontology_labels(dataset_metadata)
         else:
-            ylabel = f'Track {idx}'
-        ax.set_ylabel(ylabel, fontsize=9, fontweight='bold')
+            ontology_labels = generate_ontology_labels({})  # Usa fallback
+        
+        ylabel = ontology_labels[idx] if idx < len(ontology_labels) else f'Track {idx}'
+        ax.set_ylabel(ylabel, fontsize=5, fontweight='bold')
         ax.grid(True, alpha=0.3)
         
         # Show value range
@@ -1949,14 +2019,9 @@ def process_sample_raw_mode(
     source = raw_mode_config['source']
     window_size_key = raw_mode_config['window_size_key']
     
-    # Convert window_size_key to actual bp
-    window_size_map = {
-        'SEQUENCE_LENGTH_16KB': 16384,
-        'SEQUENCE_LENGTH_100KB': 102400,
-        'SEQUENCE_LENGTH_500KB': 512000,
-        'SEQUENCE_LENGTH_1MB': 1048576
-    }
-    center_bp = window_size_map.get(window_size_key, 102400)
+    # Convert window_size_key to actual bp (usando constantes globais)
+    window_size_map = SEQUENCE_LENGTH_MAP
+    center_bp = window_size_map.get(window_size_key, 16384)
     
     for gene_name in genes_to_plot:
         console.print(f"\n[cyan]Loading raw data for {gene_name}...[/cyan]")
@@ -1969,7 +2034,9 @@ def process_sample_raw_mode(
         if output is not None and gtf is not None:
             fig = plot_raw_data_colab_style(output, gene_name, sample_id, gtf, config, viewer)
         else:
-            fig = plot_raw_data(raw_data, sample_id, gene_name, config, viewer)
+            # Tentar obter dataset_metadata do viewer se disponível
+            dataset_metadata = getattr(viewer, 'dataset_metadata', None) if viewer else None
+            fig = plot_raw_data(raw_data, sample_id, gene_name, config, viewer, dataset_metadata)
         
         # Save if requested
         if config.get('save_plots', False):
@@ -2101,13 +2168,8 @@ def process_sample_comparison_mode(
                 data_fasta_T = np.array(result_fasta).T  # [6, full_length]
                 
                 # EXTRAIR JANELA CENTRAL APENAS PARA VISUALIZAÇÃO
-                window_size_map = {
-                    "SEQUENCE_LENGTH_2KB": 2048,
-                    "SEQUENCE_LENGTH_16KB": 16384,
-                    "SEQUENCE_LENGTH_100KB": 102400,
-                    "SEQUENCE_LENGTH_500KB": 512000,
-                    "SEQUENCE_LENGTH_1MB": 1048576
-                }
+                # Usar constante global
+                window_size_map = SEQUENCE_LENGTH_MAP
                 viz_length = window_size_map.get(window_size_key, 16384)
                 
                 console.print(f"[dim]  Extracting center window for visualization: {viz_length} bp[/dim]")
@@ -2160,13 +2222,8 @@ def process_sample_comparison_mode(
                 data_dataset_full_T = data_dataset_full.T
                 
                 # EXTRAIR JANELA CENTRAL APENAS PARA VISUALIZAÇÃO
-                window_size_map = {
-                    "SEQUENCE_LENGTH_2KB": 2048,
-                    "SEQUENCE_LENGTH_16KB": 16384,
-                    "SEQUENCE_LENGTH_100KB": 102400,
-                    "SEQUENCE_LENGTH_500KB": 512000,
-                    "SEQUENCE_LENGTH_1MB": 1048576
-                }
+                # Usar constante global
+                window_size_map = SEQUENCE_LENGTH_MAP
                 viz_length = window_size_map.get(window_size_key, 16384)
                 
                 console.print(f"[dim]  Extracting center window for visualization: {viz_length} bp[/dim]")
@@ -2217,13 +2274,8 @@ def process_sample_comparison_mode(
                 data_dataset_full_T = data_dataset_full.T
                 
                 # EXTRAIR JANELA CENTRAL APENAS PARA VISUALIZAÇÃO
-                window_size_map = {
-                    "SEQUENCE_LENGTH_2KB": 2048,
-                    "SEQUENCE_LENGTH_16KB": 16384,
-                    "SEQUENCE_LENGTH_100KB": 102400,
-                    "SEQUENCE_LENGTH_500KB": 512000,
-                    "SEQUENCE_LENGTH_1MB": 1048576
-                }
+                # Usar constante global
+                window_size_map = SEQUENCE_LENGTH_MAP
                 viz_length = window_size_map.get(window_size_key, 16384)
                 
                 console.print(f"[dim]  Extracting center window for visualization: {viz_length} bp[/dim]")
@@ -2364,9 +2416,10 @@ def process_sample_comparison_mode(
             metrics = compute_metrics(data1, data2, config.get('verbose_metrics', True))
             
             # Plot comparison
+            dataset_metadata = getattr(viewer, 'dataset_metadata', None) if viewer else None
             fig = plot_comparison(
                 data1, data2, sample_id, metrics, [gene_name], config, viewer,
-                label1=label1, label2=label2
+                label1=label1, label2=label2, dataset_metadata=dataset_metadata
             )
             
             # Save if requested
@@ -2453,11 +2506,12 @@ def process_comparison_sample(
         )
         
         # Plotar comparação
+        dataset_metadata = getattr(viewer, 'dataset_metadata', None) if viewer else None
         fig = plot_individual_comparison(
             features_1, features_2,
             sample_id_1, pop_1, superpop_1,
             sample_id_2, pop_2, superpop_2,
-            gene_name, config, viewer
+            gene_name, config, viewer, dataset_metadata
         )
         
         return fig
@@ -2540,9 +2594,10 @@ def process_sample(
         metrics = compute_metrics(cache_features, alphagenome_normalized, verbose=verbose_metrics)
         
         # Visualizar
+        dataset_metadata = getattr(viewer, 'dataset_metadata', None) if viewer else None
         fig = plot_comparison(
             cache_features, alphagenome_normalized, sample_id, metrics,
-            genes_loaded, config, viewer
+            genes_loaded, config, viewer, dataset_metadata=dataset_metadata
         )
         
         # Salvar gráfico se configurado
@@ -2591,10 +2646,10 @@ def main():
     if config.get('raw_mode', {}).get('enabled', False):
         raw_mode = config['raw_mode']
         
-        # Validate window_size_key
+        # Validate window_size_key AlphaGenome
         valid_window_sizes = ['SEQUENCE_LENGTH_16KB', 'SEQUENCE_LENGTH_100KB', 
                              'SEQUENCE_LENGTH_500KB', 'SEQUENCE_LENGTH_1MB']
-        window_size_key = raw_mode.get('window_size_key', 'SEQUENCE_LENGTH_100KB')
+        window_size_key = raw_mode.get('window_size_key', 'SEQUENCE_LENGTH_16KB')
         if window_size_key not in valid_window_sizes:
             console.print(f"[red]ERRO: window_size_key inválido: {window_size_key}[/red]")
             console.print(f"[red]Opções válidas: {', '.join(valid_window_sizes)}[/red]")

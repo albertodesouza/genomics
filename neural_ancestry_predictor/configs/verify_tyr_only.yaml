@@ -35,7 +35,7 @@ interactive_mode: true
 # Modo de navegação interativa
 # "single": Navegação atual (um indivíduo por vez)
 # "comparison": Comparação entre dois indivíduos
-interactive_comparison_mode: "single"  # Default: "single"
+interactive_comparison_mode: "comparison"  # Default: "single"
 
 show_navigation_help: true
 verbose_metrics: true
