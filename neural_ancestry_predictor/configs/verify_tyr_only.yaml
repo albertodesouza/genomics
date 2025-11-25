@@ -1,8 +1,8 @@
 # Configuração para verificar apenas o gene TYR
-cache_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes/datasets/rna_seq_H1_10000_ds1_log_split0.7-0.15-0.15_seed-1"
+cache_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes/datasets/rna_seq_H1_16384_ds1_log_split0.7-0.15-0.15_seed-1"
 dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes"
 
-split: "test"
+split: "train"
 index: 0
 sample_id: "HG02445"  # Usar sample existente
 
@@ -12,11 +12,11 @@ sample_id: "HG02445"  # Usar sample existente
 gene_filter: "MC1R"  # Mostrar apenas gene TYR (6 tracks)
 
 # Comparison mode: alphagenome_ref_x_dataset_dir, alphagenome_ind_x_dataset_dir, or dataset_dir_x_cache_dir
-comparison_mode: "dataset_dir_x_cache_dir"
+#comparison_mode: "dataset_dir_x_cache_dir"
 
 # AlphaGenome API verification mode (opcional)
 alphagenome_api:
-  enabled: false
+  enabled: true
   api_key: null
   rate_limit_delay: 0.5
   ontology_terms: ["CL:1000458", "CL:0000346", "CL:2000092"]
@@ -25,12 +25,18 @@ alphagenome_api:
 raw_mode:
   enabled: false  # When true, skips cache loading and normalization
   source: "files"  # "files" (read .npz) or "api" (call AlphaGenome API)
-  window_size_key: "SEQUENCE_LENGTH_100KB"  # One of: SEQUENCE_LENGTH_16KB, SEQUENCE_LENGTH_100KB, SEQUENCE_LENGTH_500KB, SEQUENCE_LENGTH_1MB
+  window_size_key: "SEQUENCE_LENGTH_16KB"  # One of: SEQUENCE_LENGTH_16KB, SEQUENCE_LENGTH_100KB, SEQUENCE_LENGTH_500KB, SEQUENCE_LENGTH_1MB
 
 output_dir: null
 save_plots: false
 output_prefix: "verify"
 interactive_mode: true
+
+# Modo de navegação interativa
+# "single": Navegação atual (um indivíduo por vez)
+# "comparison": Comparação entre dois indivíduos
+interactive_comparison_mode: "single"  # Default: "single"
+
 show_navigation_help: true
 verbose_metrics: true
 show_stats_in_plot: true

@@ -17,6 +17,7 @@ Updated: 2025-11-23 - Adicionado filtro por gene, navegação interativa, config
 import argparse
 import json
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -48,6 +49,16 @@ except ImportError:
 console = Console()
 
 NUM_ONTOLOGIES = 6  # Número de ontologias RNA-seq por gene
+
+# Labels das ontologias com strand (3 ontologias × 2 strands = 6 tracks)
+ONTOLOGY_LABELS = [
+    "CL:1000458 (+)\nMelanocyte",
+    "CL:0000346 (+)\nDermal Papilla",
+    "CL:2000092 (+)\nKeratinocyte",
+    "CL:1000458 (-)\nMelanocyte",
+    "CL:0000346 (-)\nDermal Papilla",
+    "CL:2000092 (-)\nKeratinocyte"
+]
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -379,6 +390,147 @@ def _load_individual_haplotype_sequence(
         
     except Exception as e:
         console.print(f"[yellow]  Warning: Could not load individual sequence: {e}[/yellow]")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def _get_alphagenome_predictions_for_individual(
+    sample_id: str,
+    gene_name: str,
+    window_size_key: str,
+    config: Dict,
+    ontology_terms: List[str]
+) -> Optional[np.ndarray]:
+    """
+    Usa build_window_and_predict.py como biblioteca para gerar predições
+    AlphaGenome corretas para o indivíduo.
+    
+    Args:
+        sample_id: ID do indivíduo (e.g., HG02445)
+        gene_name: Nome do gene (e.g., MC1R)
+        window_size_key: Tamanho da janela (e.g., SEQUENCE_LENGTH_500KB)
+        config: Configuration dict
+        ontology_terms: Lista de ontology terms
+    
+    Returns:
+        Array [window_size, 6] com predições ou None se falhar
+    """
+    try:
+        import argparse
+        from alphagenome.data import gene_annotation
+        
+        # Import build_window_and_predict dentro da função para evitar erros de import
+        sys.path.insert(0, str(Path(__file__).parent.parent / "build_non_longevous_dataset"))
+        import build_window_and_predict
+        
+        console.print(f"[cyan]  Using build_window_and_predict.py to generate AlphaGenome data...[/cyan]")
+        
+        # Criar diretório temporário
+        tmp_outdir = Path("/tmp/GENOMICS_DATA/top3")
+        tmp_outdir.mkdir(parents=True, exist_ok=True)
+        
+        # Inferir paths a partir do dataset_dir
+        # Assumindo estrutura padrão do GENOMICS_DATA
+        dataset_dir = Path(config.get('dataset_dir', '/dados/GENOMICS_DATA/top3/non_longevous_results_genes'))
+        genomics_data_root = dataset_dir.parent  # /dados/GENOMICS_DATA/top3
+        
+        ref_fasta = genomics_data_root / "refs" / "GRCh38_full_analysis_set_plus_decoy_hla.fa"
+        vcf_pattern = str(genomics_data_root / "longevity_dataset" / "vcf_chromosomes" / "1kGP_high_coverage_Illumina.{chrom}.filtered.SNV_INDEL_SV_phased_panel.vcf.gz")
+        
+        if not ref_fasta.exists():
+            console.print(f"[red]  Reference FASTA not found: {ref_fasta}[/red]")
+            console.print(f"[yellow]  Inferred from dataset_dir: {dataset_dir}[/yellow]")
+            console.print(f"[yellow]  Tried: {ref_fasta}[/yellow]")
+            return None
+        
+        # Carregar GTF para obter intervalo do gene
+        gtf_cache_path = Path("/dados/GENOMICS_DATA/top3/non_longevous_results_genes/gtf_cache.feather")
+        if not gtf_cache_path.exists():
+            console.print(f"[red]  GTF cache not found: {gtf_cache_path}[/red]")
+            return None
+        
+        import pandas as pd
+        gtf = pd.read_feather(gtf_cache_path)
+        interval = gene_annotation.get_gene_interval(gtf, gene_symbol=gene_name)
+        
+        # Mapear window_size_key para número de bases
+        window_size_map = {
+            "SEQUENCE_LENGTH_2KB": 2048,
+            "SEQUENCE_LENGTH_16KB": 16384,
+            "SEQUENCE_LENGTH_100KB": 131072,
+            "SEQUENCE_LENGTH_500KB": 524288,
+            "SEQUENCE_LENGTH_1MB": 1048576,
+        }
+        window_size = window_size_map.get(window_size_key)
+        if window_size is None:
+            console.print(f"[red]  Invalid window_size_key: {window_size_key}[/red]")
+            return None
+        
+        # Resize interval
+        interval = interval.resize(window_size)
+        
+        # Detectar prefixo do cromossomo
+        ref_fai = Path(str(ref_fasta) + ".fai")
+        prefix = build_window_and_predict.detect_chr_prefix(ref_fai)
+        chrom = build_window_and_predict.coerce_chromosome_name(interval.chromosome, prefix)
+        
+        # Resolver caminho do VCF para este cromossomo
+        vcf_path = Path(vcf_pattern.replace('{chrom}', chrom))
+        if not vcf_path.exists():
+            console.print(f"[red]  VCF not found: {vcf_path}[/red]")
+            return None
+        
+        # Criar objeto args mock para process_window
+        args = argparse.Namespace(
+            predict=True,
+            api_key=config['alphagenome_api'].get('api_key') or os.environ.get('ALPHAGENOME_API_KEY'),
+            outputs="RNA_SEQ",
+            ontology=",".join(ontology_terms),
+            all_tissues=False,
+            skip_h2=True,
+            also_iupac=False,
+            reference_only=False,
+            window_size=window_size,
+            api_rate_limit_delay=config['alphagenome_api'].get('rate_limit_delay', 0.5)
+        )
+        
+        console.print(f"[dim]  Calling process_window for {sample_id} / {gene_name}...[/dim]")
+        console.print(f"[dim]  Interval: {chrom}:{interval.start}-{interval.end} ({window_size} bp)[/dim]")
+        console.print(f"[dim]  Temporary output: {tmp_outdir}[/dim]")
+        
+        # Chamar process_window
+        case_dir = build_window_and_predict.process_window(
+            sample=sample_id,
+            target_name=gene_name,
+            chrom=chrom,
+            start=interval.start,
+            end=interval.end,
+            ref_fa=ref_fasta,
+            vcf_path=vcf_path,
+            outdir=tmp_outdir,
+            window_size=window_size,
+            args=args
+        )
+        
+        # Carregar resultado do .npz
+        predictions_h1_dir = case_dir / "predictions_H1"
+        rna_seq_file = predictions_h1_dir / "rna_seq.npz"
+        
+        if not rna_seq_file.exists():
+            console.print(f"[red]  Predictions file not found: {rna_seq_file}[/red]")
+            return None
+        
+        console.print(f"[green]  ✓ Loading predictions from: {rna_seq_file}[/green]")
+        data = np.load(rna_seq_file)
+        values = data['values']  # Shape: [window_size, 6]
+        
+        console.print(f"[green]  ✓ Loaded predictions shape: {values.shape}[/green]")
+        
+        return values
+        
+    except Exception as e:
+        console.print(f"[red]  Error in _get_alphagenome_predictions_for_individual: {e}[/red]")
         import traceback
         traceback.print_exc()
         return None
@@ -785,6 +937,109 @@ class InteractiveViewer:
         global_index = self.split_indices[self.current_index]
         individuals = self.dataset_metadata['individuals']
         return individuals[global_index]
+
+
+class InteractiveComparisonViewer:
+    """Gerencia navegação interativa de comparação entre dois indivíduos."""
+    
+    def __init__(self, config: Dict, splits_data: Dict, dataset_metadata: Dict, 
+                 metadata_csv_path: str):
+        self.config = config
+        self.splits_data = splits_data
+        self.dataset_metadata = dataset_metadata
+        self.current_index_1 = config.get('index', 0)  # Primeiro indivíduo
+        self.current_index_2 = config.get('index', 0)  # Segundo indivíduo (começa igual)
+        self.current_gene_index = 0  # Índice do gene atual
+        self.current_split = config.get('split', 'test')
+        self.should_exit = False
+        self.fig = None
+        
+        # Lista de genes disponíveis
+        self.available_genes = ["SLC24A5", "SLC45A2", "OCA2", "HERC2", "MC1R", 
+                               "EDAR", "MFSD12", "DDB1", "TCHH", "TYR", "TYRP1"]
+        
+        # Carregar metadata de superpopulação
+        self.superpopulation_map = self._load_superpopulation_map(metadata_csv_path)
+        
+        # Obter lista de índices do split atual
+        split_key = f"{self.current_split}_indices"
+        self.split_indices = splits_data[split_key]
+        self.max_index = len(self.split_indices) - 1
+        self.max_gene_index = len(self.available_genes) - 1
+        
+    def _load_superpopulation_map(self, csv_path: str) -> Dict[str, Tuple[str, str]]:
+        """Carrega mapeamento sample_id -> (population, superpopulation)."""
+        import pandas as pd
+        df = pd.read_csv(csv_path)
+        return {
+            row['SampleID']: (row['Population'], row['Superpopulation'])
+            for _, row in df.iterrows()
+        }
+    
+    def on_key_press(self, event: KeyEvent):
+        """Handler para eventos de teclado."""
+        if event.key == 'right':
+            # Avançar ambos os indivíduos
+            if self.current_index_1 < self.max_index:
+                self.current_index_1 += 1
+                self.current_index_2 += 1
+                if self.current_index_2 > self.max_index:
+                    self.current_index_2 = self.max_index
+                console.print(f"[cyan]→ Avançando ambos: Ind1={self.current_index_1}, Ind2={self.current_index_2}[/cyan]")
+                plt.close(self.fig)
+        
+        elif event.key == 'left':
+            # Retroceder ambos os indivíduos
+            if self.current_index_1 > 0:
+                self.current_index_1 -= 1
+                self.current_index_2 = max(0, self.current_index_2 - 1)
+                console.print(f"[cyan]← Retrocedendo ambos: Ind1={self.current_index_1}, Ind2={self.current_index_2}[/cyan]")
+                plt.close(self.fig)
+        
+        elif event.key == 'd':
+            # Avançar apenas o segundo indivíduo
+            if self.current_index_2 < self.max_index:
+                self.current_index_2 += 1
+                console.print(f"[cyan]→ Avançando Ind2: {self.current_index_2}[/cyan]")
+                plt.close(self.fig)
+        
+        elif event.key == 'a':
+            # Retroceder apenas o segundo indivíduo
+            if self.current_index_2 > 0:
+                self.current_index_2 -= 1
+                console.print(f"[cyan]← Retrocedendo Ind2: {self.current_index_2}[/cyan]")
+                plt.close(self.fig)
+        
+        elif event.key == 'w':
+            # Avançar gene
+            if self.current_gene_index < self.max_gene_index:
+                self.current_gene_index += 1
+                console.print(f"[cyan]↑ Gene: {self.available_genes[self.current_gene_index]}[/cyan]")
+                plt.close(self.fig)
+        
+        elif event.key == 'z':
+            # Retroceder gene
+            if self.current_gene_index > 0:
+                self.current_gene_index -= 1
+                console.print(f"[cyan]↓ Gene: {self.available_genes[self.current_gene_index]}[/cyan]")
+                plt.close(self.fig)
+        
+        elif event.key == 'q':
+            # Sair
+            console.print(f"[yellow]Saindo...[/yellow]")
+            self.should_exit = True
+            plt.close(self.fig)
+    
+    def get_current_gene(self) -> str:
+        """Retorna o gene atual."""
+        return self.available_genes[self.current_gene_index]
+    
+    def get_sample_info(self, index: int) -> Tuple[str, str, str]:
+        """Retorna (sample_id, population, superpopulation) para um índice."""
+        global_index = self.split_indices[index]
+        sample_id = self.dataset_metadata['individuals'][global_index]
+        pop, superpop = self.superpopulation_map.get(sample_id, ("Unknown", "Unknown"))
+        return sample_id, pop, superpop
 
 
 # ==============================================================================
@@ -1398,12 +1653,11 @@ def plot_comparison(
         ax.plot(x_positions, alpha_track,
                 color='red', linewidth=1.0, linestyle='--', alpha=0.7, label=label2)
         
-        # Criar label com gene e ontologia
+        # Criar label apenas com ontologia (gene já está no título)
         gene_idx = track_idx // NUM_ONTOLOGIES
         ont_idx = track_idx % NUM_ONTOLOGIES
-        if gene_idx < len(genes_displayed):
-            gene_name = genes_displayed[gene_idx]
-            ylabel = f"{gene_name}\nOnt{ont_idx}"
+        if ont_idx < len(ONTOLOGY_LABELS):
+            ylabel = ONTOLOGY_LABELS[ont_idx]
         else:
             ylabel = f"Track {track_idx}"
         
@@ -1448,6 +1702,83 @@ def plot_comparison(
             transform=fig.transFigure)
     
     plt.tight_layout(rect=[0, 0.02, 1, 0.97])
+    
+    return fig
+
+
+def plot_individual_comparison(
+    features_1: np.ndarray,
+    features_2: np.ndarray,
+    sample_id_1: str,
+    pop_1: str,
+    superpop_1: str,
+    sample_id_2: str,
+    pop_2: str,
+    superpop_2: str,
+    gene_name: str,
+    config: Dict,
+    viewer: Optional['InteractiveComparisonViewer'] = None
+) -> plt.Figure:
+    """
+    Plota comparação entre dois indivíduos.
+    
+    Args:
+        features_1: Array [6, window_size] do primeiro indivíduo
+        features_2: Array [6, window_size] do segundo indivíduo
+        sample_id_1, pop_1, superpop_1: Informações do primeiro indivíduo
+        sample_id_2, pop_2, superpop_2: Informações do segundo indivíduo
+        gene_name: Nome do gene sendo visualizado
+        config: Configuração
+        viewer: Viewer interativo
+    
+    Returns:
+        Figure do matplotlib
+    """
+    # Usar labels globais das ontologias
+    
+    num_tracks = features_1.shape[0]  # Deve ser 6
+    
+    # Criar subplots (6 linhas x 1 coluna para 6 tracks empilhadas verticalmente)
+    fig, axes = plt.subplots(6, 1, figsize=(14, 12))
+    
+    # Título principal com gene
+    label_1 = f"{sample_id_1} ({pop_1}/{superpop_1})"
+    label_2 = f"{sample_id_2} ({pop_2}/{superpop_2})"
+    
+    fig.suptitle(
+        f"Gene: {gene_name} - Comparação: {label_1} vs {label_2}",
+        fontsize=16, fontweight='bold'
+    )
+    
+    # Plotar cada track
+    for i in range(num_tracks):
+        ax = axes[i]
+        
+        # Plotar primeiro indivíduo (azul sólido)
+        ax.plot(features_1[i], color='blue', linewidth=1.5, label=label_1, alpha=0.8)
+        
+        # Plotar segundo indivíduo (vermelho tracejado)
+        ax.plot(features_2[i], color='red', linewidth=1.5, linestyle='--', 
+                label=label_2, alpha=0.8)
+        
+        # Usar nome da ontologia como ylabel
+        ax.set_ylabel(ONTOLOGY_LABELS[i], fontsize=10, fontweight='bold')
+        ax.set_xlabel('Position', fontsize=8)
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=8, loc='best')
+    
+    # Ajustar layout
+    plt.tight_layout(rect=[0, 0.03, 1, 0.96])
+    
+    # Adicionar instruções de navegação
+    if config.get('show_navigation_help', True) and viewer is not None:
+        nav_text = (
+            "Navegação: ← → (ambos indivíduos) | "
+            "A D (segundo indivíduo) | "
+            "W Z (genes) | Q (sair)"
+        )
+        fig.text(0.5, 0.01, nav_text, ha='center', fontsize=9, 
+                style='italic', color='gray')
     
     return fig
 
@@ -1557,8 +1888,12 @@ def plot_raw_data(
         # Plot raw data
         ax.plot(track_data, linewidth=0.8, color='blue', alpha=0.8)
         
-        # Labels
-        ax.set_ylabel(f'Ontology {idx}', fontsize=9)
+        # Labels - usar labels corretos das ontologias
+        if idx < len(ONTOLOGY_LABELS):
+            ylabel = ONTOLOGY_LABELS[idx]
+        else:
+            ylabel = f'Track {idx}'
+        ax.set_ylabel(ylabel, fontsize=9, fontweight='bold')
         ax.grid(True, alpha=0.3)
         
         # Show value range
@@ -1845,7 +2180,7 @@ def process_sample_comparison_mode(
                 
             elif comparison_mode == "alphagenome_ind_x_dataset_dir":
                 # Mode 2: AlphaGenome (individual) vs dataset_dir
-                # USAR TAMANHO DO DATASET, VISUALIZAR window_size_key
+                # USA build_window_and_predict.py como biblioteca
                 
                 console.print(f"[dim]  Detecting dataset_dir window size...[/dim]")
                 ontology_terms = config['alphagenome_api']['ontology_terms']
@@ -1860,27 +2195,25 @@ def process_sample_comparison_mode(
                 console.print(f"[cyan]  Dataset was generated with: {window_size_key_dataset} ({full_length} bp)[/cyan]")
                 console.print(f"[cyan]  Will visualize center: {window_size_key}[/cyan]")
                 
-                # AlphaGenome (individual) - COM O TAMANHO DO DATASET
-                console.print(f"[dim]  Loading AlphaGenome individual ({window_size_key_dataset})...[/dim]")
-                result = predict_with_alphagenome(
+                # AlphaGenome (individual) - usando build_window_and_predict.py
+                console.print(f"[dim]  Generating AlphaGenome predictions for {sample_id}...[/dim]")
+                alphagenome_values = _get_alphagenome_predictions_for_individual(
+                    sample_id=sample_id,
                     gene_name=gene_name,
+                    window_size_key=window_size_key_dataset,
                     config=config,
-                    ontology_terms=ontology_terms,
-                    window_size_key=window_size_key_dataset,  # USAR TAMANHO DO DATASET
-                    return_full_output=False,
-                    sample_id=sample_id  # Use individual's genome
+                    ontology_terms=ontology_terms
                 )
                 
-                if result is None:
-                    console.print(f"[red]  Failed to load AlphaGenome data[/red]")
+                if alphagenome_values is None:
+                    console.print(f"[red]  Failed to generate AlphaGenome data[/red]")
                     continue
                 
-                # result: [full_length, 6]
+                # alphagenome_values: [full_length, 6]
                 # data_dataset_full: [full_length, 6]
-                alphagenome_data = np.array(result)
                 
                 # Transpor ambos para [6, full_length]
-                alphagenome_data_T = alphagenome_data.T
+                alphagenome_data_T = alphagenome_values.T
                 data_dataset_full_T = data_dataset_full.T
                 
                 # EXTRAIR JANELA CENTRAL APENAS PARA VISUALIZAÇÃO
@@ -2054,8 +2387,86 @@ def process_sample_comparison_mode(
             traceback.print_exc()
             continue
     
+    # Cleanup: remover arquivos temporários
+    tmp_dir = Path("/tmp/GENOMICS_DATA/top3")
+    if tmp_dir.exists():
+        try:
+            console.print(f"[dim]  Cleaning up temporary files: {tmp_dir}[/dim]")
+            shutil.rmtree(tmp_dir)
+            console.print(f"[green]  ✓ Cleanup completed[/green]")
+        except Exception as e:
+            console.print(f"[yellow]  Warning: Could not clean up {tmp_dir}: {e}[/yellow]")
+    
     console.print(f"\n[green]✓ Comparison mode processing completed![/green]")
     return True
+
+
+def process_comparison_sample(
+    config: Dict,
+    index_1: int,
+    index_2: int,
+    gene_name: str,
+    splits_data: Dict,
+    dataset_metadata: Dict,
+    viewer: 'InteractiveComparisonViewer'
+) -> Optional[plt.Figure]:
+    """
+    Processa e visualiza comparação entre dois indivíduos.
+    
+    Args:
+        config: Configuração
+        index_1: Índice do primeiro indivíduo no split
+        index_2: Índice do segundo indivíduo no split
+        gene_name: Nome do gene a visualizar
+        splits_data: Dados dos splits
+        dataset_metadata: Metadata do dataset
+        viewer: Viewer de comparação
+    
+    Returns:
+        Figure do matplotlib ou None se erro
+    """
+    cache_dir = Path(config['cache_dir'])
+    split = config.get('split', 'test')
+    
+    try:
+        # Carregar dados do primeiro indivíduo
+        features_1_raw, metadata_1, global_index_1 = load_cache_data(
+            cache_dir, split, index_1, gene_filter=None
+        )
+        sample_id_1, pop_1, superpop_1 = viewer.get_sample_info(index_1)
+        
+        # Carregar dados do segundo indivíduo
+        features_2_raw, metadata_2, global_index_2 = load_cache_data(
+            cache_dir, split, index_2, gene_filter=None
+        )
+        sample_id_2, pop_2, superpop_2 = viewer.get_sample_info(index_2)
+        
+        # Obter lista de genes ordenada (usar a mesma da classe viewer)
+        genes_in_order = viewer.available_genes
+        
+        # Filtrar por gene específico
+        features_1, _ = filter_genes_from_features(
+            features_1_raw, gene_name, genes_in_order
+        )
+        features_2, _ = filter_genes_from_features(
+            features_2_raw, gene_name, genes_in_order
+        )
+        
+        # Plotar comparação
+        fig = plot_individual_comparison(
+            features_1, features_2,
+            sample_id_1, pop_1, superpop_1,
+            sample_id_2, pop_2, superpop_2,
+            gene_name, config, viewer
+        )
+        
+        return fig
+        
+    except Exception as e:
+        console.print(f"[red]Erro ao processar comparação: {e}[/red]")
+        import traceback
+        traceback.print_exc()
+        return None
 
 
 def process_sample(
@@ -2326,23 +2737,61 @@ def main():
             
             # Modo interativo ou não
             if config.get('interactive_mode', False):
-                viewer = InteractiveViewer(config, splits_data, dataset_metadata)
+                # Verificar qual tipo de modo interativo
+                comparison_mode = config.get('interactive_comparison_mode', 'single')
                 
-                # Loop interativo
-                while not viewer.should_exit:
-                    fig = process_sample(config, viewer.current_index, splits_data, 
-                                       dataset_metadata, norm_params, viewer)
+                if comparison_mode == 'comparison':
+                    # NOVO: Modo de comparação entre indivíduos
+                    metadata_csv = config.get('data_sources', {}).get('metadata_csv')
+                    if metadata_csv is None:
+                        metadata_csv = "../docs/1000_genomes_metadata.csv"
                     
-                    if fig is not None:
-                        viewer.fig = fig
-                        # Conectar handler de teclado
-                        fig.canvas.mpl_connect('key_press_event', viewer.on_key_press)
-                        plt.show()
-                    else:
-                        # Erro ao processar, sair
-                        break
+                    viewer = InteractiveComparisonViewer(
+                        config, splits_data, dataset_metadata, metadata_csv
+                    )
+                    
+                    console.print(f"[cyan]Modo de comparação interativa ativado:[/cyan]")
+                    console.print(f"  • Split: {viewer.current_split}")
+                    console.print(f"  • Total de amostras: {len(viewer.split_indices)}")
+                    console.print(f"  • Total de genes: {len(viewer.available_genes)}")
+                    console.print(f"[yellow]  • Use ← → (ambos), A D (ind2), W Z (genes), Q (sair)[/yellow]\n")
+                    
+                    # Loop interativo
+                    while not viewer.should_exit:
+                        current_gene = viewer.get_current_gene()
+                        fig = process_comparison_sample(
+                            config, viewer.current_index_1, viewer.current_index_2,
+                            current_gene, splits_data, dataset_metadata, viewer
+                        )
+                        
+                        if fig is not None:
+                            viewer.fig = fig
+                            fig.canvas.mpl_connect('key_press_event', viewer.on_key_press)
+                            plt.show()
+                        else:
+                            break
+                    
+                    console.print("\n[bold green]✓ Sessão de comparação interativa encerrada[/bold green]\n")
                 
-                console.print("\n[bold green]✓ Sessão interativa encerrada[/bold green]\n")
+                else:
+                    # Modo interativo existente (single)
+                    viewer = InteractiveViewer(config, splits_data, dataset_metadata)
+                    
+                    # Loop interativo
+                    while not viewer.should_exit:
+                        fig = process_sample(config, viewer.current_index, splits_data, 
+                                           dataset_metadata, norm_params, viewer)
+                        
+                        if fig is not None:
+                            viewer.fig = fig
+                            # Conectar handler de teclado
+                            fig.canvas.mpl_connect('key_press_event', viewer.on_key_press)
+                            plt.show()
+                        else:
+                            # Erro ao processar, sair
+                            break
+                    
+                    console.print("\n[bold green]✓ Sessão interativa encerrada[/bold green]\n")
             
             else:
                 # Modo não-interativo: processa apenas uma amostra

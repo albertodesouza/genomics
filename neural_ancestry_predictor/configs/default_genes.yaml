@@ -39,7 +39,7 @@ dataset_input:
   # Valores menores = menos features, treinamento mais rápido
   # Valores maiores = mais informação, maior dimensionalidade
   # Default: 100 bases (bem pequeno para começar)
-  window_center_size: 10000
+  window_center_size: 16384
   
   # Fator de downsampling a aplicar após extração do trecho central
   # 1 = usar todas as bases selecionadas (sem downsampling)
@@ -348,7 +348,7 @@ wandb:
   # true = loga métricas, gráficos, confusion matrix no W&B
   # false = não usa W&B
   # Requer: pip install wandb && wandb login
-  use_wandb: true
+  use_wandb: false
   
   # Nome do projeto no W&B
   project_name: "neural-ancestry-predictor-genes"

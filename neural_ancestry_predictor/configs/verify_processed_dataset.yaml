@@ -124,6 +124,11 @@ output_prefix: "verify"
 # false = visualiza apenas uma amostra e sai
 interactive_mode: true
 
+# Modo de navegação interativa
+# "single": Navegação atual (um indivíduo por vez)
+# "comparison": Comparação entre dois indivíduos
+interactive_comparison_mode: "single"  # Default: "single"
+
 # Mostrar instruções de navegação no gráfico
 show_navigation_help: true
 
