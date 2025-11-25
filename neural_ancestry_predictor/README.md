@@ -611,6 +611,118 @@ rm -rf processed_datasets/old_*
 
 ---
 
+## Dataset Verification
+
+### Overview
+
+The `verify_processed_dataset.py` tool is essential for **validating the quality and consistency** of processed genomic datasets before training. It compares data from different stages of the pipeline to detect bugs, inconsistencies, or processing errors.
+
+### What does it do?
+
+- 🔍 **Compares datasets** from different processing stages
+- 📊 **Visualizes RNA-seq tracks** for individual genes and samples
+- 📈 **Computes metrics** (MAE, correlation) to quantify differences
+- 🎮 **Interactive navigation** to explore multiple samples
+- 👥 **Compare individuals** side-by-side to see genetic variations
+
+### Comparison Modes
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `alphagenome_ref_x_dataset_dir` | AlphaGenome (reference) vs processed dataset | Validate reference genome processing |
+| `alphagenome_ind_x_dataset_dir` | AlphaGenome (individual) vs processed dataset | Validate individual variant processing |
+| `dataset_dir_x_cache_dir` | Original dataset vs processed cache | Validate normalization and cache |
+| `alphagenome_x_alphagenome_ref` | API methods comparison | Validate AlphaGenome API consistency |
+
+### Interactive Modes
+
+**Single Mode** (default):
+- Navigate through samples one at a time
+- Use ← → to move between individuals
+- View 6 RNA-seq tracks per gene (3 cell types × 2 strands)
+
+**Comparison Mode**:
+- Compare two individuals simultaneously
+- Navigate both together (← →) or independently (A/D for second individual)
+- Switch genes with W/Z keys
+- Visualize genetic variations between individuals
+
+### Quick Start
+
+```bash
+cd neural_ancestry_predictor
+
+# Verify cache vs dataset
+python3 verify_processed_dataset.py --config configs/verify_processed_dataset.yaml
+
+# Verify specific gene
+python3 verify_processed_dataset.py --config configs/verify_tyr_only.yaml
+
+# Compare two individuals interactively
+# Edit config: interactive_comparison_mode: "comparison"
+python3 verify_processed_dataset.py --config configs/verify_comparison.yaml
+```
+
+### When to Use
+
+- ✅ **Before training**: Ensure processed data is correct
+- ✅ **After dataset creation**: Validate `build_non_longevous_dataset` output
+- ✅ **After normalization**: Check if cache matches original data
+- ✅ **When debugging**: Visualize what the network actually sees
+- ✅ **Comparing individuals**: Understand genetic variations
+
+### Key Features
+
+- **11 ancestry-related genes**: SLC24A5, SLC45A2, OCA2, HERC2, MC1R, EDAR, MFSD12, DDB1, TCHH, TYR, TYRP1
+- **3 cell type ontologies**: Melanocyte (CL:1000458), Dermal Papilla (CL:0000346), Keratinocyte (CL:2000092)
+- **Strand-specific**: Tracks for both + and - DNA strands
+- **Metrics**: MAE (Mean Absolute Error) and Pearson correlation
+- **Flexible filtering**: View all genes or specific ones
+
+### Example Output
+
+```
+════════════════════════════════════════════════════════════
+       VERIFICAÇÃO DE DATASET PROCESSADO                   
+════════════════════════════════════════════════════════════
+
+✓ Sample: HG00120 (índice 0, global 0)
+
+═══════════════════════════════════════════════════════
+           MÉTRICAS DE COMPARAÇÃO                      
+═══════════════════════════════════════════════════════
+┏━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┓
+┃ Métrica               ┃             Valor ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━┩
+│ MAE Média (global)    │          0.004782 │
+│ Correlação Média      │          0.987512 │
+└───────────────────────┴───────────────────┘
+```
+
+### Interpreting Results
+
+**MAE (Mean Absolute Error):**
+- < 0.01: ✅ Excellent match
+- 0.01-0.05: ⚠️ Good match, minor differences
+- \> 0.05: ❌ Possible pipeline bug
+
+**Pearson Correlation:**
+- \> 0.9: ✅ Excellent correlation
+- 0.7-0.9: ✅ Good correlation
+- < 0.7: ❌ Investigate discrepancies
+
+### Full Documentation
+
+For complete documentation including:
+- Configuration options
+- All comparison modes
+- Troubleshooting guide
+- Advanced usage examples
+
+See **[docs/README_VERIFY.md](docs/README_VERIFY.md)**
+
+---
+
 ## Training
 
 ### Run Training
