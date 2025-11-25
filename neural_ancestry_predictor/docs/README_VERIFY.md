@@ -1,78 +1,78 @@
-# verify_processed_dataset.py - Verificação de Dataset Processado
+# verify_processed_dataset.py - Processed Dataset Verification
 
-## 📋 Visão Geral
+## 📋 Overview
 
-Programa para verificar e comparar dados processados de sequências genômicas com predições do AlphaGenome. Visualiza tracks (genes × ontologias RNA-seq) em gráficos de linha sobrepostos para detectar possíveis bugs no pipeline de processamento e validar consistência dos dados.
+A program to verify and compare processed genomic sequence data against AlphaGenome predictions. Visualizes tracks (genes × RNA-seq ontologies) in overlaid line charts to detect potential bugs in the processing pipeline and validate data consistency.
 
-## 🎯 Objetivo
+## 🎯 Objective
 
-Detectar inconsistências e validar comparações entre:
-- **Cache processado**: Dados normalizados armazenados em `.pt` para treinamento
-- **Dataset original**: Dados processados em `.npz` a partir de genomas individuais
-- **AlphaGenome (referência)**: Predições brutas da API usando genoma de referência
-- **AlphaGenome (individual)**: Predições brutas da API usando genoma do indivíduo
+Detect inconsistencies and validate comparisons between:
+- **Processed cache**: Normalized data stored in `.pt` files for training
+- **Original dataset**: Processed data in `.npz` files from individual genomes
+- **AlphaGenome (reference)**: Raw API predictions using reference genome
+- **AlphaGenome (individual)**: Raw API predictions using individual's genome
 
-## ✨ Funcionalidades
+## ✨ Features
 
-### 🔄 Modos de Comparação
+### 🔄 Comparison Modes
 
-O programa suporta 4 modos de comparação distintos:
+The program supports 4 distinct comparison modes:
 
 1. **`alphagenome_ref_x_dataset_dir`**: 
-   - Compara predições do AlphaGenome (genoma de referência) vs. dados do dataset processado
-   - Útil para validar se o dataset reflete corretamente o genoma de referência
+   - Compares AlphaGenome predictions (reference genome) vs. processed dataset data
+   - Useful for validating whether the dataset correctly reflects the reference genome
 
 2. **`alphagenome_ind_x_dataset_dir`**: 
-   - Compara predições do AlphaGenome (genoma individual com variantes) vs. dados do dataset processado
-   - Valida se o processamento de variantes individuais está correto
-   - Usa `build_window_and_predict.py` como biblioteca
+   - Compares AlphaGenome predictions (individual genome with variants) vs. processed dataset data
+   - Validates whether individual variant processing is correct
+   - Uses `build_window_and_predict.py` as a library
 
 3. **`dataset_dir_x_cache_dir`**: 
-   - Compara dados do dataset original (`.npz`) vs. cache processado (`.pt`)
-   - Valida pipeline de normalização e transformação
+   - Compares original dataset data (`.npz`) vs. processed cache (`.pt`)
+   - Validates normalization and transformation pipeline
 
 4. **`alphagenome_x_alphagenome_ref`**: 
-   - Compara duas formas de chamar a API do AlphaGenome
-   - `predict_interval` (sem FASTA) vs. `predict_sequence` (com FASTA extraído)
-   - Valida consistência da API
+   - Compares two ways of calling the AlphaGenome API
+   - `predict_interval` (without FASTA) vs. `predict_sequence` (with extracted FASTA)
+   - Validates API consistency
 
-### 🎮 Modos de Navegação Interativa
+### 🎮 Interactive Navigation Modes
 
-#### Modo "single" (padrão)
-Navegação tradicional por um indivíduo por vez:
-- **← (seta esquerda)**: Retrocede para amostra anterior
-- **→ (seta direita)**: Avança para próxima amostra
-- **Q**: Sai do programa
+#### "single" Mode (default)
+Traditional navigation through one individual at a time:
+- **← (left arrow)**: Go to previous sample
+- **→ (right arrow)**: Go to next sample
+- **Q**: Exit program
 
-#### Modo "comparison" (novo!)
-Comparação interativa entre dois indivíduos:
-- **← → (setas)**: Avança/retrocede ambos os indivíduos simultaneamente
-- **A**: Retrocede apenas o segundo indivíduo
-- **D**: Avança apenas o segundo indivíduo
-- **W**: Avança para o próximo gene (ambos indivíduos)
-- **Z**: Retrocede para o gene anterior (ambos indivíduos)
-- **Q**: Sai do programa
+#### "comparison" Mode (new!)
+Interactive comparison between two individuals:
+- **← → (arrows)**: Navigate both individuals simultaneously forward/backward
+- **A**: Navigate only the second individual backward
+- **D**: Navigate only the second individual forward
+- **W**: Advance to next gene (both individuals)
+- **Z**: Go back to previous gene (both individuals)
+- **Q**: Exit program
 
-No modo "comparison":
-- Visualiza 6 tracks empilhadas verticalmente (3 ontologias × 2 strands)
-- Primeiro indivíduo em azul sólido
-- Segundo indivíduo em vermelho tracejado
-- Legenda mostra: `sample_id (population/superpopulation)`
-- Gene atual exibido no título principal
+In "comparison" mode:
+- Displays 6 tracks stacked vertically (3 ontologies × 2 strands)
+- First individual in solid blue
+- Second individual in dashed red
+- Legend shows: `sample_id (population/superpopulation)`
+- Current gene displayed in main title
 
-### 🧬 Filtro de Genes
-- Visualizar todos os 11 genes (66 tracks)
-- Visualizar apenas um gene específico (6 tracks)
-- Visualizar múltiplos genes selecionados
+### 🧬 Gene Filtering
+- View all 11 genes (66 tracks)
+- View only a specific gene (6 tracks)
+- View multiple selected genes
 
-### ⚙️ Configuração via YAML
-- Todas as configurações em arquivo YAML
-- Múltiplas configurações predefinidas
-- Fácil customização
+### ⚙️ YAML Configuration
+- All settings in YAML file
+- Multiple predefined configurations
+- Easy customization
 
-## 🚀 Uso
+## 🚀 Usage
 
-### Uso Básico (modo interativo, todos os genes)
+### Basic Usage (interactive mode, all genes)
 
 ```bash
 cd neural_ancestry_predictor
@@ -80,32 +80,32 @@ cd neural_ancestry_predictor
 python3 verify_processed_dataset.py --config configs/verify_processed_dataset.yaml
 ```
 
-### Verificar apenas um gene específico (ex: MC1R)
+### Verify Only a Specific Gene (e.g., MC1R)
 
 ```bash
 python3 verify_processed_dataset.py --config configs/verify_tyr_only.yaml
 ```
 
-### Modo de Comparação entre Dois Indivíduos
+### Two-Individual Comparison Mode
 
 ```yaml
 # configs/verify_comparison.yaml
 interactive_mode: true
-interactive_comparison_mode: "comparison"  # Ativa modo de comparação
+interactive_comparison_mode: "comparison"  # Enable comparison mode
 comparison_mode: "dataset_dir_x_cache_dir"
-gene_filter: "MC1R"  # Recomendado: um gene por vez
+gene_filter: "MC1R"  # Recommended: one gene at a time
 ```
 
 ```bash
 python3 verify_processed_dataset.py --config configs/verify_comparison.yaml
-# Use ← → para navegar ambos
-# Use A D para navegar apenas o segundo indivíduo
-# Use W Z para mudar o gene
+# Use ← → to navigate both
+# Use A D to navigate only the second individual
+# Use W Z to change genes
 ```
 
-### Criar configuração customizada
+### Create Custom Configuration
 
-Crie um arquivo `.yaml` no diretório `configs/`:
+Create a `.yaml` file in the `configs/` directory:
 
 ```yaml
 # configs/my_verification.yaml
@@ -113,14 +113,14 @@ cache_dir: "/path/to/cache"
 dataset_dir: "/path/to/dataset"
 split: "test"
 index: 0
-gene_filter: "TYR"  # null para todos, "GENE" para um, ["G1", "G2"] para múltiplos
+gene_filter: "TYR"  # null for all, "GENE" for one, ["G1", "G2"] for multiple
 
-# Modo de comparação
+# Comparison mode
 comparison_mode: "alphagenome_ref_x_dataset_dir"
 
-# Modo de navegação
+# Navigation mode
 interactive_mode: true
-interactive_comparison_mode: "single"  # ou "comparison"
+interactive_comparison_mode: "single"  # or "comparison"
 
 show_navigation_help: true
 verbose_metrics: true
@@ -129,260 +129,260 @@ save_plots: false
 output_dir: null
 ```
 
-Depois execute:
+Then execute:
 
 ```bash
 python3 verify_processed_dataset.py --config configs/my_verification.yaml
 ```
 
-## 📝 Configurações Disponíveis
+## 📝 Available Settings
 
-### Arquivo de Configuração YAML
+### YAML Configuration File
 
 ```yaml
 # ═══════════════════════════════════════════════════════════════
-# DIRETÓRIOS (obrigatórios)
+# DIRECTORIES (required)
 # ═══════════════════════════════════════════════════════════════
 
-cache_dir: "/path/to/cache"           # Cache processado (.pt, metadata.json)
-dataset_dir: "/path/to/dataset"       # Dataset original (.npz)
+cache_dir: "/path/to/cache"           # Processed cache (.pt, metadata.json)
+dataset_dir: "/path/to/dataset"       # Original dataset (.npz)
 
 # ═══════════════════════════════════════════════════════════════
-# SELEÇÃO DE AMOSTRA
+# SAMPLE SELECTION
 # ═══════════════════════════════════════════════════════════════
 
-split: "test"                         # train, val ou test
-index: 0                              # Índice inicial (muda com ← →)
-sample_id: null                       # ID específico (opcional, sobrescreve split/index)
+split: "test"                         # train, val, or test
+index: 0                              # Initial index (changes with ← →)
+sample_id: null                       # Specific ID (optional, overrides split/index)
 
 # ═══════════════════════════════════════════════════════════════
-# MODO DE COMPARAÇÃO
+# COMPARISON MODE
 # ═══════════════════════════════════════════════════════════════
 
 comparison_mode: "dataset_dir_x_cache_dir"
-# Opções:
+# Options:
 #   - alphagenome_ref_x_dataset_dir: AlphaGenome (ref) vs dataset
 #   - alphagenome_ind_x_dataset_dir: AlphaGenome (ind) vs dataset
-#   - dataset_dir_x_cache_dir: Dataset vs cache (padrão)
+#   - dataset_dir_x_cache_dir: Dataset vs cache (default)
 #   - alphagenome_x_alphagenome_ref: API interval vs sequence
 
 # ═══════════════════════════════════════════════════════════════
-# FILTRO DE GENES
+# GENE FILTER
 # ═══════════════════════════════════════════════════════════════
 
-gene_filter: null                     # Opções:
-                                      # null: todos os 11 genes (66 tracks)
-                                      # "TYR": apenas gene TYR (6 tracks)
-                                      # ["TYR", "TYRP1"]: múltiplos genes (12 tracks)
+gene_filter: null                     # Options:
+                                      # null: all 11 genes (66 tracks)
+                                      # "TYR": only TYR gene (6 tracks)
+                                      # ["TYR", "TYRP1"]: multiple genes (12 tracks)
 
 # ═══════════════════════════════════════════════════════════════
-# NAVEGAÇÃO INTERATIVA
+# INTERACTIVE NAVIGATION
 # ═══════════════════════════════════════════════════════════════
 
-interactive_mode: true                # true: navegação com teclado
-                                      # false: visualiza apenas uma amostra
+interactive_mode: true                # true: keyboard navigation
+                                      # false: view only one sample
 
-interactive_comparison_mode: "single" # "single": um indivíduo por vez (← →)
-                                      # "comparison": dois indivíduos (← → A D W Z)
+interactive_comparison_mode: "single" # "single": one individual at a time (← →)
+                                      # "comparison": two individuals (← → A D W Z)
 
-show_navigation_help: true            # Mostra instruções no gráfico
+show_navigation_help: true            # Show instructions in plot
 
 # ═══════════════════════════════════════════════════════════════
-# ALPHAGENOME API (OPCIONAL)
+# ALPHAGENOME API (OPTIONAL)
 # ═══════════════════════════════════════════════════════════════
 
 alphagenome_api:
-  enabled: false                      # Habilita chamadas à API
-  api_key: null                       # Usa ALPHAGENOME_API_KEY do ambiente
-  rate_limit_delay: 0.5               # Delay entre chamadas (segundos)
+  enabled: false                      # Enable API calls
+  api_key: null                       # Uses ALPHAGENOME_API_KEY from environment
+  rate_limit_delay: 0.5               # Delay between calls (seconds)
   ontology_terms: ["CL:1000458", "CL:0000346", "CL:2000092"]
 
 # ═══════════════════════════════════════════════════════════════
-# RAW MODE (OPCIONAL)
+# RAW MODE (OPTIONAL)
 # ═══════════════════════════════════════════════════════════════
 
 raw_mode:
-  enabled: false                      # Modo raw (apenas AlphaGenome, sem cache)
-  source: "files"                     # "files" (.npz) ou "api" (chamada API)
+  enabled: false                      # Raw mode (AlphaGenome only, no cache)
+  source: "files"                     # "files" (.npz) or "api" (API call)
   window_size_key: "SEQUENCE_LENGTH_16KB"  
-  # Opções: SEQUENCE_LENGTH_2KB, SEQUENCE_LENGTH_16KB, 
+  # Options: SEQUENCE_LENGTH_2KB, SEQUENCE_LENGTH_16KB, 
   #         SEQUENCE_LENGTH_100KB (128 KiB), SEQUENCE_LENGTH_500KB (512 KiB),
   #         SEQUENCE_LENGTH_1MB
 
 # ═══════════════════════════════════════════════════════════════
-# VISUALIZAÇÃO
+# VISUALIZATION
 # ═══════════════════════════════════════════════════════════════
 
-verbose_metrics: true                 # Exibir métricas detalhadas no console
-show_stats_in_plot: true              # Mostrar estatísticas no gráfico
+verbose_metrics: true                 # Display detailed metrics in console
+show_stats_in_plot: true              # Show statistics in plot
 
 # ═══════════════════════════════════════════════════════════════
-# SALVAMENTO (opcional)
+# SAVING (optional)
 # ═══════════════════════════════════════════════════════════════
 
-save_plots: false                     # Salvar gráficos automaticamente
-output_dir: null                      # Diretório para salvar (cria se não existe)
-output_prefix: "verify"               # Prefixo dos arquivos (ex: verify_HG00120.png)
+save_plots: false                     # Save plots automatically
+output_dir: null                      # Directory to save (creates if doesn't exist)
+output_prefix: "verify"               # File prefix (e.g., verify_HG00120.png)
 ```
 
-## 🌐 Modo API do AlphaGenome
+## 🌐 AlphaGenome API Mode
 
-### O que é?
+### What is it?
 
-O modo API permite verificar o dataset comparando os dados do cache diretamente com predições **em tempo real** da API do AlphaGenome, ao invés de usar os arquivos `.npz` pré-computados.
+API mode allows verifying the dataset by comparing cache data directly with **real-time** predictions from the AlphaGenome API, instead of using pre-computed `.npz` files.
 
-### Quando usar?
+### When to use?
 
-- ✅ Verificar se os `.npz` originais foram gerados corretamente
-- ✅ Testar com sequências personalizadas (variantes individuais)
-- ✅ Validação end-to-end completa do pipeline
-- ✅ Debugging de inconsistências nos dados processados
+- ✅ Verify if original `.npz` files were generated correctly
+- ✅ Test with custom sequences (individual variants)
+- ✅ Complete end-to-end pipeline validation
+- ✅ Debug inconsistencies in processed data
 
-### Como ativar?
+### How to enable?
 
-1. Configure a API key:
+1. Set up API key:
 ```bash
 export ALPHAGENOME_API_KEY="your_api_key_here"
 ```
 
-2. Crie/edite configuração YAML:
+2. Create/edit YAML configuration:
 ```yaml
-# Habilitar modo API
+# Enable API mode
 alphagenome_api:
-  enabled: true  # Ativa chamadas à API
-  api_key: null  # Usa ALPHAGENOME_API_KEY do ambiente
-  rate_limit_delay: 0.5  # Delay entre chamadas (segundos)
+  enabled: true  # Activate API calls
+  api_key: null  # Uses ALPHAGENOME_API_KEY from environment
+  rate_limit_delay: 0.5  # Delay between calls (seconds)
   ontology_terms: ["CL:1000458", "CL:0000346", "CL:2000092"]
 
-# Recomendado: testar um gene por vez
+# Recommended: test one gene at a time
 gene_filter: "MC1R"
 ```
 
-3. Execute:
+3. Run:
 ```bash
 python3 verify_processed_dataset.py --config configs/verify_api_test.yaml
 ```
 
-### Requisitos
+### Requirements
 
-- 📦 Pacote `alphagenome` instalado (`pip install alphagenome`)
-- 🔑 API key válida do AlphaGenome
-- 🌐 Conexão com internet
-- 📁 Arquivos `.fa` das sequências em `dataset_dir/individuals/{sample}/windows/{gene}/`
+- 📦 `alphagenome` package installed (`pip install alphagenome`)
+- 🔑 Valid AlphaGenome API key
+- 🌐 Internet connection
+- 📁 `.fa` sequence files in `dataset_dir/individuals/{sample}/windows/{gene}/`
 
-### Importante
+### Important
 
-⚠️ **Quota de API**: Cada gene consome 1 chamada à API. Use `gene_filter` para economizar!  
-⚠️ **Rate limiting**: Configure `rate_limit_delay` adequadamente (padrão: 0.5s)  
-⚠️ **Ontologias**: Devem corresponder **exatamente** às usadas na criação do dataset original
+⚠️ **API Quota**: Each gene consumes 1 API call. Use `gene_filter` to save quota!  
+⚠️ **Rate limiting**: Configure `rate_limit_delay` appropriately (default: 0.5s)  
+⚠️ **Ontologies**: Must match **exactly** those used in original dataset creation
 
-### Constantes AlphaGenome
+### AlphaGenome Constants
 
-O AlphaGenome usa constantes específicas para tamanhos de janela:
+AlphaGenome uses specific constants for window sizes:
 
-| Constante | Tamanho (bp) | Tamanho (KiB) | Uso |
-|-----------|--------------|---------------|-----|
-| `SEQUENCE_LENGTH_2KB` | 2048 | 2 KiB | Testes rápidos |
-| `SEQUENCE_LENGTH_16KB` | 16384 | 16 KiB | Genes pequenos |
-| `SEQUENCE_LENGTH_100KB` | 131072 | 128 KiB | Genes médios |
-| `SEQUENCE_LENGTH_500KB` | 524288 | 512 KiB | Genes grandes |
-| `SEQUENCE_LENGTH_1MB` | 1048576 | 1 MiB | Regiões extensas |
+| Constant | Size (bp) | Size (KiB) | Usage |
+|----------|-----------|------------|-------|
+| `SEQUENCE_LENGTH_2KB` | 2048 | 2 KiB | Quick tests |
+| `SEQUENCE_LENGTH_16KB` | 16384 | 16 KiB | Small genes |
+| `SEQUENCE_LENGTH_100KB` | 131072 | 128 KiB | Medium genes |
+| `SEQUENCE_LENGTH_500KB` | 524288 | 512 KiB | Large genes |
+| `SEQUENCE_LENGTH_1MB` | 1048576 | 1 MiB | Extended regions |
 
-⚠️ **Nota**: Os nomes das constantes usam KB (base 1000), mas os tamanhos são em potências de 2 (KiB).
+⚠️ **Note**: Constant names use KB (base 1000), but sizes are in powers of 2 (KiB).
 
-## 📊 Saída
+## 📊 Output
 
-### Console (Modo "single")
+### Console ("single" Mode)
 
 ```
 ════════════════════════════════════════════════════════════
-       VERIFICAÇÃO DE DATASET PROCESSADO                   
+       PROCESSED DATASET VERIFICATION                   
 ════════════════════════════════════════════════════════════
 
-Modo interativo ativado:
+Interactive mode activated:
   • Split: test
-  • Total de amostras: 13
-  • Índice inicial: 0
-  • Use ← → para navegar, 'q' para sair
+  • Total samples: 13
+  • Initial index: 0
+  • Use ← → to navigate, 'q' to exit
 
-✓ Sample: NA19472 (índice 0, global 65)
+✓ Sample: NA19472 (index 0, global 65)
 
 ═══════════════════════════════════════════════════════
-           MÉTRICAS DE COMPARAÇÃO                      
+           COMPARISON METRICS                      
 ═══════════════════════════════════════════════════════
 ┏━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┓
-┃ Métrica               ┃              Valor ┃
+┃ Metric                ┃              Value ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━┩
-│ MAE Média (global)    │           0.004782 │
-│ MAE Máximo            │           0.048390 │
-│ MAE Mínimo            │           0.000001 │
-│ Track com maior MAE   │ 45 (gene 7, ont 3) │
+│ Mean MAE (global)     │           0.004782 │
+│ Maximum MAE           │           0.048390 │
+│ Minimum MAE           │           0.000001 │
+│ Track with max MAE    │ 45 (gene 7, ont 3) │
 │                       │                    │
-│ Correlação Média      │           0.337512 │
-│ Correlação Mínima     │          -0.043882 │
-│ Correlação Máxima     │           0.988911 │
-│ Track com menor corr. │ 55 (gene 9, ont 1) │
+│ Mean Correlation      │           0.337512 │
+│ Minimum Correlation   │          -0.043882 │
+│ Maximum Correlation   │           0.988911 │
+│ Track with min corr.  │ 55 (gene 9, ont 1) │
 └───────────────────────┴────────────────────┘
 ═══════════════════════════════════════════════════════
 ```
 
-### Console (Modo "comparison")
+### Console ("comparison" Mode)
 
 ```
 ════════════════════════════════════════════════════════════
-       VERIFICAÇÃO DE DATASET PROCESSADO                   
+       PROCESSED DATASET VERIFICATION                   
 ════════════════════════════════════════════════════════════
 
-Modo de comparação interativa ativado:
+Interactive comparison mode activated:
   • Split: train
-  • Total de amostras: 54
-  • Total de genes: 11
-  • Use ← → (ambos), A D (ind2), W Z (genes), Q (sair)
+  • Total samples: 54
+  • Total genes: 11
+  • Use ← → (both), A D (ind2), W Z (genes), Q (exit)
 
-✓ Mostrando: MC1R
+✓ Showing: MC1R
   Individual 1: HG00120 (GBR/EUR)
   Individual 2: HG00120 (GBR/EUR)
 ```
 
-### Gráfico (Modo "single")
+### Plot ("single" Mode)
 
-O gráfico mostra:
-- **Azul sólido**: Dados do primeiro conjunto (cache, dataset, ou AlphaGenome)
-- **Vermelho tracejado**: Dados do segundo conjunto (AlphaGenome, cache, ou referência)
-- **Linhas cinza pontilhadas**: Separação entre genes
-- **Labels do eixo Y**: Ontologia e tipo celular em duas linhas
-  - Linha 1: `CL:XXXXX (±)` (código da ontologia e strand)
-  - Linha 2: Nome do tipo celular (ex: `Melanocyte`)
-- **Box com estatísticas**: MAE e correlação por track
-- **Instruções de navegação**: Canto inferior central (se modo interativo)
+The plot shows:
+- **Solid blue**: Data from first set (cache, dataset, or AlphaGenome)
+- **Dashed red**: Data from second set (AlphaGenome, cache, or reference)
+- **Gray dotted lines**: Separation between genes
+- **Y-axis labels**: Ontology and cell type in two lines
+  - Line 1: `CL:XXXXX (±)` (ontology code and strand)
+  - Line 2: Cell type name (e.g., `Melanocyte`)
+- **Statistics box**: MAE and correlation per track
+- **Navigation instructions**: Bottom center (if interactive mode)
 
-### Gráfico (Modo "comparison")
+### Plot ("comparison" Mode)
 
-O gráfico mostra:
-- **6 subplots empilhados verticalmente** (3 ontologias × 2 strands)
-- **Azul sólido**: Tracks do primeiro indivíduo
-- **Vermelho tracejado**: Tracks do segundo indivíduo
-- **Título principal**: Gene atual e informação dos dois indivíduos
-- **Labels do eixo Y**: 
+The plot shows:
+- **6 subplots stacked vertically** (3 ontologies × 2 strands)
+- **Solid blue**: First individual's tracks
+- **Dashed red**: Second individual's tracks
+- **Main title**: Current gene and information for both individuals
+- **Y-axis labels**: 
   - `CL:1000458 (+)` / `Melanocyte`
   - `CL:0000346 (+)` / `Dermal Papilla`
   - `CL:2000092 (+)` / `Keratinocyte`
-  - (e versões (-) para strand negativo)
-- **Legenda**: `sample_id (population/superpopulation)` para cada indivíduo
+  - (and (-) versions for negative strand)
+- **Legend**: `sample_id (population/superpopulation)` for each individual
 
-### Ontologias RNA-seq
+### RNA-seq Ontologies
 
-O dataset usa 3 ontologias de tipos celulares, cada uma com 2 strands (+/-):
+The dataset uses 3 cell type ontologies, each with 2 strands (+/-):
 
-| Código CL | Tipo Celular | Descrição |
-|-----------|--------------|-----------|
-| CL:1000458 | Melanocyte | Células produtoras de melanina |
-| CL:0000346 | Dermal Papilla | Células da papila dérmica |
-| CL:2000092 | Keratinocyte | Células da epiderme |
+| CL Code | Cell Type | Description |
+|---------|-----------|-------------|
+| CL:1000458 | Melanocyte | Melanin-producing cells |
+| CL:0000346 | Dermal Papilla | Dermal papilla cells |
+| CL:2000092 | Keratinocyte | Epidermal cells |
 
-Cada gene tem **6 tracks**: 3 ontologias × 2 strands (+ e -)
+Each gene has **6 tracks**: 3 ontologies × 2 strands (+ and -)
 
-## 🧬 Genes Disponíveis
+## 🧬 Available Genes
 
 1. **SLC24A5** - Solute carrier family 24 member 5
 2. **SLC45A2** - Solute carrier family 45 member 2
@@ -396,34 +396,34 @@ Cada gene tem **6 tracks**: 3 ontologias × 2 strands (+ e -)
 10. **TYR** - Tyrosinase
 11. **TYRP1** - Tyrosinase related protein 1
 
-Cada gene tem 6 tracks correspondentes a 3 ontologias × 2 strands.
+Each gene has 6 tracks corresponding to 3 ontologies × 2 strands.
 
-## 🔍 Interpretação dos Resultados
+## 🔍 Interpreting Results
 
 ### MAE (Mean Absolute Error)
-- **< 0.01**: ✅ Excelente correspondência
-- **0.01 - 0.05**: ⚠️ Boa correspondência, pequenas diferenças
-- **> 0.05**: ❌ Possível bug no pipeline
+- **< 0.01**: ✅ Excellent match
+- **0.01 - 0.05**: ⚠️ Good match, minor differences
+- **> 0.05**: ❌ Possible pipeline bug
 
-### Correlação de Pearson
-- **> 0.9**: ✅ Excelente correlação
-- **0.7 - 0.9**: ✅ Boa correlação
-- **0.5 - 0.7**: ⚠️ Correlação moderada
-- **< 0.5**: ❌ Correlação fraca - investigar
+### Pearson Correlation
+- **> 0.9**: ✅ Excellent correlation
+- **0.7 - 0.9**: ✅ Good correlation
+- **0.5 - 0.7**: ⚠️ Moderate correlation
+- **< 0.5**: ❌ Weak correlation - investigate
 
-### No Gráfico
-1. **Sobreposição**: Linhas azul e vermelha devem estar próximas
-2. **Padrões**: Formas das curvas devem ser similares
-3. **Outliers**: Tracks com grande divergência precisam de investigação
+### In the Plot
+1. **Overlap**: Blue and red lines should be close
+2. **Patterns**: Curve shapes should be similar
+3. **Outliers**: Tracks with large divergence need investigation
 
-### Modo "comparison"
-- No modo de comparação, não há métricas MAE/correlação
-- O foco é na **comparação visual** das tracks de dois indivíduos
-- Diferenças entre indivíduos podem indicar variações genéticas reais
+### "comparison" Mode
+- In comparison mode, there are no MAE/correlation metrics
+- Focus is on **visual comparison** of tracks from two individuals
+- Differences between individuals may indicate real genetic variations
 
-## 📚 Exemplos de Uso
+## 📚 Usage Examples
 
-### Exemplo 1: Percorrer todas as amostras do teste
+### Example 1: Browse All Test Samples
 
 ```yaml
 # configs/scan_test_all.yaml
@@ -431,7 +431,7 @@ cache_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes/datasets/
 dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes"
 split: "test"
 index: 0
-gene_filter: null  # Todos os genes
+gene_filter: null  # All genes
 interactive_mode: true
 interactive_comparison_mode: "single"
 comparison_mode: "dataset_dir_x_cache_dir"
@@ -439,46 +439,46 @@ comparison_mode: "dataset_dir_x_cache_dir"
 
 ```bash
 python3 verify_processed_dataset.py --config configs/scan_test_all.yaml
-# Pressione → para navegar pelas 13 amostras do teste
-# Pressione 'q' para sair
+# Press → to navigate through 13 test samples
+# Press 'q' to exit
 ```
 
-### Exemplo 2: Verificar gene específico em todas as amostras
+### Example 2: Verify Specific Gene Across All Samples
 
 ```yaml
 # configs/verify_tyr_all.yaml
 gene_filter: "TYR"
 interactive_mode: true
 interactive_comparison_mode: "single"
-split: "train"  # 54 amostras
+split: "train"  # 54 samples
 comparison_mode: "dataset_dir_x_cache_dir"
 ```
 
 ```bash
 python3 verify_processed_dataset.py --config configs/verify_tyr_all.yaml
-# Navegue com → para ver TYR em todas as amostras de treino
+# Navigate with → to see TYR in all training samples
 ```
 
-### Exemplo 3: Comparar dois indivíduos interativamente
+### Example 3: Compare Two Individuals Interactively
 
 ```yaml
 # configs/compare_individuals.yaml
 interactive_mode: true
 interactive_comparison_mode: "comparison"
 comparison_mode: "dataset_dir_x_cache_dir"
-gene_filter: "MC1R"  # Recomendado: um gene por vez
+gene_filter: "MC1R"  # Recommended: one gene at a time
 split: "train"
 ```
 
 ```bash
 python3 verify_processed_dataset.py --config configs/compare_individuals.yaml
-# ← → : navega ambos os indivíduos
-# A D : navega apenas o segundo indivíduo
-# W Z : muda o gene sendo exibido
-# Q   : sai
+# ← → : navigate both individuals
+# A D : navigate only the second individual
+# W Z : change the displayed gene
+# Q   : exit
 ```
 
-### Exemplo 4: Validar AlphaGenome vs Dataset (referência)
+### Example 4: Validate AlphaGenome vs Dataset (reference)
 
 ```yaml
 # configs/validate_alphagenome_ref.yaml
@@ -491,10 +491,10 @@ sample_id: "HG02445"
 
 ```bash
 python3 verify_processed_dataset.py --config configs/validate_alphagenome_ref.yaml
-# Compara AlphaGenome (genoma de referência) com dataset processado
+# Compare AlphaGenome (reference genome) with processed dataset
 ```
 
-### Exemplo 5: Validar AlphaGenome vs Dataset (individual)
+### Example 5: Validate AlphaGenome vs Dataset (individual)
 
 ```yaml
 # configs/validate_alphagenome_ind.yaml
@@ -506,11 +506,11 @@ sample_id: "HG02445"
 
 ```bash
 python3 verify_processed_dataset.py --config configs/validate_alphagenome_ind.yaml
-# Compara AlphaGenome (genoma individual) com dataset processado
-# Usa build_window_and_predict.py para gerar predições individuais
+# Compare AlphaGenome (individual genome) with processed dataset
+# Uses build_window_and_predict.py to generate individual predictions
 ```
 
-### Exemplo 6: Salvar gráficos de todas as amostras
+### Example 6: Save Plots of All Samples
 
 ```yaml
 # configs/save_all_plots.yaml
@@ -523,143 +523,143 @@ comparison_mode: "dataset_dir_x_cache_dir"
 ```
 
 ```bash
-# Criar script para processar todas as amostras
+# Create script to process all samples
 for i in {0..12}; do
     sed "s/index: 0/index: $i/" configs/save_all_plots.yaml > /tmp/config_$i.yaml
     python3 verify_processed_dataset.py --config /tmp/config_$i.yaml
 done
 ```
 
-## 🛠️ Workflow Recomendado
+## 🛠️ Recommended Workflow
 
-### 1. Verificação Inicial (Visão Geral)
+### 1. Initial Check (Overview)
 ```bash
-# Verificar algumas amostras com todos os genes
+# Check a few samples with all genes
 python3 verify_processed_dataset.py --config configs/verify_processed_dataset.yaml
-# Use → para ver 3-5 amostras diferentes
-# Se MAE > 0.05 ou Corr < 0.5 → investigar
+# Use → to see 3-5 different samples
+# If MAE > 0.05 or Corr < 0.5 → investigate
 ```
 
-### 2. Investigação por Gene
+### 2. Gene-Specific Investigation
 ```bash
-# Se problema detectado, isolar gene problemático
+# If problem detected, isolate problematic gene
 python3 verify_processed_dataset.py --config configs/verify_tyr_only.yaml
-# Verificar se problema é específico do gene ou geral
+# Check if problem is gene-specific or general
 ```
 
-### 3. Validação AlphaGenome
+### 3. AlphaGenome Validation
 ```bash
-# Validar dados contra AlphaGenome (referência)
-# Editar config para comparison_mode: "alphagenome_ref_x_dataset_dir"
+# Validate data against AlphaGenome (reference)
+# Edit config for comparison_mode: "alphagenome_ref_x_dataset_dir"
 python3 verify_processed_dataset.py --config configs/verify_alphagenome_ref.yaml
 
-# Validar dados contra AlphaGenome (individual)
-# Editar config para comparison_mode: "alphagenome_ind_x_dataset_dir"
+# Validate data against AlphaGenome (individual)
+# Edit config for comparison_mode: "alphagenome_ind_x_dataset_dir"
 python3 verify_processed_dataset.py --config configs/verify_alphagenome_ind.yaml
 ```
 
-### 4. Comparação entre Indivíduos
+### 4. Individual Comparison
 ```bash
-# Comparar padrões de expressão entre indivíduos
-# Editar config para interactive_comparison_mode: "comparison"
+# Compare expression patterns between individuals
+# Edit config for interactive_comparison_mode: "comparison"
 python3 verify_processed_dataset.py --config configs/compare_individuals.yaml
-# Use A D para navegar o segundo indivíduo independentemente
-# Use W Z para mudar genes
+# Use A D to navigate the second individual independently
+# Use W Z to change genes
 ```
 
-### 5. Varredura Sistemática
+### 5. Systematic Scan
 ```bash
-# Verificar todos os splits
+# Verify all splits
 python3 verify_processed_dataset.py --config configs/verify_train.yaml
 python3 verify_processed_dataset.py --config configs/verify_val.yaml  
 python3 verify_processed_dataset.py --config configs/verify_test.yaml
 ```
 
-### 6. Documentação
+### 6. Documentation
 ```bash
-# Salvar gráficos para relatório
-# Configure save_plots: true e output_dir
+# Save plots for report
+# Configure save_plots: true and output_dir
 python3 verify_processed_dataset.py --config configs/save_for_report.yaml
 ```
 
 ## 🐛 Troubleshooting
 
-### Erro: "Arquivo de configuração não existe"
-- Verificar caminho do arquivo YAML
-- Verificar que está no diretório correto
+### Error: "Configuration file does not exist"
+- Check YAML file path
+- Verify you're in the correct directory
 
-### Erro: "Cache dir não existe"
-- Verificar `cache_dir` no YAML
-- Verificar permissões de leitura
+### Error: "Cache dir does not exist"
+- Check `cache_dir` in YAML
+- Verify read permissions
 
-### Erro: "Gene não encontrado"
-- Verificar ortografia do nome do gene
-- Usar lista completa: SLC24A5, SLC45A2, OCA2, HERC2, MC1R, EDAR, MFSD12, DDB1, TCHH, TYR, TYRP1
+### Error: "Gene not found"
+- Check gene name spelling
+- Use complete list: SLC24A5, SLC45A2, OCA2, HERC2, MC1R, EDAR, MFSD12, DDB1, TCHH, TYR, TYRP1
 
-### Erro: "Invalid window_size_key: SEQUENCE_LENGTH_512KB"
-- AlphaGenome usa `SEQUENCE_LENGTH_500KB` para 524288 bp (512 KiB)
-- AlphaGenome usa `SEQUENCE_LENGTH_100KB` para 131072 bp (128 KiB)
-- Verificar constantes corretas na tabela acima
+### Error: "Invalid window_size_key: SEQUENCE_LENGTH_512KB"
+- AlphaGenome uses `SEQUENCE_LENGTH_500KB` for 524288 bp (512 KiB)
+- AlphaGenome uses `SEQUENCE_LENGTH_100KB` for 131072 bp (128 KiB)
+- Check correct constants in table above
 
-### Erro: "Sequence length X not supported by the model"
-- AlphaGenome suporta apenas: 2048, 16384, 131072, 524288, 1048576 bp
-- Verificar se o dataset foi gerado com um desses tamanhos
-- Usar `window_size_key` correspondente ao tamanho do dataset
+### Error: "Sequence length X not supported by the model"
+- AlphaGenome only supports: 2048, 16384, 131072, 524288, 1048576 bp
+- Check if dataset was generated with one of these sizes
+- Use corresponding `window_size_key` for dataset size
 
-### MAE muito alto (> 0.05)
-1. Verificar que cache foi gerado com mesmos parâmetros
-2. Verificar método de normalização
-3. Verificar se dados do AlphaGenome estão corretos
-4. Usar modo `alphagenome_ref_x_dataset_dir` para validar
+### MAE too high (> 0.05)
+1. Check that cache was generated with same parameters
+2. Verify normalization method
+3. Check if AlphaGenome data is correct
+4. Use `alphagenome_ref_x_dataset_dir` mode to validate
 
-### Janela não responde a teclas
-- Garantir que janela matplotlib está em foco
-- Em alguns sistemas, clicar na janela antes de pressionar teclas
+### Window not responding to keys
+- Ensure matplotlib window has focus
+- On some systems, click on window before pressing keys
 
-### Gráfico muito "cheio"
-- Usar `gene_filter` para visualizar menos tracks
-- Exemplo: `gene_filter: "TYR"` mostra apenas 6 tracks
-- No modo "comparison", usar um gene por vez
+### Plot too "crowded"
+- Use `gene_filter` to visualize fewer tracks
+- Example: `gene_filter: "TYR"` shows only 6 tracks
+- In "comparison" mode, use one gene at a time
 
-### Modo alphagenome_ind_x_dataset_dir lento
-- Este modo chama `build_window_and_predict.py` para gerar predições
-- Usa arquivos temporários em `/tmp/GENOMICS_DATA/top3`
-- Requer acesso ao FASTA de referência e VCF
-- Limpa arquivos temporários automaticamente ao final
+### alphagenome_ind_x_dataset_dir mode slow
+- This mode calls `build_window_and_predict.py` to generate predictions
+- Uses temporary files in `/tmp/GENOMICS_DATA/top3`
+- Requires access to reference FASTA and VCF
+- Automatically cleans up temporary files at the end
 
-## 🔧 Detalhes Técnicos
+## 🔧 Technical Details
 
-### Window Size e Context
+### Window Size and Context
 
-O programa implementa lógica sofisticada para lidar com tamanhos de janela:
+The program implements sophisticated logic to handle window sizes:
 
-1. **Detecção automática**: Lê o dataset e detecta seu tamanho original (full_length)
-2. **Predição AlphaGenome**: Chama API com o mesmo full_length para manter contexto
-3. **Visualização**: Extrai janela central menor (viz_length) de ambos para comparação
-4. **Centralização**: Usa função `extract_center_window()` consistente
+1. **Automatic detection**: Reads dataset and detects its original size (full_length)
+2. **AlphaGenome prediction**: Calls API with same full_length to maintain context
+3. **Visualization**: Extracts smaller central window (viz_length) from both for comparison
+4. **Centralization**: Uses consistent `extract_center_window()` function
 
-Exemplo:
-- Dataset gerado com 524288 bp (512 KiB)
-- AlphaGenome chamado com 524288 bp (mesmo contexto)
-- Visualização mostra apenas 16384 bp (centro)
-- Ambos extraídos do mesmo centro → alinhamento perfeito
+Example:
+- Dataset generated with 524288 bp (512 KiB)
+- AlphaGenome called with 524288 bp (same context)
+- Visualization shows only 16384 bp (center)
+- Both extracted from same center → perfect alignment
 
 ### Boundary Conditions
 
-Genes próximos ao início/fim de cromossomos são tratados corretamente:
+Genes near chromosome start/end are handled correctly:
 
-1. **Coordenadas clipped**: `samtools faidx` pode retornar sequências menores
-2. **Padding com 'N'**: Sequências são padded no início/fim conforme necessário
-3. **Alinhamento mantido**: Posições relativas preservadas mesmo com padding
+1. **Clipped coordinates**: `samtools faidx` may return smaller sequences
+2. **'N' padding**: Sequences are padded at start/end as needed
+3. **Alignment maintained**: Relative positions preserved even with padding
 
-### Centralização de Lógica
+### Logic Centralization
 
-Função `extract_center_window()` usada consistentemente:
-- Remove duplicação de código
-- Garante mesma lógica de centralização
-- Corrige bug de off-by-one em versões anteriores
+`extract_center_window()` function used consistently:
+- Removes code duplication
+- Ensures same centralization logic
+- Fixes off-by-one bug from previous versions
 
-## 📦 Dependências
+## 📦 Dependencies
 
 - Python 3.10+
 - PyTorch
@@ -669,37 +669,37 @@ Função `extract_center_window()` usada consistentemente:
 - PyYAML
 - Rich
 - Pandas
-- alphagenome (opcional, para modo API)
-- samtools (opcional, para modo alphagenome_ind)
-- bcftools (opcional, para modo alphagenome_ind)
+- alphagenome (optional, for API mode)
+- samtools (optional, for alphagenome_ind mode)
+- bcftools (optional, for alphagenome_ind mode)
 
-Todas já instaladas no ambiente `genomics`.
+All already installed in `genomics` environment.
 
-## 📄 Arquivos de Exemplo
+## 📄 Example Files
 
-O repositório inclui:
-- `configs/verify_processed_dataset.yaml` - Configuração padrão (todos os genes, modo single)
-- `configs/verify_tyr_only.yaml` - Apenas gene MC1R (exemplo de filtro)
-- `configs/verify_raw_test.yaml` - Modo raw (AlphaGenome apenas)
+The repository includes:
+- `configs/verify_processed_dataset.yaml` - Default configuration (all genes, single mode)
+- `configs/verify_tyr_only.yaml` - MC1R gene only (filter example)
+- `configs/verify_raw_test.yaml` - Raw mode (AlphaGenome only)
 
-## 🔄 Histórico de Versões
+## 🔄 Version History
 
-| Data | Versão | Mudanças |
-|------|--------|----------|
-| 2025-11-23 | 1.0 | Versão inicial com navegação interativa |
-| 2025-11-24 | 1.1 | Adicionado filtro por gene e modo API |
-| 2025-11-25 | 2.0 | Adicionados comparison modes e interactive_comparison_mode |
-| 2025-11-25 | 2.1 | Correção de window_size, boundary conditions, AlphaGenome constants |
-| 2025-11-25 | 2.2 | Labels de ontologia em duas linhas, modo "comparison" refinado |
+| Date | Version | Changes |
+|------|---------|---------|
+| 2025-11-23 | 1.0 | Initial version with interactive navigation |
+| 2025-11-24 | 1.1 | Added gene filter and API mode |
+| 2025-11-25 | 2.0 | Added comparison modes and interactive_comparison_mode |
+| 2025-11-25 | 2.1 | Fixed window_size, boundary conditions, AlphaGenome constants |
+| 2025-11-25 | 2.2 | Two-line ontology labels, refined "comparison" mode |
 
-## 👥 Autor
+## 👥 Author
 
 ChatGPT (for Alberto)  
 Created: 2025-11-23  
 Updated: 2025-11-25
 
-## 📝 Notas Finais
+## 📝 Final Notes
 
-Este programa é uma ferramenta essencial para garantir a qualidade e consistência do pipeline de processamento de dados genômicos. Use-o regularmente durante o desenvolvimento e antes de treinar modelos para evitar treinar com dados incorretos.
+This program is an essential tool to ensure quality and consistency of the genomic data processing pipeline. Use it regularly during development and before training models to avoid training with incorrect data.
 
-Para questões técnicas ou bugs, consulte a documentação do código ou entre em contato.
+For technical questions or bugs, consult the code documentation or get in touch.
