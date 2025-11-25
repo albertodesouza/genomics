@@ -13,6 +13,7 @@ This module implements a YAML-configurable neural network that predicts ancestry
 - [Architecture](#architecture)
 - [Data Processing](#data-processing)
 - [Processed Dataset Cache](#processed-dataset-cache)
+- [Dataset Verification](#dataset-verification)
 - [Training](#training)
 - [Debug and Visualization](#debug-and-visualization)
 - [Testing and Evaluation](#testing-and-evaluation)
