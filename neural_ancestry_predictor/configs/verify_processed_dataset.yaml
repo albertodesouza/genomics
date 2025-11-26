@@ -83,9 +83,8 @@ alphagenome_api:
   # Rate limit delay in seconds between API calls
   rate_limit_delay: 0.5
   
-  # Ontology terms to use for predictions (must match dataset creation)
-  # Exemplo: ["CL:1000458", "CL:0000346", "CL:2000092"]
-  ontology_terms: ["CL:1000458", "CL:0000346", "CL:2000092"]
+  # Nota: ontology_terms agora são lidos dinamicamente dos metadados do dataset
+  # Os termos são obtidos de dataset_metadata['ontology_details'] ou dataset_metadata['ontologies']
 
 # ───────────────────────────────────────────────────────────────────
 # RAW MODE (OPCIONAL)

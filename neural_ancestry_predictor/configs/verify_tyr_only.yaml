@@ -15,11 +15,11 @@ gene_filter: "MC1R"  # Mostrar apenas gene TYR (6 tracks)
 #comparison_mode: "dataset_dir_x_cache_dir"
 
 # AlphaGenome API verification mode (opcional)
+# Nota: ontology_terms agora são lidos dinamicamente dos metadados do dataset
 alphagenome_api:
   enabled: true
   api_key: null
   rate_limit_delay: 0.5
-  ontology_terms: ["CL:1000458", "CL:0000346", "CL:2000092"]
 
 # Raw visualization mode (AlphaGenome only, no cache comparison)
 raw_mode:

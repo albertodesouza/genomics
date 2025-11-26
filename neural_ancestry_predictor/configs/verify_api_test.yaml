@@ -10,11 +10,11 @@ sample_id: null
 gene_filter: "MC1R"
 
 # AlphaGenome API mode - ENABLED for testing
+# Nota: ontology_terms agora são lidos dinamicamente dos metadados do dataset
 alphagenome_api:
   enabled: true
   api_key: null  # Will read from ALPHAGENOME_API_KEY env var
   rate_limit_delay: 0.5
-  ontology_terms: ["CL:1000458", "CL:0000346", "CL:2000092"]
 
 # Raw visualization mode (AlphaGenome only, no cache comparison)
 raw_mode:

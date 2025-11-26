@@ -96,6 +96,32 @@ NUM_ONTOLOGIES = 6  # Número de ontologias RNA-seq por gene (valor padrão)
 # Helper Function: Generate Ontology Labels from Dataset Metadata
 # ═══════════════════════════════════════════════════════════════════════════
 
+def get_ontology_terms_from_metadata(dataset_metadata: Dict) -> List[str]:
+    """
+    Extrai lista de ontology terms (CURIEs) dos metadados do dataset.
+    
+    Args:
+        dataset_metadata: Dicionário com metadados do dataset
+        
+    Returns:
+        Lista de ontology CURIEs ordenados (ex: ["CL:0000346", "CL:1000458", ...])
+    """
+    ontology_details = dataset_metadata.get('ontology_details', {})
+    
+    if ontology_details:
+        # Retornar CURIEs ordenados das ontologies
+        return sorted(ontology_details.keys())
+    
+    # Fallback: tentar ler do campo 'ontologies' (pode ter espaços indevidos, então limpar)
+    ontologies = dataset_metadata.get('ontologies', [])
+    if ontologies:
+        return sorted([ont.strip() for ont in ontologies if ont.strip()])
+    
+    # Fallback final: retornar lista padrão se nada encontrado
+    console.print("[yellow]⚠ Ontologias não encontradas nos metadados, usando lista padrão[/yellow]")
+    return ["CL:1000458", "CL:0000346", "CL:2000092"]
+
+
 def generate_ontology_labels(dataset_metadata: Dict) -> List[str]:
     """
     Gera labels de ontologias dinamicamente a partir dos metadados do dataset.
@@ -1278,8 +1304,16 @@ def load_alphagenome_data(
     use_api = config and config.get('alphagenome_api', {}).get('enabled', False)
     
     if use_api:
+        # Carregar dataset_metadata para passar à função
+        metadata_file = dataset_dir / 'dataset_metadata.json'
+        dataset_metadata = None
+        if metadata_file.exists():
+            import json
+            with open(metadata_file, 'r') as f:
+                dataset_metadata = json.load(f)
+        
         return _load_from_alphagenome_api(
-            dataset_dir, sample_id, window_center_size, gene_filter, config
+            dataset_dir, sample_id, window_center_size, gene_filter, config, dataset_metadata
         )
     else:
         return _load_from_files(
@@ -1292,10 +1326,21 @@ def _load_from_alphagenome_api(
     sample_id: str,
     window_center_size: int,
     gene_filter: Optional[Union[str, List[str]]],
-    config: Dict
+    config: Dict,
+    dataset_metadata: Optional[Dict] = None
 ) -> Tuple[np.ndarray, List[str]]:
     """Load data from AlphaGenome API."""
     console.print(f"[bold cyan]🌐 AlphaGenome API Mode Enabled[/bold cyan]")
+    
+    # Carregar dataset_metadata se não fornecido
+    if dataset_metadata is None:
+        metadata_file = dataset_dir / 'dataset_metadata.json'
+        if metadata_file.exists():
+            import json
+            with open(metadata_file, 'r') as f:
+                dataset_metadata = json.load(f)
+        else:
+            dataset_metadata = {}
     
     # Get gene order and filter
     genes_in_order = get_genes_in_dataset_order(dataset_dir, sample_id)
@@ -1314,7 +1359,8 @@ def _load_from_alphagenome_api(
     else:
         raise ValueError(f"gene_filter inválido: {gene_filter}")
     
-    ontology_terms = config['alphagenome_api']['ontology_terms']
+    # Obter ontology terms dos metadados do dataset
+    ontology_terms = get_ontology_terms_from_metadata(dataset_metadata)
     
     # Determine window size from window_center_size
     # Map common sizes to AlphaGenome constants (usando constantes globais)
@@ -1367,7 +1413,8 @@ def load_raw_alphagenome_data(
     gene_name: str,
     center_bp: int,
     source: str,
-    config: Dict
+    config: Dict,
+    dataset_metadata: Optional[Dict] = None
 ) -> tuple:
     """
     Load raw AlphaGenome data without normalization.
@@ -1383,9 +1430,19 @@ def load_raw_alphagenome_data(
     Returns:
         Array [6, center_bp] with raw RNA-seq values
     """
+    # Carregar dataset_metadata se não fornecido
+    if dataset_metadata is None:
+        metadata_file = dataset_dir / 'dataset_metadata.json'
+        if metadata_file.exists():
+            import json
+            with open(metadata_file, 'r') as f:
+                dataset_metadata = json.load(f)
+        else:
+            dataset_metadata = {}
+    
     if source == "api":
         # Call API with reference genome (como no Colab)
-        ontology_terms = config['alphagenome_api']['ontology_terms']
+        ontology_terms = get_ontology_terms_from_metadata(dataset_metadata)
         
         # Determinar window size key usando mapeamento global
         # Criar dicionário completo com tamanhos adicionais que não estão no SIZE_TO_SEQUENCE_NAME
@@ -1854,7 +1911,8 @@ def plot_raw_data_colab_style(
     sample_id: str,
     gtf,  # pandas DataFrame
     config: Dict,
-    viewer: Optional[InteractiveViewer] = None
+    viewer: Optional[InteractiveViewer] = None,
+    dataset_metadata: Optional[Dict] = None
 ) -> plt.Figure:
     """
     Plot using AlphaGenome's plot_components (Colab style).
@@ -1883,8 +1941,7 @@ def plot_raw_data_colab_style(
         for ont_idx in range(values.shape[1]):
             gene_tracks.append(values[:, ont_idx])
         raw_data = np.array(gene_tracks)
-        # Tentar obter dataset_metadata do viewer se disponível
-        dataset_metadata = getattr(viewer, 'dataset_metadata', None) if viewer else None
+        # dataset_metadata já está disponível como parâmetro da função
         return plot_raw_data(raw_data, sample_id, gene_name, config, viewer, dataset_metadata)
     
     console.print(f"[cyan]Creating Colab-style visualization...[/cyan]")
@@ -2027,15 +2084,14 @@ def process_sample_raw_mode(
         console.print(f"\n[cyan]Loading raw data for {gene_name}...[/cyan]")
         
         raw_data, output, gtf = load_raw_alphagenome_data(
-            dataset_dir, sample_id, gene_name, center_bp, source, config
+            dataset_dir, sample_id, gene_name, center_bp, source, config, dataset_metadata
         )
         
         # Plot with Colab-style if we have output object, otherwise simple plot
         if output is not None and gtf is not None:
-            fig = plot_raw_data_colab_style(output, gene_name, sample_id, gtf, config, viewer)
+            fig = plot_raw_data_colab_style(output, gene_name, sample_id, gtf, config, viewer, dataset_metadata)
         else:
-            # Tentar obter dataset_metadata do viewer se disponível
-            dataset_metadata = getattr(viewer, 'dataset_metadata', None) if viewer else None
+            # dataset_metadata já está disponível como parâmetro da função
             fig = plot_raw_data(raw_data, sample_id, gene_name, config, viewer, dataset_metadata)
         
         # Save if requested
@@ -2119,7 +2175,7 @@ def process_sample_comparison_mode(
                 # Ambos devem usar o mesmo tamanho do dataset_dir, mas visualizar apenas window_size_key
                 
                 console.print(f"[dim]  Detecting dataset_dir window size...[/dim]")
-                ontology_terms = config['alphagenome_api']['ontology_terms']
+                ontology_terms = get_ontology_terms_from_metadata(dataset_metadata)
                 
                 # Primeiro, carregar dataset_dir SEM extrair janela, só para detectar tamanho
                 data1_full, full_length = _load_dataset_dir_predictions(
@@ -2186,7 +2242,7 @@ def process_sample_comparison_mode(
                 # USAR TAMANHO DO DATASET, VISUALIZAR window_size_key
                 
                 console.print(f"[dim]  Detecting dataset_dir window size...[/dim]")
-                ontology_terms = config['alphagenome_api']['ontology_terms']
+                ontology_terms = get_ontology_terms_from_metadata(dataset_metadata)
                 
                 # Carregar dataset_dir SEM extrair janela
                 data_dataset_full, full_length = _load_dataset_dir_predictions(
@@ -2240,7 +2296,7 @@ def process_sample_comparison_mode(
                 # USA build_window_and_predict.py como biblioteca
                 
                 console.print(f"[dim]  Detecting dataset_dir window size...[/dim]")
-                ontology_terms = config['alphagenome_api']['ontology_terms']
+                ontology_terms = get_ontology_terms_from_metadata(dataset_metadata)
                 
                 # Carregar dataset_dir SEM extrair janela
                 data_dataset_full, full_length = _load_dataset_dir_predictions(
@@ -2416,7 +2472,7 @@ def process_sample_comparison_mode(
             metrics = compute_metrics(data1, data2, config.get('verbose_metrics', True))
             
             # Plot comparison
-            dataset_metadata = getattr(viewer, 'dataset_metadata', None) if viewer else None
+            # dataset_metadata já está disponível como parâmetro da função
             fig = plot_comparison(
                 data1, data2, sample_id, metrics, [gene_name], config, viewer,
                 label1=label1, label2=label2, dataset_metadata=dataset_metadata
@@ -2506,7 +2562,7 @@ def process_comparison_sample(
         )
         
         # Plotar comparação
-        dataset_metadata = getattr(viewer, 'dataset_metadata', None) if viewer else None
+        # dataset_metadata já está disponível como parâmetro da função
         fig = plot_individual_comparison(
             features_1, features_2,
             sample_id_1, pop_1, superpop_1,
@@ -2594,7 +2650,7 @@ def process_sample(
         metrics = compute_metrics(cache_features, alphagenome_normalized, verbose=verbose_metrics)
         
         # Visualizar
-        dataset_metadata = getattr(viewer, 'dataset_metadata', None) if viewer else None
+        # dataset_metadata já está disponível como parâmetro da função
         fig = plot_comparison(
             cache_features, alphagenome_normalized, sample_id, metrics,
             genes_loaded, config, viewer, dataset_metadata=dataset_metadata

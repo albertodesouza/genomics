@@ -23,11 +23,11 @@ gene_filter: "SLC24A5" # TYR, TYRP1, SLC24A5, SLC45A2, OCA2, HERC2, MFSD12, DDB1
 comparison_mode: "alphagenome_ind_x_dataset_dir"
 
 # For alphagenome modes, specify API settings
+# Nota: ontology_terms agora são lidos dinamicamente dos metadados do dataset
 alphagenome_api:
   enabled: true
   api_key: null
   rate_limit_delay: 0.5
-  ontology_terms: ["CL:1000458", "CL:0000346", "CL:2000092"]
 
 # Raw visualization mode - ENABLED
 raw_mode:
