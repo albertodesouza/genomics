@@ -548,12 +548,38 @@ class ProcessedGenomicDataset(Dataset):
     
     def _create_target_mappings(self):
         """Cria mapeamentos entre targets e índices."""
-        # Verificar se há classes conhecidas no config
+        
+        # Prioridade 1: Tentar carregar dos metadados do dataset
+        dataset_metadata = getattr(self.base_dataset, 'dataset_metadata', {})
+        classes_from_metadata = None
+        
+        if self.prediction_target == 'superpopulation':
+            superpop_dist = dataset_metadata.get('superpopulation_distribution', {})
+            if superpop_dist:
+                classes_from_metadata = list(superpop_dist.keys())
+        elif self.prediction_target == 'population':
+            pop_dist = dataset_metadata.get('population_distribution', {})
+            if pop_dist:
+                classes_from_metadata = list(pop_dist.keys())
+        
+        if classes_from_metadata:
+            console.print(f"\n[cyan]Carregando classes dos metadados do dataset...[/cyan]")
+            sorted_targets = sorted(classes_from_metadata)
+            
+            self.target_to_idx = {target: idx for idx, target in enumerate(sorted_targets)}
+            self.idx_to_target = {idx: target for target, idx in self.target_to_idx.items()}
+            
+            console.print(f"[green]✓ Mapeamento de targets criado: {len(self.target_to_idx)} classes[/green]")
+            console.print(f"[cyan]Classes: {sorted_targets}[/cyan]")
+            return
+        
+        # Prioridade 2: Verificar se há classes conhecidas no config
         known_classes = self.config.get('output', {}).get('known_classes')
         
         if known_classes is not None and len(known_classes) > 0:
-            # Usar classes pré-definidas (rápido!)
-            console.print(f"\n[cyan]Usando classes conhecidas do config (pula escaneamento)...[/cyan]")
+            # Usar classes pré-definidas (fallback)
+            console.print(f"\n[cyan]Usando classes conhecidas do config (fallback)...[/cyan]")
+            console.print(f"[yellow]⚠ Recomendado: Remova 'known_classes' do YAML para usar metadados do dataset[/yellow]")
             sorted_targets = sorted(known_classes)
             
             self.target_to_idx = {target: idx for idx, target in enumerate(sorted_targets)}
@@ -563,9 +589,9 @@ class ProcessedGenomicDataset(Dataset):
             console.print(f"[cyan]Classes: {sorted_targets}[/cyan]")
             return
         
-        # Caso contrário, escanear o dataset (demorado)
-        console.print(f"\n[cyan]Criando mapeamento de classes...[/cyan]")
-        console.print(f"[yellow]  (Para acelerar, defina 'known_classes' no YAML)[/yellow]")
+        # Prioridade 3: Escanear o dataset (mais lento)
+        console.print(f"\n[yellow]Classes não encontradas nos metadados ou config.[/yellow]")
+        console.print(f"[cyan]Escaneando dataset para descobrir classes...[/cyan]")
         unique_targets = set()
         
         with Progress(

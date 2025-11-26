@@ -39,7 +39,17 @@ dataset_input:
   # Valores menores = menos features, treinamento mais rápido
   # Valores maiores = mais informação, maior dimensionalidade
   # Default: 100 bases (bem pequeno para começar)
-  window_center_size: 16384
+  # WINDOW_SIZE_4KB = 4096
+  # WINDOW_SIZE_8KB = 8192
+  # WINDOW_SIZE_16KB = 16384
+  # WINDOW_SIZE_32KB = 32768
+  # WINDOW_SIZE_64KB = 65536
+  # WINDOW_SIZE_128KB = 131072
+  # WINDOW_SIZE_256KB = 262144
+  # WINDOW_SIZE_512KB = 524288   # AlphaGenome: "500KB" = 524288 bp (512 KB real)
+  # WINDOW_SIZE_1MB = 1048576
+  
+  window_center_size: 32768
   
   # Fator de downsampling a aplicar após extração do trecho central
   # 1 = usar todas as bases selecionadas (sem downsampling)
@@ -84,7 +94,7 @@ dataset_input:
   # Valores típicos (ATAC-seq, 11 windows):
   #   - log: ~4.33 a 4.34
   #   - minmax_keep_zero: varia mais (ver log)
-  normalization_value: 0.834945
+  normalization_value: 0.0
   
   # Diretório para cache do dataset processado (normalizado e dividido)
   # Se null, não usa cache (sempre reprocessa os dados)
@@ -109,21 +119,21 @@ output:
   #   "frog_likelihood": Prediz likelihood FROG (150 valores - regressão)
   prediction_target: "superpopulation"
   
-  # Classes conhecidas (otimização de performance)
-  # Se especificado, usa estas classes diretamente sem escanear o dataset (~30s economia)
-  # Se null ou vazio, escaneia o dataset para descobrir classes automaticamente
+  # Classes conhecidas (OPCIONAL - removido para usar metadados dinâmicos)
+  # Se não especificado ou null, carrega automaticamente dos metadados do dataset
+  # Se os metadados não estiverem disponíveis, pode especificar aqui como fallback
   # 
   # Para superpopulation (5 classes):
-  known_classes: ["AFR", "AMR", "EAS", "EUR", "SAS"]
+  # known_classes: ["AFR", "AMR", "EAS", "EUR", "SAS"]
   # 
-  # Para population (26 classes), descomente e complete:
+  # Para population (26 classes):
   # known_classes: ["ACB", "ASW", "BEB", "CDX", "CEU", "CHB", "CHS", "CLM", 
   #                 "ESN", "FIN", "GBR", "GIH", "GWD", "IBS", "ITU", "JPT", 
   #                 "KHV", "LWK", "MSL", "MXL", "PEL", "PJL", "PUR", "STU", 
   #                 "TSI", "YRI"]
   # 
-  # Para frog_likelihood (regressão), deixe como null:
-  # known_classes: null
+  # Para frog_likelihood (regressão), deixe como null ou remova o campo
+  known_classes: null
 
 # ───────────────────────────────────────────────────────────────────
 # C) MODEL ARCHITECTURE
@@ -176,7 +186,7 @@ model:
     #   [1, 20]  - Processa 1 linha (1 track específica) × 20 bases
     #              Cada track processada independentemente
     #              Output: (66-1)/1+1 = 66 linhas × 2500 posições = muito maior
-    kernel_size: [11, 20]
+    kernel_size: [11, 16]
     
     # Número de filtros/kernels convolucionais
     # Cada filtro aprende um padrão diferente
@@ -191,7 +201,7 @@ model:
     #   - Dimensão vertical: (66 - 11) / 11 + 1 = 6 grupos
     #   - Dimensão horizontal: (50000 - 20) / 20 + 1 = 2500 posições
     #   - Flatten size: 5 filters × 6 × 2500 = 75,000 features
-    stride: [11, 20]
+    stride: [11, 16]
     
     # Padding - pode ser escalar ou lista [vertical, horizontal]
     # Adiciona zeros nas bordas da entrada antes da convolução
@@ -324,7 +334,7 @@ data_split:
   # Seed para reprodutibilidade
   # Use o mesmo seed para ter sempre a mesma divisão e inicialização de pesos
   # null = aleatório (resultados não reprodutíveis)
-  random_seed: -1
+  random_seed: 13
   
   # Determinismo estrito para reprodutibilidade perfeita
   # true = Determinismo ESTRITO - 100% reprodutível entre execuções
@@ -348,7 +358,7 @@ wandb:
   # true = loga métricas, gráficos, confusion matrix no W&B
   # false = não usa W&B
   # Requer: pip install wandb && wandb login
-  use_wandb: false
+  use_wandb: true
   
   # Nome do projeto no W&B
   project_name: "neural-ancestry-predictor-genes"
