@@ -1330,6 +1330,199 @@ class CNNAncestryPredictor(nn.Module):
         console.print(f"  • Bias: zeros")
 
 
+class CNN2AncestryPredictor(nn.Module):
+    """
+    Rede neural convolucional avançada (CNN2) para predição de ancestralidade.
+    
+    Arquitetura multi-layer com global pooling, mais adequada para dados de
+    genes com múltiplas tracks (ex: 11 genes × 6 ontologias = 66 tracks).
+    
+    Arquitetura:
+    - Input: [batch, 1, num_rows, effective_size]
+    - Conv2D Stage 1: Agrupa tracks de genes (ex: 6→1 por gene)
+    - Conv2D Stage 2: Processa ao longo das bases
+    - Conv2D Stage 3: Features mais abstratas
+    - AdaptiveAvgPool2d: Global pooling → vetor fixo
+    - FC: Classificação final
+    
+    Vantagens sobre CNN simples:
+    - Menos parâmetros (~100-200k vs 5M+)
+    - Hierarquia de features (padrões locais → globais)
+    - Global pooling = invariante ao tamanho da entrada
+    """
+    
+    def __init__(self, config: Dict, input_shape: Tuple[int, int], num_classes: int):
+        """
+        Inicializa o modelo CNN2.
+        
+        Args:
+            config: Configuração do YAML
+            input_shape: Tupla (num_rows, effective_size) do shape de entrada 2D
+            num_classes: Número de classes (ou tamanho da saída para regressão)
+        """
+        super(CNN2AncestryPredictor, self).__init__()
+        
+        self.config = config
+        self.num_classes = num_classes
+        self.is_classification = config['output']['prediction_target'] != 'frog_likelihood'
+        
+        num_rows, effective_size = input_shape
+        
+        # Ler parâmetros da configuração CNN2
+        cnn2_config = config['model'].get('cnn2', {})
+        
+        # Stage 1: Primeira convolução (agrupa tracks)
+        num_filters_s1 = cnn2_config.get('num_filters_stage1', 16)
+        kernel_s1 = tuple(cnn2_config.get('kernel_stage1', [6, 32]))
+        stride_s1 = tuple(cnn2_config.get('stride_stage1', [6, 32]))
+        
+        # Stage 2 e 3: Convoluções subsequentes
+        num_filters_s2 = cnn2_config.get('num_filters_stage2', 32)
+        num_filters_s3 = cnn2_config.get('num_filters_stage3', 64)
+        kernel_s23 = tuple(cnn2_config.get('kernel_stages23', [1, 5]))
+        stride_s23 = tuple(cnn2_config.get('stride_stages23', [1, 2]))
+        padding_s23 = tuple(cnn2_config.get('padding_stages23', [0, 2]))
+        
+        # FC e dropout
+        fc_hidden_size = cnn2_config.get('fc_hidden_size', 128)
+        dropout_rate = config['model'].get('dropout_rate', 0.3)
+        
+        # Calcular dimensões após cada convolução
+        # Stage 1
+        conv1_h = (num_rows - kernel_s1[0]) // stride_s1[0] + 1
+        conv1_w = (effective_size - kernel_s1[1]) // stride_s1[1] + 1
+        
+        # Stage 2
+        conv2_h = (conv1_h + 2*padding_s23[0] - kernel_s23[0]) // stride_s23[0] + 1
+        conv2_w = (conv1_w + 2*padding_s23[1] - kernel_s23[1]) // stride_s23[1] + 1
+        
+        # Stage 3
+        conv3_h = (conv2_h + 2*padding_s23[0] - kernel_s23[0]) // stride_s23[0] + 1
+        conv3_w = (conv2_w + 2*padding_s23[1] - kernel_s23[1]) // stride_s23[1] + 1
+        
+        # Bloco de features convolucionais
+        self.features = nn.Sequential(
+            # Stage 1: Agrupa tracks de genes
+            nn.Conv2d(1, num_filters_s1, kernel_size=kernel_s1, stride=stride_s1),
+            nn.ReLU(),
+            
+            # Stage 2: Processa ao longo das bases
+            nn.Conv2d(num_filters_s1, num_filters_s2, 
+                     kernel_size=kernel_s23, stride=stride_s23, padding=padding_s23),
+            nn.ReLU(),
+            
+            # Stage 3: Features mais abstratas
+            nn.Conv2d(num_filters_s2, num_filters_s3,
+                     kernel_size=kernel_s23, stride=stride_s23, padding=padding_s23),
+            nn.ReLU()
+        )
+        
+        # Global pooling: reduz dimensão espacial para (conv1_h, 1)
+        # Mantém a estrutura dos genes, remove variabilidade das bases
+        self.global_pool = nn.AdaptiveAvgPool2d((conv1_h, 1))
+        
+        # Dimensão após flatten
+        flattened_size = num_filters_s3 * conv1_h * 1
+        
+        # Classificador
+        self.classifier = nn.Sequential(
+            nn.Linear(flattened_size, fc_hidden_size),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(fc_hidden_size, num_classes)
+        )
+        
+        # Inicializar pesos
+        self._initialize_weights()
+        
+        # Imprimir informações do modelo
+        console.print(f"[green]Modelo CNN2 criado:[/green]")
+        console.print(f"  • Input shape: {num_rows} x {effective_size} (1 canal)")
+        console.print(f"  • Stage 1: {num_filters_s1} filters, kernel={kernel_s1}, stride={stride_s1}")
+        console.print(f"    → Output: {num_filters_s1} x {conv1_h} x {conv1_w}")
+        console.print(f"  • Stage 2: {num_filters_s2} filters, kernel={kernel_s23}, stride={stride_s23}, padding={padding_s23}")
+        console.print(f"    → Output: {num_filters_s2} x {conv2_h} x {conv2_w}")
+        console.print(f"  • Stage 3: {num_filters_s3} filters, kernel={kernel_s23}, stride={stride_s23}, padding={padding_s23}")
+        console.print(f"    → Output: {num_filters_s3} x {conv3_h} x {conv3_w}")
+        console.print(f"  • Global Pool: → {num_filters_s3} x {conv1_h} x 1")
+        console.print(f"  • Flatten size: {flattened_size}")
+        console.print(f"  • FC: {flattened_size} → {fc_hidden_size} → {num_classes}")
+        console.print(f"  • Dropout: {dropout_rate}")
+        console.print(f"  • Total parameters: {self.count_parameters():,}")
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass.
+        
+        Args:
+            x: Input tensor com shape [batch, num_rows, effective_size] (2D)
+               
+        Returns:
+            Output tensor com shape [batch, num_classes] contendo logits (não probabilidades)
+        """
+        # Adicionar dimensão de canal: [batch, num_rows, effective_size] -> [batch, 1, num_rows, effective_size]
+        x = x.unsqueeze(1)
+        
+        # Features convolucionais
+        x = self.features(x)
+        
+        # Global pooling
+        x = self.global_pool(x)
+        
+        # Flatten
+        x = x.view(x.size(0), -1)
+        
+        # Classificador
+        logits = self.classifier(x)
+        return logits
+    
+    def predict_proba(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Calcula probabilidades de classe usando softmax sobre os logits.
+        
+        Args:
+            x: Input tensor com shape [batch, num_rows, effective_size] (2D)
+               
+        Returns:
+            Output tensor com shape [batch, num_classes] contendo probabilidades
+        """
+        logits = self.forward(x)
+        return torch.softmax(logits, dim=1)
+    
+    def count_parameters(self) -> int:
+        """Conta número total de parâmetros treináveis."""
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+    
+    def _initialize_weights(self):
+        """
+        Inicializa pesos usando He/Kaiming para ReLU.
+        
+        Estratégia:
+        - Conv2D: Kaiming (He) initialization para ReLU
+        - FC layers: Kaiming para camadas intermediárias, Xavier para saída
+        - Bias: zeros
+        """
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                # Última camada (saída) usa Xavier, outras usam Kaiming
+                if m.out_features == self.num_classes:
+                    nn.init.xavier_normal_(m.weight)
+                else:
+                    nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+        
+        console.print(f"[green]✓ Pesos CNN2 inicializados:[/green]")
+        console.print(f"  • Conv2D: Kaiming (He) initialization")
+        console.print(f"  • FC hidden: Kaiming initialization")
+        console.print(f"  • FC output: Xavier initialization")
+        console.print(f"  • Bias: zeros")
+
+
 # ==============================================================================
 # TRAINING AND EVALUATION
 # ==============================================================================
@@ -3569,8 +3762,11 @@ def main():
     elif model_type == 'CNN':
         console.print(f"[cyan]Criando modelo: Convolutional Neural Network (CNN)[/cyan]")
         model = CNNAncestryPredictor(config, input_shape, num_classes).to(device)
+    elif model_type == 'CNN2':
+        console.print(f"[cyan]Criando modelo: CNN2 (Multi-layer with Global Pooling)[/cyan]")
+        model = CNN2AncestryPredictor(config, input_shape, num_classes).to(device)
     else:
-        raise ValueError(f"Tipo de modelo não suportado: {model_type}. Use 'NN' ou 'CNN'.")
+        raise ValueError(f"Tipo de modelo não suportado: {model_type}. Use 'NN', 'CNN' ou 'CNN2'.")
     
     # Inicializar W&B
     wandb_run = None
