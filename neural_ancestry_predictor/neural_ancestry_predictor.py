@@ -1609,6 +1609,10 @@ class Trainer:
         total_loss = 0.0
         total_samples = 0
         
+        # Debug: salvar detalhes na época 50
+        debug_epoch_50 = (epoch + 1 == 50)
+        debug_data = []
+        
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -1638,6 +1642,22 @@ class Trainer:
                 outputs = self.model(features)
                 loss = self.criterion(outputs, targets)
                 
+                # Debug: coletar dados individuais (antes do backward)
+                if debug_epoch_50:
+                    with torch.no_grad():
+                        for i in range(batch_size):
+                            target_val = targets[i].item()
+                            output_logits = outputs[i].cpu().numpy()
+                            # Calcular loss individual
+                            individual_loss = torch.nn.functional.cross_entropy(
+                                outputs[i:i+1], targets[i:i+1], reduction='none'
+                            ).item()
+                            debug_data.append({
+                                'target': target_val,
+                                'logits': output_logits,
+                                'loss': individual_loss
+                            })
+                
                 # Backward pass
                 loss.backward()
                 self.optimizer.step()
@@ -1661,6 +1681,22 @@ class Trainer:
                 progress.update(task, advance=1)
         
         avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
+        
+        # Salvar debug na época 50
+        if debug_epoch_50:
+            with open('train_loss.txt', 'w') as f:
+                f.write("Training Loss Debug - Época 50\n")
+                f.write("=" * 80 + "\n")
+                f.write(f"Total samples: {total_samples}\n")
+                f.write(f"Average loss: {avg_loss:.6f}\n")
+                f.write("=" * 80 + "\n\n")
+                for idx, data in enumerate(debug_data):
+                    f.write(f"Sample {idx+1}:\n")
+                    f.write(f"  Target: {data['target']}\n")
+                    f.write(f"  Logits: {data['logits']}\n")
+                    f.write(f"  Loss: {data['loss']:.6f}\n\n")
+            console.print(f"[yellow]Debug: Training loss detalhada salva em train_loss.txt[/yellow]")
+        
         return avg_loss
     
     def evaluate_train_accuracy(self) -> float:
@@ -1689,7 +1725,7 @@ class Trainer:
                 total += targets.size(0)
                 correct += (predicted == targets).sum().item()
         
-        accuracy = 100.0 * correct / total if total > 0 else 0.0
+        accuracy = correct / total if total > 0 else 0.0
         return accuracy
     
     def validate(self, epoch: int) -> Tuple[float, float]:
@@ -1705,6 +1741,10 @@ class Trainer:
         all_predictions = []
         all_targets = []
         
+        # Debug: salvar detalhes na época 50
+        debug_epoch_50 = (epoch + 1 == 50)
+        debug_data = []
+        
         with torch.no_grad():
             for features, targets in self.val_loader:
                 features = features.to(self.device, non_blocking=True)
@@ -1714,6 +1754,21 @@ class Trainer:
                 
                 outputs = self.model(features)
                 loss = self.criterion(outputs, targets)
+                
+                # Debug: coletar dados individuais
+                if debug_epoch_50:
+                    for i in range(batch_size):
+                        target_val = targets[i].item()
+                        output_logits = outputs[i].cpu().numpy()
+                        # Calcular loss individual
+                        individual_loss = torch.nn.functional.cross_entropy(
+                            outputs[i:i+1], targets[i:i+1], reduction='none'
+                        ).item()
+                        debug_data.append({
+                            'target': target_val,
+                            'logits': output_logits,
+                            'loss': individual_loss
+                        })
                 
                 # Acumular loss ponderada pelo tamanho do batch
                 total_loss += loss.item() * batch_size
@@ -1727,15 +1782,26 @@ class Trainer:
         
         avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
         
+        # Salvar debug na época 50
+        if debug_epoch_50:
+            with open('val_loss.txt', 'w') as f:
+                f.write("Validation Loss Debug - Época 50\n")
+                f.write("=" * 80 + "\n")
+                f.write(f"Total samples: {total_samples}\n")
+                f.write(f"Average loss: {avg_loss:.6f}\n")
+                f.write("=" * 80 + "\n\n")
+                for idx, data in enumerate(debug_data):
+                    f.write(f"Sample {idx+1}:\n")
+                    f.write(f"  Target: {data['target']}\n")
+                    f.write(f"  Logits: {data['logits']}\n")
+                    f.write(f"  Loss: {data['loss']:.6f}\n\n")
+            console.print(f"[yellow]Debug: Validation loss detalhada salva em val_loss.txt[/yellow]")
+        
         # Calcular accuracy
         if len(all_predictions) > 0:
             accuracy = accuracy_score(all_targets, all_predictions)
         else:
             accuracy = 0.0
-        
-        # Obter learning rate atual
-        current_lr = self.optimizer.param_groups[0]['lr']
-        console.print(f"[green]Validação - Época {epoch + 1}:[/green] Loss={avg_loss:.4f}, Accuracy={accuracy:.4f}, LR={current_lr:.2e}")
         
         return avg_loss, accuracy
     
@@ -1763,77 +1829,96 @@ class Trainer:
         console.print(f"\n[bold green]Total de parâmetros treináveis: {self.model.count_parameters():,}[/bold green]")
         console.print()
         
-        for epoch in range(num_epochs):
-            # Verificar se houve interrupção (CTRL+C)
-            if interrupt_state.interrupted:
-                console.print("\n[yellow]⚠ Treinamento interrompido pelo usuário (CTRL+C)[/yellow]")
-                break
-            
-            # Treinar
-            train_loss = self.train_epoch(epoch)
-            console.print(f"[cyan]Treino - Época {epoch + 1}:[/cyan] Loss={train_loss:.4f}")
-            
-            # Validar
-            if (epoch + 1) % val_frequency == 0:
-                val_loss, val_accuracy = self.validate(epoch)
+        try:
+            for epoch in range(num_epochs):
+                # Verificar se houve interrupção (CTRL+C)
+                if interrupt_state.interrupted:
+                    console.print("\n[yellow]⚠ Treinamento interrompido pelo usuário (CTRL+C)[/yellow]")
+                    break
                 
-                # Avaliar acurácia de treino (apenas quando validar)
-                console.print(f"[cyan]Avaliando acurácia no conjunto de treino...[/cyan]")
-                train_accuracy = self.evaluate_train_accuracy()
-                console.print(f"[green]Treino - Acurácia: {train_accuracy:.2f}%[/green]")
+                # Treinar
+                train_loss = self.train_epoch(epoch)
                 
-                # Salvar histórico
-                self.history['train_loss'].append(train_loss)
-                self.history['train_accuracy'].append(train_accuracy)
-                self.history['val_loss'].append(val_loss)
-                self.history['val_accuracy'].append(val_accuracy)
-                self.history['epoch'].append(epoch + 1)
-                
-                # Log no W&B
-                if self.wandb_run:
-                    log_dict = {
-                        'epoch': epoch + 1,
-                        'train_loss': train_loss,
-                        'train_accuracy': train_accuracy,
-                        'val_loss': val_loss,
-                        'val_accuracy': val_accuracy
-                    }
-                    # Adicionar learning rate atual
-                    current_lr = self.optimizer.param_groups[0]['lr']
-                    log_dict['learning_rate'] = current_lr
+                # Validar
+                if (epoch + 1) % val_frequency == 0:
+                    val_loss, val_accuracy = self.validate(epoch)
                     
-                    self.wandb_run.log(log_dict)
+                    # Avaliar acurácia de treino (apenas quando validar)
+                    train_accuracy = self.evaluate_train_accuracy()
+                    
+                    # Obter learning rate atual
+                    current_lr = self.optimizer.param_groups[0]['lr']
+                    
+                    # Imprimir tudo em uma linha
+                    console.print(
+                        f"[cyan]Época {epoch + 1}:[/cyan] "
+                        f"Train Acc={train_accuracy * 100:.2f}% | "
+                        f"Val Acc={val_accuracy * 100:.2f}% | "
+                        f"Train Loss={train_loss:.4f} | "
+                        f"Val Loss={val_loss:.4f} | "
+                        f"LR={current_lr:.2e}"
+                    )
+                    
+                    # Salvar histórico
+                    self.history['train_loss'].append(train_loss)
+                    self.history['train_accuracy'].append(train_accuracy)
+                    self.history['val_loss'].append(val_loss)
+                    self.history['val_accuracy'].append(val_accuracy)
+                    self.history['epoch'].append(epoch + 1)
+                    
+                    # Log no W&B
+                    if self.wandb_run:
+                        log_dict = {
+                            'epoch': epoch + 1,
+                            'train_loss': train_loss,
+                            'train_accuracy': train_accuracy,
+                            'val_loss': val_loss,
+                            'val_accuracy': val_accuracy,
+                            'learning_rate': current_lr
+                        }
+                        self.wandb_run.log(log_dict)
+                    
+                    # Atualizar e salvar melhores métricas (apenas se habilitado)
+                    save_during_training = self.config['checkpointing'].get('save_during_training', True)
+                    
+                    if val_loss < self.best_val_loss:
+                        self.best_val_loss = val_loss
+                        if save_during_training:
+                            self.save_checkpoint(epoch, 'best_loss')
+                    
+                    if val_accuracy > self.best_val_accuracy:
+                        self.best_val_accuracy = val_accuracy
+                        if save_during_training:
+                            self.save_checkpoint(epoch, 'best_accuracy')
+                    
+                    # Atualizar learning rate scheduler
+                    if self.scheduler is not None:
+                        if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+                            # ReduceLROnPlateau precisa da métrica monitorada
+                            scheduler_config = self.config['training']['lr_scheduler']
+                            if scheduler_config.get('mode', 'min') == 'min':
+                                self.scheduler.step(val_loss)
+                            else:  # mode == 'max'
+                                self.scheduler.step(val_accuracy)
+                        else:
+                            # Outros schedulers não precisam de métrica
+                            self.scheduler.step()
                 
-                # Atualizar e salvar melhores métricas (apenas se habilitado)
+                # Salvar checkpoint periódico (apenas se habilitado)
                 save_during_training = self.config['checkpointing'].get('save_during_training', True)
-                
-                if val_loss < self.best_val_loss:
-                    self.best_val_loss = val_loss
-                    if save_during_training:
-                        self.save_checkpoint(epoch, 'best_loss')
-                
-                if val_accuracy > self.best_val_accuracy:
-                    self.best_val_accuracy = val_accuracy
-                    if save_during_training:
-                        self.save_checkpoint(epoch, 'best_accuracy')
-                
-                # Atualizar learning rate scheduler
-                if self.scheduler is not None:
-                    if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
-                        # ReduceLROnPlateau precisa da métrica monitorada
-                        scheduler_config = self.config['training']['lr_scheduler']
-                        if scheduler_config.get('mode', 'min') == 'min':
-                            self.scheduler.step(val_loss)
-                        else:  # mode == 'max'
-                            self.scheduler.step(val_accuracy)
-                    else:
-                        # Outros schedulers não precisam de métrica
-                        self.scheduler.step()
-            
-            # Salvar checkpoint periódico (apenas se habilitado)
-            save_during_training = self.config['checkpointing'].get('save_during_training', True)
-            if save_during_training and (epoch + 1) % save_frequency == 0:
-                self.save_checkpoint(epoch, f'epoch_{epoch + 1}')
+                if save_during_training and (epoch + 1) % save_frequency == 0:
+                    self.save_checkpoint(epoch, f'epoch_{epoch + 1}')
+        
+        except KeyboardInterrupt:
+            console.print("\n[yellow]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/yellow]")
+            console.print("[yellow]⚠ CTRL+C detectado - Finalizando treino graciosamente...[/yellow]")
+            console.print("[yellow]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/yellow]")
+            # Salvar checkpoint de interrupção
+            if 'epoch' in locals():
+                console.print(f"[yellow]Salvando checkpoint da época {epoch + 1}...[/yellow]")
+                self.save_checkpoint(epoch, 'interrupted')
+            console.print("[yellow]Treinamento interrompido. Checkpoint salvo.[/yellow]")
+            raise SystemExit(0)
         
         # Salvar checkpoint final (sempre)
         console.print("[yellow]Salvando checkpoint final...[/yellow]")
