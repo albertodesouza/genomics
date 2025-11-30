@@ -1607,7 +1607,7 @@ class Trainer:
         """
         self.model.train()
         total_loss = 0.0
-        num_batches = 0
+        total_samples = 0
         
         with Progress(
             SpinnerColumn(),
@@ -1631,6 +1631,8 @@ class Trainer:
                 features = features.to(self.device, non_blocking=True)
                 targets = targets.to(self.device, non_blocking=True)
                 
+                batch_size = targets.size(0)
+                
                 # Forward pass
                 self.optimizer.zero_grad()
                 outputs = self.model(features)
@@ -1640,8 +1642,9 @@ class Trainer:
                 loss.backward()
                 self.optimizer.step()
                 
-                total_loss += loss.item()
-                num_batches += 1
+                # Acumular loss ponderada pelo tamanho do batch
+                total_loss += loss.item() * batch_size
+                total_samples += batch_size
                 
                 # Visualização interativa (se habilitada)
                 if self.enable_visualization:
@@ -1657,7 +1660,7 @@ class Trainer:
                 
                 progress.update(task, advance=1)
         
-        avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
+        avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
         return avg_loss
     
     def evaluate_train_accuracy(self) -> float:
@@ -1698,6 +1701,7 @@ class Trainer:
         """
         self.model.eval()
         total_loss = 0.0
+        total_samples = 0
         all_predictions = []
         all_targets = []
         
@@ -1706,10 +1710,14 @@ class Trainer:
                 features = features.to(self.device, non_blocking=True)
                 targets = targets.to(self.device, non_blocking=True)
                 
+                batch_size = targets.size(0)
+                
                 outputs = self.model(features)
                 loss = self.criterion(outputs, targets)
                 
-                total_loss += loss.item()
+                # Acumular loss ponderada pelo tamanho do batch
+                total_loss += loss.item() * batch_size
+                total_samples += batch_size
                 
                 # Para classificação, calcular accuracy
                 if self.config['output']['prediction_target'] != 'frog_likelihood':
@@ -1717,7 +1725,7 @@ class Trainer:
                     all_predictions.extend(predictions.cpu().numpy())
                     all_targets.extend(targets.cpu().numpy())
         
-        avg_loss = total_loss / len(self.val_loader)
+        avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
         
         # Calcular accuracy
         if len(all_predictions) > 0:
