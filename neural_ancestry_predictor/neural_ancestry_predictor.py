@@ -392,49 +392,33 @@ class ProcessedGenomicDataset(Dataset):
     
     def _compute_normalization_params(self) -> Dict:
         """
-        Computa média e desvio padrão de todos os dados para normalização.
+        Computa parâmetros de normalização por track (por gene/ontologia).
         
-        Se normalization_value estiver configurado no YAML (diferente de 0 ou null),
-        usa esse valor diretamente sem computar.
+        Cada track é normalizada independentemente para evitar que tracks com
+        valores altos dominem o treinamento.
         
         Returns:
-            Dict com parâmetros de normalização
+            Dict com parâmetros de normalização por track
         """
-        # Verificar se há valor pré-definido no config
+        # Verificar se há valor pré-definido no config (não suportado para per-track)
         predefined_value = self.config['dataset_input'].get('normalization_value', 0)
         
         if predefined_value != 0 and predefined_value is not None:
-            # Usar valor pré-definido
-            params = {'method': self.normalization_method}
-            
-            if self.normalization_method == 'zscore':
-                console.print(f"[yellow]⚠ AVISO: normalization_value não é aplicável para método 'zscore'[/yellow]")
-                console.print(f"[yellow]  Computando normalmente...[/yellow]")
-            elif self.normalization_method == 'minmax_keep_zero':
-                params['max'] = float(predefined_value)
-                console.print(f"\n[bold cyan]✓ Usando valor de normalização pré-definido:[/bold cyan]")
-                console.print(f"  • Método: MinMax (mantendo zeros)")
-                console.print(f"  • Máximo não-zero: {predefined_value:.6f}")
-                console.print(f"  • [dim](Valor do config, não computado)[/dim]")
-                return params
-            elif self.normalization_method == 'log':
-                params['log_max'] = float(predefined_value)
-                console.print(f"\n[bold cyan]✓ Usando valor de normalização pré-definido:[/bold cyan]")
-                console.print(f"  • Método: Logarítmico")
-                console.print(f"  • log1p(max): {predefined_value:.6f}")
-                console.print(f"  • [dim](Valor do config, não computado)[/dim]")
-                return params
+            console.print(f"[yellow]⚠ AVISO: normalization_value não é suportado para normalização per-track[/yellow]")
+            console.print(f"[yellow]  Ignorando e computando parâmetros por track...[/yellow]")
         
-        # Se não há valor pré-definido ou método é zscore, computar normalmente
-        all_values = []
+        # Coletar valores por track
+        track_values = None  # Será inicializado no primeiro sample
         num_processed = 0
         num_errors = 0
         
-        console.print(f"[cyan]Iniciando computação de normalização para {len(self.base_dataset)} amostras...[/cyan]")
-        console.print(f"[cyan]Método de normalização: {self.normalization_method}[/cyan]")
-        console.print(f"[cyan]Outputs a processar: {', '.join(self.alphagenome_outputs)}[/cyan]")
-        console.print(f"[cyan]Modo de haplótipo: {self.haplotype_mode}[/cyan]")
-        console.print(f"[cyan]Tamanho do trecho central: {self.window_center_size} bases[/cyan]")
+        total_samples = len(self.base_dataset)
+        console.print(f"[cyan]Iniciando computação de normalização POR TRACK...[/cyan]")
+        console.print(f"[cyan]  • Amostras: {total_samples}[/cyan]")
+        console.print(f"[cyan]  • Método: {self.normalization_method}[/cyan]")
+        console.print(f"[cyan]  • Outputs: {', '.join(self.alphagenome_outputs)}[/cyan]")
+        console.print(f"[cyan]  • Haplótipo: {self.haplotype_mode}[/cyan]")
+        console.print(f"[cyan]  • Window center: {self.window_center_size} bases[/cyan]")
         
         with Progress(
             SpinnerColumn(),
@@ -444,7 +428,7 @@ class ProcessedGenomicDataset(Dataset):
             console=console
         ) as progress:
             task = progress.add_task(
-                "Computando estatísticas para normalização...",
+                "Coletando valores por track...",
                 total=len(self.base_dataset)
             )
             
@@ -460,7 +444,16 @@ class ProcessedGenomicDataset(Dataset):
                     processed_array = self._process_windows(input_data['windows'])
                     
                     if len(processed_array) > 0:
-                        all_values.append(processed_array)
+                        # Inicializar track_values no primeiro sample válido
+                        if track_values is None:
+                            num_tracks = processed_array.shape[0]
+                            track_values = [[] for _ in range(num_tracks)]
+                            console.print(f"[cyan]  • Total de tracks detectadas: {num_tracks}[/cyan]")
+                        
+                        # Adicionar valores de cada track
+                        for track_idx in range(processed_array.shape[0]):
+                            track_values[track_idx].append(processed_array[track_idx])
+                        
                         num_processed += 1
                     else:
                         console.print(f"[yellow]  ⚠ Amostra {sample_id} (idx={idx}): Nenhum dado válido encontrado[/yellow]")
@@ -471,78 +464,96 @@ class ProcessedGenomicDataset(Dataset):
                     console.print(f"[yellow]  ⚠ Erro ao processar amostra {idx}: {e}[/yellow]")
                 progress.update(task, advance=1)
         
-        if len(all_values) == 0:
+        if track_values is None or len(track_values) == 0:
             console.print(f"[red]ERRO: Nenhuma amostra válida para normalização![/red]")
             console.print(f"[red]  • Amostras processadas: {num_processed}[/red]")
             console.print(f"[red]  • Amostras com erro: {num_errors}[/red]")
             console.print(f"[red]  • Total esperado: {len(self.base_dataset)}[/red]")
-            return {'method': self.normalization_method, 'mean': 0.0, 'std': 1.0}
+            return {
+                'method': self.normalization_method,
+                'per_track': False,
+                'mean': 0.0,
+                'std': 1.0
+            }
         
-        # Concatenar todos os arrays
-        all_values = np.concatenate(all_values)
+        num_tracks = len(track_values)
+        console.print(f"\n[cyan]Computando parâmetros para {num_tracks} tracks...[/cyan]")
         
-        # Calcular parâmetros dependendo do método escolhido
-        params = {'method': self.normalization_method}
+        # Concatenar valores de cada track e computar parâmetros
+        track_params = []
         
-        if self.normalization_method == 'zscore':
-            # Z-score: mean e std
-            mean = float(np.mean(all_values))
-            std = float(np.std(all_values))
-            if std < 1e-8:
-                std = 1.0
-            params['mean'] = mean
-            params['std'] = std
+        for track_idx in range(num_tracks):
+            # Concatenar valores desta track de todas as amostras
+            track_array = np.concatenate(track_values[track_idx])
             
-            console.print(f"\n[bold green]✓ Normalização Z-score Concluída:[/bold green]")
-            console.print(f"  • Amostras processadas com sucesso: {num_processed}/{len(self.base_dataset)}")
+            if self.normalization_method == 'zscore':
+                mean = float(np.mean(track_array))
+                std = float(np.std(track_array))
+                if std < 1e-8:
+                    std = 1.0
+                track_params.append({'mean': mean, 'std': std})
+                
+            elif self.normalization_method == 'minmax_keep_zero':
+                nonzero_values = track_array[track_array > 0]
+                if len(nonzero_values) > 0:
+                    xmax = float(nonzero_values.max())
+                else:
+                    xmax = 1.0
+                track_params.append({'max': xmax})
+                
+            elif self.normalization_method == 'log':
+                nonzero_values = track_array[track_array > 0]
+                if len(nonzero_values) > 0:
+                    xmax = float(nonzero_values.max())
+                    log_max = float(np.log1p(xmax))
+                else:
+                    log_max = 1.0
+                track_params.append({'log_max': log_max})
+                
+            else:
+                # Fallback para zscore
+                mean = float(np.mean(track_array))
+                std = float(np.std(track_array))
+                if std < 1e-8:
+                    std = 1.0
+                track_params.append({'mean': mean, 'std': std})
+        
+        # Construir resultado
+        params = {
+            'method': self.normalization_method,
+            'per_track': True,
+            'num_tracks': num_tracks,
+            'track_params': track_params
+        }
+        
+        # Exibir resumo
+        if self.normalization_method == 'zscore':
+            console.print(f"\n[bold green]✓ Normalização Z-score Por-Track Concluída:[/bold green]")
+            console.print(f"  • Amostras processadas: {num_processed}/{len(self.base_dataset)}")
             console.print(f"  • Amostras com erro: {num_errors}")
-            console.print(f"  • Total de valores coletados: {len(all_values):,}")
-            console.print(f"  • Média (mean): {mean:.6f}")
-            console.print(f"  • Desvio padrão (std): {std:.6f}")
+            console.print(f"  • Tracks normalizadas: {num_tracks}")
+            # Mostrar algumas tracks como exemplo
+            for i in [0, 1, num_tracks-1]:
+                if i < len(track_params):
+                    console.print(f"  • Track {i}: mean={track_params[i]['mean']:.6f}, std={track_params[i]['std']:.6f}")
             
         elif self.normalization_method == 'minmax_keep_zero':
-            # MinMax mantendo zeros: apenas o máximo dos valores não-zero
-            nonzero_values = all_values[all_values > 0]
-            if len(nonzero_values) > 0:
-                xmax = float(nonzero_values.max())
-            else:
-                xmax = 1.0
-            params['max'] = xmax
-            
-            console.print(f"\n[bold green]✓ Normalização MinMax (mantendo zeros) Concluída:[/bold green]")
-            console.print(f"  • Amostras processadas com sucesso: {num_processed}/{len(self.base_dataset)}")
+            console.print(f"\n[bold green]✓ Normalização MinMax Por-Track Concluída:[/bold green]")
+            console.print(f"  • Amostras processadas: {num_processed}/{len(self.base_dataset)}")
             console.print(f"  • Amostras com erro: {num_errors}")
-            console.print(f"  • Total de valores coletados: {len(all_values):,}")
-            console.print(f"  • Valores zeros: {(all_values == 0).sum():,}")
-            console.print(f"  • Máximo não-zero: {xmax:.6f}")
+            console.print(f"  • Tracks normalizadas: {num_tracks}")
+            for i in [0, 1, num_tracks-1]:
+                if i < len(track_params):
+                    console.print(f"  • Track {i}: max={track_params[i]['max']:.6f}")
             
         elif self.normalization_method == 'log':
-            # Log: log1p do máximo
-            nonzero_values = all_values[all_values > 0]
-            if len(nonzero_values) > 0:
-                xmax = float(nonzero_values.max())
-                log_max = float(np.log1p(xmax))
-            else:
-                log_max = 1.0
-            params['log_max'] = log_max
-            
-            console.print(f"\n[bold green]✓ Normalização Logarítmica Concluída:[/bold green]")
-            console.print(f"  • Amostras processadas com sucesso: {num_processed}/{len(self.base_dataset)}")
+            console.print(f"\n[bold green]✓ Normalização Logarítmica Por-Track Concluída:[/bold green]")
+            console.print(f"  • Amostras processadas: {num_processed}/{len(self.base_dataset)}")
             console.print(f"  • Amostras com erro: {num_errors}")
-            console.print(f"  • Total de valores coletados: {len(all_values):,}")
-            console.print(f"  • Valores zeros: {(all_values == 0).sum():,}")
-            console.print(f"  • log1p(max): {log_max:.6f}")
-            
-        else:
-            console.print(f"[red]Método de normalização desconhecido: {self.normalization_method}[/red]")
-            console.print(f"[yellow]Usando zscore como fallback[/yellow]")
-            mean = float(np.mean(all_values))
-            std = float(np.std(all_values))
-            if std < 1e-8:
-                std = 1.0
-            params['method'] = 'zscore'
-            params['mean'] = mean
-            params['std'] = std
+            console.print(f"  • Tracks normalizadas: {num_tracks}")
+            for i in [0, 1, num_tracks-1]:
+                if i < len(track_params):
+                    console.print(f"  • Track {i}: log1p(max)={track_params[i]['log_max']:.6f}")
         
         return params
     
@@ -808,30 +819,55 @@ class ProcessedGenomicDataset(Dataset):
         
         # Aplicar normalização conforme método escolhido
         method = self.normalization_params.get('method', 'zscore')
+        per_track = self.normalization_params.get('per_track', False)
         
-        if method == 'zscore':
-            features_tensor = zscore_normalize(
-                features_tensor, 
-                self.normalization_params['mean'], 
-                self.normalization_params['std']
-            )
-        elif method == 'minmax_keep_zero':
-            features_tensor = minmax_keep_zero(
-                features_tensor,
-                self.normalization_params['max']
-            )
-        elif method == 'log':
-            features_tensor = log_normalize(
-                features_tensor,
-                self.normalization_params['log_max']
-            )
+        if per_track:
+            # Normalização por track (cada linha/track normalizada independentemente)
+            track_params = self.normalization_params['track_params']
+            normalized_rows = []
+            
+            for track_idx in range(features_tensor.shape[0]):
+                track_tensor = features_tensor[track_idx:track_idx+1, :]  # Manter 2D
+                params = track_params[track_idx]
+                
+                if method == 'zscore':
+                    normalized = zscore_normalize(track_tensor, params['mean'], params['std'])
+                elif method == 'minmax_keep_zero':
+                    normalized = minmax_keep_zero(track_tensor, params['max'])
+                elif method == 'log':
+                    normalized = log_normalize(track_tensor, params['log_max'])
+                else:
+                    # Fallback para zscore
+                    normalized = zscore_normalize(track_tensor, params.get('mean', 0.0), params.get('std', 1.0))
+                
+                normalized_rows.append(normalized)
+            
+            features_tensor = torch.cat(normalized_rows, dim=0)
         else:
-            # Fallback para zscore
-            features_tensor = zscore_normalize(
-                features_tensor,
-                self.normalization_params.get('mean', 0.0),
-                self.normalization_params.get('std', 1.0)
-            )
+            # Normalização global (backwards compatibility)
+            if method == 'zscore':
+                features_tensor = zscore_normalize(
+                    features_tensor, 
+                    self.normalization_params['mean'], 
+                    self.normalization_params['std']
+                )
+            elif method == 'minmax_keep_zero':
+                features_tensor = minmax_keep_zero(
+                    features_tensor,
+                    self.normalization_params['max']
+                )
+            elif method == 'log':
+                features_tensor = log_normalize(
+                    features_tensor,
+                    self.normalization_params['log_max']
+                )
+            else:
+                # Fallback para zscore
+                features_tensor = zscore_normalize(
+                    features_tensor,
+                    self.normalization_params.get('mean', 0.0),
+                    self.normalization_params.get('std', 1.0)
+                )
         
         # Processar target
         if self.prediction_target == 'frog_likelihood':
@@ -954,12 +990,8 @@ class NNAncestryPredictor(nn.Module):
                 layers.append(nn.Dropout(dropout_rate))
             prev_size = hidden_size
         
-        # Camada de saída (sempre LINEAR, sem ativação - o softmax é aplicado depois)
+        # Camada de saída (sempre LINEAR, sem ativação - logits)
         layers.append(nn.Linear(prev_size, num_classes))
-        
-        # Softmax para classificação (aplicado no forward)
-        if self.is_classification:
-            self.softmax = nn.Softmax(dim=1)
         
         self.network = nn.Sequential(*layers)
         
@@ -971,7 +1003,7 @@ class NNAncestryPredictor(nn.Module):
         console.print(f"  • Input size (após flatten): {self.input_size}")
         console.print(f"  • Hidden layers: {hidden_layers}")
         console.print(f"  • Ativação: {activation_type} (em todas as camadas hidden)")
-        console.print(f"  • Arquitetura: flatten → camadas hidden → saída (linear→softmax)")
+        console.print(f"  • Arquitetura: flatten → camadas hidden → saída (logits)")
         console.print(f"  • Output size: {num_classes}")
         console.print(f"  • Dropout: {dropout_rate}")
         console.print(f"  • Total parameters: {self.count_parameters():,}")
@@ -984,18 +1016,26 @@ class NNAncestryPredictor(nn.Module):
             x: Input tensor com shape [batch, num_rows, effective_size] (2D)
                
         Returns:
-            Output tensor com shape [batch, num_classes]
+            Output tensor com shape [batch, num_classes] contendo logits (não probabilidades)
         """
         # Flatten: [batch, num_rows, effective_size] -> [batch, num_rows * effective_size]
         x = x.view(x.size(0), -1)
         
         logits = self.network(x)
-        
-        if self.is_classification and not self.training:
-            # Aplicar softmax apenas durante inferência
-            return self.softmax(logits)
-        
         return logits
+    
+    def predict_proba(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Calcula probabilidades de classe usando softmax sobre os logits.
+        
+        Args:
+            x: Input tensor com shape [batch, num_rows, effective_size] (2D)
+               
+        Returns:
+            Output tensor com shape [batch, num_classes] contendo probabilidades
+        """
+        logits = self.forward(x)
+        return torch.softmax(logits, dim=1)
     
     def count_parameters(self) -> int:
         """Conta número total de parâmetros treináveis."""
@@ -1169,14 +1209,10 @@ class CNNAncestryPredictor(nn.Module):
                 fc_layers.append(nn.Dropout(dropout_rate))
             prev_size = hidden_size
         
-        # Camada de saída (linear, sem ativação)
+        # Camada de saída (linear, sem ativação - logits)
         fc_layers.append(nn.Linear(prev_size, num_classes))
         
         self.fc_network = nn.Sequential(*fc_layers)
-        
-        # Softmax para classificação
-        if self.is_classification:
-            self.softmax = nn.Softmax(dim=1)
         
         # Inicializar pesos
         self._initialize_weights(activation_type)
@@ -1203,7 +1239,7 @@ class CNNAncestryPredictor(nn.Module):
             x: Input tensor com shape [batch, num_rows, effective_size] (2D)
                
         Returns:
-            Output tensor com shape [batch, num_classes]
+            Output tensor com shape [batch, num_classes] contendo logits (não probabilidades)
         """
         # Adicionar dimensão de canal: [batch, num_rows, effective_size] -> [batch, 1, num_rows, effective_size]
         x = x.unsqueeze(1)
@@ -1221,12 +1257,20 @@ class CNNAncestryPredictor(nn.Module):
         
         # Camadas fully connected
         logits = self.fc_network(x)
-        
-        if self.is_classification and not self.training:
-            # Aplicar softmax apenas durante inferência
-            return self.softmax(logits)
-        
         return logits
+    
+    def predict_proba(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Calcula probabilidades de classe usando softmax sobre os logits.
+        
+        Args:
+            x: Input tensor com shape [batch, num_rows, effective_size] (2D)
+               
+        Returns:
+            Output tensor com shape [batch, num_classes] contendo probabilidades
+        """
+        logits = self.forward(x)
+        return torch.softmax(logits, dim=1)
     
     def count_parameters(self) -> int:
         """Conta número total de parâmetros treináveis."""
@@ -1432,13 +1476,14 @@ class Trainer:
         Args:
             features: Tensor de entrada com shape (1, num_rows, effective_size) para 2D
             targets: Target verdadeiro (1,)
-            outputs: Saída da rede (1, num_classes)
+            outputs: Saída da rede (1, num_classes) - logits
             batch_idx: Índice do batch
             epoch: Número da época
         """
         # Converter para CPU e numpy
         features_cpu = features.cpu().detach()
         target_idx = targets.cpu().item()
+        # Aplicar softmax sobre logits para obter probabilidades
         output_probs = torch.softmax(outputs, dim=1).cpu().detach().numpy()[0]
         predicted_idx = output_probs.argmax()
         
@@ -1863,12 +1908,13 @@ class Tester:
         Args:
             features: Tensor de entrada com shape (1, num_rows, effective_size) para 2D
             targets: Target verdadeiro (1,)
-            outputs: Saída da rede (1, num_classes)
+            outputs: Saída da rede (1, num_classes) - logits
             sample_idx: Índice da amostra
         """
         # Converter para CPU e numpy
         features_cpu = features.cpu().detach()
         target_idx = targets.cpu().item()
+        # Aplicar softmax sobre logits para obter probabilidades
         output_probs = torch.softmax(outputs, dim=1).cpu().detach().numpy()[0]
         predicted_idx = output_probs.argmax()
         
@@ -2651,6 +2697,9 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
     Prepara datasets e dataloaders.
     Tenta carregar do cache compartilhado se disponível, senão processa e salva.
     
+    IMPORTANTE: Normalização é computada APENAS com dados de treino+validação,
+    nunca incluindo dados de teste (previne data leakage).
+    
     Args:
         config: Configuração do experimento
         experiment_dir: Diretório do experimento (onde salvar resultados)
@@ -2707,6 +2756,45 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
         cache_sequences=False
     )
     
+    # ==================================================================================
+    # PASSO 1: FAZER SPLIT ANTES DA NORMALIZAÇÃO (prevenir data leakage)
+    # ==================================================================================
+    console.print("\n[bold cyan]📊 Dividindo Dataset (Train/Val/Test)[/bold cyan]")
+    
+    total_size = len(base_dataset)
+    train_size = int(config['data_split']['train_split'] * total_size)
+    val_size = int(config['data_split']['val_split'] * total_size)
+    test_size = total_size - train_size - val_size
+    
+    # Criar índices
+    indices = list(range(total_size))
+    random_seed = config['data_split']['random_seed']
+    
+    # random_seed == -1 significa NÃO embaralhar (modo debug)
+    # random_seed == None significa embaralhar aleatoriamente (não reprodutível)
+    # random_seed >= 0 significa embaralhar com seed (reprodutível)
+    if random_seed is not None and random_seed != -1:
+        np.random.seed(random_seed)
+        np.random.shuffle(indices)
+        console.print(f"[cyan]  • Dados embaralhados com seed {random_seed}[/cyan]")
+    elif random_seed == -1:
+        console.print(f"[yellow]  • MODO DEBUG: Dados NÃO embaralhados (random_seed=-1)[/yellow]")
+    else:
+        np.random.shuffle(indices)
+        console.print(f"[yellow]  • Dados embaralhados aleatoriamente (sem seed)[/yellow]")
+    
+    train_indices = indices[:train_size]
+    val_indices = indices[train_size:train_size + val_size]
+    test_indices = indices[train_size + val_size:]
+    
+    console.print(f"[green]  • Treino: {len(train_indices)} amostras ({len(train_indices)/total_size*100:.1f}%)[/green]")
+    console.print(f"[green]  • Validação: {len(val_indices)} amostras ({len(val_indices)/total_size*100:.1f}%)[/green]")
+    console.print(f"[green]  • Teste: {len(test_indices)} amostras ({len(test_indices)/total_size*100:.1f}%)[/green]")
+    
+    # ==================================================================================
+    # PASSO 2: COMPUTAR NORMALIZAÇÃO APENAS COM TRAIN+VAL (nunca incluir test!)
+    # ==================================================================================
+    
     # Tentar carregar parâmetros de normalização do cache (se existirem e forem compatíveis)
     normalization_params = None
     if cache_dir is not None:
@@ -2737,7 +2825,7 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
                 if params_match:
                     with open(norm_file, 'r') as f:
                         normalization_params = json.load(f)
-                    console.print(f"[green]✓ Parâmetros de normalização carregados do cache[/green]")
+                    console.print(f"\n[green]✓ Parâmetros de normalização carregados do cache[/green]")
                     
                     # Mostrar parâmetros de acordo com o método
                     method = normalization_params.get('method', 'zscore')
@@ -2750,30 +2838,61 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
                         console.print(f"  • Máximo não-zero: {normalization_params.get('max', 1):.6f}")
                     elif method == 'log':
                         console.print(f"  • Método: Logarítmico")
-                        console.print(f"  • log1p(max): {normalization_params.get('log_max', 1):.6f}")
+                        if 'per_track_log_max' in normalization_params:
+                            console.print(f"  • Per-track log_max (66 tracks)")
+                        else:
+                            console.print(f"  • log1p(max): {normalization_params.get('log_max', 1):.6f}")
                     else:
                         console.print(f"  • Método: {method}")
             except Exception as e:
                 console.print(f"[yellow]⚠ Não foi possível carregar parâmetros de normalização: {e}[/yellow]")
                 normalization_params = None
     
-    # Criar dataset processado
+    # Se não temos parâmetros cached, computar APENAS com train+val
+    if normalization_params is None:
+        console.print(f"\n[bold yellow]🔬 Computando Normalização (APENAS Train+Val)[/bold yellow]")
+        console.print(f"[yellow]   ⚠ Dados de teste NÃO serão usados (prevenir data leakage)[/yellow]")
+        
+        # Criar subset train+val
+        train_val_indices = train_indices + val_indices
+        train_val_subset = Subset(base_dataset, train_val_indices)
+        
+        console.print(f"[cyan]   • Usando {len(train_val_subset)} amostras para normalização[/cyan]")
+        console.print(f"[cyan]   • Excluindo {len(test_indices)} amostras de teste[/cyan]")
+        
+        # Criar dataset temporário apenas para computar normalização
+        temp_dataset = ProcessedGenomicDataset(
+            base_dataset=train_val_subset,
+            config=config,
+            normalization_params=None,
+            compute_normalization=True
+        )
+        
+        # Extrair parâmetros computados
+        normalization_params = temp_dataset.normalization_params
+        console.print(f"[green]   ✓ Normalização computada com sucesso[/green]")
+    
+    # ==================================================================================
+    # PASSO 3: APLICAR NORMALIZAÇÃO AO DATASET COMPLETO (com parâmetros de train+val)
+    # ==================================================================================
+    console.print(f"\n[bold cyan]⚙️  Criando Dataset Processado[/bold cyan]")
+    
     processed_dataset = ProcessedGenomicDataset(
         base_dataset=base_dataset,
         config=config,
         normalization_params=normalization_params,
-        compute_normalization=(normalization_params is None)
+        compute_normalization=False  # Nunca recomputar aqui!
     )
     
     # Salvar parâmetros de normalização no diretório models do experimento (para referência)
     norm_path = experiment_dir / 'models' / 'normalization_params.json'
     norm_path.parent.mkdir(parents=True, exist_ok=True)
     with open(norm_path, 'w') as f:
-        json.dump(processed_dataset.normalization_params, f, indent=2)
-    console.print(f"[green]✓ Parâmetros de normalização salvos em {norm_path}[/green]")
+        json.dump(normalization_params, f, indent=2)
+    console.print(f"[green]✓ Parâmetros de normalização salvos em {norm_path.name}[/green]")
     
-    # Também salvar no cache_dir para reutilização (mesmo que cache completo não exista ainda)
-    if cache_dir is not None and normalization_params is None:  # Só se computamos agora
+    # Também salvar no cache_dir para reutilização
+    if cache_dir is not None:
         cache_path = Path(cache_dir)
         cache_path.mkdir(parents=True, exist_ok=True)
         
@@ -2785,45 +2904,23 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
                 'haplotype_mode': config['dataset_input']['haplotype_mode'],
                 'window_center_size': config['dataset_input']['window_center_size'],
                 'downsample_factor': config['dataset_input']['downsample_factor'],
-            }
+                'normalization_method': config['dataset_input'].get('normalization_method', 'zscore'),
+            },
+            'normalization_note': 'Computed using ONLY train+validation samples (test excluded to prevent data leakage)'
         }
         with open(cache_path / 'metadata.json', 'w') as f:
             json.dump(partial_metadata, f, indent=2)
         
         with open(cache_path / 'normalization_params.json', 'w') as f:
-            json.dump(processed_dataset.normalization_params, f, indent=2)
+            json.dump(normalization_params, f, indent=2)
         
-        console.print(f"[green]✓ Parâmetros de normalização também salvos no cache para reutilização[/green]")
+        console.print(f"[green]✓ Parâmetros salvos no cache para reutilização[/green]")
     
-    # Split dataset
-    total_size = len(processed_dataset)
-    train_size = int(config['data_split']['train_split'] * total_size)
-    val_size = int(config['data_split']['val_split'] * total_size)
-    test_size = total_size - train_size - val_size
+    # ==================================================================================
+    # PASSO 4: SALVAR CACHE E CRIAR DATALOADERS
+    # ==================================================================================
     
-    # Criar índices
-    indices = list(range(total_size))
-    random_seed = config['data_split']['random_seed']
-    
-    # random_seed == -1 significa NÃO embaralhar (modo debug)
-    # random_seed == None significa embaralhar aleatoriamente (não reprodutível)
-    # random_seed >= 0 significa embaralhar com seed (reprodutível)
-    if random_seed is not None and random_seed != -1:
-        np.random.seed(random_seed)
-        np.random.shuffle(indices)
-        console.print(f"[cyan]📊 Dados embaralhados com seed {random_seed}[/cyan]")
-    elif random_seed == -1:
-        console.print(f"[yellow]⚠ MODO DEBUG: Dados NÃO serão embaralhados (random_seed=-1)[/yellow]")
-        console.print(f"[yellow]  Ordem será: dataset_dir → cache_dir (mesma sequência)[/yellow]")
-    else:
-        np.random.shuffle(indices)
-        console.print(f"[yellow]⚠ Dados embaralhados aleatoriamente (sem seed)[/yellow]")
-    
-    train_indices = indices[:train_size]
-    val_indices = indices[train_size:train_size + val_size]
-    test_indices = indices[train_size + val_size:]
-    
-    console.print(f"[green]Dataset split:[/green]")
+    console.print(f"\n[green]Dataset split (já definido):[/green]")
     console.print(f"  • Treino: {len(train_indices)} amostras")
     console.print(f"  • Validação: {len(val_indices)} amostras")
     console.print(f"  • Teste: {len(test_indices)} amostras")

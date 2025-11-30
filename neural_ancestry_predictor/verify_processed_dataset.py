@@ -1587,6 +1587,7 @@ def apply_normalization(
 ) -> np.ndarray:
     """
     Aplica normalização aos dados do AlphaGenome.
+    Suporta normalização global e por-track.
     
     Args:
         data: Array numpy com dados brutos
@@ -1596,34 +1597,71 @@ def apply_normalization(
     Returns:
         Array numpy normalizado
     """
-    # Converter para tensor PyTorch para usar as funções de normalização
-    data_tensor = torch.from_numpy(data).float()
+    # Verificar se é normalização per-track
+    per_track = norm_params.get('per_track', False)
     
-    if method == 'log':
-        log_max = norm_params.get('log_max')
-        if log_max is None:
-            raise ValueError("log_max não encontrado nos parâmetros de normalização")
-        normalized = log_normalize(data_tensor, log_max)
-    
-    elif method == 'minmax_keep_zero':
-        max_val = norm_params.get('max')
-        if max_val is None:
-            raise ValueError("max não encontrado nos parâmetros de normalização")
-        normalized = minmax_keep_zero(data_tensor, max_val)
-    
-    elif method == 'zscore':
-        mean = norm_params.get('mean')
-        std = norm_params.get('std')
-        if mean is None or std is None:
-            raise ValueError("mean ou std não encontrado nos parâmetros de normalização")
-        normalized = (data_tensor - mean) / std
-    
+    if per_track:
+        # Normalização por track (cada linha normalizada independentemente)
+        track_params = norm_params['track_params']
+        normalized_rows = []
+        
+        for track_idx in range(data.shape[0]):
+            track_data = data[track_idx:track_idx+1, :]  # Manter 2D [1, width]
+            params = track_params[track_idx]
+            
+            if method == 'log':
+                log_max = params['log_max']
+                track_tensor = torch.from_numpy(track_data).float()
+                track_norm = log_normalize(track_tensor, log_max)
+                normalized_rows.append(track_norm.numpy())
+                
+            elif method == 'minmax_keep_zero':
+                xmax = params['max']
+                track_tensor = torch.from_numpy(track_data).float()
+                track_norm = minmax_keep_zero(track_tensor, xmax)
+                normalized_rows.append(track_norm.numpy())
+                
+            elif method == 'zscore':
+                mean = params['mean']
+                std = params['std']
+                track_tensor = torch.from_numpy(track_data).float()
+                track_norm = (track_tensor - mean) / std if std > 1e-8 else track_tensor
+                normalized_rows.append(track_norm.numpy())
+                
+            else:
+                raise ValueError(f"Método de normalização desconhecido: {method}")
+        
+        return np.vstack(normalized_rows)
+        
     else:
-        raise ValueError(f"Método de normalização desconhecido: {method}")
-    
-    normalized_array = normalized.numpy()
-    
-    return normalized_array
+        # Normalização global (backwards compatibility)
+        data_tensor = torch.from_numpy(data).float()
+        
+        if method == 'log':
+            log_max = norm_params.get('log_max')
+            if log_max is None:
+                raise ValueError("log_max não encontrado nos parâmetros de normalização")
+            normalized = log_normalize(data_tensor, log_max)
+        
+        elif method == 'minmax_keep_zero':
+            max_val = norm_params.get('max')
+            if max_val is None:
+                raise ValueError("max não encontrado nos parâmetros de normalização")
+            normalized = minmax_keep_zero(data_tensor, max_val)
+        
+        elif method == 'zscore':
+            mean = norm_params.get('mean')
+            std = norm_params.get('std')
+            if mean is None or std is None:
+                raise ValueError("mean ou std não encontrado nos parâmetros de normalização")
+            normalized = (data_tensor - mean) / std
+        
+        else:
+            raise ValueError(f"Método de normalização desconhecido: {method}")
+        
+        normalized_array = normalized.numpy()
+        
+        return normalized_array
 
 
 # ==============================================================================

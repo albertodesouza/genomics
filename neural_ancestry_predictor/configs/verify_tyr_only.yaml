@@ -1,5 +1,5 @@
 # Configuração para verificar apenas o gene TYR
-cache_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes/datasets/rna_seq_H1_16384_ds1_log_split0.7-0.15-0.15_seed-1"
+cache_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes/datasets/rna_seq_H1_32768_ds1_log_split0.7-0.15-0.15_seed13"
 dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes"
 
 split: "train"

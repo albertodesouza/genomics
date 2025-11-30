@@ -48,8 +48,8 @@ dataset_input:
   # WINDOW_SIZE_256KB = 262144
   # WINDOW_SIZE_512KB = 524288   # AlphaGenome: "500KB" = 524288 bp (512 KB real)
   # WINDOW_SIZE_1MB = 1048576
-  
-  window_center_size: 32768
+
+  window_center_size: 16384
   
   # Fator de downsampling a aplicar após extração do trecho central
   # 1 = usar todas as bases selecionadas (sem downsampling)
@@ -334,7 +334,7 @@ data_split:
   # Seed para reprodutibilidade
   # Use o mesmo seed para ter sempre a mesma divisão e inicialização de pesos
   # null = aleatório (resultados não reprodutíveis)
-  random_seed: 13
+  random_seed: 15
   
   # Determinismo estrito para reprodutibilidade perfeita
   # true = Determinismo ESTRITO - 100% reprodutível entre execuções
