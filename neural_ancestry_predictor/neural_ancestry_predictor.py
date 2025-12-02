@@ -29,6 +29,8 @@ import sys
 import signal
 import io
 import contextlib
+import time
+import psutil
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 import warnings
@@ -2024,21 +2026,43 @@ class Trainer:
         
         try:
             for epoch in range(num_epochs):
+                epoch_start = time.time()
                 # Verificar se houve interrupção (CTRL+C)
                 if interrupt_state.interrupted:
                     console.print("\n[yellow]⚠ Treinamento interrompido pelo usuário (CTRL+C)[/yellow]")
                     break
                 
                 # Treinar
+                process = psutil.Process(os.getpid())
+                train_start = time.time()
                 train_loss = self.train_epoch(epoch)
+                train_duration = time.time() - train_start
+                rss_mb = process.memory_info().rss / 1024 / 1024
+                console.print(f"[dim cyan]Tempo treino: {train_duration:.2f}s | RSS: {rss_mb:.1f} MB[/dim cyan]")
                 
                 # Validar
                 if (epoch + 1) % val_frequency == 0:
-                    val_loss, val_accuracy = self.validate(epoch)
-                    
                     # Avaliar acurácia de treino (apenas quando validar)
+                    eval_start = time.time()
                     train_accuracy = self.evaluate_train_accuracy()
+                    eval_duration = time.time() - eval_start
+                    rss_mb = process.memory_info().rss / 1024 / 1024
+                    console.print(f"[dim cyan]Tempo avaliação treino: {eval_duration:.2f}s | RSS: {rss_mb:.1f} MB[/dim cyan]")
+
+                    # Liberar memória dos datasets
+                    # if hasattr(self.train_loader.dataset, 'unload_data'):
+                    #     self.train_loader.dataset.unload_data()
                     
+                    val_start = time.time()
+                    val_loss, val_accuracy = self.validate(epoch)
+                    val_duration = time.time() - val_start
+                    rss_mb = process.memory_info().rss / 1024 / 1024
+                    console.print(f"[dim cyan]Tempo validação: {val_duration:.2f}s | RSS: {rss_mb:.1f} MB[/dim cyan]")
+                    
+                    # Liberar memória dos datasets
+                    # if hasattr(self.val_loader.dataset, 'unload_data'):
+                    #     self.val_loader.dataset.unload_data()
+                        
                     # Obter learning rate atual
                     current_lr = self.optimizer.param_groups[0]['lr']
                     
@@ -2096,11 +2120,19 @@ class Trainer:
                         else:
                             # Outros schedulers não precisam de métrica
                             self.scheduler.step()
-                
+                # else:
+                #     # Liberar memória dos datasets
+                #     if hasattr(self.train_loader.dataset, 'unload_data'):
+                #         self.train_loader.dataset.unload_data()
+                            
                 # Salvar checkpoint periódico (apenas se habilitado)
                 save_during_training = self.config['checkpointing'].get('save_during_training', True)
                 if save_during_training and (epoch + 1) % save_frequency == 0:
                     self.save_checkpoint(epoch, f'epoch_{epoch + 1}')
+                
+                epoch_duration = time.time() - epoch_start
+                rss_mb = process.memory_info().rss / 1024 / 1024
+                console.print(f"[dim cyan]Tempo total da época {epoch + 1}: {epoch_duration:.2f}s | RSS: {rss_mb:.1f} MB[/dim cyan]")
         
         except KeyboardInterrupt:
             console.print("\n[yellow]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/yellow]")
@@ -2760,6 +2792,10 @@ def save_processed_dataset(
 class CachedProcessedDataset(Dataset):
     """
     Dataset wrapper para dados carregados do cache.
+    
+    Suporta dois modos de carregamento:
+    - preload: Carrega tudo na RAM (rápido, usa muita memória)
+    - lazy: Carrega sob demanda (economiza memória, pequeno overhead I/O)
     """
     
     def __init__(self, data_file: Path, target_to_idx: Dict, idx_to_target: Dict, config: Dict):
@@ -2770,20 +2806,85 @@ class CachedProcessedDataset(Dataset):
             data_file: Arquivo .pt com dados processados
             target_to_idx: Mapeamento target->índice
             idx_to_target: Mapeamento índice->target
-            config: Configuração (necessário para taint_at_runtime)
+            config: Configuração (necessário para taint_at_runtime e loading_strategy)
         """
-        console.print(f"[cyan]Carregando {data_file.name}...[/cyan]")
-        self.data = torch.load(data_file)
+        self.data_file = data_file
         self.target_to_idx = target_to_idx
         self.idx_to_target = idx_to_target
         self.config = config
-        console.print(f"[green]✓ {len(self.data)} samples carregados[/green]")
+        
+        # Ler configuração de carregamento
+        data_loading_config = config.get('data_loading', {})
+        self.loading_strategy = data_loading_config.get('loading_strategy', 'preload')
+        self.cache_size = data_loading_config.get('cache_size', 100)
+        
+        console.print(f"[cyan]Preparando {data_file.name}...[/cyan]")
+        
+        if self.loading_strategy == 'preload':
+            # Modo tradicional: carrega tudo na RAM
+            self.data = torch.load(data_file)
+            self._length = len(self.data)
+            self._data_loaded = True
+            console.print(f"[green]✓ {self._length} samples carregados (preload)[/green]")
+        
+        elif self.loading_strategy == 'lazy':
+            # Modo lazy: carrega apenas metadados agora
+            temp_data = torch.load(data_file)
+            self._length = len(temp_data)
+            del temp_data  # Liberar memória imediatamente
+            
+            self._data_loaded = False
+            self.data = None
+            
+            # Cache LRU para samples recentemente acessados
+            self._cache = {}  # {idx: (features, target)}
+            self._cache_order = []  # Lista para LRU
+            
+            console.print(f"[green]✓ {self._length} samples preparados (lazy loading)[/green]")
+            console.print(f"  • Modo: Lazy loading (carrega sob demanda)")
+            console.print(f"  • Cache LRU: {self.cache_size} samples")
+            console.print(f"  • Use unload_data() para liberar memória entre épocas")
+        
+        else:
+            raise ValueError(f"loading_strategy inválida: {self.loading_strategy}. Use 'preload' ou 'lazy'.")
     
     def __len__(self) -> int:
-        return len(self.data)
+        return self._length
     
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        features, target = self.data[idx]
+        """
+        Retorna sample do dataset.
+        
+        Para preload: acesso direto da RAM
+        Para lazy: verifica cache, senão carrega do arquivo
+        """
+        if self.loading_strategy == 'preload':
+            # Modo preload: acesso direto
+            features, target = self.data[idx]
+        
+        elif self.loading_strategy == 'lazy':
+            # Modo lazy: verificar cache primeiro
+            if idx in self._cache:
+                features, target = self._cache[idx]
+            else:
+                # Cache miss: carregar arquivo se necessário
+                if not self._data_loaded or self.data is None:
+                    self.data = torch.load(self.data_file)
+                    self._data_loaded = True
+                
+                features, target = self.data[idx]
+                
+                # Adicionar ao cache LRU (guardar referências, não clones)
+                if self.cache_size > 0:
+                    if len(self._cache) >= self.cache_size:
+                        # Remover item mais antigo (LRU)
+                        oldest_idx = self._cache_order.pop(0)
+                        del self._cache[oldest_idx]
+                    
+                    # Não clonar - apenas guardar referência ao tensor em self.data
+                    # Isso não duplica memória, apenas cria ponteiros
+                    self._cache[idx] = (features, target)
+                    self._cache_order.append(idx)
         
         # Aplicar tainting em runtime (se habilitado)
         # Apenas para classificação (não para regressão/frog_likelihood)
@@ -2800,6 +2901,28 @@ class CachedProcessedDataset(Dataset):
         
         return features, target
     
+    def unload_data(self):
+        """
+        Libera arquivo da memória (apenas para lazy loading).
+        Chamado automaticamente após cada época para economizar RAM.
+        O cache LRU é mantido para acesso rápido.
+        """
+        if self.loading_strategy == 'lazy' and self.data is not None:
+            # Calcular tamanho aproximado liberado
+            if isinstance(self.data, list) and len(self.data) > 0:
+                # Estimativa: cada sample ~8.6 MB (66 x 32768 x 4 bytes)
+                size_mb = len(self.data) * 8.6
+                
+                del self.data
+                self.data = None
+                self._data_loaded = False
+                
+                import gc
+                gc.collect()
+                
+                # Log apenas em modo verbose - mostra quanto foi liberado
+                console.print(f"[dim cyan]  → Liberados ~{size_mb:.0f} MB ({self.data_file.name})[/dim cyan]")
+    
     def get_num_classes(self) -> int:
         return len(self.target_to_idx)
     
@@ -2810,6 +2933,11 @@ class CachedProcessedDataset(Dataset):
         Returns:
             Tupla (num_rows, effective_size) para dados 2D
         """
+        # Garantir que dados estejam carregados
+        if self.loading_strategy == 'lazy' and not self._data_loaded:
+            self.data = torch.load(self.data_file)
+            self._data_loaded = True
+        
         if len(self.data) > 0:
             features_shape = self.data[0][0].shape
             if len(features_shape) == 2:
@@ -2893,9 +3021,20 @@ def load_processed_dataset(
         batch_size = 1
         console.print(f"  • [yellow]Batch size forçado para 1 (visualização habilitada)[/yellow]")
     
-    console.print(f"  • Inicializando workers paralelos (train: 4 workers, val/test: 2 workers)")
-    console.print(f"  • Batch size: {batch_size}")
-    console.print(f"  • Isso pode levar alguns segundos na primeira vez...")
+    loading_strategy = config.get('data_loading', {}).get('loading_strategy', 'preload').lower()
+    if loading_strategy == 'lazy':
+        train_workers = 0
+        val_test_workers = 0
+        persistent_workers = False
+        console.print(f"  • [yellow]Lazy loading detectado: num_workers ajustado automaticamente para 0 (evita múltiplas cópias em RAM)[/yellow]")
+        console.print(f"  • Batch size: {batch_size}")
+    else:
+        train_workers = 4
+        val_test_workers = 2
+        persistent_workers = True
+        console.print(f"  • Inicializando workers paralelos (train: {train_workers} workers, val/test: {val_test_workers} workers)")
+        console.print(f"  • Batch size: {batch_size}")
+        console.print(f"  • Isso pode levar alguns segundos na primeira vez...")
     
     # Função collate para empilhar batches corretamente
     def collate_fn(batch):
@@ -2921,34 +3060,34 @@ def load_processed_dataset(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=4,
+        num_workers=train_workers,
         pin_memory=True,
         collate_fn=collate_fn,
-        persistent_workers=True,
+        persistent_workers=persistent_workers if train_workers > 0 else False,
         generator=generator,
-        worker_init_fn=worker_init_fn
+        worker_init_fn=worker_init_fn if train_workers > 0 else None
     )
     
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=2,
+        num_workers=val_test_workers,
         pin_memory=True,
         collate_fn=collate_fn,
-        persistent_workers=True,
-        worker_init_fn=worker_init_fn
+        persistent_workers=persistent_workers if val_test_workers > 0 else False,
+        worker_init_fn=worker_init_fn if val_test_workers > 0 else None
     )
     
     test_loader = DataLoader(
         test_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=2,
+        num_workers=val_test_workers,
         pin_memory=True,
         collate_fn=collate_fn,
-        persistent_workers=True,
-        worker_init_fn=worker_init_fn
+        persistent_workers=persistent_workers if val_test_workers > 0 else False,
+        worker_init_fn=worker_init_fn if val_test_workers > 0 else None
     )
     
     console.print(f"[green]✓ DataLoaders criados com sucesso![/green]\n")
@@ -3254,9 +3393,20 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
         batch_size = 1
         console.print(f"  • [yellow]Batch size forçado para 1 (visualização habilitada)[/yellow]")
     
-    console.print(f"  • Inicializando workers paralelos (train: 4 workers, val/test: 2 workers)")
-    console.print(f"  • Batch size: {batch_size}")
-    console.print(f"  • Isso pode levar alguns segundos na primeira vez...")
+    loading_strategy = config.get('data_loading', {}).get('loading_strategy', 'preload').lower()
+    if loading_strategy == 'lazy':
+        train_workers = 0
+        val_test_workers = 0
+        persistent_workers = False
+        console.print(f"  • [yellow]Lazy loading detectado: num_workers ajustado automaticamente para 0 (evita múltiplas cópias em RAM)[/yellow]")
+        console.print(f"  • Batch size: {batch_size}")
+    else:
+        train_workers = 4
+        val_test_workers = 2
+        persistent_workers = True
+        console.print(f"  • Inicializando workers paralelos (train: {train_workers} workers, val/test: {val_test_workers} workers)")
+        console.print(f"  • Batch size: {batch_size}")
+        console.print(f"  • Isso pode levar alguns segundos na primeira vez...")
     
     # Função collate para empilhar batches corretamente
     def collate_fn(batch):
@@ -3282,34 +3432,34 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=4,
+        num_workers=train_workers,
         pin_memory=True,
         collate_fn=collate_fn,
-        persistent_workers=True,
+        persistent_workers=persistent_workers if train_workers > 0 else False,
         generator=generator,
-        worker_init_fn=worker_init_fn
+        worker_init_fn=worker_init_fn if train_workers > 0 else None
     )
     
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=2,
+        num_workers=val_test_workers,
         pin_memory=True,
         collate_fn=collate_fn,
-        persistent_workers=True,
-        worker_init_fn=worker_init_fn
+        persistent_workers=persistent_workers if val_test_workers > 0 else False,
+        worker_init_fn=worker_init_fn if val_test_workers > 0 else None
     )
     
     test_loader = DataLoader(
         test_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=2,
+        num_workers=val_test_workers,
         pin_memory=True,
         collate_fn=collate_fn,
-        persistent_workers=True,
-        worker_init_fn=worker_init_fn
+        persistent_workers=persistent_workers if val_test_workers > 0 else False,
+        worker_init_fn=worker_init_fn if val_test_workers > 0 else None
     )
     
     return processed_dataset, train_loader, val_loader, test_loader
