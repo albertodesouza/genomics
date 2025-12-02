@@ -1,0 +1,215 @@
+# ═══════════════════════════════════════════════════════════════════
+# Configuration — Non-Longevous Dataset Builder (Small Dataset)
+# ═══════════════════════════════════════════════════════════════════
+# 
+# Este config seleciona ~3 indivíduos por população (26 populações)
+# Total esperado: ~78 indivíduos
+# Distribuição por superpopulação:
+#   - AFR (7 pops): 21 indivíduos
+#   - AMR (4 pops): 12 indivíduos
+#   - EAS (5 pops): 15 indivíduos
+#   - EUR (5 pops): 15 indivíduos
+#   - SAS (5 pops): 15 indivíduos
+# ═══════════════════════════════════════════════════════════════════
+
+project:
+  name: "non_longevous_dataset_genes"
+  description: "Small dataset with ~3 individuals per population (~78 total)"
+  output_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000"
+
+# ═══════════════════════════════════════════════════════════════════
+# Debug Options
+# ═══════════════════════════════════════════════════════════════════
+
+debug:
+  # When true, creates dataset using only reference genome (no individual variants)
+  # Useful for validating pipeline and AlphaGenome predictions
+  create_dataset_with_reference_genome_only: false
+
+# ═══════════════════════════════════════════════════════════════════
+# Data Sources
+# ═══════════════════════════════════════════════════════════════════
+
+data_sources:
+  # CSV file with 1000 Genomes metadata
+  # Header: FamilyID,SampleID,FatherID,MotherID,Sex,Population,Superpopulation
+  # Sex: 1=Male, 2=Female
+  metadata_csv: "../../docs/1000_genomes_metadata.csv"  # Relativo ao diretório configs/
+  
+  # Reference genome
+  reference:
+    fasta: "/dados/GENOMICS_DATA/top3/refs/GRCh38_full_analysis_set_plus_decoy_hla.fa"  # Relativo ao diretório configs/
+    name: "GRCh38"
+  
+  # VCF files location (chromosome pattern)
+  # {chrom} will be replaced by chromosome name (e.g., chr1, chr2, chrX)
+  vcf_pattern: "/dados/GENOMICS_DATA/top3/longevity_dataset/vcf_chromosomes/1kGP_high_coverage_Illumina.{chrom}.filtered.SNV_INDEL_SV_phased_panel.vcf.gz"
+
+# ═══════════════════════════════════════════════════════════════════
+# Sample Selection
+# ═══════════════════════════════════════════════════════════════════
+
+sample_selection:
+  # Selection level: "superpopulation" or "population"
+  # Usando "population" para distribuir uniformemente entre todas as 26 populações
+  level: "population"
+  
+  # Samples per group (depending on level selected)
+  # 3 indivíduos por população = ~78 indivíduos no total
+  samples_per_group: 50
+  
+  # Optional: specific groups to include (leave empty for all)
+  # Incluindo todas as 26 populações:
+  # AFR: ACB, ASW, ESN, GWD, LWK, MSL, YRI (7 populações)
+  # AMR: CLM, MXL, PEL, PUR (4 populações)
+  # EAS: CDX, CHB, CHS, JPT, KHV (5 populações)
+  # EUR: CEU, FIN, GBR, IBS, TSI (5 populações)
+  # SAS: BEB, GIH, ITU, PJL, STU (5 populações)
+  include_groups: []
+  
+  # Optional: exclude specific groups
+  exclude_groups: []
+  
+  # Sex filter: "all", "male", or "female"
+  sex_filter: "all"
+  
+  # Random seed for reproducible sampling
+  random_seed: 42
+
+# ═══════════════════════════════════════════════════════════════════
+# build_window_and_predict.py Parameters
+# ═══════════════════════════════════════════════════════════════════
+
+build_window_params:
+  # ═══════════════════════════════════════════════════════════════
+  # Window Mode: "gene" or "snp"
+  # ═══════════════════════════════════════════════════════════════
+  mode: "gene"  # Options: "gene" or "snp"
+  
+  # ═══════════════════════════════════════════════════════════════
+  # Gene Mode Options
+  # ═══════════════════════════════════════════════════════════════
+  gene:
+    # Single gene (use either symbol or id, not both)
+    symbol: "CYP2B6"           # HGNC gene symbol
+    id: null                   # ENSEMBL gene ID (e.g., ENSG00000197894)
+    
+    # OR multiple genes from file (one per line)
+    # If gene_list_file is provided, it overrides single gene above
+    gene_list_file: ../docs/ancestry_gene_list.txt       # Path to file with gene list
+  
+  # ═══════════════════════════════════════════════════════════════
+  # SNP Mode Options
+  # ═══════════════════════════════════════════════════════════════
+  snp:
+    # Path to SNP list file (tab-delimited with header)
+    # Format: ALFRED_UID  dbSNP_rsnumber  chrom  chrom_pos  alleles
+    # Default: Uses 55 AISNPs from FROGAncestryCalc (GRCh38 coordinates)
+    snp_list_file: "../../FROGAncestryCalc/SNPInfo/55_aisnps_alleles_grch38.txt"
+  
+  # ═══════════════════════════════════════════════════════════════
+  # Common Options (apply to both modes)
+  # ═══════════════════════════════════════════════════════════════
+  
+  # GTF annotation (optional for gene mode, ignored for SNP mode)
+  gtf_feather: null
+  
+  # Window size (must match AlphaGenome supported sizes)
+  # Valid sizes: 524288 (512KB), 1048576 (1MB)
+  window_size: 524288      # 512 KB = 2^19 (AlphaGenome SEQUENCE_LENGTH_500KB)
+  
+  # Haplotype options
+  skip_h2: false           # Set true to only build H1 (faster)
+  also_iupac: false        # Set true to also build IUPAC consensus
+  
+  # AlphaGenome prediction options
+  predict: true             # Run AlphaGenome predictions
+  
+  # API key (will use environment variable if not provided)
+  api_key: "${ALPHAGENOME_API_KEY}"
+  
+  # Output types (comma-separated)
+  # Available: RNA_SEQ, CAGE, ATAC, CHIP_HISTONE, CHIP_TF, DNASE, PROCAP, etc.
+  # Using RNA_SEQ + ATAC for ancestry validation:
+  #   - RNA_SEQ: Gene expression (population-specific eQTLs)
+  #   - ATAC: Chromatin accessibility (regulatory variants)
+  outputs: "RNA_SEQ"
+  
+  # Ontology terms (tissue/cell types, comma-separated CURIEs)
+  # Using B-lymphocytes (LCLs) - the SAME cell type used in 1000 Genomes Project
+  # CL:0000236 = B cell (lymphocytes transformed with EBV)
+  # This provides:
+  #   - Conceptual alignment with 1000G data source
+  #   - Rich data on immune system variation (relevant for population health)
+  #   - Direct relevance to longevity studies (immunosenescence)
+  # Leave empty to use all tissues (WARNING: slow and memory intensive)
+  # Other examples:
+  #   UBERON:0002107 (liver)
+  #   UBERON:0000955 (brain)
+  #   UBERON:0000948 (heart)
+  #   UBERON:0000178 (blood)
+  #   CL:0002601 (senescent cell)
+  ontology: "CL:1000458,CL:0000346,CL:2000092"
+  
+  # Skip confirmation when requesting all tissues
+  all_tissues: false
+  
+  # ═══════════════════════════════════════════════════════════════
+  # API Rate Limiting
+  # ═══════════════════════════════════════════════════════════════
+  # Delay (in seconds) AFTER EACH AlphaGenome API call to respect usage limits
+  # This delay is applied after EVERY prediction (each SNP × haplotype)
+  # Set to 0 to disable rate limiting
+  # Supports float values (e.g., 0.5 for 500ms delay)
+  # 
+  # Example calculation for this config (78 samples with 55 SNPs):
+  #   - Total API calls: 78 samples × 55 SNPs × 2 haplotypes = 8,580 calls
+  #   - With 0.5s delay: ~71 minutes of delays alone (plus ~20 hours API time)
+  #   - Total estimated time: ~21-22 hours
+  # 
+  # Recommended: 0.5 to 1.0 seconds for respectful API usage
+  api_rate_limit_delay: 0.5
+
+# ═══════════════════════════════════════════════════════════════════
+# Pipeline Execution Steps
+# ═══════════════════════════════════════════════════════════════════
+
+pipeline:
+  steps:
+    # Step 1: Analyze CSV and print statistics
+    analyze_metadata: true       # ENABLED BY DEFAULT
+    
+    # Step 2: Select samples according to selection criteria
+    select_samples: true
+    
+    # Step 3: Validate VCF files exist for selected samples
+    validate_vcfs: true
+    
+    # Step 4: Run build_window_and_predict.py for each sample
+    run_predictions: true
+    
+    # Step 5: Generate summary report
+    generate_report: true
+    
+    # Step 6: Generate PyTorch Dataset metadata (aggregates all individuals)
+    generate_dataset_metadata: true
+  
+  # Parallel processing
+  parallel:
+    enabled: true
+    n_workers: 4              # Number of parallel processes
+  
+  # Resume from checkpoint
+  resume_from_checkpoint: true
+  checkpoint_file: "non_longevous_dataset_genes_checkpoint.json"
+
+# ═══════════════════════════════════════════════════════════════════
+# Logging
+# ═══════════════════════════════════════════════════════════════════
+
+logging:
+  level: "INFO"              # DEBUG, INFO, WARNING, ERROR
+  log_file: "non_longevous_dataset_small.log"
+  console_output: true
+
+
