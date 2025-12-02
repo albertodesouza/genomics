@@ -2798,7 +2798,15 @@ class CachedProcessedDataset(Dataset):
     - lazy: Carrega sob demanda (economiza memória, pequeno overhead I/O)
     """
     
-    def __init__(self, data_file: Path, target_to_idx: Dict, idx_to_target: Dict, config: Dict):
+    def __init__(
+        self,
+        data_file: Path,
+        target_to_idx: Dict,
+        idx_to_target: Dict,
+        config: Dict,
+        split_name: Optional[str] = None,
+        length_hint: Optional[int] = None
+    ):
         """
         Inicializa dataset do cache.
         
@@ -2807,11 +2815,15 @@ class CachedProcessedDataset(Dataset):
             target_to_idx: Mapeamento target->índice
             idx_to_target: Mapeamento índice->target
             config: Configuração (necessário para taint_at_runtime e loading_strategy)
+            split_name: Nome do split (train/val/test) para resolver tamanho via metadata
+            length_hint: Comprimento esperado (evita carregar o arquivo apenas para len)
         """
         self.data_file = data_file
         self.target_to_idx = target_to_idx
         self.idx_to_target = idx_to_target
         self.config = config
+        self.split_name = (split_name or self._infer_split_name()).lower()
+        self._length_hint = length_hint
         
         # Ler configuração de carregamento
         data_loading_config = config.get('data_loading', {})
@@ -2829,9 +2841,7 @@ class CachedProcessedDataset(Dataset):
         
         elif self.loading_strategy == 'lazy':
             # Modo lazy: carrega apenas metadados agora
-            temp_data = torch.load(data_file)
-            self._length = len(temp_data)
-            del temp_data  # Liberar memória imediatamente
+            self._length = self._determine_length_without_loading()
             
             self._data_loaded = False
             self.data = None
@@ -2850,6 +2860,62 @@ class CachedProcessedDataset(Dataset):
     
     def __len__(self) -> int:
         return self._length
+
+    def _infer_split_name(self) -> str:
+        """
+        Tenta inferir automaticamente o split a partir do nome do arquivo.
+        Retorna 'train' como fallback seguro.
+        """
+        stem = self.data_file.stem.lower()
+        mapping = {
+            'train': 'train',
+            'train_data': 'train',
+            'training': 'train',
+            'val': 'val',
+            'validation': 'val',
+            'val_data': 'val',
+            'test': 'test',
+            'test_data': 'test'
+        }
+        for key, value in mapping.items():
+            if key in stem:
+                return value
+        return 'train'
+
+    def _determine_length_without_loading(self) -> int:
+        """
+        Resolve o comprimento do dataset sem carregar o arquivo .pt completo.
+        Utiliza hint direto, metadata.json ou splits.json como fallback.
+        """
+        if self._length_hint is not None:
+            return self._length_hint
+        
+        metadata_path = self.data_file.parent / 'metadata.json'
+        if metadata_path.exists():
+            try:
+                with open(metadata_path, 'r') as f:
+                    metadata = json.load(f)
+                split_key = f"{self.split_name}_size"
+                split_sizes = metadata.get('splits', {})
+                if split_key in split_sizes:
+                    return split_sizes[split_key]
+            except json.JSONDecodeError:
+                console.print(f"[yellow]Aviso: metadata.json inválido em {metadata_path}[/yellow]")
+        
+        splits_path = self.data_file.parent / 'splits.json'
+        if splits_path.exists():
+            try:
+                with open(splits_path, 'r') as f:
+                    splits = json.load(f)
+                indices_key = f"{self.split_name}_indices"
+                if indices_key in splits:
+                    return len(splits[indices_key])
+            except json.JSONDecodeError:
+                console.print(f"[yellow]Aviso: splits.json inválido em {splits_path}[/yellow]")
+        
+        raise RuntimeError(
+            f"Não foi possível determinar o tamanho de {self.data_file.name} sem carregar o arquivo."
+        )
     
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -3007,10 +3073,33 @@ def load_processed_dataset(
         target_to_idx[str(i)] = i
         idx_to_target[i] = str(i)
     
+    split_sizes = metadata.get('splits', {})
+    
     # Carregar datasets
-    train_dataset = CachedProcessedDataset(cache_dir / 'train_data.pt', target_to_idx, idx_to_target, config)
-    val_dataset = CachedProcessedDataset(cache_dir / 'val_data.pt', target_to_idx, idx_to_target, config)
-    test_dataset = CachedProcessedDataset(cache_dir / 'test_data.pt', target_to_idx, idx_to_target, config)
+    train_dataset = CachedProcessedDataset(
+        cache_dir / 'train_data.pt',
+        target_to_idx,
+        idx_to_target,
+        config,
+        split_name='train',
+        length_hint=split_sizes.get('train_size')
+    )
+    val_dataset = CachedProcessedDataset(
+        cache_dir / 'val_data.pt',
+        target_to_idx,
+        idx_to_target,
+        config,
+        split_name='val',
+        length_hint=split_sizes.get('val_size')
+    )
+    test_dataset = CachedProcessedDataset(
+        cache_dir / 'test_data.pt',
+        target_to_idx,
+        idx_to_target,
+        config,
+        split_name='test',
+        length_hint=split_sizes.get('test_size')
+    )
     
     # Preparar para criar DataLoaders
     console.print("\n[cyan]⚙️  Criando DataLoaders...[/cyan]")
