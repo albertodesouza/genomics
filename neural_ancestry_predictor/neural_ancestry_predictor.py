@@ -959,10 +959,45 @@ class NNAncestryPredictor(nn.Module):
         super(NNAncestryPredictor, self).__init__()
         
         self.config = config
-        self.input_shape = input_shape
-        self.input_size = input_shape[0] * input_shape[1]  # Tamanho após flatten
         self.num_classes = num_classes
         self.is_classification = config['output']['prediction_target'] != 'frog_likelihood'
+        
+        # Determinar quais linhas usar (genes específicos)
+        genes_to_use = config['dataset_input'].get('genes_to_use', None)
+        tracks_per_gene = 6  # rna_seq tem 6 tracks
+        
+        # Ordem dos genes no dataset (carregada do cache metadata)
+        # Fallback para ordem padrão se não disponível
+        GENE_ORDER = config['dataset_input'].get('gene_order', 
+            ["MC1R", "TYRP1", "TYR", "SLC45A2", "DDB1", 
+             "EDAR", "MFSD12", "OCA2", "HERC2", "SLC24A5", "TCHH"])
+        
+        if genes_to_use:
+            # Validar genes
+            for gene in genes_to_use:
+                if gene not in GENE_ORDER:
+                    raise ValueError(f"Gene inválido: {gene}. Opções: {GENE_ORDER}")
+            
+            # Criar lista de índices de genes (mantendo ordem do dataset)
+            gene_indices = [i for i, gene in enumerate(GENE_ORDER) if gene in genes_to_use]
+            self.genes_selected = [GENE_ORDER[i] for i in gene_indices]
+            
+            # Calcular linhas a extrair (cada gene = 6 linhas consecutivas)
+            self.rows_to_use = []
+            for gene_idx in gene_indices:
+                start_row = gene_idx * tracks_per_gene
+                self.rows_to_use.extend(range(start_row, start_row + tracks_per_gene))
+        else:
+            # Default: usar todos os genes
+            self.genes_selected = GENE_ORDER
+            self.rows_to_use = list(range(len(GENE_ORDER) * tracks_per_gene))
+        
+        # Ajustar input_shape para os genes selecionados
+        num_rows_original = input_shape[0]
+        effective_size = input_shape[1]
+        num_rows = len(self.rows_to_use)
+        self.input_shape = (num_rows, effective_size)
+        self.input_size = num_rows * effective_size  # Tamanho após flatten
         
         # Parâmetros de arquitetura
         hidden_layers = config['model']['hidden_layers']
@@ -1001,7 +1036,10 @@ class NNAncestryPredictor(nn.Module):
         self._initialize_weights(activation_type)
         
         console.print(f"[green]Modelo NN criado:[/green]")
-        console.print(f"  • Input shape: {input_shape[0]} x {input_shape[1]}")
+        console.print(f"  • Input shape original: {input_shape[0]} x {input_shape[1]}")
+        console.print(f"  • Genes selecionados: {len(self.genes_selected)} genes → {len(self.rows_to_use)} linhas")
+        console.print(f"  • Genes: {', '.join(self.genes_selected)}")
+        console.print(f"  • Input shape efetivo: {self.input_shape[0]} x {self.input_shape[1]}")
         console.print(f"  • Input size (após flatten): {self.input_size}")
         console.print(f"  • Hidden layers: {hidden_layers}")
         console.print(f"  • Ativação: {activation_type} (em todas as camadas hidden)")
@@ -1020,7 +1058,11 @@ class NNAncestryPredictor(nn.Module):
         Returns:
             Output tensor com shape [batch, num_classes] contendo logits (não probabilidades)
         """
-        # Flatten: [batch, num_rows, effective_size] -> [batch, num_rows * effective_size]
+        # Selecionar apenas as linhas dos genes escolhidos
+        # [batch, num_rows_original, effective_size] -> [batch, num_rows_selected, effective_size]
+        x = x[:, self.rows_to_use, :]
+        
+        # Flatten: [batch, num_rows_selected, effective_size] -> [batch, num_rows_selected * effective_size]
         x = x.view(x.size(0), -1)
         
         logits = self.network(x)
@@ -1116,9 +1158,44 @@ class CNNAncestryPredictor(nn.Module):
         super(CNNAncestryPredictor, self).__init__()
         
         self.config = config
-        self.input_shape = input_shape
         self.num_classes = num_classes
         self.is_classification = config['output']['prediction_target'] != 'frog_likelihood'
+        
+        # Determinar quais linhas usar (genes específicos)
+        genes_to_use = config['dataset_input'].get('genes_to_use', None)
+        tracks_per_gene = 6  # rna_seq tem 6 tracks
+        
+        # Ordem dos genes no dataset (carregada do cache metadata)
+        # Fallback para ordem padrão se não disponível
+        GENE_ORDER = config['dataset_input'].get('gene_order', 
+            ["MC1R", "TYRP1", "TYR", "SLC45A2", "DDB1", 
+             "EDAR", "MFSD12", "OCA2", "HERC2", "SLC24A5", "TCHH"])
+        
+        if genes_to_use:
+            # Validar genes
+            for gene in genes_to_use:
+                if gene not in GENE_ORDER:
+                    raise ValueError(f"Gene inválido: {gene}. Opções: {GENE_ORDER}")
+            
+            # Criar lista de índices de genes (mantendo ordem do dataset)
+            gene_indices = [i for i, gene in enumerate(GENE_ORDER) if gene in genes_to_use]
+            self.genes_selected = [GENE_ORDER[i] for i in gene_indices]
+            
+            # Calcular linhas a extrair (cada gene = 6 linhas consecutivas)
+            self.rows_to_use = []
+            for gene_idx in gene_indices:
+                start_row = gene_idx * tracks_per_gene
+                self.rows_to_use.extend(range(start_row, start_row + tracks_per_gene))
+        else:
+            # Default: usar todos os genes
+            self.genes_selected = GENE_ORDER
+            self.rows_to_use = list(range(len(GENE_ORDER) * tracks_per_gene))
+        
+        # Ajustar input_shape para os genes selecionados
+        num_rows_original = input_shape[0]
+        effective_size = input_shape[1]
+        num_rows = len(self.rows_to_use)
+        self.input_shape = (num_rows, effective_size)
         
         # Parâmetros CNN
         cnn_config = config['model']['cnn']
@@ -1167,8 +1244,8 @@ class CNNAncestryPredictor(nn.Module):
             padding=padding
         )
         
-        # Calcular dimensões após convolução
-        num_rows, effective_size = input_shape
+        # Calcular dimensões após convolução (usando input_shape ajustado)
+        num_rows, effective_size = self.input_shape
         
         # Extrair padding como tupla
         if isinstance(padding, int):
@@ -1220,7 +1297,10 @@ class CNNAncestryPredictor(nn.Module):
         self._initialize_weights(activation_type)
         
         console.print(f"[green]Modelo CNN criado:[/green]")
-        console.print(f"  • Input shape: {input_shape[0]} x {input_shape[1]} (1 canal)")
+        console.print(f"  • Input shape original: {input_shape[0]} x {input_shape[1]}")
+        console.print(f"  • Genes selecionados: {len(self.genes_selected)} genes → {len(self.rows_to_use)} linhas")
+        console.print(f"  • Genes: {', '.join(self.genes_selected)}")
+        console.print(f"  • Input shape efetivo: {self.input_shape[0]} x {self.input_shape[1]} (1 canal)")
         console.print(f"  • Conv2D: {num_filters} filters, kernel={kernel_size}, stride={stride}, padding={padding}")
         console.print(f"  • Após Conv2D: {num_filters} x {conv_out_h} x {conv_out_w}")
         if pool_size:
@@ -1243,7 +1323,11 @@ class CNNAncestryPredictor(nn.Module):
         Returns:
             Output tensor com shape [batch, num_classes] contendo logits (não probabilidades)
         """
-        # Adicionar dimensão de canal: [batch, num_rows, effective_size] -> [batch, 1, num_rows, effective_size]
+        # Selecionar apenas as linhas dos genes escolhidos
+        # [batch, num_rows_original, effective_size] -> [batch, num_rows_selected, effective_size]
+        x = x[:, self.rows_to_use, :]
+        
+        # Adicionar dimensão de canal: [batch, num_rows_selected, effective_size] -> [batch, 1, num_rows_selected, effective_size]
         x = x.unsqueeze(1)
         
         # Convolução + Ativação
@@ -1368,7 +1452,41 @@ class CNN2AncestryPredictor(nn.Module):
         self.num_classes = num_classes
         self.is_classification = config['output']['prediction_target'] != 'frog_likelihood'
         
-        num_rows, effective_size = input_shape
+        # Determinar quais linhas usar (genes específicos)
+        genes_to_use = config['dataset_input'].get('genes_to_use', None)
+        tracks_per_gene = 6  # rna_seq tem 6 tracks
+        
+        # Ordem dos genes no dataset (carregada do cache metadata)
+        # Fallback para ordem padrão se não disponível
+        GENE_ORDER = config['dataset_input'].get('gene_order', 
+            ["MC1R", "TYRP1", "TYR", "SLC45A2", "DDB1", 
+             "EDAR", "MFSD12", "OCA2", "HERC2", "SLC24A5", "TCHH"])
+        
+        if genes_to_use:
+            # Validar genes
+            for gene in genes_to_use:
+                if gene not in GENE_ORDER:
+                    raise ValueError(f"Gene inválido: {gene}. Opções: {GENE_ORDER}")
+            
+            # Criar lista de índices de genes (mantendo ordem do dataset)
+            gene_indices = [i for i, gene in enumerate(GENE_ORDER) if gene in genes_to_use]
+            self.genes_selected = [GENE_ORDER[i] for i in gene_indices]
+            
+            # Calcular linhas a extrair (cada gene = 6 linhas consecutivas)
+            self.rows_to_use = []
+            for gene_idx in gene_indices:
+                start_row = gene_idx * tracks_per_gene
+                self.rows_to_use.extend(range(start_row, start_row + tracks_per_gene))
+        else:
+            # Default: usar todos os genes
+            self.genes_selected = GENE_ORDER
+            self.rows_to_use = list(range(len(GENE_ORDER) * tracks_per_gene))
+        
+        # Ajustar input_shape para os genes selecionados
+        num_rows_original = input_shape[0]
+        effective_size = input_shape[1]
+        num_rows = len(self.rows_to_use)
+        self.input_shape = (num_rows, effective_size)
         
         # Ler parâmetros da configuração CNN2
         cnn2_config = config['model'].get('cnn2', {})
@@ -1439,7 +1557,10 @@ class CNN2AncestryPredictor(nn.Module):
         
         # Imprimir informações do modelo
         console.print(f"[green]Modelo CNN2 criado:[/green]")
-        console.print(f"  • Input shape: {num_rows} x {effective_size} (1 canal)")
+        console.print(f"  • Input shape original: {input_shape[0]} x {input_shape[1]}")
+        console.print(f"  • Genes selecionados: {len(self.genes_selected)} genes → {len(self.rows_to_use)} linhas")
+        console.print(f"  • Genes: {', '.join(self.genes_selected)}")
+        console.print(f"  • Input shape efetivo: {num_rows} x {effective_size} (1 canal)")
         console.print(f"  • Stage 1: {num_filters_s1} filters, kernel={kernel_s1}, stride={stride_s1}")
         console.print(f"    → Output: {num_filters_s1} x {conv1_h} x {conv1_w}")
         console.print(f"  • Stage 2: {num_filters_s2} filters, kernel={kernel_s23}, stride={stride_s23}, padding={padding_s23}")
@@ -1462,7 +1583,11 @@ class CNN2AncestryPredictor(nn.Module):
         Returns:
             Output tensor com shape [batch, num_classes] contendo logits (não probabilidades)
         """
-        # Adicionar dimensão de canal: [batch, num_rows, effective_size] -> [batch, 1, num_rows, effective_size]
+        # Selecionar apenas as linhas dos genes escolhidos
+        # [batch, num_rows_original, effective_size] -> [batch, num_rows_selected, effective_size]
+        x = x[:, self.rows_to_use, :]
+        
+        # Adicionar dimensão de canal: [batch, num_rows_selected, effective_size] -> [batch, 1, num_rows_selected, effective_size]
         x = x.unsqueeze(1)
         
         # Features convolucionais
@@ -2143,7 +2268,8 @@ class Trainer:
                 console.print(f"[yellow]Salvando checkpoint da época {epoch + 1}...[/yellow]")
                 self.save_checkpoint(epoch, 'interrupted')
             console.print("[yellow]Treinamento interrompido. Checkpoint salvo.[/yellow]")
-            raise SystemExit(0)
+            # Marcar como interrompido (mas continuar para executar testes)
+            interrupt_state.interrupted = True
         
         # Salvar checkpoint final (sempre)
         console.print("[yellow]Salvando checkpoint final...[/yellow]")
@@ -2460,7 +2586,7 @@ class Tester:
     
     def _print_results(self, results: Dict, target_names: List[str]):
         """Imprime resultados formatados."""
-        console.print("\n[bold cyan]═══ RESULTADOS DO TESTE ═══[/bold cyan]\n")
+        console.print(f"\n[bold cyan]═══ RESULTADOS DO TESTE ({self.dataset_name.upper()}) ═══[/bold cyan]\n")
         
         # Métricas gerais
         table = Table(title="Métricas de Performance")
@@ -2476,10 +2602,14 @@ class Tester:
         
         # Classification report
         console.print("\n[bold]Classification Report:[/bold]")
+        # Listar nomes das classes
+        console.print(f"[dim]Classes: {', '.join([f'{i}={name}' for i, name in enumerate(target_names)])}[/dim]")
         console.print(results['classification_report'])
         
         # Confusion Matrix
         console.print("\n[bold]Confusion Matrix:[/bold]")
+        # Listar nomes das classes
+        console.print(f"[dim]Classes: {', '.join([f'{i}={name}' for i, name in enumerate(target_names)])}[/dim]")
         cm = results['confusion_matrix']
         
         cm_table = Table(title="Confusion Matrix")
@@ -2731,6 +2861,16 @@ def save_processed_dataset(
         with open(temp_cache_dir / 'normalization_params.json', 'w') as f:
             json.dump(processed_dataset.normalization_params, f, indent=2)
         
+        # Obter ordem dos genes do dataset base
+        try:
+            # Pegar do primeiro sample do dataset base
+            first_sample_data, _ = processed_dataset.base_dataset[0]
+            gene_order = list(first_sample_data['windows'])
+            console.print(f"  📊 Ordem dos genes detectada: {', '.join(gene_order)}")
+        except Exception as e:
+            console.print(f"[yellow]⚠ Não foi possível obter ordem dos genes: {e}[/yellow]")
+            gene_order = None
+        
         # Salvar metadados
         metadata = {
             'creation_date': datetime.now().isoformat(),
@@ -2756,7 +2896,10 @@ def save_processed_dataset(
             'total_samples': len(processed_dataset),
             'num_classes': processed_dataset.get_num_classes(),
             'input_size': processed_dataset.get_input_size(),
-            'prediction_target': config['output']['prediction_target']
+            'prediction_target': config['output']['prediction_target'],
+            'class_names': processed_dataset.idx_to_target,  # Salvar mapeamento de classes
+            'gene_order': gene_order,  # Salvar ordem dos genes
+            'tracks_per_gene': 6  # Número de tracks por gene (rna_seq)
         }
         console.print(f"  💾 Salvando metadata.json...")
         with open(temp_cache_dir / 'metadata.json', 'w') as f:
@@ -3024,7 +3167,7 @@ class CachedProcessedDataset(Dataset):
 def load_processed_dataset(
     cache_dir: Path,
     config: Dict
-) -> Tuple[CachedProcessedDataset, DataLoader, DataLoader, DataLoader]:
+) -> Tuple[CachedProcessedDataset, DataLoader, DataLoader, DataLoader, Dict]:
     """
     Carrega dataset processado do cache.
     
@@ -3067,11 +3210,101 @@ def load_processed_dataset(
     target_to_idx = {}
     idx_to_target = {}
     
-    # Para classificação, criar mapeamentos dummy (os dados já estão como índices)
-    num_classes = metadata.get('num_classes', 0)
-    for i in range(num_classes):
-        target_to_idx[str(i)] = i
-        idx_to_target[i] = str(i)
+    # Para classificação, criar mapeamentos a partir dos nomes salvos (ou reconstruir se necessário)
+    metadata_updated = False
+    temp_base_dataset = None
+    
+    if 'class_names' in metadata:
+        # Carregar mapeamentos reais do metadata (novo formato)
+        class_names = metadata['class_names']
+        # Converter chaves de string para int se necessário
+        idx_to_target = {int(k): v for k, v in class_names.items()}
+        target_to_idx = {v: int(k) for k, v in idx_to_target.items()}
+    else:
+        # Cache antigo sem class_names: reconstruir a partir do dataset base
+        console.print("[yellow]⚠ Cache não contém nomes de classes. Reconstruindo...[/yellow]")
+        
+        # Carregar dataset base temporariamente apenas para obter as classes
+        temp_base_dataset = GenomicLongevityDataset(
+            dataset_dir=Path(config['dataset_input']['dataset_dir']),
+            load_predictions=False,  # Não precisa carregar predições
+            load_sequences=False,
+            cache_sequences=False
+        )
+        
+        # Obter classes do metadata do dataset (mesmo procedimento de _create_target_mappings)
+        dataset_metadata = temp_base_dataset.dataset_metadata
+        prediction_target = config['output']['prediction_target']
+        classes_from_metadata = None
+        
+        if prediction_target == 'superpopulation':
+            superpop_dist = dataset_metadata.get('superpopulation_distribution', {})
+            if superpop_dist:
+                classes_from_metadata = list(superpop_dist.keys())
+        elif prediction_target == 'population':
+            pop_dist = dataset_metadata.get('population_distribution', {})
+            if pop_dist:
+                classes_from_metadata = list(pop_dist.keys())
+        
+        if classes_from_metadata:
+            # Criar mapeamentos (ordenados alfabeticamente para consistência)
+            sorted_targets = sorted(classes_from_metadata)
+            target_to_idx = {target: idx for idx, target in enumerate(sorted_targets)}
+            idx_to_target = {idx: target for target, idx in target_to_idx.items()}
+            
+            # Atualizar metadata do cache com os nomes das classes
+            metadata['class_names'] = idx_to_target
+            metadata_updated = True
+            
+            console.print(f"[green]✓ Nomes de classes reconstruídos[/green]")
+            console.print(f"[cyan]Classes: {sorted_targets}[/cyan]")
+        else:
+            # Último recurso: criar mapeamentos dummy
+            console.print("[yellow]⚠ Não foi possível obter nomes de classes. Usando índices.[/yellow]")
+            num_classes = metadata.get('num_classes', 0)
+            for i in range(num_classes):
+                target_to_idx[str(i)] = i
+                idx_to_target[i] = str(i)
+    
+    # Carregar ou reconstruir gene_order
+    if 'gene_order' in metadata:
+        gene_order = metadata['gene_order']
+        console.print(f"[green]Ordem dos genes: {', '.join(gene_order) if gene_order else 'N/A'}[/green]")
+    else:
+        # Cache antigo sem gene_order: reconstruir a partir do dataset base
+        console.print("[yellow]⚠ Cache não contém ordem dos genes. Reconstruindo...[/yellow]")
+        
+        # Carregar dataset base se ainda não foi carregado
+        if temp_base_dataset is None:
+            temp_base_dataset = GenomicLongevityDataset(
+                dataset_dir=Path(config['dataset_input']['dataset_dir']),
+                load_predictions=False,
+                load_sequences=False,
+                cache_sequences=False
+            )
+        
+        try:
+            # Obter ordem dos genes do primeiro sample
+            first_sample_data, _ = temp_base_dataset[0]
+            gene_order = list(first_sample_data['windows'])
+            
+            # Atualizar metadata do cache com a ordem dos genes
+            metadata['gene_order'] = gene_order
+            metadata['tracks_per_gene'] = 6  # rna_seq tem 6 tracks
+            metadata_updated = True
+            
+            console.print(f"[green]✓ Ordem dos genes reconstruída[/green]")
+            console.print(f"[cyan]Genes: {', '.join(gene_order)}[/cyan]")
+        except Exception as e:
+            console.print(f"[yellow]⚠ Não foi possível obter ordem dos genes: {e}[/yellow]")
+            gene_order = None
+    
+    # Salvar metadata atualizado se houve mudanças
+    if metadata_updated:
+        metadata_file = cache_dir / 'metadata.json'
+        with open(metadata_file, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        console.print(f"[green]✓ Metadata do cache atualizado e salvo[/green]")
     
     split_sizes = metadata.get('splits', {})
     
@@ -3186,7 +3419,8 @@ def load_processed_dataset(
     console.print(f"  • Teste: {len(test_dataset)} amostras")
     
     # Usar train_dataset como full_dataset (para compatibilidade com código existente)
-    return train_dataset, train_loader, val_loader, test_loader
+    # Retornar também o metadata para que prepare_data possa extrair gene_order
+    return train_dataset, train_loader, val_loader, test_loader, metadata
 
 
 # ==============================================================================
@@ -3233,7 +3467,14 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
                 "[bold green]Cache Encontrado![/bold green]\n"
                 f"Carregando dataset do cache compartilhado: {cache_path.name}"
             ))
-            result = load_processed_dataset(cache_path, config)
+            full_dataset, train_loader, val_loader, test_loader, cache_metadata = load_processed_dataset(cache_path, config)
+            
+            # Passar gene_order do cache para o config
+            if 'gene_order' in cache_metadata and cache_metadata['gene_order']:
+                config['dataset_input']['gene_order'] = cache_metadata['gene_order']
+                console.print(f"[green]Gene order carregado do cache: {', '.join(cache_metadata['gene_order'])}[/green]")
+            
+            result = (full_dataset, train_loader, val_loader, test_loader)
             
             # Copiar normalization_params para o diretório do experimento (referência)
             (experiment_dir / 'models').mkdir(exist_ok=True)
@@ -3454,7 +3695,14 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
         # IMPORTANTE: Agora que o cache foi salvo, carregar dele para usar
         # o CachedProcessedDataset (rápido) em vez do ProcessedGenomicDataset (lento)
         console.print("\n[cyan]✓ Cache salvo! Recarregando do cache para treino rápido...[/cyan]")
-        result = load_processed_dataset(cache_path, config)
+        full_dataset, train_loader, val_loader, test_loader, cache_metadata = load_processed_dataset(cache_path, config)
+        
+        # Passar gene_order do cache para o config
+        if 'gene_order' in cache_metadata and cache_metadata['gene_order']:
+            config['dataset_input']['gene_order'] = cache_metadata['gene_order']
+            console.print(f"[green]Gene order carregado do cache: {', '.join(cache_metadata['gene_order'])}[/green]")
+        
+        result = (full_dataset, train_loader, val_loader, test_loader)
         
         # Copiar normalization_params para o diretório do experimento (referência)
         (experiment_dir / 'models').mkdir(exist_ok=True)
@@ -4061,48 +4309,48 @@ def main():
             json.dump(history, f, indent=2)
         console.print(f"[green]✓ Histórico salvo em {history_path}[/green]")
         
-        # Executar testes automáticos após o treino (não interromper se CTRL+C durante testes)
-        if not interrupt_state.interrupted:
-            console.print("\n[bold cyan]═══════════════════════════════════════════════[/bold cyan]")
-            console.print("[bold cyan]Executando Testes Automáticos Após Treinamento[/bold cyan]")
-            console.print("[bold cyan]═══════════════════════════════════════════════[/bold cyan]\n")
-            
-            # Determinar qual checkpoint usar
-            models_dir = experiment_dir / 'models'
-            if (models_dir / 'best_accuracy.pt').exists():
-                checkpoint_path = models_dir / 'best_accuracy.pt'
-                console.print(f"[green]Carregando melhor modelo (accuracy): {checkpoint_path}[/green]")
-            elif (models_dir / 'final.pt').exists():
-                checkpoint_path = models_dir / 'final.pt'
-                console.print(f"[green]Carregando modelo final: {checkpoint_path}[/green]")
-            else:
-                console.print("[yellow]⚠ Nenhum checkpoint encontrado para teste automático[/yellow]")
-                checkpoint_path = None
-            
-            if checkpoint_path:
-                # Limpar memória GPU antes de carregar checkpoint
-                if device.type == 'cuda':
-                    torch.cuda.empty_cache()
-                
-                # Carregar checkpoint na CPU, depois aplicar ao modelo (já na GPU)
-                checkpoint = torch.load(checkpoint_path, map_location='cpu')
-                model.load_state_dict(checkpoint['model_state_dict'])
-                
-                # Teste no conjunto de treino
-                console.print("\n[cyan]━━━ Testando no conjunto de TREINO ━━━[/cyan]")
-                train_results = run_test_and_save(model, train_loader, full_dataset, config, device, 'train', experiment_dir)
-                
-                # Teste no conjunto de validação
-                console.print("\n[cyan]━━━ Testando no conjunto de VALIDAÇÃO ━━━[/cyan]")
-                val_results = run_test_and_save(model, val_loader, full_dataset, config, device, 'val', experiment_dir)
-                
-                # Teste no conjunto de teste
-                console.print("\n[cyan]━━━ Testando no conjunto de TESTE ━━━[/cyan]")
-                test_results = run_test_and_save(model, test_loader, full_dataset, config, device, 'test', experiment_dir)
-                
-                console.print("\n[bold green]✓ Testes automáticos concluídos![/bold green]")
+        # Executar testes automáticos após o treino (executar MESMO se CTRL+C)
+        console.print("\n[bold cyan]═══════════════════════════════════════════════[/bold cyan]")
+        if interrupt_state.interrupted:
+            console.print("[bold cyan]Executando Testes Após CTRL+C[/bold cyan]")
         else:
-            console.print("\n[yellow]⚠ Testes automáticos pulados devido à interrupção[/yellow]")
+            console.print("[bold cyan]Executando Testes Automáticos Após Treinamento[/bold cyan]")
+        console.print("[bold cyan]═══════════════════════════════════════════════[/bold cyan]\n")
+        
+        # Determinar qual checkpoint usar
+        models_dir = experiment_dir / 'models'
+        if (models_dir / 'best_accuracy.pt').exists():
+            checkpoint_path = models_dir / 'best_accuracy.pt'
+            console.print(f"[green]Carregando melhor modelo (accuracy): {checkpoint_path}[/green]")
+        elif (models_dir / 'final.pt').exists():
+            checkpoint_path = models_dir / 'final.pt'
+            console.print(f"[green]Carregando modelo final: {checkpoint_path}[/green]")
+        else:
+            console.print("[yellow]⚠ Nenhum checkpoint encontrado para teste automático[/yellow]")
+            checkpoint_path = None
+        
+        if checkpoint_path:
+            # Limpar memória GPU antes de carregar checkpoint
+            if device.type == 'cuda':
+                torch.cuda.empty_cache()
+            
+            # Carregar checkpoint na CPU, depois aplicar ao modelo (já na GPU)
+            checkpoint = torch.load(checkpoint_path, map_location='cpu')
+            model.load_state_dict(checkpoint['model_state_dict'])
+            
+            # Teste no conjunto de treino
+            console.print("\n[cyan]━━━ Testando no conjunto de TREINO ━━━[/cyan]")
+            train_results = run_test_and_save(model, train_loader, full_dataset, config, device, 'train', experiment_dir)
+            
+            # Teste no conjunto de validação
+            console.print("\n[cyan]━━━ Testando no conjunto de VALIDAÇÃO ━━━[/cyan]")
+            val_results = run_test_and_save(model, val_loader, full_dataset, config, device, 'val', experiment_dir)
+            
+            # Teste no conjunto de teste
+            console.print("\n[cyan]━━━ Testando no conjunto de TESTE ━━━[/cyan]")
+            test_results = run_test_and_save(model, test_loader, full_dataset, config, device, 'test', experiment_dir)
+            
+            console.print("\n[bold green]✓ Testes automáticos concluídos![/bold green]")
         
     elif config['mode'] == 'test':
         # Carregar melhor checkpoint do experiment_dir

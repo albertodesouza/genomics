@@ -49,7 +49,7 @@ dataset_input:
   # WINDOW_SIZE_512KB = 524288   # AlphaGenome: "500KB" = 524288 bp (512 KB real)
   # WINDOW_SIZE_1MB = 1048576
 
-  window_center_size: 65536
+  window_center_size: 32768
   
   # Fator de downsampling a aplicar após extração do trecho central
   # 1 = usar todas as bases selecionadas (sem downsampling)
@@ -57,6 +57,34 @@ dataset_input:
   # 10 = usar 1 a cada 10 bases
   # Maior downsampling = menor dimensionalidade, mais rápido, menos informação
   downsample_factor: 1
+  
+  # Seleção de genes a usar na rede neural
+  # Lista específica de genes para incluir no treinamento
+  # A ordem dos genes é automaticamente obtida do dataset (salva no cache metadata)
+  # Você pode listar os genes em qualquer ordem - o sistema usará a ordem correta do dataset
+  # 
+  # Genes disponíveis: MC1R, TYRP1, TYR, SLC45A2, DDB1, EDAR, MFSD12, OCA2, HERC2, SLC24A5, TCHH
+  # Cada gene contribui com 6 linhas (6 ontologias RNA-seq)
+  # 
+  # Exemplos:
+  #   - Todos os genes (66 linhas): usar lista completa abaixo
+  #   - Apenas pigmentação: ["MC1R", "TYR", "OCA2", "SLC24A5", "SLC45A2"]
+  #   - Sem genes de cabelo: remover EDAR e TCHH da lista
+  # 
+  # NOTA: A ordem em que você lista os genes aqui não importa.
+  #       O sistema usa a ordem salva no metadata do cache (extraída do dataset base).
+  genes_to_use:
+    - "MC1R"
+    - "TYRP1"
+    - "TYR"
+    - "SLC45A2"
+    - "DDB1"
+    - "EDAR"
+    - "MFSD12"
+    - "OCA2"
+    - "HERC2"
+    - "SLC24A5"
+    - "TCHH"
   
   # Método de normalização dos dados
   # Opções:
@@ -422,7 +450,7 @@ data_split:
   # Seed para reprodutibilidade
   # Use o mesmo seed para ter sempre a mesma divisão e inicialização de pesos
   # null = aleatório (resultados não reprodutíveis)
-  random_seed: 13
+  random_seed: 42
   
   # Determinismo estrito para reprodutibilidade perfeita
   # true = Determinismo ESTRITO - 100% reprodutível entre execuções
