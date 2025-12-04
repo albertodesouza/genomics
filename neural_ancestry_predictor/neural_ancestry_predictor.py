@@ -2332,7 +2332,7 @@ class Tester:
         config: Dict,
         device: torch.device,
         wandb_run: Optional[Any] = None,
-        dataset_name: str = "Teste"
+        dataset_name: str = "Test"
     ):
         """Inicializa tester.
         
@@ -4426,13 +4426,13 @@ def main():
         
         if test_dataset_choice == 'train':
             selected_loader = train_loader
-            dataset_name = "Treino"
+            dataset_name = "Train"
         elif test_dataset_choice == 'val':
             selected_loader = val_loader
-            dataset_name = "Validação"
-        else:  # 'test' é o padrão
+            dataset_name = "Validation"
+        else:  # 'test' is the default
             selected_loader = test_loader
-            dataset_name = "Teste"
+            dataset_name = "Test"
         
         console.print(f"[cyan]Testando no conjunto de: {dataset_name}[/cyan]")
         
