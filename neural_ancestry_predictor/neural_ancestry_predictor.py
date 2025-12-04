@@ -1875,7 +1875,7 @@ class Trainer:
                 y_major_ticks = [i * tracks_per_gene * pixels_per_row for i in range(num_genes + 1)]
                 ax1.set_yticks(y_major_ticks)
                 ax1.set_yticklabels([''] * len(y_major_ticks))  # No labels on boundary ticks
-                ax1.tick_params(axis='y', which='major', length=8, width=1.5)
+                ax1.tick_params(axis='y', which='major', length=8, width=0.8)
                 
                 # Minor ticks at center of each gene for labels
                 y_minor_ticks = [(i * tracks_per_gene + tracks_per_gene / 2) * pixels_per_row 
@@ -2439,7 +2439,7 @@ class Tester:
             
             # Plot as image
             plt.imshow(img_normalized, cmap='gray', aspect='auto', interpolation='nearest')
-            plt.xlabel('Genomic Position (rescaled)', fontsize=12)
+            plt.xlabel('Gene Position (rescaled)', fontsize=12)
             plt.title(f'{self.dataset_name.upper()} | Sample {sample_idx + 1} | Input 2D ({img_data.shape[0]}x{img_data.shape[1]} → {viz_height}x{viz_width})', 
                      fontsize=14, fontweight='bold')
             plt.colorbar(label='Normalized Value')
@@ -2453,7 +2453,7 @@ class Tester:
                 y_major_ticks = [i * tracks_per_gene * pixels_per_row for i in range(num_genes + 1)]
                 ax1.set_yticks(y_major_ticks)
                 ax1.set_yticklabels([''] * len(y_major_ticks))  # No labels on boundary ticks
-                ax1.tick_params(axis='y', which='major', length=8, width=1.5)
+                ax1.tick_params(axis='y', which='major', length=8, width=0.8)
                 
                 # Minor ticks at center of each gene for labels
                 y_minor_ticks = [(i * tracks_per_gene + tracks_per_gene / 2) * pixels_per_row 
