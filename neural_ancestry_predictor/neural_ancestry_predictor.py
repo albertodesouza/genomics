@@ -173,8 +173,13 @@ def generate_experiment_name(config: Dict) -> str:
                  <normalization_method>_k<kernel>_f<filters>_s<stride>_p<padding>_[pool<size>_]
                  <hidden_layers>_<activation>_<dropout_rate>_<optimizer>
     
-    Exemplo NN:  nn_atac_H1_1002_log_L100-40_relu_0.0_adam
-    Exemplo CNN: cnn_atac_H1_1002_log_k5x5_f20_s5_p0_L100-40_relu_0.0_adam
+    Formato CNN2: cnn2_<alphagenome_outputs>_<haplotype_mode>_<window_center_size>_
+                  <normalization_method>_s1k<kernel>f<filters>_s2f<filters>_s3f<filters>_
+                  fc<hidden_size>_<hidden_layers>_<activation>_<dropout_rate>_<optimizer>
+    
+    Exemplo NN:   nn_atac_H1_1002_log_L100-40_relu_0.0_adam
+    Exemplo CNN:  cnn_atac_H1_1002_log_k5x5_f20_s5_p0_L100-40_relu_0.0_adam
+    Exemplo CNN2: cnn2_rna_seq_H1_32768_log_s1k6x32f16_s2f32_s3f64_fc128_L100-40_relu_0.4_adam
     
     Args:
         config: Dicionário de configuração
@@ -236,6 +241,35 @@ def generate_experiment_name(config: Dict) -> str:
             f"{normalization_method}_{kernel_str}_{filters_str}_{stride_str}_{padding_str}_{pool_str}"
             f"{hidden_layers_str}_{activation}_{dropout_rate}_{optimizer}"
         )
+    
+    elif model_type == 'cnn2':
+        # Parâmetros CNN2
+        cnn2_config = config['model'].get('cnn2', {})
+        
+        # Stage 1
+        num_filters_s1 = cnn2_config.get('num_filters_stage1', 16)
+        kernel_s1 = cnn2_config.get('kernel_stage1', [6, 32])
+        stage1_str = f"s1k{kernel_s1[0]}x{kernel_s1[1]}f{num_filters_s1}"
+        
+        # Stage 2
+        num_filters_s2 = cnn2_config.get('num_filters_stage2', 32)
+        stage2_str = f"s2f{num_filters_s2}"
+        
+        # Stage 3
+        num_filters_s3 = cnn2_config.get('num_filters_stage3', 64)
+        stage3_str = f"s3f{num_filters_s3}"
+        
+        # FC hidden size
+        fc_hidden_size = cnn2_config.get('fc_hidden_size', 128)
+        fc_str = f"fc{fc_hidden_size}"
+        
+        # Montar nome CNN2
+        experiment_name = (
+            f"cnn2_{alphagenome_outputs}_{haplotype_mode}_{window_center_size}_"
+            f"{normalization_method}_{stage1_str}_{stage2_str}_{stage3_str}_{fc_str}_"
+            f"{hidden_layers_str}_{activation}_{dropout_rate}_{optimizer}"
+        )
+    
     else:
         # Montar nome NN (default)
         experiment_name = (
@@ -1792,7 +1826,7 @@ class Trainer:
         plt.close()
     
     def _visualize_sample(self, features: torch.Tensor, targets: torch.Tensor, 
-                         outputs: torch.Tensor, batch_idx: int, epoch: int):
+                         outputs: torch.Tensor, sample_idx: int, sample_id: str, epoch: int):
         """
         Visualiza uma amostra de entrada e suas predições.
         
@@ -1800,7 +1834,8 @@ class Trainer:
             features: Tensor de entrada with shape (1, num_rows, effective_size) for 2D
             targets: True target (1,)
             outputs: Network output (1, num_classes) - logits
-            batch_idx: Batch index
+            sample_idx: Sample index in the split
+            sample_id: Sample ID (e.g., HG00138)
             epoch: Epoch number
         """
         # Convert to CPU and numpy
@@ -1862,7 +1897,7 @@ class Trainer:
             # Plot as image
             plt.imshow(img_normalized, cmap='gray', aspect='auto', interpolation='nearest')
             plt.xlabel('Genomic Position (rescaled)', fontsize=12)
-            plt.title(f'Epoch {epoch + 1} | Sample {batch_idx + 1} | Input 2D ({img_data.shape[0]}x{img_data.shape[1]} → {viz_height}x{viz_width})', 
+            plt.title(f'Epoch {epoch + 1} | Sample {sample_id} | Input 2D ({img_data.shape[0]}x{img_data.shape[1]} → {viz_height}x{viz_width})', 
                      fontsize=14, fontweight='bold')
             plt.colorbar(label='Normalized Value')
             
@@ -1893,7 +1928,7 @@ class Trainer:
             plt.plot(features_np, linewidth=0.5, alpha=0.7)
             plt.xlabel('Feature Index', fontsize=12)
             plt.ylabel('Feature Value', fontsize=12)
-            plt.title(f'Epoch {epoch + 1} | Sample {batch_idx + 1} | Input Features (n={len(features_np)})', 
+            plt.title(f'Epoch {epoch + 1} | Sample {sample_id} | Input Features (n={len(features_np)})', 
                      fontsize=14, fontweight='bold')
             plt.grid(True, alpha=0.3)
         
@@ -1964,7 +1999,7 @@ class Trainer:
                 total=len(self.train_loader)
             )
             
-            for batch_idx, (features, targets) in enumerate(self.train_loader):
+            for batch_idx, (features, targets, indices) in enumerate(self.train_loader):
                 # Verificar limite de amostras para visualização
                 if self.enable_visualization and self.max_samples_per_epoch is not None:
                     if batch_idx >= self.max_samples_per_epoch:
@@ -2006,7 +2041,9 @@ class Trainer:
                 
                 # Visualização interativa (se habilitada)
                 if self.enable_visualization:
-                    self._visualize_sample(features, targets, outputs, batch_idx, epoch)
+                    sample_idx = indices[0].item()  # batch_size=1 na visualização
+                    sample_id = self.train_loader.dataset.get_sample_id(sample_idx)
+                    self._visualize_sample(features, targets, outputs, sample_idx, sample_id, epoch)
                     # Check if user requested to quit
                     if self._quit_requested:
                         console.print("[yellow]⚠ Quit requested by user (pressed 'q')[/yellow]")
@@ -2059,7 +2096,7 @@ class Trainer:
         total = 0
         
         with torch.no_grad():
-            for features, targets in self.train_loader:
+            for features, targets, indices in self.train_loader:
                 features = features.to(self.device, non_blocking=True)
                 targets = targets.to(self.device, non_blocking=True)
                 
@@ -2089,7 +2126,7 @@ class Trainer:
         debug_data = []
         
         with torch.no_grad():
-            for features, targets in self.val_loader:
+            for features, targets, indices in self.val_loader:
                 features = features.to(self.device, non_blocking=True)
                 targets = targets.to(self.device, non_blocking=True)
                 
@@ -2371,7 +2408,7 @@ class Tester:
         plt.close()
     
     def _visualize_sample(self, features: torch.Tensor, targets: torch.Tensor, 
-                         outputs: torch.Tensor, sample_idx: int):
+                         outputs: torch.Tensor, sample_idx: int, sample_id: str):
         """
         Visualizes a test sample and its predictions.
         
@@ -2379,7 +2416,8 @@ class Tester:
             features: Input tensor with shape (1, num_rows, effective_size) for 2D
             targets: True target (1,)
             outputs: Network output (1, num_classes) - logits
-            sample_idx: Sample index
+            sample_idx: Sample index in the split
+            sample_id: Sample ID (e.g., HG00138)
         """
         # Convert to CPU and numpy
         features_cpu = features.cpu().detach()
@@ -2440,7 +2478,7 @@ class Tester:
             # Plot as image
             plt.imshow(img_normalized, cmap='gray', aspect='auto', interpolation='nearest')
             plt.xlabel('Gene Position (rescaled)', fontsize=12)
-            plt.title(f'{self.dataset_name.upper()} | Sample {sample_idx + 1} | Input 2D ({img_data.shape[0]}x{img_data.shape[1]} → {viz_height}x{viz_width})', 
+            plt.title(f'{self.dataset_name.upper()} | Sample {sample_id} | Input 2D ({img_data.shape[0]}x{img_data.shape[1]} → {viz_height}x{viz_width})', 
                      fontsize=14, fontweight='bold')
             plt.colorbar(label='Normalized Value')
             
@@ -2471,7 +2509,7 @@ class Tester:
             plt.plot(features_np, linewidth=0.5, alpha=0.7)
             plt.xlabel('Feature Index', fontsize=12)
             plt.ylabel('Feature Value', fontsize=12)
-            plt.title(f'{self.dataset_name.upper()} | Sample {sample_idx + 1} | Input Features (n={len(features_np)})', 
+            plt.title(f'{self.dataset_name.upper()} | Sample {sample_id} | Input Features (n={len(features_np)})', 
                      fontsize=14, fontweight='bold')
             plt.grid(True, alpha=0.3)
         
@@ -2546,14 +2584,16 @@ class Tester:
             # Se visualização está habilitada, não usar progress bar
             if self.enable_visualization:
                 sample_count = 0
-                for batch_idx, (features, targets) in enumerate(self.test_loader):
+                for batch_idx, (features, targets, indices) in enumerate(self.test_loader):
                     features = features.to(self.device, non_blocking=True)
                     targets = targets.to(self.device, non_blocking=True)
                     
                     outputs = self.model(features)
                     
                     # Visualizar amostra
-                    self._visualize_sample(features, targets, outputs, batch_idx)
+                    sample_idx = indices[0].item()  # batch_size=1 na visualização
+                    sample_id = self.dataset.get_sample_id(sample_idx)
+                    self._visualize_sample(features, targets, outputs, sample_idx, sample_id)
                     
                     # Check if user requested to quit
                     if self._quit_requested:
@@ -2587,7 +2627,7 @@ class Tester:
                         total=len(self.test_loader)
                     )
                     
-                    for features, targets in self.test_loader:
+                    for features, targets, indices in self.test_loader:
                         features = features.to(self.device, non_blocking=True)
                         targets = targets.to(self.device, non_blocking=True)
                         
@@ -3015,6 +3055,9 @@ class CachedProcessedDataset(Dataset):
         self.split_name = (split_name or self._infer_split_name()).lower()
         self._length_hint = length_hint
         
+        # Carregar mapeamento de índices para sample_ids
+        self._sample_ids = self._load_sample_ids()
+        
         # Ler configuração de carregamento
         data_loading_config = config.get('data_loading', {})
         self.loading_strategy = data_loading_config.get('loading_strategy', 'preload')
@@ -3050,6 +3093,55 @@ class CachedProcessedDataset(Dataset):
     
     def __len__(self) -> int:
         return self._length
+    
+    def _load_sample_ids(self) -> Optional[List[str]]:
+        """Load sample IDs mapping from cache metadata."""
+        try:
+            cache_dir = self.data_file.parent
+            
+            # Load splits to get indices
+            splits_file = cache_dir / 'splits.json'
+            if not splits_file.exists():
+                return None
+            with open(splits_file, 'r') as f:
+                splits = json.load(f)
+            
+            indices_key = f"{self.split_name}_indices"
+            split_indices = splits.get(indices_key, [])
+            
+            # Load dataset metadata to get individual IDs
+            metadata_file = cache_dir / 'metadata.json'
+            if not metadata_file.exists():
+                return None
+            with open(metadata_file, 'r') as f:
+                metadata = json.load(f)
+            
+            dataset_dir = Path(metadata.get('processing_params', {}).get('dataset_dir', ''))
+            dataset_metadata_file = dataset_dir / 'dataset_metadata.json'
+            if not dataset_metadata_file.exists():
+                return None
+            with open(dataset_metadata_file, 'r') as f:
+                dataset_metadata = json.load(f)
+            
+            individuals = dataset_metadata.get('individuals', [])
+            
+            # Map split indices to sample_ids
+            sample_ids = []
+            for idx in split_indices:
+                if idx < len(individuals):
+                    sample_ids.append(individuals[idx])
+                else:
+                    sample_ids.append(f"sample_{idx}")
+            
+            return sample_ids
+        except Exception:
+            return None
+    
+    def get_sample_id(self, idx: int) -> str:
+        """Get sample ID for given index in this split."""
+        if self._sample_ids is not None and idx < len(self._sample_ids):
+            return self._sample_ids[idx]
+        return f"#{idx + 1}"
 
     def _infer_split_name(self) -> str:
         """
@@ -3107,12 +3199,15 @@ class CachedProcessedDataset(Dataset):
             f"Não foi possível determinar o tamanho de {self.data_file.name} sem carregar o arquivo."
         )
     
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, int]:
         """
         Retorna sample do dataset.
         
         Para preload: acesso direto da RAM
         Para lazy: verifica cache, senão carrega do arquivo
+        
+        Returns:
+            Tuple (features, target, idx) onde idx é o índice original no split
         """
         if self.loading_strategy == 'preload':
             # Modo preload: acesso direto
@@ -3155,7 +3250,7 @@ class CachedProcessedDataset(Dataset):
             # Aplicar tainting
             features = taint_sample(features, target_class, num_classes)
         
-        return features, target
+        return features, target, idx
     
     def unload_data(self):
         """
@@ -3407,9 +3502,9 @@ def load_processed_dataset(
     
     # Função collate para empilhar batches corretamente
     def collate_fn(batch):
-        """Empilha batch de tuplas (features, target) em tensors."""
+        """Empilha batch de tuplas (features, target, idx) em tensors."""
         # Como os dados vêm do cache já processados, apenas empilhar
-        features_list, targets_list = zip(*batch)
+        features_list, targets_list, indices_list = zip(*batch)
         
         # Empilhar features: (batch_size, num_features)
         features_batch = torch.stack(features_list, dim=0)
@@ -3417,7 +3512,10 @@ def load_processed_dataset(
         # Empilhar targets: (batch_size,)
         targets_batch = torch.stack(targets_list, dim=0)
         
-        return features_batch, targets_batch
+        # Empilhar indices: (batch_size,)
+        indices_batch = torch.tensor(indices_list, dtype=torch.long)
+        
+        return features_batch, targets_batch, indices_batch
     
     # Criar generator para shuffle determinístico (se seed configurada)
     generator = None
@@ -3794,9 +3892,9 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
     
     # Função collate para empilhar batches corretamente
     def collate_fn(batch):
-        """Empilha batch de tuplas (features, target) em tensors."""
+        """Empilha batch de tuplas (features, target, idx) em tensors."""
         # Como os dados vêm do cache já processados, apenas empilhar
-        features_list, targets_list = zip(*batch)
+        features_list, targets_list, indices_list = zip(*batch)
         
         # Empilhar features: (batch_size, num_features)
         features_batch = torch.stack(features_list, dim=0)
@@ -3804,7 +3902,10 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
         # Empilhar targets: (batch_size,)
         targets_batch = torch.stack(targets_list, dim=0)
         
-        return features_batch, targets_batch
+        # Empilhar indices: (batch_size,)
+        indices_batch = torch.tensor(indices_list, dtype=torch.long)
+        
+        return features_batch, targets_batch, indices_batch
     
     # Criar generator para shuffle determinístico (se seed configurada)
     generator = None
