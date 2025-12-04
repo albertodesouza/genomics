@@ -393,7 +393,7 @@ training:
     # "cosine": Redução suave seguindo curva cosseno
     # "exponential": Redução exponencial constante
     # "multistep": Reduz em épocas específicas
-    type: "plateau"
+    type: "cosine"
     
     # ─── Configurações para ReduceLROnPlateau ───
     # Monitora melhoria de loss ("min") ou accuracy ("max")
@@ -417,10 +417,10 @@ training:
     
     # ─── Configurações para CosineAnnealingLR ───
     # Número de épocas para completar o ciclo
-    # T_max: 100
+    T_max: 150
     
     # LR mínimo no final do ciclo
-    # eta_min: 0.000001
+    eta_min: 0.000001
     
     # ─── Configurações para ExponentialLR ───
     # Fator de decaimento por época (lr = lr * gamma)
@@ -450,7 +450,7 @@ data_split:
   # Seed para reprodutibilidade
   # Use o mesmo seed para ter sempre a mesma divisão e inicialização de pesos
   # null = aleatório (resultados não reprodutíveis)
-  random_seed: 42
+  random_seed: 13
   
   # Determinismo estrito para reprodutibilidade perfeita
   # true = Determinismo ESTRITO - 100% reprodutível entre execuções
@@ -474,7 +474,7 @@ wandb:
   # true = loga métricas, gráficos, confusion matrix no W&B
   # false = não usa W&B
   # Requer: pip install wandb && wandb login
-  use_wandb: true
+  use_wandb: false
   
   # Nome do projeto no W&B
   project_name: "neural-ancestry-predictor-genes-1000"
@@ -521,7 +521,7 @@ debug:
   # true = mostra gráfico com entrada/saída após cada batch (pressione Enter para continuar)
   # false = treino normal sem visualização
   # IMPORTANTE: Quando true, força batch_size=1 automaticamente
-  enable_visualization: false
+  enable_visualization: true
   
   # Número máximo de amostras a visualizar por época
   # null = visualiza todas as amostras da época
@@ -557,13 +557,13 @@ debug:
 # "train": Treina a rede neural
 # "test": Carrega checkpoint e testa no conjunto especificado em test_dataset
 # Pode ser sobrescrito via --mode na linha de comando
-mode: "train"
+mode: "test"
 
 # Conjunto de dados a ser usado no modo test
 # "test": Conjunto de teste (padrão)
 # "train": Conjunto de treinamento
 # "val": Conjunto de validação
-test_dataset: "test"
+test_dataset: "train"
 
 # ═══════════════════════════════════════════════════════════════════
 # NOTAS DE USO

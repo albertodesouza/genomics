@@ -1693,9 +1693,10 @@ class Trainer:
         
         if self.enable_visualization:
             console.print(f"[yellow]⚠ Modo de visualização ativado! Batch size será forçado para 1.[/yellow]")
-            console.print(f"[yellow]Pressione qualquer tecla na janela do gráfico para continuar.[/yellow]")
+            console.print(f"[yellow]Pressione qualquer tecla na janela do gráfico para continuar. Pressione 'q' para sair.[/yellow]")
             plt.ion()  # Modo interativo
             self._key_pressed = False
+            self._quit_requested = False
         
         # Configurar otimizador
         optimizer_type = config['training']['optimizer'].lower()
@@ -1786,6 +1787,8 @@ class Trainer:
     def _on_key_press(self, event):
         """Callback para capturar tecla pressionada na janela do gráfico."""
         self._key_pressed = True
+        if event.key == 'q':
+            self._quit_requested = True
         plt.close()
     
     def _visualize_sample(self, features: torch.Tensor, targets: torch.Tensor, 
@@ -1794,21 +1797,21 @@ class Trainer:
         Visualiza uma amostra de entrada e suas predições.
         
         Args:
-            features: Tensor de entrada com shape (1, num_rows, effective_size) para 2D
-            targets: Target verdadeiro (1,)
-            outputs: Saída da rede (1, num_classes) - logits
-            batch_idx: Índice do batch
-            epoch: Número da época
+            features: Tensor de entrada with shape (1, num_rows, effective_size) for 2D
+            targets: True target (1,)
+            outputs: Network output (1, num_classes) - logits
+            batch_idx: Batch index
+            epoch: Epoch number
         """
-        # Converter para CPU e numpy
+        # Convert to CPU and numpy
         features_cpu = features.cpu().detach()
         target_idx = targets.cpu().item()
-        # Aplicar softmax sobre logits para obter probabilidades
+        # Apply softmax over logits to get probabilities
         output_probs = torch.softmax(outputs, dim=1).cpu().detach().numpy()[0]
         predicted_idx = output_probs.argmax()
         
-        # Obter nomes das classes (se disponível)
-        class_names = ['AFR', 'AMR', 'EAS', 'EUR', 'SAS']  # Para superpopulation
+        # Get class names (if available)
+        class_names = ['AFR', 'AMR', 'EAS', 'EUR', 'SAS']  # For superpopulation
         if target_idx < len(class_names):
             target_name = class_names[target_idx]
             predicted_name = class_names[predicted_idx]
@@ -1816,64 +1819,85 @@ class Trainer:
             target_name = f"Class {target_idx}"
             predicted_name = f"Class {predicted_idx}"
         
-        # Criar figura
+        # Get gene names from config
+        genes_to_use = self.config['dataset_input'].get('genes_to_use', None)
+        GENE_ORDER = self.config['dataset_input'].get('gene_order', 
+            ["MC1R", "TYRP1", "TYR", "SLC45A2", "DDB1",
+             "EDAR", "MFSD12", "OCA2", "HERC2", "SLC24A5", "TCHH"])
+        if genes_to_use:
+            # Maintain gene order from dataset
+            gene_names = [gene for gene in GENE_ORDER if gene in genes_to_use]
+        else:
+            gene_names = GENE_ORDER
+        tracks_per_gene = 6
+        
+        # Create figure
         plt.clf()
         fig = plt.gcf()
         fig.set_size_inches(16, 8)
         
-        # Plot das features de entrada
-        plt.subplot(2, 1, 1)
+        # Plot input features
+        ax1 = plt.subplot(2, 1, 1)
         
-        # Detectar se entrada é 2D ou 1D
+        # Detect if input is 2D or 1D
         if features_cpu.ndim == 3 and features_cpu.shape[0] == 1:
-            # Entrada 2D: [1, num_rows, effective_size]
+            # 2D input: [1, num_rows, effective_size]
             img_data = features_cpu[0].numpy()  # [num_rows, effective_size]
             
-            # Rescale para visualização
+            # Rescale for visualization
             viz_height = self.config.get('debug', {}).get('visualization', {}).get('height', 300)
             viz_width = self.config.get('debug', {}).get('visualization', {}).get('width', 600)
             
-            # Calcular fatores de zoom
+            # Calculate zoom factors
             zoom_factors = (viz_height / img_data.shape[0], viz_width / img_data.shape[1])
             img_resized = ndimage.zoom(img_data, zoom_factors, order=1)  # order=1 = bilinear
             
-            # Normalizar para visualização (0=preto, 1=branco)
+            # Normalize for visualization (0=black, 1=white)
             img_min, img_max = img_resized.min(), img_resized.max()
             if img_max > img_min:
                 img_normalized = (img_resized - img_min) / (img_max - img_min)
             else:
                 img_normalized = np.zeros_like(img_resized)
             
-            # Plotar como imagem
+            # Plot as image
             plt.imshow(img_normalized, cmap='gray', aspect='auto', interpolation='nearest')
-            plt.xlabel('Posição Genômica (rescaled)', fontsize=12)
-            plt.ylabel('SNP/Window (rescaled)', fontsize=12)
-            plt.title(f'Época {epoch + 1} | Amostra {batch_idx + 1} | Input 2D ({img_data.shape[0]}x{img_data.shape[1]} → {viz_height}x{viz_width})', 
+            plt.xlabel('Genomic Position (rescaled)', fontsize=12)
+            plt.title(f'Epoch {epoch + 1} | Sample {batch_idx + 1} | Input 2D ({img_data.shape[0]}x{img_data.shape[1]} → {viz_height}x{viz_width})', 
                      fontsize=14, fontweight='bold')
-            plt.colorbar(label='Valor Normalizado')
+            plt.colorbar(label='Normalized Value')
             
-            # Estatísticas das features (dados originais)
-            stats_text = (f'Min: {img_data.min():.3f} | Max: {img_data.max():.3f} | '
-                         f'Mean: {img_data.mean():.3f} | Std: {img_data.std():.3f}')
+            # Configure Y axis with gene names
+            num_genes = len(gene_names)
+            if img_data.shape[0] == num_genes * tracks_per_gene:
+                pixels_per_row = viz_height / img_data.shape[0]
+                
+                # Major ticks at gene boundaries (before and after each gene)
+                y_major_ticks = [i * tracks_per_gene * pixels_per_row for i in range(num_genes + 1)]
+                ax1.set_yticks(y_major_ticks)
+                ax1.set_yticklabels([''] * len(y_major_ticks))  # No labels on boundary ticks
+                ax1.tick_params(axis='y', which='major', length=8, width=1.5)
+                
+                # Minor ticks at center of each gene for labels
+                y_minor_ticks = [(i * tracks_per_gene + tracks_per_gene / 2) * pixels_per_row 
+                                 for i in range(num_genes)]
+                ax1.set_yticks(y_minor_ticks, minor=True)
+                ax1.set_yticklabels(gene_names, minor=True, fontsize=10)
+                ax1.tick_params(axis='y', which='minor', length=0)  # Hide minor tick marks
+                
+                ax1.set_ylabel('Genes', fontsize=12)
+            else:
+                ax1.set_ylabel('Tracks (rescaled)', fontsize=12)
         else:
-            # Entrada 1D (fallback para retrocompatibilidade)
+            # 1D input (fallback for backwards compatibility)
             features_np = features_cpu.numpy().flatten()
             plt.plot(features_np, linewidth=0.5, alpha=0.7)
             plt.xlabel('Feature Index', fontsize=12)
             plt.ylabel('Feature Value', fontsize=12)
-            plt.title(f'Época {epoch + 1} | Amostra {batch_idx + 1} | Input Features (n={len(features_np)})', 
+            plt.title(f'Epoch {epoch + 1} | Sample {batch_idx + 1} | Input Features (n={len(features_np)})', 
                      fontsize=14, fontweight='bold')
             plt.grid(True, alpha=0.3)
-            
-            # Estatísticas das features
-            stats_text = (f'Min: {features_np.min():.3f} | Max: {features_np.max():.3f} | '
-                         f'Mean: {features_np.mean():.3f} | Std: {features_np.std():.3f}')
         
-        plt.text(0.02, 0.98, stats_text, transform=plt.gca().transAxes,
-                fontsize=10, verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-        
-        # Plot das probabilidades de saída
+        # Plot output probabilities
         plt.subplot(2, 1, 2)
         bars = plt.bar(range(len(output_probs)), output_probs, color='steelblue', alpha=0.7)
         bars[target_idx].set_color('green')
@@ -1889,33 +1913,27 @@ class Trainer:
         plt.grid(True, alpha=0.3, axis='y')
         plt.ylim([0, 1])
         
-        # Texto com predição e target
-        correct = "✓ CORRETO" if predicted_idx == target_idx else "✗ ERRADO"
+        # Text with prediction and target
+        correct = "✓ CORRECT" if predicted_idx == target_idx else "✗ WRONG"
         color = 'green' if predicted_idx == target_idx else 'red'
         result_text = (f'{correct}\n'
-                      f'Target: {target_name} (classe {target_idx})\n'
-                      f'Predito: {predicted_name} (classe {predicted_idx}, prob={output_probs[predicted_idx]:.3f})')
+                      f'Target: {target_name} (class {target_idx})\n'
+                      f'Predicted: {predicted_name} (class {predicted_idx}, prob={output_probs[predicted_idx]:.3f})')
         
         plt.text(0.98, 0.98, result_text, transform=plt.gca().transAxes,
                 fontsize=11, verticalalignment='top', horizontalalignment='right',
                 bbox=dict(boxstyle='round', facecolor=color, alpha=0.3))
         
-        # Adicionar instruções no canto superior direito da figura
-        fig.text(0.98, 0.98, 'Pressione qualquer tecla para continuar...', 
-                ha='right', va='top', fontsize=11, style='italic',
-                bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.6))
-        
         plt.tight_layout()
-        plt.subplots_adjust(top=0.95)  # Dar espaço no topo
         
-        # Conectar callback de tecla
+        # Connect key callback
         self._key_pressed = False
         cid = fig.canvas.mpl_connect('key_press_event', self._on_key_press)
         
-        # Mostrar e aguardar tecla
+        # Show and wait for key
         plt.show(block=True)
         
-        # Desconectar callback
+        # Disconnect callback
         fig.canvas.mpl_disconnect(cid)
     
     def train_epoch(self, epoch: int) -> float:
@@ -1989,6 +2007,11 @@ class Trainer:
                 # Visualização interativa (se habilitada)
                 if self.enable_visualization:
                     self._visualize_sample(features, targets, outputs, batch_idx, epoch)
+                    # Check if user requested to quit
+                    if self._quit_requested:
+                        console.print("[yellow]⚠ Quit requested by user (pressed 'q')[/yellow]")
+                        import sys
+                        sys.exit(0)
                 
                 # Log no W&B
                 if self.wandb_run and batch_idx % self.config['wandb']['log_frequency'] == 0:
@@ -2338,32 +2361,35 @@ class Tester:
         if self.enable_visualization:
             plt.ion()
             self._key_pressed = False
+            self._quit_requested = False
     
     def _on_key_press(self, event):
         """Callback para detectar tecla pressionada."""
         self._key_pressed = True
+        if event.key == 'q':
+            self._quit_requested = True
         plt.close()
     
     def _visualize_sample(self, features: torch.Tensor, targets: torch.Tensor, 
                          outputs: torch.Tensor, sample_idx: int):
         """
-        Visualiza uma amostra de teste e suas predições.
+        Visualizes a test sample and its predictions.
         
         Args:
-            features: Tensor de entrada com shape (1, num_rows, effective_size) para 2D
-            targets: Target verdadeiro (1,)
-            outputs: Saída da rede (1, num_classes) - logits
-            sample_idx: Índice da amostra
+            features: Input tensor with shape (1, num_rows, effective_size) for 2D
+            targets: True target (1,)
+            outputs: Network output (1, num_classes) - logits
+            sample_idx: Sample index
         """
-        # Converter para CPU e numpy
+        # Convert to CPU and numpy
         features_cpu = features.cpu().detach()
         target_idx = targets.cpu().item()
-        # Aplicar softmax sobre logits para obter probabilidades
+        # Apply softmax over logits to get probabilities
         output_probs = torch.softmax(outputs, dim=1).cpu().detach().numpy()[0]
         predicted_idx = output_probs.argmax()
         
-        # Obter nomes das classes (se disponível)
-        class_names = ['AFR', 'AMR', 'EAS', 'EUR', 'SAS']  # Para superpopulation
+        # Get class names (if available)
+        class_names = ['AFR', 'AMR', 'EAS', 'EUR', 'SAS']  # For superpopulation
         if target_idx < len(class_names):
             target_name = class_names[target_idx]
             predicted_name = class_names[predicted_idx]
@@ -2371,64 +2397,85 @@ class Tester:
             target_name = f"Class {target_idx}"
             predicted_name = f"Class {predicted_idx}"
         
-        # Criar figura
+        # Get gene names from config
+        genes_to_use = self.config['dataset_input'].get('genes_to_use', None)
+        GENE_ORDER = self.config['dataset_input'].get('gene_order', 
+            ["MC1R", "TYRP1", "TYR", "SLC45A2", "DDB1",
+             "EDAR", "MFSD12", "OCA2", "HERC2", "SLC24A5", "TCHH"])
+        if genes_to_use:
+            # Maintain gene order from dataset
+            gene_names = [gene for gene in GENE_ORDER if gene in genes_to_use]
+        else:
+            gene_names = GENE_ORDER
+        tracks_per_gene = 6
+        
+        # Create figure
         plt.clf()
         fig = plt.gcf()
         fig.set_size_inches(16, 8)
         
-        # Plot das features de entrada
-        plt.subplot(2, 1, 1)
+        # Plot input features
+        ax1 = plt.subplot(2, 1, 1)
         
-        # Detectar se entrada é 2D ou 1D
+        # Detect if input is 2D or 1D
         if features_cpu.ndim == 3 and features_cpu.shape[0] == 1:
-            # Entrada 2D: [1, num_rows, effective_size]
+            # 2D input: [1, num_rows, effective_size]
             img_data = features_cpu[0].numpy()  # [num_rows, effective_size]
             
-            # Rescale para visualização
+            # Rescale for visualization
             viz_height = self.config.get('debug', {}).get('visualization', {}).get('height', 300)
             viz_width = self.config.get('debug', {}).get('visualization', {}).get('width', 600)
             
-            # Calcular fatores de zoom
+            # Calculate zoom factors
             zoom_factors = (viz_height / img_data.shape[0], viz_width / img_data.shape[1])
             img_resized = ndimage.zoom(img_data, zoom_factors, order=1)  # order=1 = bilinear
             
-            # Normalizar para visualização (0=preto, 1=branco)
+            # Normalize for visualization (0=black, 1=white)
             img_min, img_max = img_resized.min(), img_resized.max()
             if img_max > img_min:
                 img_normalized = (img_resized - img_min) / (img_max - img_min)
             else:
                 img_normalized = np.zeros_like(img_resized)
             
-            # Plotar como imagem
+            # Plot as image
             plt.imshow(img_normalized, cmap='gray', aspect='auto', interpolation='nearest')
-            plt.xlabel('Posição Genômica (rescaled)', fontsize=12)
-            plt.ylabel('SNP/Window (rescaled)', fontsize=12)
-            plt.title(f'{self.dataset_name.upper()} | Amostra {sample_idx + 1} | Input 2D ({img_data.shape[0]}x{img_data.shape[1]} → {viz_height}x{viz_width})', 
+            plt.xlabel('Genomic Position (rescaled)', fontsize=12)
+            plt.title(f'{self.dataset_name.upper()} | Sample {sample_idx + 1} | Input 2D ({img_data.shape[0]}x{img_data.shape[1]} → {viz_height}x{viz_width})', 
                      fontsize=14, fontweight='bold')
-            plt.colorbar(label='Valor Normalizado')
+            plt.colorbar(label='Normalized Value')
             
-            # Estatísticas das features (dados originais)
-            stats_text = (f'Min: {img_data.min():.3f} | Max: {img_data.max():.3f} | '
-                         f'Mean: {img_data.mean():.3f} | Std: {img_data.std():.3f}')
+            # Configure Y axis with gene names
+            num_genes = len(gene_names)
+            if img_data.shape[0] == num_genes * tracks_per_gene:
+                pixels_per_row = viz_height / img_data.shape[0]
+                
+                # Major ticks at gene boundaries (before and after each gene)
+                y_major_ticks = [i * tracks_per_gene * pixels_per_row for i in range(num_genes + 1)]
+                ax1.set_yticks(y_major_ticks)
+                ax1.set_yticklabels([''] * len(y_major_ticks))  # No labels on boundary ticks
+                ax1.tick_params(axis='y', which='major', length=8, width=1.5)
+                
+                # Minor ticks at center of each gene for labels
+                y_minor_ticks = [(i * tracks_per_gene + tracks_per_gene / 2) * pixels_per_row 
+                                 for i in range(num_genes)]
+                ax1.set_yticks(y_minor_ticks, minor=True)
+                ax1.set_yticklabels(gene_names, minor=True, fontsize=10)
+                ax1.tick_params(axis='y', which='minor', length=0)  # Hide minor tick marks
+                
+                ax1.set_ylabel('Genes', fontsize=12)
+            else:
+                ax1.set_ylabel('Tracks (rescaled)', fontsize=12)
         else:
-            # Entrada 1D (fallback para retrocompatibilidade)
+            # 1D input (fallback for backwards compatibility)
             features_np = features_cpu.numpy().flatten()
             plt.plot(features_np, linewidth=0.5, alpha=0.7)
             plt.xlabel('Feature Index', fontsize=12)
             plt.ylabel('Feature Value', fontsize=12)
-            plt.title(f'{self.dataset_name.upper()} | Amostra {sample_idx + 1} | Input Features (n={len(features_np)})', 
+            plt.title(f'{self.dataset_name.upper()} | Sample {sample_idx + 1} | Input Features (n={len(features_np)})', 
                      fontsize=14, fontweight='bold')
             plt.grid(True, alpha=0.3)
-            
-            # Estatísticas das features
-            stats_text = (f'Min: {features_np.min():.3f} | Max: {features_np.max():.3f} | '
-                         f'Mean: {features_np.mean():.3f} | Std: {features_np.std():.3f}')
         
-        plt.text(0.02, 0.98, stats_text, transform=plt.gca().transAxes,
-                fontsize=10, verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-        
-        # Plot das probabilidades de saída
+        # Plot output probabilities
         plt.subplot(2, 1, 2)
         bars = plt.bar(range(len(output_probs)), output_probs, color='steelblue', alpha=0.7)
         bars[target_idx].set_color('green')
@@ -2444,33 +2491,27 @@ class Tester:
         plt.grid(True, alpha=0.3, axis='y')
         plt.ylim([0, 1])
         
-        # Texto com predição e target
-        correct = "✓ CORRETO" if predicted_idx == target_idx else "✗ ERRADO"
+        # Text with prediction and target
+        correct = "✓ CORRECT" if predicted_idx == target_idx else "✗ WRONG"
         color = 'green' if predicted_idx == target_idx else 'red'
         result_text = (f'{correct}\n'
-                      f'Target: {target_name} (classe {target_idx})\n'
-                      f'Predito: {predicted_name} (classe {predicted_idx}, prob={output_probs[predicted_idx]:.3f})')
+                      f'Target: {target_name} (class {target_idx})\n'
+                      f'Predicted: {predicted_name} (class {predicted_idx}, prob={output_probs[predicted_idx]:.3f})')
         
         plt.text(0.98, 0.98, result_text, transform=plt.gca().transAxes,
                 fontsize=11, verticalalignment='top', horizontalalignment='right',
                 bbox=dict(boxstyle='round', facecolor=color, alpha=0.3))
         
-        # Adicionar instruções no canto superior direito da figura
-        fig.text(0.98, 0.98, 'Pressione qualquer tecla para continuar...', 
-                ha='right', va='top', fontsize=11, style='italic',
-                bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.6))
-        
         plt.tight_layout()
-        plt.subplots_adjust(top=0.95)  # Dar espaço no topo
         
-        # Conectar callback de tecla
+        # Connect key callback
         self._key_pressed = False
         cid = fig.canvas.mpl_connect('key_press_event', self._on_key_press)
         
-        # Mostrar e aguardar tecla
+        # Show and wait for key
         plt.show(block=True)
         
-        # Desconectar callback
+        # Disconnect callback
         fig.canvas.mpl_disconnect(cid)
     
     def test(self) -> Dict:
@@ -2513,6 +2554,12 @@ class Tester:
                     
                     # Visualizar amostra
                     self._visualize_sample(features, targets, outputs, batch_idx)
+                    
+                    # Check if user requested to quit
+                    if self._quit_requested:
+                        console.print("[yellow]⚠ Quit requested by user (pressed 'q')[/yellow]")
+                        import sys
+                        sys.exit(0)
                     
                     if self.config['output']['prediction_target'] != 'frog_likelihood':
                         predictions = torch.argmax(outputs, dim=1)
