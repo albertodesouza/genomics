@@ -298,6 +298,13 @@ model:
     # Tamanho da camada fully connected intermediária
     # Após global pooling, temos ~700 features → fc_hidden_size → num_classes
     fc_hidden_size: 128
+    
+    # Tipo de global pooling: "max" ou "avg"
+    # max: captura features mais salientes (picos de expressão) - recomendado
+    # avg: média dos valores (preserva informação geral)
+    # NOTA: Ambos são determinísticos. AdaptiveAvgPool2d NÃO é usado porque
+    #       não tem implementação determinística no backward pass em CUDA.
+    global_pool_type: "max"
 
 # ───────────────────────────────────────────────────────────────────
 # D) DATA LOADING
@@ -452,6 +459,17 @@ data_split:
   # null = aleatório (resultados não reprodutíveis)
   random_seed: 13
   
+  # Estratégia de balanceamento dos dados
+  # - "stratified": Balanceamento estratificado sequencial
+  #   • Agrupa amostras por classe e intercala
+  #   • Descarta excedentes para garantir mesmo número por classe
+  #   • Ideal para treino balanceado em produção
+  # - "shuffle": Randomização simples
+  #   • Preserva TODOS os dados (não descarta nada)
+  #   • Embaralha com seed fixa para reprodutibilidade
+  #   • Ideal para debug e verificação de dados
+  balancing_strategy: "shuffle"
+  
   # Determinismo estrito para reprodutibilidade perfeita
   # true = Determinismo ESTRITO - 100% reprodutível entre execuções
   #        • Garante resultados idênticos com mesmo seed
@@ -462,7 +480,7 @@ data_split:
   #        • Pequenas variações (~0.1-0.5% acc) podem ocorrer
   #        • Útil para: treinos de produção, otimização de hiperparâmetros
   # Nota: Requer random_seed configurado (não null)
-  strict_determinism: false
+  strict_determinism: true
 
 # ───────────────────────────────────────────────────────────────────
 # G) WEIGHTS & BIASES
@@ -474,7 +492,7 @@ wandb:
   # true = loga métricas, gráficos, confusion matrix no W&B
   # false = não usa W&B
   # Requer: pip install wandb && wandb login
-  use_wandb: false
+  use_wandb: true
   
   # Nome do projeto no W&B
   project_name: "neural-ancestry-predictor-genes-1000"
@@ -521,7 +539,7 @@ debug:
   # true = mostra gráfico com entrada/saída após cada batch (pressione Enter para continuar)
   # false = treino normal sem visualização
   # IMPORTANTE: Quando true, força batch_size=1 automaticamente
-  enable_visualization: true
+  enable_visualization: false
   
   # Número máximo de amostras a visualizar por época
   # null = visualiza todas as amostras da época
@@ -547,6 +565,53 @@ debug:
   # Exemplo: 5 classes, 5500 features -> classe 0→pos 0, classe 1→pos 1100, etc.
   taint_at_cache_save: false  # Taintar ao salvar no cache (dados salvos já vêm marcados)
   taint_at_runtime: false      # Taintar durante __getitem__ (marca em tempo de execução)
+  
+  # ─────────────────────────────────────────────────────────────────
+  # Interpretabilidade (Grad-CAM e DeepLIFT)
+  # ─────────────────────────────────────────────────────────────────
+  # Técnicas de interpretabilidade para entender quais regiões gênicas
+  # mais contribuem para a predição de cada classe.
+  # Requer: mode="test" e enable_visualization=true
+  #
+  # Métodos disponíveis:
+  #   - gradcam: Grad-CAM - mapa de ativação ponderado por gradientes
+  #              Destaca regiões espaciais (genes/posições) importantes
+  #   - deeplift: DeepLIFT - atribuição por propagação de diferenças
+  #              Atribui importância a cada feature individual
+  #   - both: Executa ambos os métodos lado a lado
+  interpretability:
+    # Habilitar análise de interpretabilidade
+    # true = gera mapas de importância durante teste com visualização
+    # false = visualização normal sem interpretabilidade
+    enabled: false
+    
+    # Método de interpretabilidade a usar
+    # Opções: "gradcam", "deeplift", "both"
+    method: "gradcam"
+    
+    # Salvar imagens PNG das visualizações
+    # true = salva cada visualização como PNG no output_dir
+    # false = apenas exibe interativamente
+    save_images: true
+    
+    # Diretório para salvar imagens de interpretabilidade
+    # Relativo ao diretório do experimento ou caminho absoluto
+    output_dir: "interpretability_results"
+    
+    # Configuração específica do Grad-CAM
+    gradcam:
+      # Camada alvo para extrair ativações
+      # "auto" = última camada convolucional (recomendado)
+      # Para CNN: usa conv1
+      # Para CNN2: usa última conv em features (Stage 3)
+      target_layer: "auto"
+    
+    # Configuração específica do DeepLIFT
+    deeplift:
+      # Baseline (referência) para comparação
+      # "zeros" = tensor de zeros (padrão, simples)
+      # "mean" = média de todas as amostras do dataset de teste
+      baseline: "zeros"
 
 # ───────────────────────────────────────────────────────────────────
 # J) MODE
@@ -557,13 +622,13 @@ debug:
 # "train": Treina a rede neural
 # "test": Carrega checkpoint e testa no conjunto especificado em test_dataset
 # Pode ser sobrescrito via --mode na linha de comando
-mode: "test"
+mode: "train"
 
 # Conjunto de dados a ser usado no modo test
 # "test": Conjunto de teste (padrão)
 # "train": Conjunto de treinamento
 # "val": Conjunto de validação
-test_dataset: "train"
+test_dataset: "test"
 
 # ═══════════════════════════════════════════════════════════════════
 # NOTAS DE USO

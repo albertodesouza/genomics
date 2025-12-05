@@ -259,6 +259,10 @@ def generate_experiment_name(config: Dict) -> str:
         num_filters_s3 = cnn2_config.get('num_filters_stage3', 64)
         stage3_str = f"s3f{num_filters_s3}"
         
+        # Global pooling type
+        pool_type = cnn2_config.get('global_pool_type', 'max')
+        pool_str = f"gp{pool_type}"
+        
         # FC hidden size
         fc_hidden_size = cnn2_config.get('fc_hidden_size', 128)
         fc_str = f"fc{fc_hidden_size}"
@@ -266,7 +270,7 @@ def generate_experiment_name(config: Dict) -> str:
         # Montar nome CNN2
         experiment_name = (
             f"cnn2_{alphagenome_outputs}_{haplotype_mode}_{window_center_size}_"
-            f"{normalization_method}_{stage1_str}_{stage2_str}_{stage3_str}_{fc_str}_"
+            f"{normalization_method}_{stage1_str}_{stage2_str}_{stage3_str}_{pool_str}_{fc_str}_"
             f"{hidden_layers_str}_{activation}_{dropout_rate}_{optimizer}"
         )
     
@@ -287,10 +291,10 @@ def generate_dataset_name(config: Dict) -> str:
     Experimentos com os mesmos parâmetros de dataset compartilharão o mesmo cache.
     
     Formato: <alphagenome_outputs>_<haplotype_mode>_<window_center_size>_
-             ds<downsample_factor>_<normalization_method>_
+             ds<downsample_factor>_<normalization_method>_<balancing>_
              split<train>-<val>-<test>_seed<random_seed>
     
-    Exemplo: atac_H1_1002_ds1_log_split0.7-0.15-0.15_seed42
+    Exemplo: atac_H1_1002_ds1_log_strat_split0.7-0.15-0.15_seed42
     
     Args:
         config: Dicionário de configuração
@@ -311,10 +315,14 @@ def generate_dataset_name(config: Dict) -> str:
     test_split = config['data_split']['test_split']
     random_seed = config['data_split']['random_seed']
     
+    # Estratégia de balanceamento
+    balancing_strategy = config['data_split'].get('balancing_strategy', 'stratified')
+    balance_str = 'strat' if balancing_strategy == 'stratified' else 'shuf'
+    
     # Montar nome do dataset
     dataset_name = (
         f"{alphagenome_outputs}_{haplotype_mode}_{window_center_size}_"
-        f"ds{downsample_factor}_{normalization_method}_"
+        f"ds{downsample_factor}_{normalization_method}_{balance_str}_"
         f"split{train_split}-{val_split}-{test_split}_seed{random_seed}"
     )
     
@@ -596,18 +604,45 @@ class ProcessedGenomicDataset(Dataset):
     def _create_target_mappings(self):
         """Cria mapeamentos entre targets e índices."""
         
-        # Prioridade 1: Tentar carregar dos metadados do dataset
-        dataset_metadata = getattr(self.base_dataset, 'dataset_metadata', {})
+        # Prioridade 1: Tentar carregar dos metadados do dataset (rápido - sem I/O de dados)
+        dataset_metadata = getattr(self.base_dataset, 'dataset_metadata', None)
+        
+        # Se não está no base_dataset, tentar carregar do arquivo
+        if dataset_metadata is None:
+            dataset_dir = Path(self.config['dataset_input']['dataset_dir'])
+            metadata_file = dataset_dir / 'dataset_metadata.json'
+            if metadata_file.exists():
+                with open(metadata_file, 'r') as f:
+                    dataset_metadata = json.load(f)
+        
         classes_from_metadata = None
         
-        if self.prediction_target == 'superpopulation':
-            superpop_dist = dataset_metadata.get('superpopulation_distribution', {})
-            if superpop_dist:
-                classes_from_metadata = list(superpop_dist.keys())
-        elif self.prediction_target == 'population':
-            pop_dist = dataset_metadata.get('population_distribution', {})
-            if pop_dist:
-                classes_from_metadata = list(pop_dist.keys())
+        if dataset_metadata:
+            if self.prediction_target == 'superpopulation':
+                # Tentar superpopulation_distribution primeiro
+                superpop_dist = dataset_metadata.get('superpopulation_distribution', {})
+                if superpop_dist:
+                    classes_from_metadata = list(superpop_dist.keys())
+                else:
+                    # Fallback: extrair de individuals_pedigree
+                    pedigree = dataset_metadata.get('individuals_pedigree', {})
+                    if pedigree:
+                        classes_from_metadata = list(set(
+                            p.get('superpopulation') for p in pedigree.values() 
+                            if p.get('superpopulation')
+                        ))
+            elif self.prediction_target == 'population':
+                pop_dist = dataset_metadata.get('population_distribution', {})
+                if pop_dist:
+                    classes_from_metadata = list(pop_dist.keys())
+                else:
+                    # Fallback: extrair de individuals_pedigree
+                    pedigree = dataset_metadata.get('individuals_pedigree', {})
+                    if pedigree:
+                        classes_from_metadata = list(set(
+                            p.get('population') for p in pedigree.values() 
+                            if p.get('population')
+                        ))
         
         if classes_from_metadata:
             console.print(f"\n[cyan]Carregando classes dos metadados do dataset...[/cyan]")
@@ -1571,9 +1606,15 @@ class CNN2AncestryPredictor(nn.Module):
             nn.ReLU()
         )
         
-        # Global pooling: reduz dimensão espacial para (conv1_h, 1)
-        # Mantém a estrutura dos genes, remove variabilidade das bases
-        self.global_pool = nn.AdaptiveAvgPool2d((conv1_h, 1))
+        # Global pooling determinístico: usa MaxPool2d ou AvgPool2d com kernel fixo
+        # Faz pooling apenas na dimensão da largura, mantendo a altura (genes)
+        # NOTA: AdaptiveAvgPool2d não é determinístico em CUDA no backward pass
+        pool_type = cnn2_config.get('global_pool_type', 'max')
+        if pool_type == 'max':
+            self.global_pool = nn.MaxPool2d(kernel_size=(1, conv3_w))
+        else:
+            self.global_pool = nn.AvgPool2d(kernel_size=(1, conv3_w))
+        self.pool_type = pool_type
         
         # Dimensão após flatten
         flattened_size = num_filters_s3 * conv1_h * 1
@@ -1601,7 +1642,7 @@ class CNN2AncestryPredictor(nn.Module):
         console.print(f"    → Output: {num_filters_s2} x {conv2_h} x {conv2_w}")
         console.print(f"  • Stage 3: {num_filters_s3} filters, kernel={kernel_s23}, stride={stride_s23}, padding={padding_s23}")
         console.print(f"    → Output: {num_filters_s3} x {conv3_h} x {conv3_w}")
-        console.print(f"  • Global Pool: → {num_filters_s3} x {conv1_h} x 1")
+        console.print(f"  • Global Pool ({pool_type}): kernel=(1, {conv3_w}) → {num_filters_s3} x {conv1_h} x 1")
         console.print(f"  • Flatten size: {flattened_size}")
         console.print(f"  • FC: {flattened_size} → {fc_hidden_size} → {num_classes}")
         console.print(f"  • Dropout: {dropout_rate}")
@@ -1682,6 +1723,285 @@ class CNN2AncestryPredictor(nn.Module):
         console.print(f"  • FC hidden: Kaiming initialization")
         console.print(f"  • FC output: Xavier initialization")
         console.print(f"  • Bias: zeros")
+
+
+# ==============================================================================
+# INTERPRETABILITY: GRAD-CAM AND DEEPLIFT
+# ==============================================================================
+
+class GradCAM:
+    """
+    Grad-CAM (Gradient-weighted Class Activation Mapping) para CNNs.
+    
+    Calcula mapas de ativação que destacam regiões importantes para a predição
+    de uma classe específica, usando gradientes da saída em relação às ativações
+    da última camada convolucional.
+    
+    Referência: Selvaraju et al., 2017 - "Grad-CAM: Visual Explanations from 
+    Deep Networks via Gradient-based Localization"
+    
+    Uso:
+        gradcam = GradCAM(model, target_layer='auto')
+        cam = gradcam.generate(input_tensor, target_class=None)  # None = classe predita
+    """
+    
+    def __init__(self, model: nn.Module, target_layer: str = 'auto'):
+        """
+        Inicializa Grad-CAM.
+        
+        Args:
+            model: Modelo CNN (CNNAncestryPredictor ou CNN2AncestryPredictor)
+            target_layer: Camada alvo para extrair ativações
+                         'auto' = detecta automaticamente a última conv
+        """
+        self.model = model
+        self.target_layer = target_layer
+        self.activations = None
+        self.gradients = None
+        self._hooks = []
+        
+        # Detectar tipo de modelo e camada alvo
+        self._setup_target_layer()
+    
+    def _setup_target_layer(self):
+        """Configura a camada alvo e registra hooks."""
+        model_type = type(self.model).__name__
+        
+        if model_type == 'CNNAncestryPredictor':
+            # CNN simples: usar conv1
+            target = self.model.conv1
+            self._layer_name = 'conv1'
+        elif model_type == 'CNN2AncestryPredictor':
+            # CNN2: usar última conv em features (índice 4 = Stage 3 Conv)
+            # features = [Conv2d, ReLU, Conv2d, ReLU, Conv2d, ReLU]
+            target = self.model.features[4]  # Stage 3 Conv2d
+            self._layer_name = 'features[4] (Stage 3)'
+        else:
+            raise ValueError(f"Grad-CAM não suportado para modelo tipo: {model_type}")
+        
+        # Registrar hooks
+        self._hooks.append(
+            target.register_forward_hook(self._forward_hook)
+        )
+        self._hooks.append(
+            target.register_full_backward_hook(self._backward_hook)
+        )
+        
+        console.print(f"[cyan]Grad-CAM configurado para camada: {self._layer_name}[/cyan]")
+    
+    def _forward_hook(self, module, input, output):
+        """Hook para capturar ativações no forward pass."""
+        self.activations = output.detach()
+    
+    def _backward_hook(self, module, grad_input, grad_output):
+        """Hook para capturar gradientes no backward pass."""
+        self.gradients = grad_output[0].detach()
+    
+    def generate(self, input_tensor: torch.Tensor, target_class: Optional[int] = None) -> torch.Tensor:
+        """
+        Gera mapa Grad-CAM para uma entrada.
+        
+        Args:
+            input_tensor: Tensor de entrada [batch, num_rows, effective_size]
+            target_class: Classe alvo para gerar CAM. Se None, usa classe predita.
+            
+        Returns:
+            Tensor com mapa de ativação [num_rows, effective_size] normalizado [0, 1]
+        """
+        # Garantir que modelo está em modo eval mas com gradientes
+        was_training = self.model.training
+        self.model.eval()
+        
+        # Forward pass
+        input_tensor = input_tensor.requires_grad_(True)
+        output = self.model(input_tensor)
+        
+        # Determinar classe alvo
+        if target_class is None:
+            target_class = output.argmax(dim=1).item()
+        
+        # Backward pass para a classe alvo
+        self.model.zero_grad()
+        one_hot = torch.zeros_like(output)
+        one_hot[0, target_class] = 1
+        output.backward(gradient=one_hot, retain_graph=True)
+        
+        # Calcular pesos (média global dos gradientes por canal)
+        # gradients shape: [batch, channels, height, width]
+        weights = self.gradients.mean(dim=(2, 3), keepdim=True)  # [batch, channels, 1, 1]
+        
+        # Combinação ponderada das ativações
+        # activations shape: [batch, channels, height, width]
+        cam = (weights * self.activations).sum(dim=1, keepdim=True)  # [batch, 1, height, width]
+        
+        # ReLU para manter apenas contribuições positivas
+        cam = torch.relu(cam)
+        
+        # Normalizar para [0, 1]
+        cam = cam.squeeze()  # [height, width]
+        if cam.max() > 0:
+            cam = cam / cam.max()
+        
+        # Interpolar para tamanho da entrada original
+        # Obter dimensão original da entrada (após seleção de genes)
+        if hasattr(self.model, 'rows_to_use'):
+            target_h = len(self.model.rows_to_use)
+        else:
+            target_h = input_tensor.shape[1]
+        target_w = input_tensor.shape[2]
+        
+        # Redimensionar CAM para tamanho da entrada
+        cam_resized = torch.nn.functional.interpolate(
+            cam.unsqueeze(0).unsqueeze(0),
+            size=(target_h, target_w),
+            mode='bilinear',
+            align_corners=False
+        ).squeeze()
+        
+        # Restaurar estado do modelo
+        if was_training:
+            self.model.train()
+        
+        return cam_resized.cpu(), target_class
+    
+    def remove_hooks(self):
+        """Remove todos os hooks registrados."""
+        for hook in self._hooks:
+            hook.remove()
+        self._hooks = []
+
+
+class DeepLIFT:
+    """
+    DeepLIFT (Deep Learning Important Features) para CNNs.
+    
+    Calcula atribuições de importância para cada feature de entrada,
+    propagando diferenças de ativação (em relação a um baseline) através
+    da rede usando regras de contribuição específicas.
+    
+    Implementação simplificada que usa gradientes × (input - baseline),
+    uma aproximação válida para redes com ReLU (Rescale Rule).
+    
+    Referência: Shrikumar et al., 2017 - "Learning Important Features 
+    Through Propagating Activation Differences"
+    
+    Uso:
+        deeplift = DeepLIFT(model)
+        attributions = deeplift.generate(input_tensor, baseline='zeros')
+    """
+    
+    def __init__(self, model: nn.Module):
+        """
+        Inicializa DeepLIFT.
+        
+        Args:
+            model: Modelo (NN, CNN ou CNN2)
+        """
+        self.model = model
+        self._baseline_cache = None
+    
+    def _get_baseline(self, input_tensor: torch.Tensor, baseline_type: str,
+                      dataset: Optional[Any] = None) -> torch.Tensor:
+        """
+        Obtém tensor baseline.
+        
+        Args:
+            input_tensor: Tensor de entrada para obter shape e device
+            baseline_type: 'zeros' ou 'mean'
+            dataset: Dataset para calcular média (necessário se baseline_type='mean')
+            
+        Returns:
+            Tensor baseline com mesmo shape que input_tensor
+        """
+        if baseline_type == 'zeros':
+            return torch.zeros_like(input_tensor)
+        
+        elif baseline_type == 'mean':
+            if self._baseline_cache is not None:
+                return self._baseline_cache.to(input_tensor.device)
+            
+            if dataset is None:
+                console.print("[yellow]⚠ Dataset não fornecido para baseline='mean', usando zeros[/yellow]")
+                return torch.zeros_like(input_tensor)
+            
+            # Calcular média de todas as amostras
+            console.print("[cyan]Calculando baseline (média do dataset)...[/cyan]")
+            all_samples = []
+            for i in range(min(len(dataset), 100)):  # Limitar a 100 amostras
+                sample, _, _ = dataset[i]
+                all_samples.append(sample)
+            
+            mean_baseline = torch.stack(all_samples).mean(dim=0)
+            self._baseline_cache = mean_baseline
+            return mean_baseline.unsqueeze(0).to(input_tensor.device)
+        
+        else:
+            raise ValueError(f"Baseline type desconhecido: {baseline_type}")
+    
+    def generate(self, input_tensor: torch.Tensor, target_class: Optional[int] = None,
+                 baseline_type: str = 'zeros', dataset: Optional[Any] = None) -> torch.Tensor:
+        """
+        Gera atribuições DeepLIFT para uma entrada.
+        
+        Usa a aproximação gradient × (input - baseline), que é equivalente
+        ao DeepLIFT Rescale Rule para redes com ReLU.
+        
+        Args:
+            input_tensor: Tensor de entrada [batch, num_rows, effective_size]
+            target_class: Classe alvo. Se None, usa classe predita.
+            baseline_type: 'zeros' ou 'mean'
+            dataset: Dataset para calcular média (necessário se baseline_type='mean')
+            
+        Returns:
+            Tensor de atribuições [num_rows, effective_size]
+        """
+        # Garantir modo eval
+        was_training = self.model.training
+        self.model.eval()
+        
+        # Obter baseline
+        baseline = self._get_baseline(input_tensor, baseline_type, dataset)
+        
+        # Calcular diferença input - baseline
+        delta = input_tensor - baseline
+        
+        # Habilitar gradientes
+        input_tensor = input_tensor.clone().requires_grad_(True)
+        
+        # Forward pass
+        output = self.model(input_tensor)
+        
+        # Determinar classe alvo
+        if target_class is None:
+            target_class = output.argmax(dim=1).item()
+        
+        # Backward pass
+        self.model.zero_grad()
+        one_hot = torch.zeros_like(output)
+        one_hot[0, target_class] = 1
+        output.backward(gradient=one_hot)
+        
+        # Atribuições = gradiente × delta (aproximação do DeepLIFT Rescale Rule)
+        gradients = input_tensor.grad.detach()
+        attributions = gradients * delta
+        
+        # Remover dimensão de batch
+        attributions = attributions.squeeze(0)
+        
+        # Se modelo tem seleção de genes, aplicar máscara
+        if hasattr(self.model, 'rows_to_use'):
+            # Manter apenas as linhas usadas pelo modelo
+            rows_to_use = self.model.rows_to_use
+            # Criar tensor com zeros e preencher apenas as linhas usadas
+            full_attr = torch.zeros_like(attributions)
+            full_attr[rows_to_use, :] = attributions[rows_to_use, :]
+            attributions = full_attr
+        
+        # Restaurar estado
+        if was_training:
+            self.model.train()
+        
+        return attributions.cpu(), target_class
 
 
 # ==============================================================================
@@ -1931,7 +2251,7 @@ class Trainer:
             plt.title(f'Epoch {epoch + 1} | Sample {sample_id} | Input Features (n={len(features_np)})', 
                      fontsize=14, fontweight='bold')
             plt.grid(True, alpha=0.3)
-        
+            
         # Plot output probabilities
         plt.subplot(2, 1, 2)
         bars = plt.bar(range(len(output_probs)), output_probs, color='steelblue', alpha=0.7)
@@ -2394,6 +2714,39 @@ class Tester:
         self.enable_visualization = config.get('debug', {}).get('enable_visualization', False)
         self.max_samples = config.get('debug', {}).get('max_samples_per_epoch', None)
         
+        # Configuração de interpretabilidade
+        interp_config = config.get('debug', {}).get('interpretability', {})
+        self.interpretability_enabled = (
+            self.enable_visualization and 
+            interp_config.get('enabled', False)
+        )
+        self.interp_method = interp_config.get('method', 'gradcam')
+        self.interp_save_images = interp_config.get('save_images', True)
+        self.interp_output_dir = interp_config.get('output_dir', 'interpretability_results')
+        self.deeplift_baseline = interp_config.get('deeplift', {}).get('baseline', 'zeros')
+        
+        # Inicializar objetos de interpretabilidade
+        self.gradcam = None
+        self.deeplift = None
+        
+        if self.interpretability_enabled:
+            model_type = type(model).__name__
+            
+            if model_type in ['CNNAncestryPredictor', 'CNN2AncestryPredictor']:
+                if self.interp_method in ['gradcam', 'both']:
+                    try:
+                        self.gradcam = GradCAM(model)
+                        console.print("[green]✓ Grad-CAM inicializado[/green]")
+                    except Exception as e:
+                        console.print(f"[yellow]⚠ Erro ao inicializar Grad-CAM: {e}[/yellow]")
+                
+                if self.interp_method in ['deeplift', 'both']:
+                    self.deeplift = DeepLIFT(model)
+                    console.print("[green]✓ DeepLIFT inicializado[/green]")
+            else:
+                console.print(f"[yellow]⚠ Interpretabilidade não suportada para {model_type}[/yellow]")
+                self.interpretability_enabled = False
+        
         # Forçar modo interativo do matplotlib se visualização habilitada
         if self.enable_visualization:
             plt.ion()
@@ -2447,22 +2800,62 @@ class Tester:
             gene_names = GENE_ORDER
         tracks_per_gene = 6
         
+        # Compute interpretability maps if enabled
+        gradcam_map = None
+        deeplift_map = None
+        
+        if self.interpretability_enabled:
+            if self.gradcam is not None:
+                try:
+                    gradcam_map, _ = self.gradcam.generate(features.clone(), target_class=predicted_idx)
+                except Exception as e:
+                    console.print(f"[yellow]⚠ Erro ao gerar Grad-CAM: {e}[/yellow]")
+            
+            if self.deeplift is not None:
+                try:
+                    deeplift_map, _ = self.deeplift.generate(
+                        features.clone(), 
+                        target_class=predicted_idx,
+                        baseline_type=self.deeplift_baseline,
+                        dataset=self.dataset
+                    )
+                except Exception as e:
+                    console.print(f"[yellow]⚠ Erro ao gerar DeepLIFT: {e}[/yellow]")
+        
+        # Determine layout based on interpretability
+        has_gradcam = gradcam_map is not None
+        has_deeplift = deeplift_map is not None
+        num_interp_panels = (1 if has_gradcam else 0) + (1 if has_deeplift else 0)
+        
+        # Calculate number of rows for subplot
+        # Row 1: Input + CAM overlay (or just input)
+        # Row 2: Interpretability maps (if any)
+        # Row 3 (or 2): Output probabilities
+        if num_interp_panels > 0:
+            num_rows_subplot = 3
+            fig_height = 12
+        else:
+            num_rows_subplot = 2
+            fig_height = 8
+        
         # Create figure
         plt.clf()
         fig = plt.gcf()
-        fig.set_size_inches(16, 8)
+        fig.set_size_inches(16, fig_height)
         
-        # Plot input features
-        ax1 = plt.subplot(2, 1, 1)
+        # Rescale parameters
+        viz_height = self.config.get('debug', {}).get('visualization', {}).get('height', 300)
+        viz_width = self.config.get('debug', {}).get('visualization', {}).get('width', 600)
+        
+        # ─────────────────────────────────────────────────────────────────
+        # Row 1: Input features (with CAM overlay if available)
+        # ─────────────────────────────────────────────────────────────────
+        ax1 = plt.subplot(num_rows_subplot, 1, 1)
         
         # Detect if input is 2D or 1D
         if features_cpu.ndim == 3 and features_cpu.shape[0] == 1:
             # 2D input: [1, num_rows, effective_size]
             img_data = features_cpu[0].numpy()  # [num_rows, effective_size]
-            
-            # Rescale for visualization
-            viz_height = self.config.get('debug', {}).get('visualization', {}).get('height', 300)
-            viz_width = self.config.get('debug', {}).get('visualization', {}).get('width', 600)
             
             # Calculate zoom factors
             zoom_factors = (viz_height / img_data.shape[0], viz_width / img_data.shape[1])
@@ -2477,8 +2870,20 @@ class Tester:
             
             # Plot as image
             plt.imshow(img_normalized, cmap='gray', aspect='auto', interpolation='nearest')
+            
+            # Overlay Grad-CAM heatmap if available
+            if has_gradcam:
+                cam_np = gradcam_map.numpy()
+                # Resize CAM to match visualization size
+                cam_resized = ndimage.zoom(cam_np, zoom_factors, order=1)
+                # Overlay with transparency
+                plt.imshow(cam_resized, cmap='jet', aspect='auto', alpha=0.4, interpolation='nearest')
+                title_suffix = " + Grad-CAM overlay"
+            else:
+                title_suffix = ""
+            
             plt.xlabel('Gene Position (rescaled)', fontsize=12)
-            plt.title(f'{self.dataset_name.upper()} | Sample {sample_id} | Input 2D ({img_data.shape[0]}x{img_data.shape[1]} → {viz_height}x{viz_width})', 
+            plt.title(f'{self.dataset_name.upper()} | Sample {sample_id} | Input 2D ({img_data.shape[0]}x{img_data.shape[1]}){title_suffix}', 
                      fontsize=14, fontweight='bold')
             plt.colorbar(label='Normalized Value')
             
@@ -2513,8 +2918,107 @@ class Tester:
                      fontsize=14, fontweight='bold')
             plt.grid(True, alpha=0.3)
         
-        # Plot output probabilities
-        plt.subplot(2, 1, 2)
+        # ─────────────────────────────────────────────────────────────────
+        # Row 2: Interpretability maps (if enabled)
+        # ─────────────────────────────────────────────────────────────────
+        if num_interp_panels > 0:
+            # Determine subplot positions
+            if has_gradcam and has_deeplift:
+                # Two panels side by side
+                ax_gc = plt.subplot(num_rows_subplot, 2, 3)
+                ax_dl = plt.subplot(num_rows_subplot, 2, 4)
+            elif has_gradcam:
+                ax_gc = plt.subplot(num_rows_subplot, 1, 2)
+            elif has_deeplift:
+                ax_dl = plt.subplot(num_rows_subplot, 1, 2)
+            
+            # Plot Grad-CAM
+            if has_gradcam:
+                cam_np = gradcam_map.numpy()
+                cam_resized = ndimage.zoom(cam_np, zoom_factors, order=1)
+                
+                plt.sca(ax_gc)
+                im_gc = plt.imshow(cam_resized, cmap='hot', aspect='auto', interpolation='nearest')
+                plt.colorbar(im_gc, label='Activation')
+                plt.title('Grad-CAM: Regiões Importantes para Predição', fontsize=12, fontweight='bold')
+                plt.xlabel('Gene Position', fontsize=10)
+                
+                # Configure Y axis
+                num_genes = len(gene_names)
+                if features_cpu.shape[1] == num_genes * tracks_per_gene:
+                    pixels_per_row = viz_height / features_cpu.shape[1]
+                    y_minor_ticks = [(i * tracks_per_gene + tracks_per_gene / 2) * pixels_per_row 
+                                     for i in range(num_genes)]
+                    ax_gc.set_yticks(y_minor_ticks)
+                    ax_gc.set_yticklabels(gene_names, fontsize=9)
+                    ax_gc.set_ylabel('Genes', fontsize=10)
+                
+                # Compute gene importance (sum per gene)
+                gene_importance = []
+                for i in range(len(gene_names)):
+                    start_row = i * tracks_per_gene
+                    end_row = (i + 1) * tracks_per_gene
+                    if end_row <= cam_np.shape[0]:
+                        importance = cam_np[start_row:end_row, :].sum()
+                        gene_importance.append((gene_names[i], importance))
+                
+                if gene_importance:
+                    gene_importance.sort(key=lambda x: x[1], reverse=True)
+                    top_genes = ', '.join([f"{g[0]}({g[1]:.2f})" for g in gene_importance[:3]])
+                    ax_gc.text(0.02, 0.98, f'Top genes: {top_genes}', transform=ax_gc.transAxes,
+                              fontsize=9, verticalalignment='top',
+                              bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+            
+            # Plot DeepLIFT
+            if has_deeplift:
+                dl_np = deeplift_map.numpy()
+                
+                # Normalize DeepLIFT (can be positive or negative)
+                dl_abs_max = np.abs(dl_np).max()
+                if dl_abs_max > 0:
+                    dl_normalized = dl_np / dl_abs_max  # Range [-1, 1]
+                else:
+                    dl_normalized = dl_np
+                
+                dl_resized = ndimage.zoom(dl_normalized, zoom_factors, order=1)
+                
+                plt.sca(ax_dl)
+                im_dl = plt.imshow(dl_resized, cmap='RdBu_r', aspect='auto', 
+                                  interpolation='nearest', vmin=-1, vmax=1)
+                plt.colorbar(im_dl, label='Attribution (+ → class, - → not class)')
+                plt.title('DeepLIFT: Atribuição por Feature', fontsize=12, fontweight='bold')
+                plt.xlabel('Gene Position', fontsize=10)
+                
+                # Configure Y axis
+                num_genes = len(gene_names)
+                if features_cpu.shape[1] == num_genes * tracks_per_gene:
+                    pixels_per_row = viz_height / features_cpu.shape[1]
+                    y_minor_ticks = [(i * tracks_per_gene + tracks_per_gene / 2) * pixels_per_row 
+                                     for i in range(num_genes)]
+                    ax_dl.set_yticks(y_minor_ticks)
+                    ax_dl.set_yticklabels(gene_names, fontsize=9)
+                    ax_dl.set_ylabel('Genes', fontsize=10)
+                
+                # Compute gene importance (sum of absolute values per gene)
+                gene_importance = []
+                for i in range(len(gene_names)):
+                    start_row = i * tracks_per_gene
+                    end_row = (i + 1) * tracks_per_gene
+                    if end_row <= dl_np.shape[0]:
+                        importance = np.abs(dl_np[start_row:end_row, :]).sum()
+                        gene_importance.append((gene_names[i], importance))
+                
+                if gene_importance:
+                    gene_importance.sort(key=lambda x: x[1], reverse=True)
+                    top_genes = ', '.join([f"{g[0]}({g[1]:.2f})" for g in gene_importance[:3]])
+                    ax_dl.text(0.02, 0.98, f'Top genes: {top_genes}', transform=ax_dl.transAxes,
+                              fontsize=9, verticalalignment='top',
+                              bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        
+        # ─────────────────────────────────────────────────────────────────
+        # Last Row: Output probabilities
+        # ─────────────────────────────────────────────────────────────────
+        ax_prob = plt.subplot(num_rows_subplot, 1, num_rows_subplot)
         bars = plt.bar(range(len(output_probs)), output_probs, color='steelblue', alpha=0.7)
         bars[target_idx].set_color('green')
         bars[predicted_idx].set_edgecolor('red')
@@ -2541,6 +3045,27 @@ class Tester:
                 bbox=dict(boxstyle='round', facecolor=color, alpha=0.3))
         
         plt.tight_layout()
+        
+        # ─────────────────────────────────────────────────────────────────
+        # Save image if enabled
+        # ─────────────────────────────────────────────────────────────────
+        if self.interpretability_enabled and self.interp_save_images:
+            # Create output directory
+            output_dir = Path(self.interp_output_dir)
+            if not output_dir.is_absolute():
+                # Make relative to config's processed_cache_dir or current directory
+                cache_dir = self.config.get('dataset_input', {}).get('processed_cache_dir', '.')
+                output_dir = Path(cache_dir) / output_dir
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Generate filename
+            method_suffix = self.interp_method
+            correct_str = "correct" if predicted_idx == target_idx else "wrong"
+            filename = f"{sample_id}_{predicted_name}_{correct_str}_{method_suffix}.png"
+            filepath = output_dir / filename
+            
+            plt.savefig(filepath, dpi=150, bbox_inches='tight')
+            console.print(f"[dim]Saved: {filepath}[/dim]")
         
         # Connect key callback
         self._key_pressed = False
@@ -2574,15 +3099,56 @@ class Tester:
             console.print("[yellow]📊 Modo de visualização habilitado - mostrando gráficos interativos[/yellow]")
             if self.max_samples:
                 console.print(f"[yellow]   Limitado a {self.max_samples} amostras[/yellow]")
+            if self.interpretability_enabled:
+                console.print(f"[cyan]🔍 Interpretabilidade habilitada - método: {self.interp_method}[/cyan]")
+                if self.interp_save_images:
+                    console.print(f"[cyan]   Salvando imagens em: {self.interp_output_dir}[/cyan]")
         
         self.model.eval()
         all_predictions = []
         all_targets = []
         all_probs = []
         
-        with torch.no_grad():
-            # Se visualização está habilitada, não usar progress bar
-            if self.enable_visualization:
+        # Se interpretabilidade está habilitada, precisamos de gradientes
+        # então não usamos torch.no_grad() no loop de visualização
+        if self.enable_visualization and self.interpretability_enabled:
+            # Loop COM gradientes para interpretabilidade
+            sample_count = 0
+            for batch_idx, (features, targets, indices) in enumerate(self.test_loader):
+                features = features.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
+                
+                # Forward pass normal (sem gradientes) para obter outputs
+                with torch.no_grad():
+                    outputs = self.model(features)
+                
+                # Visualizar amostra (a interpretabilidade faz seu próprio forward com gradientes)
+                sample_idx = indices[0].item()  # batch_size=1 na visualização
+                sample_id = self.dataset.get_sample_id(sample_idx)
+                self._visualize_sample(features.clone(), targets, outputs, sample_idx, sample_id)
+                
+                # Check if user requested to quit
+                if self._quit_requested:
+                    console.print("[yellow]⚠ Quit requested by user (pressed 'q')[/yellow]")
+                    import sys
+                    sys.exit(0)
+                
+                if self.config['output']['prediction_target'] != 'frog_likelihood':
+                    predictions = torch.argmax(outputs, dim=1)
+                    all_predictions.extend(predictions.cpu().numpy())
+                    all_targets.extend(targets.cpu().numpy())
+                    all_probs.append(outputs.cpu().numpy())
+                
+                sample_count += 1
+                
+                # Limitar número de amostras se especificado
+                if self.max_samples is not None and sample_count >= self.max_samples:
+                    console.print(f"[yellow]⚠ Limitado a {self.max_samples} amostras (debug)[/yellow]")
+                    break
+        
+        elif self.enable_visualization:
+            # Loop SEM interpretabilidade - visualização simples com torch.no_grad()
+            with torch.no_grad():
                 sample_count = 0
                 for batch_idx, (features, targets, indices) in enumerate(self.test_loader):
                     features = features.to(self.device, non_blocking=True)
@@ -2613,8 +3179,10 @@ class Tester:
                     if self.max_samples is not None and sample_count >= self.max_samples:
                         console.print(f"[yellow]⚠ Limitado a {self.max_samples} amostras (debug)[/yellow]")
                         break
-            else:
-                # Modo normal com progress bar
+        
+        else:
+            # Modo normal sem visualização - com progress bar e torch.no_grad()
+            with torch.no_grad():
                 with Progress(
                     SpinnerColumn(),
                     TextColumn("[progress.description]{task.description}"),
@@ -2763,7 +3331,7 @@ def validate_cache(cache_dir: Path, config: Dict) -> bool:
     required_files = [
         'metadata.json',
         'normalization_params.json',
-        'splits.json',
+        'splits_metadata.json',
         'train_data.pt',
         'val_data.pt',
         'test_data.pt'
@@ -2779,6 +3347,13 @@ def validate_cache(cache_dir: Path, config: Dict) -> bool:
         with open(cache_dir / 'metadata.json', 'r') as f:
             metadata = json.load(f)
         
+        # Verificar versão do formato - requer formato v2 com metadados completos em splits_metadata.json
+        format_version = metadata.get('format_version', 1)
+        if format_version < 2:
+            console.print(f"[yellow]Cache invalidado: formato legado (v{format_version}). Requer v2 com metadados completos.[/yellow]")
+            console.print(f"[yellow]  O cache será recriado automaticamente.[/yellow]")
+            return False
+        
         # Verificar compatibilidade dos parâmetros críticos
         processing_params = metadata.get('processing_params', {})
         
@@ -2793,6 +3368,7 @@ def validate_cache(cache_dir: Path, config: Dict) -> bool:
             'window_center_size': config['dataset_input']['window_center_size'],
             'downsample_factor': config['dataset_input']['downsample_factor'],
             'normalization_method': config['dataset_input'].get('normalization_method', 'zscore'),
+            'balancing_strategy': config['data_split'].get('balancing_strategy', 'stratified'),
             'dataset_dir': config['dataset_input']['dataset_dir'],
             'taint_at_cache_save': config.get('debug', {}).get('taint_at_cache_save', False),
             'input_shape': '2D',
@@ -2845,17 +3421,27 @@ def save_processed_dataset(
     config: Dict
 ):
     """
-    Salva dataset processado em cache de forma idempotente.
+    Salva dataset processado em cache com balanceamento estratificado sequencial.
+    
+    Os dados são organizados em grupos onde cada grupo contém exatamente uma amostra
+    de cada classe (superpopulation), garantindo balanceamento. Amostras excedentes
+    de classes majoritárias são descartadas.
+    
+    A ordem é: [classe1_sample1, classe2_sample1, classe3_sample1, 
+                classe1_sample2, classe2_sample2, classe3_sample2, ...]
     
     Args:
         cache_dir: Diretório onde salvar cache
         processed_dataset: Dataset processado
-        train_indices: Índices de treino
-        val_indices: Índices de validação
-        test_indices: Índices de teste
+        train_indices: Índices de treino (serão reorganizados)
+        val_indices: Índices de validação (serão reorganizados)
+        test_indices: Índices de teste (serão reorganizados)
         config: Configuração usada
     """
+    import random
+    
     cache_dir = Path(cache_dir)
+    random_seed = config['data_split']['random_seed']
     
     # Criar diretório temporário para escrita atômica
     temp_cache_dir = cache_dir.parent / f"{cache_dir.name}_tmp_{os.getpid()}"
@@ -2867,30 +3453,206 @@ def save_processed_dataset(
     
     temp_cache_dir.mkdir(parents=True, exist_ok=True)
     
-    console.print(f"\n[bold cyan]💾 Salvando Dataset Processado em Cache[/bold cyan]")
+    console.print(f"\n[bold cyan]💾 Salvando Dataset Processado em Cache (Estratificado)[/bold cyan]")
     console.print(f"  📁 Diretório: {cache_dir}")
-    console.print(f"  ⚙️  Escrevendo em diretório temporário primeiro...")
-    console.print(f"  📊 Amostras de treino: {len(train_indices)}")
-    console.print(f"  📊 Amostras de validação: {len(val_indices)}")
-    console.print(f"  📊 Amostras de teste: {len(test_indices)}")
+    console.print(f"  🎲 Random seed: {random_seed}")
+    
+    # Carregar metadados do dataset fonte para obter informações dos indivíduos
+    dataset_dir = Path(config['dataset_input']['dataset_dir'])
+    dataset_metadata_file = dataset_dir / 'dataset_metadata.json'
+    if not dataset_metadata_file.exists():
+        raise FileNotFoundError(f"dataset_metadata.json não encontrado em {dataset_dir}")
+    
+    with open(dataset_metadata_file, 'r') as f:
+        source_metadata = json.load(f)
+    
+    individuals = source_metadata.get('individuals', [])
+    individuals_pedigree = source_metadata.get('individuals_pedigree', {})
+    
+    if not individuals:
+        raise ValueError("Lista de individuals vazia em dataset_metadata.json")
+    
+    console.print(f"  📋 Metadados carregados: {len(individuals)} indivíduos")
+    
+    def get_individual_metadata(idx: int) -> Dict:
+        """Obtém metadados completos de um indivíduo pelo índice."""
+        if idx >= len(individuals):
+            return {"sample_id": f"sample_{idx}", "superpopulation": "UNK", "population": "UNK", "sex": 0}
+        
+        sample_id = individuals[idx]
+        pedigree = individuals_pedigree.get(sample_id, {})
+        return {
+            "sample_id": sample_id,
+            "superpopulation": pedigree.get("superpopulation", "UNK"),
+            "population": pedigree.get("population", "UNK"),
+            "sex": pedigree.get("sex", 0)
+        }
+    
+    def stratified_interleave(indices: List[int], seed: int) -> Tuple[List[int], List[int], Dict[str, int]]:
+        """
+        Organiza índices em ordem estratificada sequencial.
+        
+        Retorna:
+            - Lista de índices intercalados por classe
+            - Lista de índices descartados (excesso de classes majoritárias)
+            - Dicionário com contagem por classe
+        """
+        # Agrupar índices por classe (superpopulation)
+        indices_by_class = {}
+        for idx in indices:
+            meta = get_individual_metadata(idx)
+            superpop = meta['superpopulation']
+            if superpop not in indices_by_class:
+                indices_by_class[superpop] = []
+            indices_by_class[superpop].append(idx)
+        
+        # Embaralhar cada classe com seed fixa para reprodutibilidade
+        rng = random.Random(seed)
+        for class_name in indices_by_class:
+            rng.shuffle(indices_by_class[class_name])
+        
+        # Determinar tamanho mínimo entre todas as classes
+        class_counts = {c: len(idxs) for c, idxs in indices_by_class.items()}
+        min_count = min(class_counts.values())
+        
+        # Coletar índices descartados (excesso)
+        discarded = []
+        for class_name, idxs in indices_by_class.items():
+            if len(idxs) > min_count:
+                discarded.extend(idxs[min_count:])
+        
+        # Truncar cada classe ao tamanho mínimo
+        for class_name in indices_by_class:
+            indices_by_class[class_name] = indices_by_class[class_name][:min_count]
+        
+        # Intercalar: classe1[0], classe2[0], ..., classeN[0], classe1[1], ...
+        # Ordenar classes alfabeticamente para determinismo
+        sorted_classes = sorted(indices_by_class.keys())
+        interleaved = []
+        for i in range(min_count):
+            for class_name in sorted_classes:
+                interleaved.append(indices_by_class[class_name][i])
+        
+        return interleaved, discarded, class_counts
+    
+    def simple_shuffle(indices: List[int], seed: int) -> Tuple[List[int], Dict[str, int]]:
+        """
+        Embaralha índices de forma simples sem descartar dados.
+        
+        Retorna:
+            - Lista de índices embaralhados
+            - Dicionário com contagem por classe (para info)
+        """
+        # Contar classes para info
+        class_counts = {}
+        for idx in indices:
+            meta = get_individual_metadata(idx)
+            superpop = meta['superpopulation']
+            class_counts[superpop] = class_counts.get(superpop, 0) + 1
+        
+        # Embaralhar com seed fixa para reprodutibilidade
+        rng = random.Random(seed)
+        shuffled = list(indices)
+        rng.shuffle(shuffled)
+        
+        return shuffled, class_counts
+    
+    # Combinar todos os índices
+    all_indices = list(train_indices) + list(val_indices) + list(test_indices)
+    console.print(f"  📊 Total de amostras: {len(all_indices)}")
+    
+    # Ler estratégia de balanceamento do config
+    balancing_strategy = config['data_split'].get('balancing_strategy', 'stratified')
+    
+    train_split = config['data_split']['train_split']
+    val_split = config['data_split']['val_split']
+    test_split = config['data_split']['test_split']
+    
+    if balancing_strategy == 'stratified':
+        # Aplicar balanceamento estratificado (descarta excedentes)
+        balanced_indices, discarded_indices, original_class_counts = stratified_interleave(all_indices, random_seed)
+        
+        num_classes = len(original_class_counts)
+        samples_per_class = len(balanced_indices) // num_classes
+        
+        console.print(f"\n  [bold]Balanceamento Estratificado:[/bold]")
+        console.print(f"  • Classes encontradas: {num_classes}")
+        for class_name, count in sorted(original_class_counts.items()):
+            discarded_count = count - samples_per_class
+            status = f"[yellow](-{discarded_count})[/yellow]" if discarded_count > 0 else "[green](OK)[/green]"
+            console.print(f"    - {class_name}: {count} → {samples_per_class} {status}")
+        console.print(f"  • Amostras balanceadas: {len(balanced_indices)}")
+        console.print(f"  • Amostras descartadas: {len(discarded_indices)}")
+        
+        # Calcular splits sobre os dados balanceados
+        # Os grupos devem permanecer intactos (não quebrar grupos de N classes)
+        total_groups = len(balanced_indices) // num_classes
+        
+        train_groups = int(total_groups * train_split)
+        val_groups = int(total_groups * val_split)
+        test_groups = total_groups - train_groups - val_groups  # Resto vai para teste
+        
+        # Converter grupos para índices
+        train_end = train_groups * num_classes
+        val_end = train_end + val_groups * num_classes
+        
+        new_train_indices = balanced_indices[:train_end]
+        new_val_indices = balanced_indices[train_end:val_end]
+        new_test_indices = balanced_indices[val_end:]
+        
+        console.print(f"\n  [bold]Splits após balanceamento:[/bold]")
+        console.print(f"  • Train: {len(new_train_indices)} amostras ({train_groups} grupos)")
+        console.print(f"  • Val: {len(new_val_indices)} amostras ({val_groups} grupos)")
+        console.print(f"  • Test: {len(new_test_indices)} amostras ({test_groups} grupos)")
+        
+    else:  # shuffle
+        # Randomização simples (preserva todos os dados)
+        shuffled_indices, class_counts = simple_shuffle(all_indices, random_seed)
+        discarded_indices = []  # Nenhum dado descartado
+        
+        console.print(f"\n  [bold]Randomização Simples (shuffle):[/bold]")
+        console.print(f"  • Classes encontradas: {len(class_counts)}")
+        for class_name, count in sorted(class_counts.items()):
+            console.print(f"    - {class_name}: {count}")
+        console.print(f"  • Total de amostras: {len(shuffled_indices)} [green](nenhuma descartada)[/green]")
+        
+        # Calcular splits simples
+        total_samples = len(shuffled_indices)
+        train_end = int(total_samples * train_split)
+        val_end = train_end + int(total_samples * val_split)
+        
+        new_train_indices = shuffled_indices[:train_end]
+        new_val_indices = shuffled_indices[train_end:val_end]
+        new_test_indices = shuffled_indices[val_end:]
+        
+        console.print(f"\n  [bold]Splits:[/bold]")
+        console.print(f"  • Train: {len(new_train_indices)} amostras")
+        console.print(f"  • Val: {len(new_val_indices)} amostras")
+        console.print(f"  • Test: {len(new_test_indices)} amostras")
     
     # Preparar dados de cada split
     train_data = []
     val_data = []
     test_data = []
     
+    # Preparar metadados de cada split (na mesma ordem dos dados)
+    train_metadata = []
+    val_metadata = []
+    test_metadata = []
+    
     # Verificar se tainting está habilitado ao salvar cache
     taint_at_save = config.get('debug', {}).get('taint_at_cache_save', False)
-    num_classes = processed_dataset.get_num_classes() if taint_at_save else 0
+    taint_num_classes = processed_dataset.get_num_classes() if taint_at_save else 0
     
     # IMPORTANTE: Desabilitar temporariamente taint_at_runtime enquanto salvamos o cache
-    # para evitar que dados sejam salvos com tainting não-intencional
     original_taint_runtime = processed_dataset.config.get('debug', {}).get('taint_at_runtime', False)
     if 'debug' not in processed_dataset.config:
         processed_dataset.config['debug'] = {}
     processed_dataset.config['debug']['taint_at_runtime'] = False
     
     try:
+        # Processar dados de treino
+        console.print(f"\n  📦 Processando dados de treino...")
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -2898,33 +3660,72 @@ def save_processed_dataset(
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
             console=console
         ) as progress:
-            task = progress.add_task("Processando e salvando dados...", total=len(processed_dataset))
-            
-            for idx in range(len(processed_dataset)):
+            task = progress.add_task("Train", total=len(new_train_indices))
+            for idx in new_train_indices:
                 features, target = processed_dataset[idx]
                 
-                # Aplicar tainting se habilitado (apenas para classificação)
+                # Aplicar tainting se habilitado
                 if taint_at_save and config['output']['prediction_target'] != 'frog_likelihood':
-                    # Extrair classe do target tensor
-                    if target.ndim == 0:  # Escalar
+                    if target.ndim == 0:
                         target_class = target.item()
                     else:
                         target_class = target[0].item()
-                    
-                    # Aplicar tainting
-                    features = taint_sample(features, target_class, num_classes)
+                    features = taint_sample(features, target_class, taint_num_classes)
                 
-                if idx in train_indices:
-                    train_data.append((features, target))
-                elif idx in val_indices:
-                    val_data.append((features, target))
-                elif idx in test_indices:
-                    test_data.append((features, target))
+                train_data.append((features, target))
+                train_metadata.append(get_individual_metadata(idx))
+                progress.update(task, advance=1)
+        
+        # Processar dados de validação
+        console.print(f"  📦 Processando dados de validação...")
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            console=console
+        ) as progress:
+            task = progress.add_task("Val", total=len(new_val_indices))
+            for idx in new_val_indices:
+                features, target = processed_dataset[idx]
                 
+                if taint_at_save and config['output']['prediction_target'] != 'frog_likelihood':
+                    if target.ndim == 0:
+                        target_class = target.item()
+                    else:
+                        target_class = target[0].item()
+                    features = taint_sample(features, target_class, taint_num_classes)
+                
+                val_data.append((features, target))
+                val_metadata.append(get_individual_metadata(idx))
+                progress.update(task, advance=1)
+        
+        # Processar dados de teste
+        console.print(f"  📦 Processando dados de teste...")
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            console=console
+        ) as progress:
+            task = progress.add_task("Test", total=len(new_test_indices))
+            for idx in new_test_indices:
+                features, target = processed_dataset[idx]
+                
+                if taint_at_save and config['output']['prediction_target'] != 'frog_likelihood':
+                    if target.ndim == 0:
+                        target_class = target.item()
+                    else:
+                        target_class = target[0].item()
+                    features = taint_sample(features, target_class, taint_num_classes)
+                
+                test_data.append((features, target))
+                test_metadata.append(get_individual_metadata(idx))
                 progress.update(task, advance=1)
         
         # Salvar dados no diretório temporário
-        console.print(f"  💾 Salvando train_data.pt ({len(train_data)} amostras)...")
+        console.print(f"\n  💾 Salvando train_data.pt ({len(train_data)} amostras)...")
         torch.save(train_data, temp_cache_dir / 'train_data.pt')
         
         console.print(f"  💾 Salvando val_data.pt ({len(val_data)} amostras)...")
@@ -2933,14 +3734,19 @@ def save_processed_dataset(
         console.print(f"  💾 Salvando test_data.pt ({len(test_data)} amostras)...")
         torch.save(test_data, temp_cache_dir / 'test_data.pt')
         
-        # Salvar splits
-        console.print(f"  💾 Salvando splits.json...")
+        # Preparar metadados dos samples descartados
+        discarded_metadata = [get_individual_metadata(idx) for idx in discarded_indices]
+        
+        # Salvar splits com metadados completos
+        console.print(f"  💾 Salvando splits_metadata.json (com metadados completos)...")
         splits = {
-            'train_indices': train_indices,
-            'val_indices': val_indices,
-            'test_indices': test_indices
+            'format_version': 3,  # Nova versão com balanceamento estratificado
+            'train': train_metadata,
+            'val': val_metadata,
+            'test': test_metadata,
+            'discarded': discarded_metadata  # Samples descartados por balanceamento
         }
-        with open(temp_cache_dir / 'splits.json', 'w') as f:
+        with open(temp_cache_dir / 'splits_metadata.json', 'w') as f:
             json.dump(splits, f, indent=2)
         
         # Salvar normalization params
@@ -2950,7 +3756,6 @@ def save_processed_dataset(
         
         # Obter ordem dos genes do dataset base
         try:
-            # Pegar do primeiro sample do dataset base
             first_sample_data, _ = processed_dataset.base_dataset[0]
             gene_order = list(first_sample_data['windows'])
             console.print(f"  📊 Ordem dos genes detectada: {', '.join(gene_order)}")
@@ -2958,9 +3763,56 @@ def save_processed_dataset(
             console.print(f"[yellow]⚠ Não foi possível obter ordem dos genes: {e}[/yellow]")
             gene_order = None
         
+        # Construir balancing_info conforme estratégia
+        if balancing_strategy == 'stratified':
+            balanced_class_counts = {c: samples_per_class for c in original_class_counts.keys()}
+            balancing_info = {
+                'strategy': 'stratified',
+                'method': 'stratified_sequential',
+                'original_total': len(all_indices),
+                'balanced_total': len(new_train_indices) + len(new_val_indices) + len(new_test_indices),
+                'discarded_total': len(discarded_indices),
+                'samples_per_class': samples_per_class,
+                'original_class_counts': original_class_counts,
+                'balanced_class_counts': balanced_class_counts,
+            }
+            splits_info = {
+                'train_size': len(new_train_indices),
+                'val_size': len(new_val_indices),
+                'test_size': len(new_test_indices),
+                'train_groups': train_groups,
+                'val_groups': val_groups,
+                'test_groups': test_groups,
+                'train_split': config['data_split']['train_split'],
+                'val_split': config['data_split']['val_split'],
+                'test_split': config['data_split']['test_split'],
+                'random_seed': random_seed
+            }
+            total_samples = len(new_train_indices) + len(new_val_indices) + len(new_test_indices)
+        else:  # shuffle
+            balancing_info = {
+                'strategy': 'shuffle',
+                'method': 'simple_random',
+                'original_total': len(all_indices),
+                'balanced_total': len(all_indices),  # Todos preservados
+                'discarded_total': 0,
+                'class_counts': class_counts,
+            }
+            splits_info = {
+                'train_size': len(new_train_indices),
+                'val_size': len(new_val_indices),
+                'test_size': len(new_test_indices),
+                'train_split': config['data_split']['train_split'],
+                'val_split': config['data_split']['val_split'],
+                'test_split': config['data_split']['test_split'],
+                'random_seed': random_seed
+            }
+            total_samples = len(all_indices)
+        
         # Salvar metadados
         metadata = {
             'creation_date': datetime.now().isoformat(),
+            'format_version': 3,
             'dataset_dir': config['dataset_input']['dataset_dir'],
             'processing_params': {
                 'alphagenome_outputs': config['dataset_input']['alphagenome_outputs'],
@@ -2968,25 +3820,19 @@ def save_processed_dataset(
                 'window_center_size': config['dataset_input']['window_center_size'],
                 'downsample_factor': config['dataset_input']['downsample_factor'],
                 'normalization_method': config['dataset_input'].get('normalization_method', 'zscore'),
+                'balancing_strategy': balancing_strategy,
                 'taint_at_cache_save': config.get('debug', {}).get('taint_at_cache_save', False),
                 'input_shape': '2D',
             },
-            'splits': {
-                'train_size': len(train_indices),
-                'val_size': len(val_indices),
-                'test_size': len(test_indices),
-                'train_split': config['data_split']['train_split'],
-                'val_split': config['data_split']['val_split'],
-                'test_split': config['data_split']['test_split'],
-                'random_seed': config['data_split']['random_seed']
-            },
-            'total_samples': len(processed_dataset),
+            'balancing_info': balancing_info,
+            'splits': splits_info,
+            'total_samples': total_samples,
             'num_classes': processed_dataset.get_num_classes(),
             'input_size': processed_dataset.get_input_size(),
             'prediction_target': config['output']['prediction_target'],
-            'class_names': processed_dataset.idx_to_target,  # Salvar mapeamento de classes
-            'gene_order': gene_order,  # Salvar ordem dos genes
-            'tracks_per_gene': 6  # Número de tracks por gene (rna_seq)
+            'class_names': processed_dataset.idx_to_target,
+            'gene_order': gene_order,
+            'tracks_per_gene': 6
         }
         console.print(f"  💾 Salvando metadata.json...")
         with open(temp_cache_dir / 'metadata.json', 'w') as f:
@@ -3055,8 +3901,8 @@ class CachedProcessedDataset(Dataset):
         self.split_name = (split_name or self._infer_split_name()).lower()
         self._length_hint = length_hint
         
-        # Carregar mapeamento de índices para sample_ids
-        self._sample_ids = self._load_sample_ids()
+        # Carregar metadados dos samples (sample_id, superpopulation, population, sex)
+        self._sample_metadata = self._load_sample_metadata()
         
         # Ler configuração de carregamento
         data_loading_config = config.get('data_loading', {})
@@ -3094,54 +3940,125 @@ class CachedProcessedDataset(Dataset):
     def __len__(self) -> int:
         return self._length
     
-    def _load_sample_ids(self) -> Optional[List[str]]:
-        """Load sample IDs mapping from cache metadata."""
+    def _load_sample_metadata(self) -> Optional[List[Dict]]:
+        """
+        Load sample metadata from splits_metadata.json.
+        
+        Supports two formats:
+        - Format v2 (new): splits_metadata.json contains complete metadata per sample
+        - Format v1 (legacy): splits_metadata.json contains only indices, needs dataset_metadata.json
+        
+        Returns:
+            List of dicts with sample metadata, or None if loading fails
+        """
         try:
             cache_dir = self.data_file.parent
             
-            # Load splits to get indices
-            splits_file = cache_dir / 'splits.json'
+            # Load splits_metadata.json
+            splits_file = cache_dir / 'splits_metadata.json'
             if not splits_file.exists():
+                console.print(f"[yellow]⚠ Sample metadata: splits_metadata.json não encontrado em {cache_dir}[/yellow]")
                 return None
             with open(splits_file, 'r') as f:
                 splits = json.load(f)
             
-            indices_key = f"{self.split_name}_indices"
-            split_indices = splits.get(indices_key, [])
+            # Check format version
+            format_version = splits.get('format_version', 1)
             
-            # Load dataset metadata to get individual IDs
-            metadata_file = cache_dir / 'metadata.json'
-            if not metadata_file.exists():
-                return None
-            with open(metadata_file, 'r') as f:
-                metadata = json.load(f)
-            
-            dataset_dir = Path(metadata.get('processing_params', {}).get('dataset_dir', ''))
-            dataset_metadata_file = dataset_dir / 'dataset_metadata.json'
-            if not dataset_metadata_file.exists():
-                return None
-            with open(dataset_metadata_file, 'r') as f:
-                dataset_metadata = json.load(f)
-            
-            individuals = dataset_metadata.get('individuals', [])
-            
-            # Map split indices to sample_ids
-            sample_ids = []
-            for idx in split_indices:
-                if idx < len(individuals):
-                    sample_ids.append(individuals[idx])
-                else:
-                    sample_ids.append(f"sample_{idx}")
-            
-            return sample_ids
-        except Exception:
+            if format_version >= 2:
+                # New format: splits_metadata.json contains complete metadata
+                split_data = splits.get(self.split_name, [])
+                if not split_data:
+                    console.print(f"[yellow]⚠ Sample metadata: '{self.split_name}' não encontrado em splits_metadata.json[/yellow]")
+                    return None
+                return split_data
+            else:
+                # Legacy format: need to load from dataset_metadata.json
+                indices_key = f"{self.split_name}_indices"
+                split_indices = splits.get(indices_key, [])
+                if not split_indices:
+                    console.print(f"[yellow]⚠ Sample metadata: {indices_key} não encontrado em splits_metadata.json (formato legado)[/yellow]")
+                    return None
+                
+                # Load dataset metadata to get individual IDs
+                metadata_file = cache_dir / 'metadata.json'
+                if not metadata_file.exists():
+                    return None
+                with open(metadata_file, 'r') as f:
+                    metadata = json.load(f)
+                
+                dataset_dir_str = metadata.get('dataset_dir', '') or metadata.get('processing_params', {}).get('dataset_dir', '')
+                if not dataset_dir_str:
+                    dataset_dir_str = self.config.get('dataset_input', {}).get('dataset_dir', '')
+                
+                if not dataset_dir_str:
+                    return None
+                
+                dataset_dir = Path(dataset_dir_str)
+                dataset_metadata_file = dataset_dir / 'dataset_metadata.json'
+                if not dataset_metadata_file.exists():
+                    return None
+                with open(dataset_metadata_file, 'r') as f:
+                    dataset_metadata = json.load(f)
+                
+                individuals = dataset_metadata.get('individuals', [])
+                individuals_pedigree = dataset_metadata.get('individuals_pedigree', {})
+                
+                # Build metadata list from indices
+                # NOTE: Legacy format has ordering issues - indices may not match data order
+                sample_metadata = []
+                for idx in split_indices:
+                    if idx < len(individuals):
+                        sample_id = individuals[idx]
+                        pedigree = individuals_pedigree.get(sample_id, {})
+                        sample_metadata.append({
+                            "sample_id": sample_id,
+                            "superpopulation": pedigree.get("superpopulation", "UNK"),
+                            "population": pedigree.get("population", "UNK"),
+                            "sex": pedigree.get("sex", 0)
+                        })
+                    else:
+                        sample_metadata.append({
+                            "sample_id": f"sample_{idx}",
+                            "superpopulation": "UNK",
+                            "population": "UNK",
+                            "sex": 0
+                        })
+                
+                # Warning about legacy format ordering issues
+                console.print(f"[yellow]⚠ Cache formato legado detectado - sample_ids podem não corresponder aos dados![/yellow]")
+                console.print(f"[yellow]  Recomendado: Apague o cache e execute novamente para usar formato v2.[/yellow]")
+                
+                return sample_metadata
+                
+        except Exception as e:
+            console.print(f"[yellow]⚠ Sample metadata: erro ao carregar - {e}[/yellow]")
             return None
     
     def get_sample_id(self, idx: int) -> str:
         """Get sample ID for given index in this split."""
-        if self._sample_ids is not None and idx < len(self._sample_ids):
-            return self._sample_ids[idx]
+        if self._sample_metadata is not None and idx < len(self._sample_metadata):
+            return self._sample_metadata[idx].get('sample_id', f"#{idx + 1}")
         return f"#{idx + 1}"
+    
+    def get_sample_metadata(self, idx: int) -> Dict:
+        """
+        Get complete metadata for a sample.
+        
+        Args:
+            idx: Index in this split
+            
+        Returns:
+            Dict with sample_id, superpopulation, population, sex
+        """
+        if self._sample_metadata is not None and idx < len(self._sample_metadata):
+            return self._sample_metadata[idx]
+        return {
+            "sample_id": f"#{idx + 1}",
+            "superpopulation": "UNK",
+            "population": "UNK",
+            "sex": 0
+        }
 
     def _infer_split_name(self) -> str:
         """
@@ -3167,7 +4084,7 @@ class CachedProcessedDataset(Dataset):
     def _determine_length_without_loading(self) -> int:
         """
         Resolve o comprimento do dataset sem carregar o arquivo .pt completo.
-        Utiliza hint direto, metadata.json ou splits.json como fallback.
+        Utiliza hint direto, metadata.json ou splits_metadata.json como fallback.
         """
         if self._length_hint is not None:
             return self._length_hint
@@ -3184,7 +4101,7 @@ class CachedProcessedDataset(Dataset):
             except json.JSONDecodeError:
                 console.print(f"[yellow]Aviso: metadata.json inválido em {metadata_path}[/yellow]")
         
-        splits_path = self.data_file.parent / 'splits.json'
+        splits_path = self.data_file.parent / 'splits_metadata.json'
         if splits_path.exists():
             try:
                 with open(splits_path, 'r') as f:
@@ -3193,7 +4110,7 @@ class CachedProcessedDataset(Dataset):
                 if indices_key in splits:
                     return len(splits[indices_key])
             except json.JSONDecodeError:
-                console.print(f"[yellow]Aviso: splits.json inválido em {splits_path}[/yellow]")
+                console.print(f"[yellow]Aviso: splits_metadata.json inválido em {splits_path}[/yellow]")
         
         raise RuntimeError(
             f"Não foi possível determinar o tamanho de {self.data_file.name} sem carregar o arquivo."
@@ -3738,8 +4655,9 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
                         console.print(f"  • Máximo não-zero: {normalization_params.get('max', 1):.6f}")
                     elif method == 'log':
                         console.print(f"  • Método: Logarítmico")
-                        if 'per_track_log_max' in normalization_params:
-                            console.print(f"  • Per-track log_max (66 tracks)")
+                        if normalization_params.get('per_track') or 'track_params' in normalization_params:
+                            num_tracks = normalization_params.get('num_tracks', len(normalization_params.get('track_params', [])))
+                            console.print(f"  • Per-track log_max ({num_tracks} tracks)")
                         else:
                             console.print(f"  • log1p(max): {normalization_params.get('log_max', 1):.6f}")
                     else:

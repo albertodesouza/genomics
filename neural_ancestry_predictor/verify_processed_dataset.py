@@ -968,8 +968,8 @@ class InteractiveViewer:
         
         Args:
             config: Configuração do programa
-            splits_data: Dados dos splits (train/val/test indices)
-            dataset_metadata: Metadata do dataset (lista de indivíduos)
+            splits_data: Dados dos splits (train/val/test indices ou metadados completos)
+            dataset_metadata: Metadata do dataset (lista de indivíduos) - pode ser None para formato v2
         """
         self.config = config
         self.splits_data = splits_data
@@ -979,15 +979,18 @@ class InteractiveViewer:
         self.should_exit = False
         self.fig = None
         
-        # Obter lista de índices do split atual
-        split_key = f"{self.current_split}_indices"
-        self.split_indices = splits_data[split_key]
-        self.max_index = len(self.split_indices) - 1
+        # Detectar formato do splits_data
+        self.format_version = splits_data.get('format_version', 1)
+        
+        # Obter tamanho do split atual
+        self.split_size = get_split_sample_count(splits_data, self.current_split, self.format_version)
+        self.max_index = self.split_size - 1
         
         console.print(f"[cyan]Modo interativo ativado:[/cyan]")
         console.print(f"  • Split: {self.current_split}")
-        console.print(f"  • Total de amostras: {len(self.split_indices)}")
+        console.print(f"  • Total de amostras: {self.split_size}")
         console.print(f"  • Índice inicial: {self.current_index}")
+        console.print(f"  • Formato splits_metadata.json: v{self.format_version}")
         console.print(f"[yellow]  • Use ← → para navegar, 'q' para sair[/yellow]\n")
     
     def on_key_press(self, event: KeyEvent):
@@ -1018,9 +1021,18 @@ class InteractiveViewer:
     
     def get_current_sample_id(self) -> str:
         """Retorna o sample_id da amostra atual."""
-        global_index = self.split_indices[self.current_index]
-        individuals = self.dataset_metadata['individuals']
-        return individuals[global_index]
+        sample_meta = get_sample_info(
+            self.splits_data, self.current_split, self.current_index,
+            self.format_version, self.dataset_metadata
+        )
+        return sample_meta.get('sample_id', f"#{self.current_index + 1}")
+    
+    def get_current_sample_metadata(self) -> Dict:
+        """Retorna os metadados completos da amostra atual."""
+        return get_sample_info(
+            self.splits_data, self.current_split, self.current_index,
+            self.format_version, self.dataset_metadata
+        )
 
 
 class InteractiveComparisonViewer:
@@ -1038,8 +1050,11 @@ class InteractiveComparisonViewer:
         self.should_exit = False
         self.fig = None
         
+        # Detectar formato do splits_data
+        self.format_version = splits_data.get('format_version', 1)
+        
         # Ler lista de genes disponíveis dos metadados do dataset
-        self.available_genes = dataset_metadata.get('genes', [])
+        self.available_genes = dataset_metadata.get('genes', []) if dataset_metadata else []
         if not self.available_genes:
             # Erro: campo 'genes' não encontrado nos metadados
             console.print("[red]❌ ERRO: Campo 'genes' não encontrado nos metadados do dataset![/red]")
@@ -1054,10 +1069,9 @@ class InteractiveComparisonViewer:
         # Carregar metadata de superpopulação
         self.superpopulation_map = self._load_superpopulation_map(metadata_csv_path)
         
-        # Obter lista de índices do split atual
-        split_key = f"{self.current_split}_indices"
-        self.split_indices = splits_data[split_key]
-        self.max_index = len(self.split_indices) - 1
+        # Obter tamanho do split atual
+        self.split_size = get_split_sample_count(splits_data, self.current_split, self.format_version)
+        self.max_index = self.split_size - 1
         self.max_gene_index = len(self.available_genes) - 1
         
     def _load_superpopulation_map(self, csv_path: str) -> Dict[str, Tuple[str, str]]:
@@ -1129,9 +1143,21 @@ class InteractiveComparisonViewer:
     
     def get_sample_info(self, index: int) -> Tuple[str, str, str]:
         """Retorna (sample_id, population, superpopulation) para um índice."""
-        global_index = self.split_indices[index]
-        sample_id = self.dataset_metadata['individuals'][global_index]
-        pop, superpop = self.superpopulation_map.get(sample_id, ("Unknown", "Unknown"))
+        sample_meta = get_sample_info(
+            self.splits_data, self.current_split, index,
+            self.format_version, self.dataset_metadata
+        )
+        sample_id = sample_meta.get('sample_id', f"#{index + 1}")
+        
+        # Tentar obter do mapa de superpopulação primeiro (mais confiável para formato legado)
+        pop, superpop = self.superpopulation_map.get(sample_id, (None, None))
+        
+        # Se não encontrou no mapa, usar os metadados do splits_metadata.json (formato v2)
+        if pop is None:
+            pop = sample_meta.get('population', 'Unknown')
+        if superpop is None:
+            superpop = sample_meta.get('superpopulation', 'Unknown')
+        
         return sample_id, pop, superpop
 
 
@@ -1139,12 +1165,107 @@ class InteractiveComparisonViewer:
 # FUNÇÕES DE CARREGAMENTO DE DADOS
 # ==============================================================================
 
+def load_splits_metadata(cache_dir: Path) -> Tuple[Dict, int]:
+    """
+    Carrega dados de splits_metadata.json detectando automaticamente o formato.
+    
+    Args:
+        cache_dir: Diretório do cache
+        
+    Returns:
+        Tupla (splits_data, format_version)
+    """
+    splits_file = cache_dir / 'splits_metadata.json'
+    if not splits_file.exists():
+        raise FileNotFoundError(f"Splits não encontrado: {splits_file}")
+    
+    with open(splits_file, 'r') as f:
+        splits = json.load(f)
+    
+    format_version = splits.get('format_version', 1)
+    return splits, format_version
+
+
+def get_sample_info(
+    splits: Dict,
+    split: str,
+    index: int,
+    format_version: int,
+    dataset_metadata: Optional[Dict] = None
+) -> Dict:
+    """
+    Obtém metadados de um sample a partir de splits_metadata.json.
+    
+    Args:
+        splits: Dados carregados de splits_metadata.json
+        split: Nome do split (train/val/test)
+        index: Índice no split
+        format_version: Versão do formato (1=legado, 2=novo)
+        dataset_metadata: Metadados do dataset fonte (necessário para formato v1)
+        
+    Returns:
+        Dict com sample_id, superpopulation, population, sex
+    """
+    if format_version >= 2:
+        # Novo formato: metadados completos diretamente em splits_metadata.json
+        split_data = splits.get(split, [])
+        if index >= len(split_data):
+            return {"sample_id": f"#{index + 1}", "superpopulation": "UNK", "population": "UNK", "sex": 0}
+        return split_data[index]
+    else:
+        # Formato legado: precisa de dataset_metadata
+        split_key = f"{split}_indices"
+        split_indices = splits.get(split_key, [])
+        if index >= len(split_indices):
+            return {"sample_id": f"#{index + 1}", "superpopulation": "UNK", "population": "UNK", "sex": 0}
+        
+        global_index = split_indices[index]
+        
+        if dataset_metadata is None:
+            return {"sample_id": f"sample_{global_index}", "superpopulation": "UNK", "population": "UNK", "sex": 0}
+        
+        individuals = dataset_metadata.get('individuals', [])
+        individuals_pedigree = dataset_metadata.get('individuals_pedigree', {})
+        
+        if global_index >= len(individuals):
+            return {"sample_id": f"sample_{global_index}", "superpopulation": "UNK", "population": "UNK", "sex": 0}
+        
+        sample_id = individuals[global_index]
+        pedigree = individuals_pedigree.get(sample_id, {})
+        
+        return {
+            "sample_id": sample_id,
+            "superpopulation": pedigree.get("superpopulation", "UNK"),
+            "population": pedigree.get("population", "UNK"),
+            "sex": pedigree.get("sex", 0)
+        }
+
+
+def get_split_sample_count(splits: Dict, split: str, format_version: int) -> int:
+    """
+    Obtém o tamanho de um split.
+    
+    Args:
+        splits: Dados carregados de splits_metadata.json
+        split: Nome do split (train/val/test)
+        format_version: Versão do formato
+        
+    Returns:
+        Número de samples no split
+    """
+    if format_version >= 2:
+        return len(splits.get(split, []))
+    else:
+        split_key = f"{split}_indices"
+        return len(splits.get(split_key, []))
+
+
 def load_cache_data(
     cache_dir: Path,
     split: str,
     index: int,
     gene_filter: Optional[Union[str, List[str]]] = None
-) -> Tuple[np.ndarray, Dict, int]:
+) -> Tuple[np.ndarray, Dict, Optional[Dict]]:
     """
     Carrega dados do cache processado.
     
@@ -1155,14 +1276,14 @@ def load_cache_data(
         gene_filter: Gene(s) a filtrar. None = todos, string = um gene, lista = múltiplos genes
         
     Returns:
-        Tupla (features_array, metadata, global_index)
+        Tupla (features_array, metadata, sample_metadata)
         - features_array: Array numpy shape [num_genes*6, window_center_size]
         - metadata: Dicionário com metadados do cache
-        - global_index: Índice global do indivíduo (0-77)
+        - sample_metadata: Dicionário com metadados do sample (sample_id, superpopulation, etc)
     """
     cache_dir = Path(cache_dir)
     
-    # Carregar metadados
+    # Carregar metadados do cache
     metadata_file = cache_dir / 'metadata.json'
     if not metadata_file.exists():
         raise FileNotFoundError(f"Metadata não encontrado: {metadata_file}")
@@ -1171,24 +1292,15 @@ def load_cache_data(
         metadata = json.load(f)
     
     # Carregar splits
-    splits_file = cache_dir / 'splits.json'
-    if not splits_file.exists():
-        raise FileNotFoundError(f"Splits não encontrado: {splits_file}")
+    splits, format_version = load_splits_metadata(cache_dir)
     
-    with open(splits_file, 'r') as f:
-        splits = json.load(f)
+    # Verificar tamanho do split
+    split_size = get_split_sample_count(splits, split, format_version)
+    if split_size == 0:
+        raise ValueError(f"Split '{split}' não encontrado ou vazio. Opções: train, val, test")
     
-    # Obter índices do split selecionado
-    split_key = f"{split}_indices"
-    if split_key not in splits:
-        raise ValueError(f"Split '{split}' não encontrado. Opções: train, val, test")
-    
-    split_indices = splits[split_key]
-    
-    if index >= len(split_indices):
-        raise ValueError(f"Índice {index} fora do range para split '{split}' (max: {len(split_indices)-1})")
-    
-    global_index = split_indices[index]
+    if index >= split_size:
+        raise ValueError(f"Índice {index} fora do range para split '{split}' (max: {split_size - 1})")
     
     # Carregar dados do split
     data_file = cache_dir / f'{split}_data.pt'
@@ -1201,10 +1313,20 @@ def load_cache_data(
     features, target = data[index]
     features_array = features.numpy()  # Shape: [66, window_center_size]
     
-    # NÃO filtramos aqui - o filtro será aplicado depois que soubermos o sample_id
-    # (necessário para obter a ordem correta dos genes)
+    # Obter metadados do sample
+    # Para formato legado, precisamos carregar dataset_metadata
+    dataset_metadata = None
+    if format_version < 2:
+        dataset_dir_str = metadata.get('dataset_dir', '')
+        if dataset_dir_str:
+            dataset_metadata_file = Path(dataset_dir_str) / 'dataset_metadata.json'
+            if dataset_metadata_file.exists():
+                with open(dataset_metadata_file, 'r') as f:
+                    dataset_metadata = json.load(f)
     
-    return features_array, metadata, global_index
+    sample_metadata = get_sample_info(splits, split, index, format_version, dataset_metadata)
+    
+    return features_array, metadata, sample_metadata
 
 
 def filter_genes_from_features(
@@ -2167,21 +2289,28 @@ def process_sample_comparison_mode(
     dataset_dir = Path(config['dataset_dir'])
     
     # Determine sample_id
-    if config.get('sample_id'):
+    # If viewer is navigating, use index to get sample_id (ignore fixed sample_id in config)
+    if viewer is not None and splits_data:
+        split = config.get('split', 'train')
+        format_version = splits_data.get('format_version', 1)
+        sample_meta = get_sample_info(splits_data, split, index, format_version, dataset_metadata)
+        sample_id = sample_meta.get('sample_id', f"#{index + 1}")
+    elif config.get('sample_id'):
         sample_id = config['sample_id']
     else:
         # If comparison_mode is dataset_dir_x_cache_dir, use index from splits
         if comparison_mode == 'dataset_dir_x_cache_dir' and splits_data:
             split = config.get('split', 'train')
-            # splits_data has keys like 'train_indices', 'val_indices', 'test_indices'
-            split_key = f"{split}_indices"
-            split_indices = splits_data.get(split_key, [])
-            if index >= len(split_indices):
-                console.print(f"[red]Index {index} out of range for split {split} (size: {len(split_indices)})[/red]")
+            format_version = splits_data.get('format_version', 1)
+            split_size = get_split_sample_count(splits_data, split, format_version)
+            
+            if index >= split_size:
+                console.print(f"[red]Index {index} out of range for split {split} (size: {split_size})[/red]")
                 return False
-            # Get the actual index in dataset_metadata['individuals']
-            dataset_index = split_indices[index]
-            sample_id = dataset_metadata['individuals'][dataset_index]
+            
+            # Get sample_id using the helper function
+            sample_meta = get_sample_info(splits_data, split, index, format_version, dataset_metadata)
+            sample_id = sample_meta.get('sample_id', f"#{index + 1}")
         else:
             sample_id = dataset_metadata['individuals'][index]
     
@@ -2385,23 +2514,46 @@ def process_sample_comparison_mode(
                 # Mode 3: dataset_dir (normalized) vs cache_dir
                 console.print(f"[dim]  Loading dataset_dir data...[/dim]")
                 
-                # Load dataset_dir data
+                # Load dataset_dir data - returns [window_size, 6]
                 dataset_data, _ = _load_dataset_dir_predictions(
                     dataset_dir, sample_id, gene_name, window_size_key
                 )
                 
+                # Transpose to [6, window_size] for normalization
+                dataset_data_T = dataset_data.T  # [6, window_size]
+                
+                # Get gene index to select correct track_params
+                gene_idx = genes_in_order.index(gene_name)
+                track_offset = gene_idx * 6  # 6 tracks per gene
+                
+                # Create subset of norm_params for this gene's tracks
+                gene_norm_params = {
+                    'method': norm_params['method'],
+                    'per_track': norm_params.get('per_track', False)
+                }
+                if gene_norm_params['per_track'] and 'track_params' in norm_params:
+                    # Extract only the track_params for this gene
+                    all_track_params = norm_params['track_params']
+                    gene_norm_params['track_params'] = all_track_params[track_offset:track_offset + 6]
+                    console.print(f"[dim]  Using track_params[{track_offset}:{track_offset + 6}] for gene {gene_name}[/dim]")
+                else:
+                    # Copy global params
+                    for key in ['log_max', 'max', 'mean', 'std']:
+                        if key in norm_params:
+                            gene_norm_params[key] = norm_params[key]
+                
                 # Apply normalization
                 console.print(f"[dim]  Applying normalization...[/dim]")
                 norm_result = apply_normalization(
-                    dataset_data,  # Already numpy array
-                    norm_params['method'],
-                    norm_params
+                    dataset_data_T,  # [6, window_size]
+                    gene_norm_params['method'],
+                    gene_norm_params
                 )
                 # Convert to numpy if it's a tensor
                 if torch.is_tensor(norm_result):
-                    dataset_data_normalized = norm_result.numpy()
+                    dataset_data_normalized = norm_result.numpy()  # [6, window_size]
                 else:
-                    dataset_data_normalized = norm_result
+                    dataset_data_normalized = norm_result  # [6, window_size]
                 
                 # Load cache data
                 console.print(f"[dim]  Loading cache data...[/dim]")
@@ -2410,18 +2562,27 @@ def process_sample_comparison_mode(
                 
                 # Find index in split
                 if splits_data is None:
-                    splits_file = cache_dir / 'splits.json'
+                    splits_file = cache_dir / 'splits_metadata.json'
                     with open(splits_file) as f:
                         splits_data = json.load(f)
                 
-                # splits_data has keys like 'train_indices', not 'train'
-                # We need to find which split contains the sample and its position
-                # The sample_id was determined from dataset_metadata['individuals'][dataset_index]
-                # So we need to find dataset_index in one of the split_indices arrays
+                format_version = splits_data.get('format_version', 1)
                 split_found = None
                 cache_index = None
                 
-                # Get dataset_index from sample_id
+                if format_version >= 2:
+                    # New format: search for sample_id in split metadata
+                    for split_name in ['train', 'val', 'test']:
+                        split_data = splits_data.get(split_name, [])
+                        for idx, sample_meta in enumerate(split_data):
+                            if sample_meta.get('sample_id') == sample_id:
+                                cache_index = idx
+                                split_found = split_name
+                                break
+                        if split_found:
+                            break
+                else:
+                    # Legacy format: search by dataset index
                 dataset_index = dataset_metadata['individuals'].index(sample_id)
                 
                 for split_name in ['train', 'val', 'test']:
@@ -2436,7 +2597,7 @@ def process_sample_comparison_mode(
                             continue
                 
                 if split_found is None:
-                    console.print(f"[red]  Sample {sample_id} (index {dataset_index}) not found in any split[/red]")
+                    console.print(f"[red]  Sample {sample_id} not found in any split[/red]")
                     continue
                 
                 console.print(f"[dim]  Sample found in {split_found} split at cache index {cache_index}[/dim]")
@@ -2471,10 +2632,9 @@ def process_sample_comparison_mode(
                 
                 console.print(f"[dim]  Extracted cache tracks [{start_track}:{end_track}], shape: {cache_features.shape}[/dim]")
                 
-                # Transpose both to [6, window_size] for plotting
-                dataset_data_normalized_T = dataset_data_normalized.T  # [6, window_size]
-                
-                console.print(f"[dim]  dataset_data_normalized_T type: {type(dataset_data_normalized_T)}, cache_features type: {type(cache_features)}[/dim]")
+                # dataset_data_normalized is already [6, window_size] after normalization fix
+                console.print(f"[dim]  dataset_data_normalized type: {type(dataset_data_normalized)}, shape: {dataset_data_normalized.shape}[/dim]")
+                console.print(f"[dim]  cache_features type: {type(cache_features)}[/dim]")
                 
                 # Make sure cache_features is a numpy array
                 if torch.is_tensor(cache_features):
@@ -2482,21 +2642,28 @@ def process_sample_comparison_mode(
                 else:
                     cache_features_np = cache_features
                 
-                # Extract central region from dataset_data to match cache window_size
-                dataset_window_size = dataset_data_normalized_T.shape[1]  # e.g., 102400
-                cache_window_size = cache_features_np.shape[1]  # e.g., 10000
+                # Match window sizes by extracting central region from the larger one
+                dataset_window_size = dataset_data_normalized.shape[1]  # e.g., 16384
+                cache_window_size = cache_features_np.shape[1]  # e.g., 32768
                 
                 console.print(f"[dim]  Dataset window: {dataset_window_size}, Cache window: {cache_window_size}[/dim]")
                 
                 if dataset_window_size > cache_window_size:
-                    # Extract center from dataset_data using centralized function
-                    dataset_data_trimmed = extract_center_window(dataset_data_normalized_T, cache_window_size, axis=1)
+                    # Extract center from dataset_data to match cache
+                    dataset_data_trimmed = extract_center_window(dataset_data_normalized, cache_window_size, axis=1)
+                    cache_data_trimmed = cache_features_np
                     console.print(f"[dim]  Trimmed dataset_data to cache window size: {dataset_data_trimmed.shape}[/dim]")
+                elif cache_window_size > dataset_window_size:
+                    # Extract center from cache to match dataset_data
+                    cache_data_trimmed = extract_center_window(cache_features_np, dataset_window_size, axis=1)
+                    dataset_data_trimmed = dataset_data_normalized
+                    console.print(f"[dim]  Trimmed cache to dataset window size: {cache_data_trimmed.shape}[/dim]")
                 else:
-                    dataset_data_trimmed = dataset_data_normalized_T
+                    dataset_data_trimmed = dataset_data_normalized
+                    cache_data_trimmed = cache_features_np
                 
-                data1 = dataset_data_trimmed  # [6, cache_window_size]
-                data2 = cache_features_np  # [6, cache_window_size]
+                data1 = dataset_data_trimmed  # [6, window_size]
+                data2 = cache_data_trimmed  # [6, window_size]
                 
                 label1 = "Dataset Dir (normalized)"
                 label2 = "Cache Dir"
@@ -2526,6 +2693,12 @@ def process_sample_comparison_mode(
                     fig.savefig(output_path / filename, dpi=150, bbox_inches='tight')
                     console.print(f"[green]✓ Saved: {output_path / filename}[/green]")
             
+            # Interactive mode: store figure in viewer, don't show yet
+            if viewer is not None:
+                viewer.fig = fig
+                # Return after first gene in interactive mode
+                return True
+            else:
             plt.show()
             
         except Exception as e:
@@ -2812,7 +2985,7 @@ def main():
         norm_params = None
         if comparison_mode == 'dataset_dir_x_cache_dir':
             cache_dir = Path(config['cache_dir'])
-            splits_file = cache_dir / 'splits.json'
+            splits_file = cache_dir / 'splits_metadata.json'
             with open(splits_file) as f:
                 splits_data = json.load(f)
             
@@ -2821,6 +2994,99 @@ def main():
                 norm_params = json.load(f)
         
         # Process sample in comparison mode
+        if config.get('interactive_mode', False):
+            # Create splits_data if not available (for modes without cache)
+            if splits_data is None:
+                # Create fake splits_data based on dataset_metadata individuals
+                individuals = dataset_metadata.get('individuals', [])
+                individuals_pedigree = dataset_metadata.get('individuals_pedigree', {})
+                
+                # Build metadata for all individuals
+                all_samples = []
+                for ind in individuals:
+                    pedigree = individuals_pedigree.get(ind, {})
+                    all_samples.append({
+                        'sample_id': ind,
+                        'superpopulation': pedigree.get('superpopulation', 'UNK'),
+                        'population': pedigree.get('population', 'UNK'),
+                        'sex': pedigree.get('sex', 0)
+                    })
+                
+                splits_data = {
+                    'format_version': 2,
+                    'train': all_samples,
+                    'val': [],
+                    'test': []
+                }
+                # Force split to 'train' for navigation
+                config['split'] = 'train'
+            
+            # Check interactive_comparison_mode
+            interactive_mode_type = config.get('interactive_comparison_mode', 'single')
+            
+            if interactive_mode_type == 'comparison':
+                # Modo de comparação entre dois indivíduos
+                metadata_csv = config.get('data_sources', {}).get('metadata_csv')
+                if metadata_csv is None:
+                    metadata_csv = "../docs/1000_genomes_metadata.csv"
+                
+                viewer = InteractiveComparisonViewer(
+                    config, splits_data, dataset_metadata, metadata_csv
+                )
+                
+                console.print(f"[cyan]Modo de comparação interativa:[/cyan]")
+                console.print(f"  • Split: {viewer.current_split}")
+                console.print(f"  • Total de amostras: {viewer.split_size}")
+                console.print(f"  • Genes: {viewer.available_genes}")
+                console.print(f"[yellow]  • ← → (ambos), A D (ind2), W Z (genes), Q (sair)[/yellow]\n")
+                
+                # Interactive loop for comparison mode
+                while not viewer.should_exit:
+                    current_gene = viewer.get_current_gene()
+                    
+                    # Use process_sample_comparison_mode for each individual separately
+                    # and combine in a comparison view
+                    fig = process_comparison_sample(
+                        config, viewer.current_index_1, viewer.current_index_2,
+                        current_gene, splits_data, dataset_metadata, viewer
+                    )
+                    
+                    if fig is not None:
+                        viewer.fig = fig
+                        fig.canvas.mpl_connect('key_press_event', viewer.on_key_press)
+                        plt.show()
+                    else:
+                        break
+                
+                console.print("\n[bold green]✓ Interactive comparison session ended[/bold green]\n")
+            else:
+                # Modo single - um indivíduo por vez
+                viewer = InteractiveViewer(config, splits_data, dataset_metadata)
+                
+                console.print(f"[yellow]Modo interativo: Use ← → para navegar, 'q' para sair[/yellow]\n")
+                
+                # Interactive loop
+                while not viewer.should_exit:
+                    success = process_sample_comparison_mode(
+                        config, viewer.current_index, dataset_metadata,
+                        splits_data=splits_data,
+                        norm_params=norm_params,
+                        viewer=viewer
+                    )
+                    
+                    if not success:
+                        break
+                    
+                    # Connect keyboard handler if figure exists
+                    if viewer.fig is not None:
+                        viewer.fig.canvas.mpl_connect('key_press_event', viewer.on_key_press)
+                        plt.show()
+                
+                console.print("\n[bold green]✓ Interactive session ended[/bold green]\n")
+            
+            return
+        else:
+            # Non-interactive: process single sample
         index = config.get('index', 0)
         success = process_sample_comparison_mode(
             config, index, dataset_metadata, 
@@ -2877,7 +3143,7 @@ def main():
         else:
             # Normal comparison mode
             # Carregar splits
-            with open(cache_dir / 'splits.json', 'r') as f:
+            with open(cache_dir / 'splits_metadata.json', 'r') as f:
                 splits_data = json.load(f)
             
             # Carregar normalization params
