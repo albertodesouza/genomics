@@ -2724,6 +2724,7 @@ class Tester:
         self.interp_save_images = interp_config.get('save_images', True)
         self.interp_output_dir = interp_config.get('output_dir', 'interpretability_results')
         self.deeplift_baseline = interp_config.get('deeplift', {}).get('baseline', 'zeros')
+        self.gradcam_target_class = interp_config.get('gradcam', {}).get('target_class', 'predicted')
         
         # Inicializar objetos de interpretabilidade
         self.gradcam = None
@@ -2803,11 +2804,28 @@ class Tester:
         # Compute interpretability maps if enabled
         gradcam_map = None
         deeplift_map = None
+        gradcam_target_class_idx = None
+        gradcam_target_class_name = None
         
         if self.interpretability_enabled:
             if self.gradcam is not None:
                 try:
-                    gradcam_map, _ = self.gradcam.generate(features.clone(), target_class=predicted_idx)
+                    # Determine target class for Grad-CAM
+                    if self.gradcam_target_class == 'predicted':
+                        gradcam_target_class_idx = predicted_idx
+                        gradcam_target_class_name = predicted_name
+                    else:
+                        # Map class name to index
+                        class_name_to_idx = {name: i for i, name in enumerate(class_names)}
+                        if self.gradcam_target_class in class_name_to_idx:
+                            gradcam_target_class_idx = class_name_to_idx[self.gradcam_target_class]
+                            gradcam_target_class_name = self.gradcam_target_class
+                        else:
+                            console.print(f"[yellow]⚠ Classe '{self.gradcam_target_class}' não encontrada, usando predita[/yellow]")
+                            gradcam_target_class_idx = predicted_idx
+                            gradcam_target_class_name = predicted_name
+                    
+                    gradcam_map, _ = self.gradcam.generate(features.clone(), target_class=gradcam_target_class_idx)
                 except Exception as e:
                     console.print(f"[yellow]⚠ Erro ao gerar Grad-CAM: {e}[/yellow]")
             
@@ -2828,12 +2846,12 @@ class Tester:
         num_interp_panels = (1 if has_gradcam else 0) + (1 if has_deeplift else 0)
         
         # Calculate number of rows for subplot
-        # Row 1: Input + CAM overlay (or just input)
+        # Row 1: Input features
         # Row 2: Interpretability maps (if any)
         # Row 3 (or 2): Output probabilities
         if num_interp_panels > 0:
             num_rows_subplot = 3
-            fig_height = 12
+            fig_height = 14  # Increased for better spacing between plots
         else:
             num_rows_subplot = 2
             fig_height = 8
@@ -2868,22 +2886,11 @@ class Tester:
             else:
                 img_normalized = np.zeros_like(img_resized)
             
-            # Plot as image
+            # Plot as image (without overlay - interpretability maps shown separately)
             plt.imshow(img_normalized, cmap='gray', aspect='auto', interpolation='nearest')
             
-            # Overlay Grad-CAM heatmap if available
-            if has_gradcam:
-                cam_np = gradcam_map.numpy()
-                # Resize CAM to match visualization size
-                cam_resized = ndimage.zoom(cam_np, zoom_factors, order=1)
-                # Overlay with transparency
-                plt.imshow(cam_resized, cmap='jet', aspect='auto', alpha=0.4, interpolation='nearest')
-                title_suffix = " + Grad-CAM overlay"
-            else:
-                title_suffix = ""
-            
             plt.xlabel('Gene Position (rescaled)', fontsize=12)
-            plt.title(f'{self.dataset_name.upper()} | Sample {sample_id} | Input 2D ({img_data.shape[0]}x{img_data.shape[1]}){title_suffix}', 
+            plt.title(f'{self.dataset_name.upper()} | Sample {sample_id} | Input 2D ({img_data.shape[0]}x{img_data.shape[1]})', 
                      fontsize=14, fontweight='bold')
             plt.colorbar(label='Normalized Value')
             
@@ -2940,18 +2947,30 @@ class Tester:
                 plt.sca(ax_gc)
                 im_gc = plt.imshow(cam_resized, cmap='hot', aspect='auto', interpolation='nearest')
                 plt.colorbar(im_gc, label='Activation')
-                plt.title('Grad-CAM: Regiões Importantes para Predição', fontsize=12, fontweight='bold')
-                plt.xlabel('Gene Position', fontsize=10)
+                # Show which class is being visualized
+                gc_class_label = gradcam_target_class_name if gradcam_target_class_name else predicted_name
+                plt.title(f'Grad-CAM: Important Regions for Class {gc_class_label}', fontsize=14, fontweight='bold')
+                plt.xlabel('Gene Position (rescaled)', fontsize=12)
                 
-                # Configure Y axis
+                # Configure Y axis (same style as first plot)
                 num_genes = len(gene_names)
                 if features_cpu.shape[1] == num_genes * tracks_per_gene:
                     pixels_per_row = viz_height / features_cpu.shape[1]
+                    
+                    # Major ticks at gene boundaries
+                    y_major_ticks = [i * tracks_per_gene * pixels_per_row for i in range(num_genes + 1)]
+                    ax_gc.set_yticks(y_major_ticks)
+                    ax_gc.set_yticklabels([''] * len(y_major_ticks))
+                    ax_gc.tick_params(axis='y', which='major', length=8, width=0.8)
+                    
+                    # Minor ticks at center of each gene for labels
                     y_minor_ticks = [(i * tracks_per_gene + tracks_per_gene / 2) * pixels_per_row 
                                      for i in range(num_genes)]
-                    ax_gc.set_yticks(y_minor_ticks)
-                    ax_gc.set_yticklabels(gene_names, fontsize=9)
-                    ax_gc.set_ylabel('Genes', fontsize=10)
+                    ax_gc.set_yticks(y_minor_ticks, minor=True)
+                    ax_gc.set_yticklabels(gene_names, minor=True, fontsize=10)
+                    ax_gc.tick_params(axis='y', which='minor', length=0)
+                    
+                    ax_gc.set_ylabel('Genes', fontsize=12)
                 
                 # Compute gene importance (sum per gene)
                 gene_importance = []
@@ -2986,18 +3005,28 @@ class Tester:
                 im_dl = plt.imshow(dl_resized, cmap='RdBu_r', aspect='auto', 
                                   interpolation='nearest', vmin=-1, vmax=1)
                 plt.colorbar(im_dl, label='Attribution (+ → class, - → not class)')
-                plt.title('DeepLIFT: Atribuição por Feature', fontsize=12, fontweight='bold')
-                plt.xlabel('Gene Position', fontsize=10)
+                plt.title('DeepLIFT: Feature Attribution', fontsize=14, fontweight='bold')
+                plt.xlabel('Gene Position (rescaled)', fontsize=12)
                 
-                # Configure Y axis
+                # Configure Y axis (same style as first plot)
                 num_genes = len(gene_names)
                 if features_cpu.shape[1] == num_genes * tracks_per_gene:
                     pixels_per_row = viz_height / features_cpu.shape[1]
+                    
+                    # Major ticks at gene boundaries
+                    y_major_ticks = [i * tracks_per_gene * pixels_per_row for i in range(num_genes + 1)]
+                    ax_dl.set_yticks(y_major_ticks)
+                    ax_dl.set_yticklabels([''] * len(y_major_ticks))
+                    ax_dl.tick_params(axis='y', which='major', length=8, width=0.8)
+                    
+                    # Minor ticks at center of each gene for labels
                     y_minor_ticks = [(i * tracks_per_gene + tracks_per_gene / 2) * pixels_per_row 
                                      for i in range(num_genes)]
-                    ax_dl.set_yticks(y_minor_ticks)
-                    ax_dl.set_yticklabels(gene_names, fontsize=9)
-                    ax_dl.set_ylabel('Genes', fontsize=10)
+                    ax_dl.set_yticks(y_minor_ticks, minor=True)
+                    ax_dl.set_yticklabels(gene_names, minor=True, fontsize=10)
+                    ax_dl.tick_params(axis='y', which='minor', length=0)
+                    
+                    ax_dl.set_ylabel('Genes', fontsize=12)
                 
                 # Compute gene importance (sum of absolute values per gene)
                 gene_importance = []
@@ -3044,7 +3073,9 @@ class Tester:
                 fontsize=11, verticalalignment='top', horizontalalignment='right',
                 bbox=dict(boxstyle='round', facecolor=color, alpha=0.3))
         
+        # Adjust layout with more vertical spacing between subplots
         plt.tight_layout()
+        plt.subplots_adjust(hspace=0.35)  # Increase vertical spacing between plots
         
         # ─────────────────────────────────────────────────────────────────
         # Save image if enabled

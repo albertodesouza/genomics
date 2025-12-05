@@ -492,7 +492,7 @@ wandb:
   # true = loga métricas, gráficos, confusion matrix no W&B
   # false = não usa W&B
   # Requer: pip install wandb && wandb login
-  use_wandb: true
+  use_wandb: false
   
   # Nome do projeto no W&B
   project_name: "neural-ancestry-predictor-genes-1000"
@@ -539,7 +539,7 @@ debug:
   # true = mostra gráfico com entrada/saída após cada batch (pressione Enter para continuar)
   # false = treino normal sem visualização
   # IMPORTANTE: Quando true, força batch_size=1 automaticamente
-  enable_visualization: false
+  enable_visualization: true
   
   # Número máximo de amostras a visualizar por época
   # null = visualiza todas as amostras da época
@@ -583,7 +583,7 @@ debug:
     # Habilitar análise de interpretabilidade
     # true = gera mapas de importância durante teste com visualização
     # false = visualização normal sem interpretabilidade
-    enabled: false
+    enabled: true
     
     # Método de interpretabilidade a usar
     # Opções: "gradcam", "deeplift", "both"
@@ -605,6 +605,13 @@ debug:
       # Para CNN: usa conv1
       # Para CNN2: usa última conv em features (Stage 3)
       target_layer: "auto"
+      
+      # Classe alvo para gerar o mapa de ativação
+      # "predicted" = usa a classe predita pela rede (padrão)
+      # "AFR", "AMR", "EAS", "EUR", "SAS" = classe específica
+      # Isso permite visualizar quais regiões ativam uma classe específica,
+      # independente do que a rede prediz para a amostra
+      target_class: "AFR"
     
     # Configuração específica do DeepLIFT
     deeplift:
@@ -622,13 +629,13 @@ debug:
 # "train": Treina a rede neural
 # "test": Carrega checkpoint e testa no conjunto especificado em test_dataset
 # Pode ser sobrescrito via --mode na linha de comando
-mode: "train"
+mode: "test"
 
 # Conjunto de dados a ser usado no modo test
 # "test": Conjunto de teste (padrão)
 # "train": Conjunto de treinamento
 # "val": Conjunto de validação
-test_dataset: "test"
+test_dataset: "train"
 
 # ═══════════════════════════════════════════════════════════════════
 # NOTAS DE USO
