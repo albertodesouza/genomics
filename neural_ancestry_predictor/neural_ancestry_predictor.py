@@ -2616,22 +2616,17 @@ class Trainer:
                         if save_during_training:
                             self.save_checkpoint(epoch, 'best_accuracy')
                     
-                    # Atualizar learning rate scheduler
-                    if self.scheduler is not None:
-                        if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
-                            # ReduceLROnPlateau precisa da métrica monitorada
-                            scheduler_config = self.config['training']['lr_scheduler']
-                            if scheduler_config.get('mode', 'min') == 'min':
-                                self.scheduler.step(val_loss)
-                            else:  # mode == 'max'
-                                self.scheduler.step(val_accuracy)
-                        else:
-                            # Outros schedulers não precisam de métrica
-                            self.scheduler.step()
-                # else:
-                #     # Liberar memória dos datasets
-                #     if hasattr(self.train_loader.dataset, 'unload_data'):
-                #         self.train_loader.dataset.unload_data()
+                    # Atualizar ReduceLROnPlateau (precisa da métrica, só quando valida)
+                    if self.scheduler is not None and isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+                        scheduler_config = self.config['training']['lr_scheduler']
+                        if scheduler_config.get('mode', 'min') == 'min':
+                            self.scheduler.step(val_loss)
+                        else:  # mode == 'max'
+                            self.scheduler.step(val_accuracy)
+                
+                # Atualizar schedulers baseados em época (TODA época, fora do bloco de validação)
+                if self.scheduler is not None and not isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+                    self.scheduler.step()
                             
                 # Salvar checkpoint periódico (apenas se habilitado)
                 save_during_training = self.config['checkpointing'].get('save_during_training', True)

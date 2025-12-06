@@ -364,7 +364,7 @@ training:
   
   # Taxa de aprendizado (learning rate)
   # Valores típicos: 0.001 (1e-3) a 0.0001 (1e-4)
-  learning_rate: 0.001
+  learning_rate: 0.0005
   
   # Função de loss
   # "cross_entropy": Para classificação (superpopulation, population)
@@ -375,11 +375,11 @@ training:
   # Valores maiores = treinamento mais estável, mais memória
   # Valores menores = mais atualizações, menos memória
   # Deve ser ajustado de acordo com tamanho do dataset
-  batch_size: 10
+  batch_size: 50
   
   # Número de épocas de treinamento
   # Uma época = passar por todo o dataset de treino uma vez
-  num_epochs: 450
+  num_epochs: 400
   
   # Frequência de validação (em épocas)
   # A cada N épocas, executa validação
@@ -424,7 +424,7 @@ training:
     
     # ─── Configurações para CosineAnnealingLR ───
     # Número de épocas para completar o ciclo
-    T_max: 150
+    T_max: 300
     
     # LR mínimo no final do ciclo
     eta_min: 0.000001
