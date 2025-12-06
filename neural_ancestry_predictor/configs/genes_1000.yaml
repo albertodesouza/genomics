@@ -198,7 +198,7 @@ model:
   # 0.0 = sem dropout
   # Valores típicos: 0.2 a 0.5
   # Ajuda a prevenir overfitting
-  dropout_rate: 0.4
+  dropout_rate: 0.5
   
   # Parâmetros específicos para CNN (ignorados se type='NN')
   cnn:
@@ -297,14 +297,14 @@ model:
     
     # Tamanho da camada fully connected intermediária
     # Após global pooling, temos ~700 features → fc_hidden_size → num_classes
-    fc_hidden_size: 128
+    fc_hidden_size: 256
     
     # Tipo de global pooling: "max" ou "avg"
     # max: captura features mais salientes (picos de expressão) - recomendado
     # avg: média dos valores (preserva informação geral)
     # NOTA: Ambos são determinísticos. AdaptiveAvgPool2d NÃO é usado porque
     #       não tem implementação determinística no backward pass em CUDA.
-    global_pool_type: "avg"
+    global_pool_type: "max"
 
 # ───────────────────────────────────────────────────────────────────
 # D) DATA LOADING
@@ -492,7 +492,7 @@ wandb:
   # true = loga métricas, gráficos, confusion matrix no W&B
   # false = não usa W&B
   # Requer: pip install wandb && wandb login
-  use_wandb: false
+  use_wandb: true
   
   # Nome do projeto no W&B
   project_name: "neural-ancestry-predictor-genes-1000"
