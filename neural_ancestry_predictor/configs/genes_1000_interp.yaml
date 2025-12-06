@@ -304,7 +304,7 @@ model:
     # avg: média dos valores (preserva informação geral)
     # NOTA: Ambos são determinísticos. AdaptiveAvgPool2d NÃO é usado porque
     #       não tem implementação determinística no backward pass em CUDA.
-    global_pool_type: "avg"
+    global_pool_type: "max"
 
 # ───────────────────────────────────────────────────────────────────
 # D) DATA LOADING
@@ -539,7 +539,7 @@ debug:
   # true = mostra gráfico com entrada/saída após cada batch (pressione Enter para continuar)
   # false = treino normal sem visualização
   # IMPORTANTE: Quando true, força batch_size=1 automaticamente
-  enable_visualization: false
+  enable_visualization: true
   
   # Número máximo de amostras a visualizar por época
   # null = visualiza todas as amostras da época
@@ -583,7 +583,7 @@ debug:
     # Habilitar análise de interpretabilidade
     # true = gera mapas de importância durante teste com visualização
     # false = visualização normal sem interpretabilidade
-    enabled: false
+    enabled: true
     
     # Método de interpretabilidade a usar
     # Opções: "gradcam", "deeplift", "both"
@@ -629,13 +629,13 @@ debug:
 # "train": Treina a rede neural
 # "test": Carrega checkpoint e testa no conjunto especificado em test_dataset
 # Pode ser sobrescrito via --mode na linha de comando
-mode: "train"
+mode: "test"
 
 # Conjunto de dados a ser usado no modo test
 # "test": Conjunto de teste (padrão)
 # "train": Conjunto de treinamento
 # "val": Conjunto de validação
-test_dataset: "test"
+test_dataset: "train"
 
 # ═══════════════════════════════════════════════════════════════════
 # NOTAS DE USO

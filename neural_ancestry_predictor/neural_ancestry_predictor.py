@@ -1821,10 +1821,15 @@ class GradCAM:
             target_class = output.argmax(dim=1).item()
         
         # Backward pass para a classe alvo
+        # Estratégia inversa: propagar gradiente das outras classes para evitar
+        # saturação quando a classe alvo tem probabilidade muito alta.
+        # Gradiente = 0 para classe alvo, 1/(N-1) para as demais.
+        # Isso captura "o que reduz as outras classes" ≈ "o que ativa a classe alvo"
         self.model.zero_grad()
-        one_hot = torch.zeros_like(output)
-        one_hot[0, target_class] = 1
-        output.backward(gradient=one_hot, retain_graph=True)
+        num_classes = output.shape[1]
+        gradient = torch.ones_like(output) / (num_classes - 1)
+        gradient[0, target_class] = 0
+        output.backward(gradient=gradient, retain_graph=True)
         
         # Calcular pesos (média global dos gradientes por canal)
         # gradients shape: [batch, channels, height, width]
@@ -1837,10 +1842,8 @@ class GradCAM:
         # ReLU para manter apenas contribuições positivas
         cam = torch.relu(cam)
         
-        # Normalizar para [0, 1]
+        # Sem normalização - manter valores originais do CAM
         cam = cam.squeeze()  # [height, width]
-        if cam.max() > 0:
-            cam = cam / cam.max()
         
         # Interpolar para tamanho da entrada original
         # Obter dimensão original da entrada (após seleção de genes)
@@ -2945,7 +2948,8 @@ class Tester:
                 cam_resized = ndimage.zoom(cam_np, zoom_factors, order=1)
                 
                 plt.sca(ax_gc)
-                im_gc = plt.imshow(cam_resized, cmap='hot', aspect='auto', interpolation='nearest')
+                im_gc = plt.imshow(cam_resized, cmap='hot', aspect='auto', interpolation='nearest',
+                                   vmin=0.0, vmax=0.0025)
                 plt.colorbar(im_gc, label='Activation')
                 # Show which class is being visualized
                 gc_class_label = gradcam_target_class_name if gradcam_target_class_name else predicted_name
