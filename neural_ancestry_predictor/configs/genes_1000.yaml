@@ -619,6 +619,11 @@ debug:
       # "zeros" = tensor de zeros (padrão, simples)
       # "mean" = média de todas as amostras do dataset de teste
       baseline: "zeros"
+      
+      # Classe alvo para gerar as atribuições
+      # "predicted" = usa a classe predita pela rede (padrão)
+      # "AFR", "AMR", "EAS", "EUR", "SAS" = classe específica
+      target_class: "predicted"
 
 # ───────────────────────────────────────────────────────────────────
 # J) MODE

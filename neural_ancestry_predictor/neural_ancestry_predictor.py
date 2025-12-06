@@ -2727,6 +2727,7 @@ class Tester:
         self.interp_save_images = interp_config.get('save_images', True)
         self.interp_output_dir = interp_config.get('output_dir', 'interpretability_results')
         self.deeplift_baseline = interp_config.get('deeplift', {}).get('baseline', 'zeros')
+        self.deeplift_target_class = interp_config.get('deeplift', {}).get('target_class', 'predicted')
         self.gradcam_target_class = interp_config.get('gradcam', {}).get('target_class', 'predicted')
         
         # Inicializar objetos de interpretabilidade
@@ -2834,9 +2835,21 @@ class Tester:
             
             if self.deeplift is not None:
                 try:
+                    # Determine target class for DeepLIFT
+                    if self.deeplift_target_class == 'predicted':
+                        deeplift_target_class_idx = predicted_idx
+                    else:
+                        # Map class name to index
+                        class_name_to_idx = {name: i for i, name in enumerate(class_names)}
+                        if self.deeplift_target_class in class_name_to_idx:
+                            deeplift_target_class_idx = class_name_to_idx[self.deeplift_target_class]
+                        else:
+                            console.print(f"[yellow]⚠ Classe '{self.deeplift_target_class}' não encontrada, usando predita[/yellow]")
+                            deeplift_target_class_idx = predicted_idx
+                    
                     deeplift_map, _ = self.deeplift.generate(
                         features.clone(), 
-                        target_class=predicted_idx,
+                        target_class=deeplift_target_class_idx,
                         baseline_type=self.deeplift_baseline,
                         dataset=self.dataset
                     )
@@ -2996,18 +3009,24 @@ class Tester:
             if has_deeplift:
                 dl_np = deeplift_map.numpy()
                 
-                # Normalize DeepLIFT (can be positive or negative)
-                dl_abs_max = np.abs(dl_np).max()
-                if dl_abs_max > 0:
-                    dl_normalized = dl_np / dl_abs_max  # Range [-1, 1]
-                else:
-                    dl_normalized = dl_np
-                
-                dl_resized = ndimage.zoom(dl_normalized, zoom_factors, order=1)
+                # Sem normalização - manter valores originais
+                dl_resized = ndimage.zoom(dl_np, zoom_factors, order=1)
                 
                 plt.sca(ax_dl)
-                im_dl = plt.imshow(dl_resized, cmap='RdBu_r', aspect='auto', 
-                                  interpolation='nearest', vmin=-1, vmax=1)
+                
+                # Colormap personalizado: preto no centro, clareando para os extremos
+                # Azul claro (negativo) <- Preto (zero) -> Vermelho claro (positivo)
+                from matplotlib.colors import LinearSegmentedColormap
+                colors_diverging = [
+                    (0.6, 0.8, 1.0),   # Azul claro (negativo máximo)
+                    (0.0, 0.0, 0.0),   # Preto (zero)
+                    (1.0, 0.7, 0.6)    # Vermelho claro (positivo máximo)
+                ]
+                cmap_black_center = LinearSegmentedColormap.from_list('black_center', colors_diverging)
+                
+                # Escala fixa para comparação entre amostras
+                im_dl = plt.imshow(dl_resized, cmap=cmap_black_center, aspect='auto', 
+                                  interpolation='nearest', vmin=-0.10, vmax=0.10)
                 plt.colorbar(im_dl, label='Attribution (+ → class, - → not class)')
                 plt.title('DeepLIFT: Feature Attribution', fontsize=14, fontweight='bold')
                 plt.xlabel('Gene Position (rescaled)', fontsize=12)
