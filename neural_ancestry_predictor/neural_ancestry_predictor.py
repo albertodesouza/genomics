@@ -2116,6 +2116,17 @@ class Trainer:
                 )
                 console.print(f"[green]✓ LR Scheduler: MultiStepLR (milestones={scheduler_config.get('milestones', [30, 60, 90])})[/green]")
             
+            elif scheduler_type == 'cosine_warm_restarts':
+                T_0 = scheduler_config.get('T_0', 50)
+                T_mult = scheduler_config.get('T_mult', 1)
+                self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                    self.optimizer,
+                    T_0=T_0,
+                    T_mult=T_mult,
+                    eta_min=scheduler_config.get('eta_min', 1e-6)
+                )
+                console.print(f"[green]✓ LR Scheduler: CosineAnnealingWarmRestarts (T_0={T_0}, T_mult={T_mult})[/green]")
+            
             else:
                 console.print(f"[yellow]⚠ Scheduler type '{scheduler_type}' não reconhecido, continuando sem scheduler[/yellow]")
                 self.scheduler = None

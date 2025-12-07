@@ -263,6 +263,7 @@ training:
     # "plateau": Reduz quando métrica para de melhorar (recomendado)
     # "step": Reduz em intervalos fixos de épocas
     # "cosine": Redução suave seguindo curva cosseno
+    # "cosine_warm_restarts": Cosseno com reinícios periódicos
     # "exponential": Redução exponencial constante
     # "multistep": Reduz em épocas específicas
     type: "plateau"
@@ -293,6 +294,15 @@ training:
     
     # LR mínimo no final do ciclo
     # eta_min: 0.000001
+    
+    # ─── Configurações para CosineAnnealingWarmRestarts ───
+    # Épocas para o primeiro ciclo (restart)
+    # T_0: 50
+    
+    # Fator multiplicador do período após cada restart
+    # T_mult=1: ciclos iguais (50, 50, 50...)
+    # T_mult=2: ciclos crescentes (50, 100, 200...)
+    # T_mult: 2
     
     # ─── Configurações para ExponentialLR ───
     # Fator de decaimento por época (lr = lr * gamma)
