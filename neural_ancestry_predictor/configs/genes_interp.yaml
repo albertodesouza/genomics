@@ -18,7 +18,7 @@
 dataset_input:
   # Caminho para o diretório do dataset PyTorch
   # Deve conter individuals/ e dataset_metadata.json
-  dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000"
+  dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes"
   
   # Lista de outputs AlphaGenome a usar como entrada
   # Opções disponíveis: rna_seq, atac, cage, chip_histone, chip_tf, dnase, etc.
@@ -132,7 +132,7 @@ dataset_input:
   # O cache inclui: dados normalizados, splits de treino/val/teste, e metadados
   # Ideal para múltiplas execuções com mesmo dataset e mesmos parâmetros
   # null = desabilita cache; "processed_datasets/default_cache" = habilita
-  processed_cache_dir: /dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes_1000
+  processed_cache_dir: /dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes
 
 # ───────────────────────────────────────────────────────────────────
 # B) OUTPUT PARAMETERS
@@ -198,7 +198,7 @@ model:
   # 0.0 = sem dropout
   # Valores típicos: 0.2 a 0.5
   # Ajuda a prevenir overfitting
-  dropout_rate: 0.4
+  dropout_rate: 0.5
   
   # Parâmetros específicos para CNN (ignorados se type='NN')
   cnn:
@@ -297,7 +297,7 @@ model:
     
     # Tamanho da camada fully connected intermediária
     # Após global pooling, temos ~700 features → fc_hidden_size → num_classes
-    fc_hidden_size: 128
+    fc_hidden_size: 256
     
     # Tipo de global pooling: "max" ou "avg"
     # max: captura features mais salientes (picos de expressão) - recomendado
@@ -375,11 +375,11 @@ training:
   # Valores maiores = treinamento mais estável, mais memória
   # Valores menores = mais atualizações, menos memória
   # Deve ser ajustado de acordo com tamanho do dataset
-  batch_size: 10
+  batch_size: 50
   
   # Número de épocas de treinamento
   # Uma época = passar por todo o dataset de treino uma vez
-  num_epochs: 450
+  num_epochs: 300
   
   # Frequência de validação (em épocas)
   # A cada N épocas, executa validação
@@ -414,7 +414,7 @@ training:
     patience: 30
     
     # Learning rate mínimo (não reduz abaixo disso)
-    min_lr: 0.000001
+    min_lr: 0.0000001
     
     # ─── Configurações para StepLR ───
     # Reduz a cada N épocas
@@ -425,10 +425,10 @@ training:
     
     # ─── Configurações para CosineAnnealingLR ───
     # Número de épocas para completar o ciclo
-    T_max: 150
+    T_max: 300
     
     # LR mínimo no final do ciclo
-    eta_min: 0.000001
+    eta_min: 0.0000001
     
     # ─── Configurações para CosineAnnealingWarmRestarts ───
     # Épocas para o primeiro ciclo (restart)
@@ -437,7 +437,7 @@ training:
     # Fator multiplicador do período após cada restart
     # T_mult=1: ciclos iguais (50, 50, 50...)
     # T_mult=2: ciclos crescentes (50, 100, 200...)
-    T_mult: 2
+    T_mult: 1
     
     # ─── Configurações para ExponentialLR ───
     # Fator de decaimento por época (lr = lr * gamma)
@@ -505,7 +505,7 @@ wandb:
   use_wandb: false
   
   # Nome do projeto no W&B
-  project_name: "neural-ancestry-predictor-genes-1000"
+  project_name: "neural-ancestry-predictor-genes-tainted"
   
   # Nome do run (opcional)
   # null = usa o nome do experimento automaticamente (ex: cnn_atac_H1_1002_log_k5x5_f20_s5_p0_L100-40_relu_0.0_adam)
@@ -568,6 +568,7 @@ debug:
     width: 600   # Largura da imagem visualizada
     height: 660  # Altura aumentada para 66 tracks (10 pixels/track)
   
+  # ─────────────────────────────────────────────────────────────────
   # Tainting de amostras para debug
   # ─────────────────────────────────────────────────────────────────
   # Cria blocos de valor em posições específicas baseadas na classe
@@ -585,19 +586,19 @@ debug:
   # Tipo de tainting:
   # - "additive": Mantém dados originais + coloca taint
   # - "override": Zera TODA a entrada e coloca APENAS o taint
-  taint_type: "override"
+  taint_type: "additive"
   
   # Valor do taint (após normalização)
-  taint_value: 1.0
+  taint_value: 10.0
   
   # Tamanho do bloco de taint
-  taint_horizontal_size: 6   # Largura do bloco em colunas
+  taint_horizontal_size: 50   # Largura do bloco em colunas
   taint_vertical_size: 6     # Altura do bloco em linhas
   
   # Passo por classe (posição = classe * step)
   # Fórmula: start_col = classe * horizontal_step
   #          start_row = classe * vertical_step
-  taint_horizontal_step: 100 # Passo horizontal por classe
+  taint_horizontal_step: 5000 # Passo horizontal por classe
   taint_vertical_step: 6     # Passo vertical por classe
   
   # Exemplo com 5 classes e os valores acima:
@@ -665,7 +666,7 @@ debug:
       # Classe alvo para gerar as atribuições
       # "predicted" = usa a classe predita pela rede (padrão)
       # "AFR", "AMR", "EAS", "EUR", "SAS" = classe específica
-      target_class: "AFR"
+      target_class: "AMR"
 
 # ───────────────────────────────────────────────────────────────────
 # J) MODE
@@ -682,7 +683,7 @@ mode: "test"
 # "test": Conjunto de teste (padrão)
 # "train": Conjunto de treinamento
 # "val": Conjunto de validação
-test_dataset: "train"
+test_dataset: "test"
 
 # ═══════════════════════════════════════════════════════════════════
 # NOTAS DE USO

@@ -1117,14 +1117,14 @@ class InteractiveComparisonViewer:
                 console.print(f"[cyan]← Retrocedendo Ind2: {self.current_index_2}[/cyan]")
                 plt.close(self.fig)
         
-        elif event.key == 'w':
+        elif event.key == 'z':
             # Avançar gene
             if self.current_gene_index < self.max_gene_index:
                 self.current_gene_index += 1
                 console.print(f"[cyan]↑ Gene: {self.available_genes[self.current_gene_index]}[/cyan]")
                 plt.close(self.fig)
         
-        elif event.key == 'z':
+        elif event.key == 'w':
             # Retroceder gene
             if self.current_gene_index > 0:
                 self.current_gene_index -= 1
@@ -2583,18 +2583,18 @@ def process_sample_comparison_mode(
                             break
                 else:
                     # Legacy format: search by dataset index
-                dataset_index = dataset_metadata['individuals'].index(sample_id)
-                
-                for split_name in ['train', 'val', 'test']:
-                    split_key = f"{split_name}_indices"
-                    if split_key in splits_data:
-                        split_indices = splits_data[split_key]
-                        try:
-                            cache_index = split_indices.index(dataset_index)
-                            split_found = split_name
-                            break
-                        except ValueError:
-                            continue
+                    dataset_index = dataset_metadata['individuals'].index(sample_id)
+                    
+                    for split_name in ['train', 'val', 'test']:
+                        split_key = f"{split_name}_indices"
+                        if split_key in splits_data:
+                            split_indices = splits_data[split_key]
+                            try:
+                                cache_index = split_indices.index(dataset_index)
+                                split_found = split_name
+                                break
+                            except ValueError:
+                                continue
                 
                 if split_found is None:
                     console.print(f"[red]  Sample {sample_id} not found in any split[/red]")
@@ -2699,7 +2699,7 @@ def process_sample_comparison_mode(
                 # Return after first gene in interactive mode
                 return True
             else:
-            plt.show()
+                plt.show()
             
         except Exception as e:
             console.print(f"[red]  Error processing {gene_name}: {e}[/red]")
@@ -2728,10 +2728,17 @@ def process_comparison_sample(
     gene_name: str,
     splits_data: Dict,
     dataset_metadata: Dict,
-    viewer: 'InteractiveComparisonViewer'
+    viewer: 'InteractiveComparisonViewer',
+    norm_params: Optional[Dict] = None
 ) -> Optional[plt.Figure]:
     """
     Processa e visualiza comparação entre dois indivíduos.
+    
+    Quando comparison_mode == "dataset_dir_x_cache_dir":
+        - ind1: dados de dataset_dir (normalizados)
+        - ind2: dados de cache_dir
+    Caso contrário:
+        - Ambos os indivíduos vêm do cache_dir
     
     Args:
         config: Configuração
@@ -2741,43 +2748,95 @@ def process_comparison_sample(
         splits_data: Dados dos splits
         dataset_metadata: Metadata do dataset
         viewer: Viewer de comparação
+        norm_params: Parâmetros de normalização (necessário para dataset_dir_x_cache_dir)
     
     Returns:
         Figure do matplotlib ou None se erro
     """
     cache_dir = Path(config['cache_dir'])
     split = config.get('split', 'test')
+    comparison_mode = config.get('comparison_mode', '')
     
     try:
-        # Carregar dados do primeiro indivíduo
-        features_1_raw, metadata_1, global_index_1 = load_cache_data(
-            cache_dir, split, index_1, gene_filter=None
-        )
-        sample_id_1, pop_1, superpop_1 = viewer.get_sample_info(index_1)
-        
-        # Carregar dados do segundo indivíduo
-        features_2_raw, metadata_2, global_index_2 = load_cache_data(
-            cache_dir, split, index_2, gene_filter=None
-        )
-        sample_id_2, pop_2, superpop_2 = viewer.get_sample_info(index_2)
-        
         # Obter lista de genes ordenada (usar a mesma da classe viewer)
         genes_in_order = viewer.available_genes
         
-        # Filtrar por gene específico
-        features_1, _ = filter_genes_from_features(
-            features_1_raw, gene_name, genes_in_order
-        )
-        features_2, _ = filter_genes_from_features(
-            features_2_raw, gene_name, genes_in_order
-        )
+        if comparison_mode == 'dataset_dir_x_cache_dir' and norm_params is not None:
+            # Modo especial: ind1 de dataset_dir, ind2 de cache_dir
+            dataset_dir = Path(config['dataset_dir'])
+            
+            # Carregar dados do primeiro indivíduo de dataset_dir
+            sample_id_1, pop_1, superpop_1 = viewer.get_sample_info(index_1)
+            console.print(f"[dim]  Loading ind1 ({sample_id_1}) from dataset_dir...[/dim]")
+            
+            # Carregar metadata do cache para obter window_center_size
+            cache_metadata_file = cache_dir / 'metadata.json'
+            with open(cache_metadata_file, 'r') as f:
+                cache_metadata = json.load(f)
+            window_center_size = cache_metadata['processing_params']['window_center_size']
+            normalization_method = cache_metadata['processing_params']['normalization_method']
+            
+            # Carregar dados do dataset_dir para ind1
+            features_1_raw, _ = load_alphagenome_data(
+                dataset_dir, sample_id_1, window_center_size, 
+                gene_filter=None, config=None  # Sem API, carrega dos arquivos
+            )
+            
+            # Aplicar normalização aos dados de dataset_dir
+            features_1_norm = apply_normalization(features_1_raw, normalization_method, norm_params)
+            
+            # Filtrar por gene
+            features_1, _ = filter_genes_from_features(
+                features_1_norm, gene_name, genes_in_order
+            )
+            
+            # Carregar dados do segundo indivíduo de cache_dir
+            sample_id_2, pop_2, superpop_2 = viewer.get_sample_info(index_2)
+            console.print(f"[dim]  Loading ind2 ({sample_id_2}) from cache_dir...[/dim]")
+            
+            features_2_raw, _, _ = load_cache_data(
+                cache_dir, split, index_2, gene_filter=None
+            )
+            
+            # Filtrar por gene
+            features_2, _ = filter_genes_from_features(
+                features_2_raw, gene_name, genes_in_order
+            )
+            
+            # Labels diferenciados para indicar a fonte
+            label_suffix_1 = " [dataset_dir]"
+            label_suffix_2 = " [cache_dir]"
+        else:
+            # Modo padrão: ambos os indivíduos do cache_dir
+            # Carregar dados do primeiro indivíduo
+            features_1_raw, metadata_1, global_index_1 = load_cache_data(
+                cache_dir, split, index_1, gene_filter=None
+            )
+            sample_id_1, pop_1, superpop_1 = viewer.get_sample_info(index_1)
+            
+            # Carregar dados do segundo indivíduo
+            features_2_raw, metadata_2, global_index_2 = load_cache_data(
+                cache_dir, split, index_2, gene_filter=None
+            )
+            sample_id_2, pop_2, superpop_2 = viewer.get_sample_info(index_2)
+            
+            # Filtrar por gene específico
+            features_1, _ = filter_genes_from_features(
+                features_1_raw, gene_name, genes_in_order
+            )
+            features_2, _ = filter_genes_from_features(
+                features_2_raw, gene_name, genes_in_order
+            )
+            
+            label_suffix_1 = ""
+            label_suffix_2 = ""
         
         # Plotar comparação
         # dataset_metadata já está disponível como parâmetro da função
         fig = plot_individual_comparison(
             features_1, features_2,
-            sample_id_1, pop_1, superpop_1,
-            sample_id_2, pop_2, superpop_2,
+            sample_id_1 + label_suffix_1, pop_1, superpop_1,
+            sample_id_2 + label_suffix_2, pop_2, superpop_2,
             gene_name, config, viewer, dataset_metadata
         )
         
@@ -3044,11 +3103,13 @@ def main():
                 while not viewer.should_exit:
                     current_gene = viewer.get_current_gene()
                     
-                    # Use process_sample_comparison_mode for each individual separately
-                    # and combine in a comparison view
+                    # Use process_comparison_sample to compare:
+                    # - dataset_dir (ind1, normalized) vs cache_dir (ind2) when comparison_mode == "dataset_dir_x_cache_dir"
+                    # - cache_dir (ind1) vs cache_dir (ind2) otherwise
                     fig = process_comparison_sample(
                         config, viewer.current_index_1, viewer.current_index_2,
-                        current_gene, splits_data, dataset_metadata, viewer
+                        current_gene, splits_data, dataset_metadata, viewer,
+                        norm_params=norm_params
                     )
                     
                     if fig is not None:
@@ -3087,19 +3148,19 @@ def main():
             return
         else:
             # Non-interactive: process single sample
-        index = config.get('index', 0)
-        success = process_sample_comparison_mode(
-            config, index, dataset_metadata, 
-            splits_data=splits_data,
-            norm_params=norm_params
-        )
-        
-        if success:
-            console.print("\n[bold green]✓ Comparison completed successfully![/bold green]\n")
-        else:
-            sys.exit(1)
-        
-        return
+            index = config.get('index', 0)
+            success = process_sample_comparison_mode(
+                config, index, dataset_metadata, 
+                splits_data=splits_data,
+                norm_params=norm_params
+            )
+            
+            if success:
+                console.print("\n[bold green]✓ Comparison completed successfully![/bold green]\n")
+            else:
+                sys.exit(1)
+            
+            return
     
     # Validar diretórios
     dataset_dir = Path(config['dataset_dir'])
@@ -3167,7 +3228,7 @@ def main():
                     
                     console.print(f"[cyan]Modo de comparação interativa ativado:[/cyan]")
                     console.print(f"  • Split: {viewer.current_split}")
-                    console.print(f"  • Total de amostras: {len(viewer.split_indices)}")
+                    console.print(f"  • Total de amostras: {viewer.split_size}")
                     console.print(f"  • Total de genes: {len(viewer.available_genes)}")
                     console.print(f"[yellow]  • Use ← → (ambos), A D (ind2), W Z (genes), Q (sair)[/yellow]\n")
                     
@@ -3176,7 +3237,8 @@ def main():
                         current_gene = viewer.get_current_gene()
                         fig = process_comparison_sample(
                             config, viewer.current_index_1, viewer.current_index_2,
-                            current_gene, splits_data, dataset_metadata, viewer
+                            current_gene, splits_data, dataset_metadata, viewer,
+                            norm_params=norm_params
                         )
                         
                         if fig is not None:

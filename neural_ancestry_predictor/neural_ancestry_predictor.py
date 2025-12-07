@@ -124,40 +124,100 @@ def zscore_normalize(x: torch.Tensor, mean: float, std: float) -> torch.Tensor:
     return (x - mean) / std
 
 
-def taint_sample(features: torch.Tensor, target_class: int, num_classes: int) -> torch.Tensor:
+def taint_sample(
+    features: torch.Tensor, 
+    target_class: int, 
+    num_classes: int,
+    taint_type: str = 'additive',
+    taint_value: float = 1.0,
+    taint_horizontal_size: int = 6,
+    taint_vertical_size: int = 6,
+    taint_horizontal_step: int = 100,
+    taint_vertical_step: int = 6
+) -> torch.Tensor:
     """
-    Marca amostra com valor sentinela para debug.
+    Marca amostra com valor sentinela para debug - versão configurável para CNN2.
     
-    Coloca -2 na posição específica baseada na classe:
-    posição = classe * (input_vector_size / num_classes)
+    MODOS DE TAINTING:
     
-    Exemplo:
-        Para 5 classes e vetor de 5500 elementos:
-        - Classe 0 -> posição 0 * (5500/5) = 0
-        - Classe 1 -> posição 1 * (5500/5) = 1100
-        - Classe 2 -> posição 2 * (5500/5) = 2200
+    1. additive (padrão): Adiciona bloco de taint sobre os dados originais
+       - Mantém dados originais intactos
+       - Coloca bloco de taint_value em posição específica da classe
+       - Útil para testar se a rede consegue "ver" o sinal
+    
+    2. override: Zera TODA a entrada e coloca apenas o taint
+       - Entrada fica toda zerada exceto o bloco de taint
+       - Teste mais radical: a rede SÓ vê o taint
+       - Se não aprender com isso, há problema sério na arquitetura
+    
+    ESTRATÉGIA DE POSICIONAMENTO:
+    - A posição do bloco é calculada com base na classe:
+      - start_col = target_class * taint_horizontal_step
+      - start_row = target_class * taint_vertical_step
+    - O tamanho do bloco é definido por:
+      - largura = taint_horizontal_size
+      - altura = taint_vertical_size
+    
+    Exemplo com horizontal_step=100, vertical_step=6, horizontal_size=6, vertical_size=6:
+        - Classe 0: bloco em (row=0, col=0) até (row=6, col=6)
+        - Classe 1: bloco em (row=6, col=100) até (row=12, col=106)
+        - Classe 2: bloco em (row=12, col=200) até (row=18, col=206)
         - etc.
     
     Args:
-        features: Tensor de entrada
+        features: Tensor de entrada (1D ou 2D)
         target_class: Classe de saída (0 a num_classes-1)
         num_classes: Número total de classes
+        taint_type: 'additive' (mantém dados, adiciona taint) ou 
+                    'override' (zera tudo, só taint)
+        taint_value: Valor do taint (default: 1.0)
+        taint_horizontal_size: Largura do bloco de taint em colunas (default: 6)
+        taint_vertical_size: Altura do bloco de taint em linhas (default: 6)
+        taint_horizontal_step: Passo horizontal por classe (default: 100)
+        taint_vertical_step: Passo vertical por classe (default: 6)
         
     Returns:
         Tensor com tainting aplicado
     """
-    features = features.clone()
-    input_size = features.shape[0] if features.ndim == 1 else features.numel()
+    if taint_type == 'override':
+        # Override: zerar toda a entrada primeiro
+        features = torch.zeros_like(features)
+    else:
+        # Additive: manter dados originais
+        features = features.clone()
     
-    # Calcular posição: classe * (input_size / num_classes)
-    position = int(target_class * (input_size / num_classes))
+    if features.ndim == 1:
+        # Dados 1D: comportamento simples baseado em horizontal_step
+        input_size = features.shape[0]
+        position = int(target_class * taint_horizontal_step)
+        end_position = min(position + taint_horizontal_size, input_size)
+        if position < input_size:
+            features[position:end_position] = taint_value
     
-    # Garantir que posição está no range válido
-    if position < input_size:
-        if features.ndim == 1:
-            features[position] = -2.0
-        else:
-            features.view(-1)[position] = -2.0
+    elif features.ndim == 2:
+        # Dados 2D: criar bloco visível para CNN
+        num_rows, num_cols = features.shape
+        
+        # Posição do bloco baseada na classe e nos passos
+        start_col = int(target_class * taint_horizontal_step)
+        start_row = int(target_class * taint_vertical_step)
+        
+        # Garantir que o bloco está dentro dos limites
+        end_row = min(start_row + taint_vertical_size, num_rows)
+        end_col = min(start_col + taint_horizontal_size, num_cols)
+        
+        # Garantir que as posições iniciais estão dentro dos limites
+        if start_row < num_rows and start_col < num_cols:
+            features[start_row:end_row, start_col:end_col] = taint_value
+    
+    else:
+        # Mais dimensões: flatten e aplicar
+        flat = features.view(-1)
+        input_size = flat.numel()
+        position = int(target_class * taint_horizontal_step)
+        end_position = min(position + taint_horizontal_size, input_size)
+        if position < input_size:
+            flat[position:end_position] = taint_value
     
     return features
 
@@ -955,7 +1015,16 @@ class ProcessedGenomicDataset(Dataset):
                 # Tainting em runtime (se habilitado) - apenas para classificação
                 if self.config.get('debug', {}).get('taint_at_runtime', False):
                     num_classes = len(self.target_to_idx)
-                    features_tensor = taint_sample(features_tensor, target_idx, num_classes)
+                    debug_config = self.config.get('debug', {})
+                    features_tensor = taint_sample(
+                        features_tensor, target_idx, num_classes,
+                        taint_type=debug_config.get('taint_type', 'additive'),
+                        taint_value=debug_config.get('taint_value', 1.0),
+                        taint_horizontal_size=debug_config.get('taint_horizontal_size', 6),
+                        taint_vertical_size=debug_config.get('taint_vertical_size', 6),
+                        taint_horizontal_step=debug_config.get('taint_horizontal_step', 100),
+                        taint_vertical_step=debug_config.get('taint_vertical_step', 6)
+                    )
             else:
                 # Target desconhecido, usar -1
                 target_tensor = torch.tensor(-1, dtype=torch.long)
@@ -2151,6 +2220,7 @@ class Trainer:
         
         self.best_val_loss = float('inf')
         self.best_val_accuracy = 0.0
+        self.best_val_loss_at_best_accuracy = float('inf')  # Para atualizar best_accuracy quando loss melhora
     
     def _on_key_press(self, event):
         """Callback para capturar tecla pressionada na janela do gráfico."""
@@ -2405,10 +2475,20 @@ class Trainer:
                 f.write(f"Average loss: {avg_loss:.6f}\n")
                 f.write("=" * 80 + "\n\n")
                 for idx, data in enumerate(debug_data):
+                    logits = data['logits']
+                    # Calcular softmax dos logits
+                    logits_tensor = torch.tensor(logits) if not isinstance(logits, torch.Tensor) else logits
+                    softmax_probs = torch.softmax(logits_tensor, dim=0).numpy()
+                    
+                    # Formatar valores com 3 casas decimais, alinhados (7 chars: sinal + 1 digito + ponto + 3 decimais)
+                    logits_str = "[" + ", ".join(f"{v:7.3f}" for v in logits) + "]"
+                    softmax_str = "[" + ", ".join(f"{v:7.3f}" for v in softmax_probs) + "]"
+                    
                     f.write(f"Sample {idx+1}:\n")
-                    f.write(f"  Target: {data['target']}\n")
-                    f.write(f"  Logits: {data['logits']}\n")
-                    f.write(f"  Loss: {data['loss']:.6f}\n\n")
+                    f.write(f"  Target:  {data['target']}\n")
+                    f.write(f"  Logits:  {logits_str}\n")
+                    f.write(f"  Softmax: {softmax_str}\n")
+                    f.write(f"  Loss:    {data['loss']:.6f}\n\n")
             console.print(f"[yellow]Debug: Training loss detalhada salva em train_loss.txt[/yellow]")
         
         return avg_loss
@@ -2622,10 +2702,19 @@ class Trainer:
                         if save_during_training:
                             self.save_checkpoint(epoch, 'best_loss')
                     
+                    # Salvar best_accuracy se:
+                    # 1. Accuracy melhorou, OU
+                    # 2. Accuracy igual à melhor mas loss menor (logits mais confiantes)
                     if val_accuracy > self.best_val_accuracy:
                         self.best_val_accuracy = val_accuracy
+                        self.best_val_loss_at_best_accuracy = val_loss
                         if save_during_training:
                             self.save_checkpoint(epoch, 'best_accuracy')
+                    elif val_accuracy == self.best_val_accuracy and val_loss < self.best_val_loss_at_best_accuracy:
+                        self.best_val_loss_at_best_accuracy = val_loss
+                        if save_during_training:
+                            self.save_checkpoint(epoch, 'best_accuracy')
+                            console.print(f"[green]  ✓ best_accuracy atualizado (mesma acc, loss menor: {val_loss:.6f})[/green]")
                     
                     # Atualizar ReduceLROnPlateau (precisa da métrica, só quando valida)
                     if self.scheduler is not None and isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
@@ -2770,6 +2859,40 @@ class Tester:
         if event.key == 'q':
             self._quit_requested = True
         plt.close()
+    
+    def _print_sample_info(self, sample_idx: int, sample_id: str, 
+                          targets: torch.Tensor, outputs: torch.Tensor):
+        """
+        Imprime informações da amostra no terminal.
+        
+        Args:
+            sample_idx: Índice da amostra no split
+            sample_id: ID da amostra (e.g., HG00138)
+            targets: Target verdadeiro (1,)
+            outputs: Saída da rede (1, num_classes) - logits
+        """
+        target_idx = targets.cpu().item()
+        logits = outputs.cpu().detach().numpy()[0]
+        softmax_probs = torch.softmax(outputs, dim=1).cpu().detach().numpy()[0]
+        
+        # Formatar valores com 3 casas decimais, alinhados
+        logits_str = "[" + ", ".join(f"{v:7.3f}" for v in logits) + "]"
+        softmax_str = "[" + ", ".join(f"{v:7.3f}" for v in softmax_probs) + "]"
+        
+        # Obter nomes das classes
+        class_names = self.config['output'].get('known_classes') or ["AFR", "AMR", "EAS", "EUR", "SAS"]
+        target_name = class_names[target_idx] if target_idx < len(class_names) else str(target_idx)
+        predicted_idx = softmax_probs.argmax()
+        predicted_name = class_names[predicted_idx] if predicted_idx < len(class_names) else str(predicted_idx)
+        correct = "✓" if target_idx == predicted_idx else "✗"
+        
+        console.print(f"\n[bold cyan]{'='*80}[/bold cyan]")
+        console.print(f"[bold]Sample {sample_idx + 1}: {sample_id}[/bold]")
+        console.print(f"  Target:    {target_idx} ({target_name})")
+        console.print(f"  Predicted: {predicted_idx} ({predicted_name}) {correct}")
+        console.print(f"  Logits:    {logits_str}")
+        console.print(f"  Softmax:   {softmax_str}")
+        console.print(f"[bold cyan]{'='*80}[/bold cyan]")
     
     def _visualize_sample(self, features: torch.Tensor, targets: torch.Tensor, 
                          outputs: torch.Tensor, sample_idx: int, sample_id: str):
@@ -3035,7 +3158,23 @@ class Tester:
                                   interpolation='nearest', vmin=-0.10, vmax=0.10)
                 plt.colorbar(im_dl, label='Attribution (+ → class, - → not class)')
                 plt.title('DeepLIFT: Feature Attribution', fontsize=14, fontweight='bold')
-                plt.xlabel('Gene Position (rescaled)', fontsize=12)
+                
+                # Compute gene importance first (needed for xlabel)
+                gene_importance = []
+                for i in range(len(gene_names)):
+                    start_row = i * tracks_per_gene
+                    end_row = (i + 1) * tracks_per_gene
+                    if end_row <= dl_np.shape[0]:
+                        importance = np.abs(dl_np[start_row:end_row, :]).sum()
+                        gene_importance.append((gene_names[i], importance))
+                
+                # Build xlabel with top genes included
+                if gene_importance:
+                    gene_importance.sort(key=lambda x: x[1], reverse=True)
+                    top_genes_str = ', '.join([f"{g[0]}({g[1]:.2f})" for g in gene_importance[:3]])
+                    plt.xlabel(f'Gene Position (rescaled) — Top genes: {top_genes_str}', fontsize=11)
+                else:
+                    plt.xlabel('Gene Position (rescaled)', fontsize=12)
                 
                 # Configure Y axis (same style as first plot)
                 num_genes = len(gene_names)
@@ -3056,22 +3195,6 @@ class Tester:
                     ax_dl.tick_params(axis='y', which='minor', length=0)
                     
                     ax_dl.set_ylabel('Genes', fontsize=12)
-                
-                # Compute gene importance (sum of absolute values per gene)
-                gene_importance = []
-                for i in range(len(gene_names)):
-                    start_row = i * tracks_per_gene
-                    end_row = (i + 1) * tracks_per_gene
-                    if end_row <= dl_np.shape[0]:
-                        importance = np.abs(dl_np[start_row:end_row, :]).sum()
-                        gene_importance.append((gene_names[i], importance))
-                
-                if gene_importance:
-                    gene_importance.sort(key=lambda x: x[1], reverse=True)
-                    top_genes = ', '.join([f"{g[0]}({g[1]:.2f})" for g in gene_importance[:3]])
-                    ax_dl.text(0.02, 0.98, f'Top genes: {top_genes}', transform=ax_dl.transAxes,
-                              fontsize=9, verticalalignment='top',
-                              bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
         
         # ─────────────────────────────────────────────────────────────────
         # Last Row: Output probabilities
@@ -3185,6 +3308,10 @@ class Tester:
                 # Visualizar amostra (a interpretabilidade faz seu próprio forward com gradientes)
                 sample_idx = indices[0].item()  # batch_size=1 na visualização
                 sample_id = self.dataset.get_sample_id(sample_idx)
+                
+                # Imprimir informações no terminal
+                self._print_sample_info(sample_idx, sample_id, targets, outputs)
+                
                 self._visualize_sample(features.clone(), targets, outputs, sample_idx, sample_id)
                 
                 # Check if user requested to quit
@@ -3219,6 +3346,10 @@ class Tester:
                     # Visualizar amostra
                     sample_idx = indices[0].item()  # batch_size=1 na visualização
                     sample_id = self.dataset.get_sample_id(sample_idx)
+                    
+                    # Imprimir informações no terminal
+                    self._print_sample_info(sample_idx, sample_id, targets, outputs)
+                    
                     self._visualize_sample(features, targets, outputs, sample_idx, sample_id)
                     
                     # Check if user requested to quit
@@ -3381,6 +3512,14 @@ def validate_cache(cache_dir: Path, config: Dict) -> bool:
     if not cache_dir.exists():
         return False
     
+    # Se taint_at_cache_save=True e mode=train, forçar recriação do cache
+    # Isso permite que o usuário controle os parâmetros de tainting sem verificar versão do cache
+    taint_at_cache_save = config.get('debug', {}).get('taint_at_cache_save', False)
+    mode = config.get('mode', 'train')
+    if taint_at_cache_save and mode == 'train':
+        console.print(f"[yellow]Cache será recriado: taint_at_cache_save=True em modo train[/yellow]")
+        return False
+    
     # Verificar arquivo de flag que indica cache completo
     complete_flag = cache_dir / '.cache_complete'
     if not complete_flag.exists():
@@ -3422,6 +3561,9 @@ def validate_cache(cache_dir: Path, config: Dict) -> bool:
         if cached_input_shape != '2D':
             console.print(f"[yellow]Cache invalidado: formato de entrada mudou de 1D para 2D[/yellow]")
             return False
+        # Parâmetros básicos que sempre invalidam o cache
+        # NOTA: taint_type, taint_value e outros parâmetros de tainting NÃO são verificados aqui
+        # Se taint_at_cache_save=True em mode=train, o cache será recriado de qualquer forma
         current_params = {
             'alphagenome_outputs': config['dataset_input']['alphagenome_outputs'],
             'haplotype_mode': config['dataset_input']['haplotype_mode'],
@@ -3430,7 +3572,6 @@ def validate_cache(cache_dir: Path, config: Dict) -> bool:
             'normalization_method': config['dataset_input'].get('normalization_method', 'zscore'),
             'balancing_strategy': config['data_split'].get('balancing_strategy', 'stratified'),
             'dataset_dir': config['dataset_input']['dataset_dir'],
-            'taint_at_cache_save': config.get('debug', {}).get('taint_at_cache_save', False),
             'input_shape': '2D',
         }
         
@@ -3703,6 +3844,13 @@ def save_processed_dataset(
     # Verificar se tainting está habilitado ao salvar cache
     taint_at_save = config.get('debug', {}).get('taint_at_cache_save', False)
     taint_num_classes = processed_dataset.get_num_classes() if taint_at_save else 0
+    debug_config = config.get('debug', {})
+    taint_type = debug_config.get('taint_type', 'additive')
+    taint_value = debug_config.get('taint_value', 1.0)
+    taint_horizontal_size = debug_config.get('taint_horizontal_size', 6)
+    taint_vertical_size = debug_config.get('taint_vertical_size', 6)
+    taint_horizontal_step = debug_config.get('taint_horizontal_step', 100)
+    taint_vertical_step = debug_config.get('taint_vertical_step', 6)
     
     # IMPORTANTE: Desabilitar temporariamente taint_at_runtime enquanto salvamos o cache
     original_taint_runtime = processed_dataset.config.get('debug', {}).get('taint_at_runtime', False)
@@ -3730,7 +3878,14 @@ def save_processed_dataset(
                         target_class = target.item()
                     else:
                         target_class = target[0].item()
-                    features = taint_sample(features, target_class, taint_num_classes)
+                    features = taint_sample(
+                        features, target_class, taint_num_classes,
+                        taint_type=taint_type, taint_value=taint_value,
+                        taint_horizontal_size=taint_horizontal_size,
+                        taint_vertical_size=taint_vertical_size,
+                        taint_horizontal_step=taint_horizontal_step,
+                        taint_vertical_step=taint_vertical_step
+                    )
                 
                 train_data.append((features, target))
                 train_metadata.append(get_individual_metadata(idx))
@@ -3754,7 +3909,14 @@ def save_processed_dataset(
                         target_class = target.item()
                     else:
                         target_class = target[0].item()
-                    features = taint_sample(features, target_class, taint_num_classes)
+                    features = taint_sample(
+                        features, target_class, taint_num_classes,
+                        taint_type=taint_type, taint_value=taint_value,
+                        taint_horizontal_size=taint_horizontal_size,
+                        taint_vertical_size=taint_vertical_size,
+                        taint_horizontal_step=taint_horizontal_step,
+                        taint_vertical_step=taint_vertical_step
+                    )
                 
                 val_data.append((features, target))
                 val_metadata.append(get_individual_metadata(idx))
@@ -3778,7 +3940,14 @@ def save_processed_dataset(
                         target_class = target.item()
                     else:
                         target_class = target[0].item()
-                    features = taint_sample(features, target_class, taint_num_classes)
+                    features = taint_sample(
+                        features, target_class, taint_num_classes,
+                        taint_type=taint_type, taint_value=taint_value,
+                        taint_horizontal_size=taint_horizontal_size,
+                        taint_vertical_size=taint_vertical_size,
+                        taint_horizontal_step=taint_horizontal_step,
+                        taint_vertical_step=taint_vertical_step
+                    )
                 
                 test_data.append((features, target))
                 test_metadata.append(get_individual_metadata(idx))
@@ -3881,7 +4050,6 @@ def save_processed_dataset(
                 'downsample_factor': config['dataset_input']['downsample_factor'],
                 'normalization_method': config['dataset_input'].get('normalization_method', 'zscore'),
                 'balancing_strategy': balancing_strategy,
-                'taint_at_cache_save': config.get('debug', {}).get('taint_at_cache_save', False),
                 'input_shape': '2D',
             },
             'balancing_info': balancing_info,
@@ -4219,13 +4387,22 @@ class CachedProcessedDataset(Dataset):
         if (self.config.get('debug', {}).get('taint_at_runtime', False) and
             self.config['output']['prediction_target'] != 'frog_likelihood'):
             num_classes = len(self.target_to_idx)
+            debug_config = self.config.get('debug', {})
             # Extrair classe do target tensor
             if target.ndim == 0:  # Escalar
                 target_class = target.item()
             else:
                 target_class = target[0].item()
             # Aplicar tainting
-            features = taint_sample(features, target_class, num_classes)
+            features = taint_sample(
+                features, target_class, num_classes,
+                taint_type=debug_config.get('taint_type', 'additive'),
+                taint_value=debug_config.get('taint_value', 1.0),
+                taint_horizontal_size=debug_config.get('taint_horizontal_size', 6),
+                taint_vertical_size=debug_config.get('taint_vertical_size', 6),
+                taint_horizontal_step=debug_config.get('taint_horizontal_step', 100),
+                taint_vertical_step=debug_config.get('taint_vertical_step', 6)
+            )
         
         return features, target, idx
     

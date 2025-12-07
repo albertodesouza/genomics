@@ -1,6 +1,6 @@
 # Configuração para verificar apenas o gene TYR
-cache_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes_1000/datasets/rna_seq_H1_32768_ds1_log_split0.7-0.15-0.15_seed13"
-dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000"
+cache_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes/datasets/rna_seq_H1_32768_ds1_log_shuf_split0.7-0.15-0.15_seed13"
+dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes"
 
 split: "train"
 index: 0
@@ -29,6 +29,12 @@ gene_filter: "MC1R"  # Mostrar apenas gene MC1R (6 tracks)
 #  Validates normalization and transformation pipeline
 comparison_mode: "dataset_dir_x_cache_dir"
 
+# Modo de navegação interativa
+# "single": Navegação atual (um indivíduo por vez)
+# "comparison": Comparação entre dois indivíduos - SÓ DEVE SER USADO JUNTO COM comparison_mode: "dataset_dir_x_cache_dir"
+interactive_comparison_mode: "comparison"  # Default: "single"
+#interactive_comparison_mode: "single"  # Default: "single"
+
 # AlphaGenome API verification mode (opcional)
 # Nota: ontology_terms agora são lidos dinamicamente dos metadados do dataset
 alphagenome_api:
@@ -46,11 +52,6 @@ output_dir: null
 save_plots: false
 output_prefix: "verify"
 interactive_mode: true
-
-# Modo de navegação interativa
-# "single": Navegação atual (um indivíduo por vez)
-# "comparison": Comparação entre dois indivíduos
-interactive_comparison_mode: "comparison"  # Default: "single"
 
 show_navigation_help: true
 verbose_metrics: true

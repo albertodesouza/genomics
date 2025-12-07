@@ -568,13 +568,46 @@ debug:
     width: 600   # Largura da imagem visualizada
     height: 660  # Altura aumentada para 66 tracks (10 pixels/track)
   
+  # ─────────────────────────────────────────────────────────────────
   # Tainting de amostras para debug
-  # Marca amostras com valor sentinela (-2) em posições específicas
-  # baseadas na classe de saída, para verificar se rede aprende corretamente
-  # Fórmula: posição = classe * (input_vector_size / num_classes)
-  # Exemplo: 5 classes, 5500 features -> classe 0→pos 0, classe 1→pos 1100, etc.
-  taint_at_cache_save: true  # Taintar ao salvar no cache (dados salvos já vêm marcados)
-  taint_at_runtime: true      # Taintar durante __getitem__ (marca em tempo de execução)
+  # ─────────────────────────────────────────────────────────────────
+  # Cria blocos de valor em posições específicas baseadas na classe
+  # de saída, para verificar se a rede aprende corretamente e para
+  # analisar métodos de interpretabilidade.
+  #
+  # NOTA: Se taint_at_cache_save=true e mode=train, o cache será
+  # sempre recriado. O usuário deve apagar o cache manualmente se
+  # necessário.
+  
+  # Quando aplicar tainting:
+  taint_at_cache_save: true  # Taintar ao salvar no cache (recria cache em mode=train)
+  taint_at_runtime: false     # Taintar durante __getitem__ (não afeta cache)
+  
+  # Tipo de tainting:
+  # - "additive": Mantém dados originais + coloca taint
+  # - "override": Zera TODA a entrada e coloca APENAS o taint
+  taint_type: "override"
+  
+  # Valor do taint (após normalização)
+  taint_value: 1.0
+  
+  # Tamanho do bloco de taint
+  taint_horizontal_size: 2500   # Largura do bloco em colunas
+  taint_vertical_size: 6     # Altura do bloco em linhas
+  
+  # Passo por classe (posição = classe * step)
+  # Fórmula: start_col = classe * horizontal_step
+  #          start_row = classe * vertical_step
+  taint_horizontal_step: 5000 # Passo horizontal por classe
+  taint_vertical_step: 6     # Passo vertical por classe
+  
+  # Exemplo com 5 classes e os valores acima:
+  # Classe 0: bloco em (row=0,  col=0)   até (row=6,  col=6)
+  # Classe 1: bloco em (row=6,  col=100) até (row=12, col=106)
+  # Classe 2: bloco em (row=12, col=200) até (row=18, col=206)
+  # Classe 3: bloco em (row=18, col=300) até (row=24, col=306)
+  # Classe 4: bloco em (row=24, col=400) até (row=30, col=406)
+  
   
   # ─────────────────────────────────────────────────────────────────
   # Interpretabilidade (Grad-CAM e DeepLIFT)
@@ -650,7 +683,7 @@ mode: "train"
 # "test": Conjunto de teste (padrão)
 # "train": Conjunto de treinamento
 # "val": Conjunto de validação
-test_dataset: "test"
+test_dataset: "train"
 
 # ═══════════════════════════════════════════════════════════════════
 # NOTAS DE USO
