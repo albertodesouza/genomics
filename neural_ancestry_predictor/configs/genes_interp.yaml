@@ -567,6 +567,13 @@ debug:
     #   height: 300 = 4.5 pixels por track (padrão, pode ser apertado)
     width: 600   # Largura da imagem visualizada
     height: 660  # Altura aumentada para 66 tracks (10 pixels/track)
+    
+    # Função de agregação para downsampling dos mapas de interpretabilidade
+    # Quando os dados de alta resolução são reduzidos para visualização,
+    # esta função determina como agregar os valores em cada bloco.
+    # "max" = máximo do bloco (preserva picos de ativação - recomendado)
+    # "mean" = média do bloco (visão geral, mas pode esconder picos)
+    downsample_aggregation: "max"
   
   # ─────────────────────────────────────────────────────────────────
   # Tainting de amostras para debug
@@ -581,18 +588,18 @@ debug:
   
   # Quando aplicar tainting:
   taint_at_cache_save: false  # Taintar ao salvar no cache (recria cache em mode=train)
-  taint_at_runtime: false     # Taintar durante __getitem__ (não afeta cache)
+  taint_at_runtime: true     # Taintar durante __getitem__ (não afeta cache)
   
   # Tipo de tainting:
   # - "additive": Mantém dados originais + coloca taint
   # - "override": Zera TODA a entrada e coloca APENAS o taint
-  taint_type: "additive"
+  taint_type: "override"
   
   # Valor do taint (após normalização)
-  taint_value: 10.0
+  taint_value: 1.0
   
   # Tamanho do bloco de taint
-  taint_horizontal_size: 50   # Largura do bloco em colunas
+  taint_horizontal_size: 1000   # Largura do bloco em colunas
   taint_vertical_size: 6     # Altura do bloco em linhas
   
   # Passo por classe (posição = classe * step)
@@ -600,15 +607,7 @@ debug:
   #          start_row = classe * vertical_step
   taint_horizontal_step: 5000 # Passo horizontal por classe
   taint_vertical_step: 6     # Passo vertical por classe
-  
-  # Exemplo com 5 classes e os valores acima:
-  # Classe 0: bloco em (row=0,  col=0)   até (row=6,  col=6)
-  # Classe 1: bloco em (row=6,  col=100) até (row=12, col=106)
-  # Classe 2: bloco em (row=12, col=200) até (row=18, col=206)
-  # Classe 3: bloco em (row=18, col=300) até (row=24, col=306)
-  # Classe 4: bloco em (row=24, col=400) até (row=30, col=406)
-  
-  
+    
   # ─────────────────────────────────────────────────────────────────
   # Interpretabilidade (Grad-CAM e DeepLIFT)
   # ─────────────────────────────────────────────────────────────────
@@ -630,7 +629,7 @@ debug:
     
     # Método de interpretabilidade a usar
     # Opções: "gradcam", "deeplift", "both"
-    method: "deeplift"
+    method: "gradcam"
     
     # Salvar imagens PNG das visualizações
     # true = salva cada visualização como PNG no output_dir
@@ -654,7 +653,7 @@ debug:
       # "AFR", "AMR", "EAS", "EUR", "SAS" = classe específica
       # Isso permite visualizar quais regiões ativam uma classe específica,
       # independente do que a rede prediz para a amostra
-      target_class: "AFR"
+      target_class: "AMR"
     
     # Configuração específica do DeepLIFT
     deeplift:

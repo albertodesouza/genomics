@@ -124,6 +124,70 @@ def zscore_normalize(x: torch.Tensor, mean: float, std: float) -> torch.Tensor:
     return (x - mean) / std
 
 
+def block_reduce_2d(arr: np.ndarray, target_shape: Tuple[int, int], 
+                    func: str = 'max') -> np.ndarray:
+    """
+    Redimensiona array 2D para target_shape usando agregação por bloco para downscale
+    e interpolação para upscale, tratando altura e largura independentemente.
+    
+    Isso permite preservar picos (ex: taint) quando há downscale em uma dimensão
+    e upscale em outra.
+    
+    Args:
+        arr: Array 2D numpy de entrada
+        target_shape: Tupla (altura, largura) do tamanho desejado
+        func: Função de agregação para downscale - 'max', 'min' ou 'mean'
+        
+    Returns:
+        Array 2D redimensionado para target_shape
+    """
+    h, w = arr.shape
+    th, tw = target_shape
+    
+    # Selecionar função de agregação
+    if func == 'max':
+        agg_func = np.max
+    elif func == 'min':
+        agg_func = np.min
+    elif func == 'mean':
+        agg_func = np.mean
+    else:
+        raise ValueError(f"Função de agregação desconhecida: {func}. Use 'max', 'min' ou 'mean'.")
+    
+    # Passo 1: Processar LARGURA (colunas)
+    if tw >= w:
+        # Upscale na largura - usar interpolação
+        temp = ndimage.zoom(arr, (1, tw / w), order=1)
+    else:
+        # Downscale na largura - usar block_reduce
+        bw = w / tw
+        temp = np.zeros((h, tw), dtype=arr.dtype)
+        for j in range(tw):
+            x_start = int(j * bw)
+            x_end = int((j + 1) * bw)
+            x_end = min(x_end, w)
+            if x_end > x_start:
+                temp[:, j] = agg_func(arr[:, x_start:x_end], axis=1)
+    
+    # Passo 2: Processar ALTURA (linhas)
+    h_temp = temp.shape[0]
+    if th >= h_temp:
+        # Upscale na altura - usar interpolação
+        result = ndimage.zoom(temp, (th / h_temp, 1), order=1)
+    else:
+        # Downscale na altura - usar block_reduce
+        bh = h_temp / th
+        result = np.zeros((th, tw), dtype=arr.dtype)
+        for i in range(th):
+            y_start = int(i * bh)
+            y_end = int((i + 1) * bh)
+            y_end = min(y_end, h_temp)
+            if y_end > y_start:
+                result[i, :] = agg_func(temp[y_start:y_end, :], axis=0)
+    
+    return result
+
+
 def taint_sample(
     features: torch.Tensor, 
     target_class: int, 
@@ -2301,7 +2365,7 @@ class Trainer:
             # Plot as image
             plt.imshow(img_normalized, cmap='gray', aspect='auto', interpolation='nearest')
             plt.xlabel('Genomic Position (rescaled)', fontsize=12)
-            plt.title(f'Epoch {epoch + 1} | Sample {sample_id} | Input 2D ({img_data.shape[0]}x{img_data.shape[1]} → {viz_height}x{viz_width})', 
+            plt.title(f'Epoch {epoch + 1} | Sample {sample_id} ({target_name}) | Input 2D ({img_data.shape[0]}x{img_data.shape[1]} → {viz_height}x{viz_width})', 
                      fontsize=14, fontweight='bold')
             plt.colorbar(label='Normalized Value')
             
@@ -2939,6 +3003,7 @@ class Tester:
         deeplift_map = None
         gradcam_target_class_idx = None
         gradcam_target_class_name = None
+        deeplift_target_class_name = None
         
         if self.interpretability_enabled:
             if self.gradcam is not None:
@@ -2967,14 +3032,17 @@ class Tester:
                     # Determine target class for DeepLIFT
                     if self.deeplift_target_class == 'predicted':
                         deeplift_target_class_idx = predicted_idx
+                        deeplift_target_class_name = predicted_name
                     else:
                         # Map class name to index
                         class_name_to_idx = {name: i for i, name in enumerate(class_names)}
                         if self.deeplift_target_class in class_name_to_idx:
                             deeplift_target_class_idx = class_name_to_idx[self.deeplift_target_class]
+                            deeplift_target_class_name = self.deeplift_target_class
                         else:
                             console.print(f"[yellow]⚠ Classe '{self.deeplift_target_class}' não encontrada, usando predita[/yellow]")
                             deeplift_target_class_idx = predicted_idx
+                            deeplift_target_class_name = predicted_name
                     
                     deeplift_map, _ = self.deeplift.generate(
                         features.clone(), 
@@ -3009,6 +3077,7 @@ class Tester:
         # Rescale parameters
         viz_height = self.config.get('debug', {}).get('visualization', {}).get('height', 300)
         viz_width = self.config.get('debug', {}).get('visualization', {}).get('width', 600)
+        downsample_agg = self.config.get('debug', {}).get('visualization', {}).get('downsample_aggregation', 'max')
         
         # ─────────────────────────────────────────────────────────────────
         # Row 1: Input features (with CAM overlay if available)
@@ -3020,9 +3089,11 @@ class Tester:
             # 2D input: [1, num_rows, effective_size]
             img_data = features_cpu[0].numpy()  # [num_rows, effective_size]
             
-            # Calculate zoom factors
+            # Calculate zoom factors for later use
             zoom_factors = (viz_height / img_data.shape[0], viz_width / img_data.shape[1])
-            img_resized = ndimage.zoom(img_data, zoom_factors, order=1)  # order=1 = bilinear
+            
+            # Usar block_reduce para preservar picos (ex: taint) ao invés de interpolação
+            img_resized = block_reduce_2d(img_data, (viz_height, viz_width), func=downsample_agg)
             
             # Normalize for visualization (0=black, 1=white)
             img_min, img_max = img_resized.min(), img_resized.max()
@@ -3035,7 +3106,7 @@ class Tester:
             plt.imshow(img_normalized, cmap='gray', aspect='auto', interpolation='nearest')
             
             plt.xlabel('Gene Position (rescaled)', fontsize=12)
-            plt.title(f'{self.dataset_name.upper()} | Sample {sample_id} | Input 2D ({img_data.shape[0]}x{img_data.shape[1]})', 
+            plt.title(f'{self.dataset_name.upper()} | Sample {sample_id} ({target_name}) | Input 2D ({img_data.shape[0]}x{img_data.shape[1]})', 
                      fontsize=14, fontweight='bold')
             plt.colorbar(label='Normalized Value')
             
@@ -3087,16 +3158,33 @@ class Tester:
             # Plot Grad-CAM
             if has_gradcam:
                 cam_np = gradcam_map.numpy()
-                cam_resized = ndimage.zoom(cam_np, zoom_factors, order=1)
+                # Usar block_reduce para preservar picos ao invés de interpolação
+                cam_resized = block_reduce_2d(cam_np, (viz_height, viz_width), func=downsample_agg)
                 
                 plt.sca(ax_gc)
                 im_gc = plt.imshow(cam_resized, cmap='hot', aspect='auto', interpolation='nearest',
                                    vmin=0.0, vmax=0.0025)
                 plt.colorbar(im_gc, label='Activation')
-                # Show which class is being visualized
+                # Show which class is being visualized and individual's superpopulation
                 gc_class_label = gradcam_target_class_name if gradcam_target_class_name else predicted_name
-                plt.title(f'Grad-CAM: Important Regions for Class {gc_class_label}', fontsize=14, fontweight='bold')
-                plt.xlabel('Gene Position (rescaled)', fontsize=12)
+                plt.title(f'Grad-CAM: Important Regions for Class {gc_class_label} (Individual: {target_name})', fontsize=14, fontweight='bold')
+                
+                # Compute gene importance first (needed for xlabel)
+                gene_importance = []
+                for i in range(len(gene_names)):
+                    start_row = i * tracks_per_gene
+                    end_row = (i + 1) * tracks_per_gene
+                    if end_row <= cam_np.shape[0]:
+                        importance = cam_np[start_row:end_row, :].sum()
+                        gene_importance.append((gene_names[i], importance))
+                
+                # Build xlabel with top genes included (same style as DeepLIFT)
+                if gene_importance:
+                    gene_importance.sort(key=lambda x: x[1], reverse=True)
+                    top_genes_str = ', '.join([f"{g[0]}({g[1]:.2f})" for g in gene_importance[:3]])
+                    plt.xlabel(f'Gene Position (rescaled) — Top genes: {top_genes_str}', fontsize=11)
+                else:
+                    plt.xlabel('Gene Position (rescaled)', fontsize=12)
                 
                 # Configure Y axis (same style as first plot)
                 num_genes = len(gene_names)
@@ -3117,29 +3205,23 @@ class Tester:
                     ax_gc.tick_params(axis='y', which='minor', length=0)
                     
                     ax_gc.set_ylabel('Genes', fontsize=12)
-                
-                # Compute gene importance (sum per gene)
-                gene_importance = []
-                for i in range(len(gene_names)):
-                    start_row = i * tracks_per_gene
-                    end_row = (i + 1) * tracks_per_gene
-                    if end_row <= cam_np.shape[0]:
-                        importance = cam_np[start_row:end_row, :].sum()
-                        gene_importance.append((gene_names[i], importance))
-                
-                if gene_importance:
-                    gene_importance.sort(key=lambda x: x[1], reverse=True)
-                    top_genes = ', '.join([f"{g[0]}({g[1]:.2f})" for g in gene_importance[:3]])
-                    ax_gc.text(0.02, 0.98, f'Top genes: {top_genes}', transform=ax_gc.transAxes,
-                              fontsize=9, verticalalignment='top',
-                              bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
             
             # Plot DeepLIFT
             if has_deeplift:
                 dl_np = deeplift_map.numpy()
                 
-                # Sem normalização - manter valores originais
-                dl_resized = ndimage.zoom(dl_np, zoom_factors, order=1)
+                # Usar block_reduce para preservar picos ao invés de interpolação
+                # Para DeepLIFT (valores positivos e negativos), usar max do valor absoluto
+                # mas preservando o sinal
+                if downsample_agg == 'max':
+                    # Para preservar extremos (positivos e negativos), comparar por valor absoluto
+                    dl_resized_pos = block_reduce_2d(np.maximum(dl_np, 0), (viz_height, viz_width), func='max')
+                    dl_resized_neg = block_reduce_2d(np.minimum(dl_np, 0), (viz_height, viz_width), func='min')
+                    # Combinar: usar o que tiver maior magnitude
+                    dl_resized = np.where(np.abs(dl_resized_pos) >= np.abs(dl_resized_neg), 
+                                          dl_resized_pos, dl_resized_neg)
+                else:
+                    dl_resized = block_reduce_2d(dl_np, (viz_height, viz_width), func=downsample_agg)
                 
                 plt.sca(ax_dl)
                 
@@ -3157,7 +3239,9 @@ class Tester:
                 im_dl = plt.imshow(dl_resized, cmap=cmap_black_center, aspect='auto', 
                                   interpolation='nearest', vmin=-0.10, vmax=0.10)
                 plt.colorbar(im_dl, label='Attribution (+ → class, - → not class)')
-                plt.title('DeepLIFT: Feature Attribution', fontsize=14, fontweight='bold')
+                # Show which class is being visualized and individual's superpopulation
+                dl_class_label = deeplift_target_class_name if deeplift_target_class_name else predicted_name
+                plt.title(f'DeepLIFT: Feature Attribution for Class {dl_class_label} (Individual: {target_name})', fontsize=14, fontweight='bold')
                 
                 # Compute gene importance first (needed for xlabel)
                 gene_importance = []
