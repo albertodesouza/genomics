@@ -2035,6 +2035,7 @@ class DeepLIFT:
         """
         self.model = model
         self._baseline_cache = None
+        self._class_mean_cache: Dict[int, torch.Tensor] = {}  # Cache para média por classe
     
     def _get_baseline(self, input_tensor: torch.Tensor, baseline_type: str,
                       dataset: Optional[Any] = None) -> torch.Tensor:
@@ -2061,9 +2062,9 @@ class DeepLIFT:
                 return torch.zeros_like(input_tensor)
             
             # Calcular média de todas as amostras
-            console.print("[cyan]Calculando baseline (média do dataset)...[/cyan]")
+            console.print("\n\n[red]Calculando baseline (média do dataset)...[/red]\n\n")
             all_samples = []
-            for i in range(min(len(dataset), 100)):  # Limitar a 100 amostras
+            for i in range(min(len(dataset), 10000)):  # Limitar a 10000 amostras
                 sample, _, _ = dataset[i]
                 all_samples.append(sample)
             
@@ -2138,6 +2139,65 @@ class DeepLIFT:
             self.model.train()
         
         return attributions.cpu(), target_class
+    
+    def generate_class_mean(self, target_class_idx: int, dataset: Any,
+                            baseline_type: str = 'zeros') -> torch.Tensor:
+        """
+        Gera a média das atribuições DeepLIFT para todas as amostras de uma classe.
+        
+        Args:
+            target_class_idx: Índice da classe alvo
+            dataset: Dataset para buscar amostras
+            baseline_type: 'zeros' ou 'mean'
+            
+        Returns:
+            Tensor com a média das atribuições [num_rows, effective_size]
+        """
+        # Verificar cache
+        if target_class_idx in self._class_mean_cache:
+            return self._class_mean_cache[target_class_idx]
+        
+        console.print(f"[cyan]Calculando média DeepLIFT para classe {target_class_idx}...[/cyan]")
+        
+        # Coletar todas as amostras da classe alvo
+        class_samples = []
+        for i in range(len(dataset)):
+            sample, target, _ = dataset[i]
+            if target == target_class_idx:
+                class_samples.append(sample)
+        
+        if len(class_samples) == 0:
+            console.print(f"[yellow]⚠ Nenhuma amostra encontrada para classe {target_class_idx}[/yellow]")
+            return None
+        
+        console.print(f"[cyan]  → {len(class_samples)} amostras encontradas[/cyan]")
+        
+        # Calcular DeepLIFT para cada amostra
+        all_attributions = []
+        device = next(self.model.parameters()).device
+        
+        for i, sample in enumerate(class_samples):
+            # Preparar entrada
+            input_tensor = sample.unsqueeze(0).to(device)
+            
+            # Calcular atribuições para esta amostra
+            attr, _ = self.generate(input_tensor, target_class=target_class_idx,
+                                   baseline_type=baseline_type, dataset=dataset)
+            all_attributions.append(attr)
+            
+            # Progress (a cada 10 amostras)
+            if (i + 1) % 10 == 0:
+                console.print(f"[dim]  → Processadas {i + 1}/{len(class_samples)} amostras[/dim]")
+        
+        # Calcular média
+        mean_attributions = torch.stack(all_attributions).mean(dim=0)
+        
+        # Armazenar no cache
+        self._class_mean_cache[target_class_idx] = mean_attributions
+        
+        console.print(f"[green]✓ Média DeepLIFT calculada para classe {target_class_idx}[/green]")
+        
+        return mean_attributions
 
 
 # ==============================================================================
@@ -3033,6 +3093,13 @@ class Tester:
                     if self.deeplift_target_class == 'predicted':
                         deeplift_target_class_idx = predicted_idx
                         deeplift_target_class_name = predicted_name
+                        # Calcular individualmente para cada amostra
+                        deeplift_map, _ = self.deeplift.generate(
+                            features.clone(), 
+                            target_class=deeplift_target_class_idx,
+                            baseline_type=self.deeplift_baseline,
+                            dataset=self.dataset
+                        )
                     else:
                         # Map class name to index
                         class_name_to_idx = {name: i for i, name in enumerate(class_names)}
@@ -3043,13 +3110,13 @@ class Tester:
                             console.print(f"[yellow]⚠ Classe '{self.deeplift_target_class}' não encontrada, usando predita[/yellow]")
                             deeplift_target_class_idx = predicted_idx
                             deeplift_target_class_name = predicted_name
-                    
-                    deeplift_map, _ = self.deeplift.generate(
-                        features.clone(), 
-                        target_class=deeplift_target_class_idx,
-                        baseline_type=self.deeplift_baseline,
-                        dataset=self.dataset
-                    )
+                        
+                        # Usar média de todas as amostras da classe alvo
+                        deeplift_map = self.deeplift.generate_class_mean(
+                            target_class_idx=deeplift_target_class_idx,
+                            dataset=self.dataset,
+                            baseline_type=self.deeplift_baseline
+                        )
                 except Exception as e:
                     console.print(f"[yellow]⚠ Erro ao gerar DeepLIFT: {e}[/yellow]")
         
@@ -3175,13 +3242,13 @@ class Tester:
                     start_row = i * tracks_per_gene
                     end_row = (i + 1) * tracks_per_gene
                     if end_row <= cam_np.shape[0]:
-                        importance = cam_np[start_row:end_row, :].sum()
+                        importance = cam_np[start_row:end_row, :].mean()
                         gene_importance.append((gene_names[i], importance))
                 
                 # Build xlabel with top genes included (same style as DeepLIFT)
                 if gene_importance:
                     gene_importance.sort(key=lambda x: x[1], reverse=True)
-                    top_genes_str = ', '.join([f"{g[0]}({g[1]:.2f})" for g in gene_importance[:3]])
+                    top_genes_str = ', '.join([f"{g[0]}({g[1]:.5f})" for g in gene_importance[:3]])
                     plt.xlabel(f'Gene Position (rescaled) — Top genes: {top_genes_str}', fontsize=11)
                 else:
                     plt.xlabel('Gene Position (rescaled)', fontsize=12)
@@ -3249,13 +3316,13 @@ class Tester:
                     start_row = i * tracks_per_gene
                     end_row = (i + 1) * tracks_per_gene
                     if end_row <= dl_np.shape[0]:
-                        importance = np.abs(dl_np[start_row:end_row, :]).sum()
+                        importance = np.abs(dl_np[start_row:end_row, :]).mean()
                         gene_importance.append((gene_names[i], importance))
                 
                 # Build xlabel with top genes included
                 if gene_importance:
                     gene_importance.sort(key=lambda x: x[1], reverse=True)
-                    top_genes_str = ', '.join([f"{g[0]}({g[1]:.2f})" for g in gene_importance[:3]])
+                    top_genes_str = ', '.join([f"{g[0]}({g[1]:.5f})" for g in gene_importance[:3]])
                     plt.xlabel(f'Gene Position (rescaled) — Top genes: {top_genes_str}', fontsize=11)
                 else:
                     plt.xlabel('Gene Position (rescaled)', fontsize=12)
