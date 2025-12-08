@@ -304,7 +304,7 @@ model:
     # avg: média dos valores (preserva informação geral)
     # NOTA: Ambos são determinísticos. AdaptiveAvgPool2d NÃO é usado porque
     #       não tem implementação determinística no backward pass em CUDA.
-    global_pool_type: "max"
+    global_pool_type: "avg"
 
 # ───────────────────────────────────────────────────────────────────
 # D) DATA LOADING
