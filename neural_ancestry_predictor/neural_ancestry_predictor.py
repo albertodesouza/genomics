@@ -3803,6 +3803,92 @@ def validate_cache(cache_dir: Path, config: Dict) -> bool:
         return False
 
 
+def get_gene_window_metadata(
+    dataset_dir: Path,
+    gene_order: List[str],
+    window_center_size: int
+) -> Optional[Dict]:
+    """
+    Obtém metadados das janelas genômicas com coordenadas ajustadas para window_center_size.
+    
+    Args:
+        dataset_dir: Diretório do dataset base (contém individuals/)
+        gene_order: Lista ordenada de genes
+        window_center_size: Tamanho da janela central extraída
+        
+    Returns:
+        Dicionário com metadados de cada gene, ou None se não for possível obter
+    """
+    if not gene_order:
+        return None
+    
+    dataset_dir = Path(dataset_dir)
+    individuals_dir = dataset_dir / 'individuals'
+    
+    if not individuals_dir.exists():
+        console.print(f"[yellow]⚠ Diretório individuals não encontrado: {individuals_dir}[/yellow]")
+        return None
+    
+    # Encontrar primeiro indivíduo válido
+    individual_dirs = [d for d in individuals_dir.iterdir() if d.is_dir()]
+    if not individual_dirs:
+        console.print(f"[yellow]⚠ Nenhum indivíduo encontrado em {individuals_dir}[/yellow]")
+        return None
+    
+    # Usar primeiro indivíduo para obter window_metadata
+    first_individual = individual_dirs[0]
+    metadata_file = first_individual / 'individual_metadata.json'
+    
+    if not metadata_file.exists():
+        console.print(f"[yellow]⚠ individual_metadata.json não encontrado: {metadata_file}[/yellow]")
+        return None
+    
+    try:
+        with open(metadata_file, 'r') as f:
+            individual_metadata = json.load(f)
+        
+        window_metadata = individual_metadata.get('window_metadata', {})
+        if not window_metadata:
+            console.print(f"[yellow]⚠ window_metadata não encontrado em {metadata_file}[/yellow]")
+            return None
+        
+        gene_window_metadata = {}
+        
+        for gene_name in gene_order:
+            if gene_name not in window_metadata:
+                console.print(f"[yellow]⚠ Gene {gene_name} não encontrado em window_metadata[/yellow]")
+                continue
+            
+            gene_meta = window_metadata[gene_name]
+            original_start = gene_meta.get('start', 0)
+            original_window_size = gene_meta.get('window_size', 0)
+            chromosome = gene_meta.get('chromosome', '')
+            
+            # Calcular centro da janela original
+            # original_window_size é o tamanho -1 (end - start), então temos original_window_size + 1 elementos
+            center_idx = (original_window_size + 1) // 2
+            genomic_center = original_start + center_idx
+            
+            # Calcular nova janela centrada
+            half_size = window_center_size // 2
+            new_start = genomic_center - half_size
+            new_end = genomic_center + half_size - 1
+            new_window_size = new_end - new_start  # = window_center_size - 1
+            
+            gene_window_metadata[gene_name] = {
+                'chromosome': chromosome,
+                'start': new_start,
+                'end': new_end,
+                'window_size': new_window_size
+            }
+        
+        return gene_window_metadata
+        
+    except Exception as e:
+        console.print(f"[yellow]⚠ Erro ao obter gene_window_metadata: {e}[/yellow]")
+        return None
+
+
 def save_processed_dataset(
     cache_dir: Path,
     processed_dataset: ProcessedGenomicDataset,
@@ -4182,6 +4268,13 @@ def save_processed_dataset(
             console.print(f"[yellow]⚠ Não foi possível obter ordem dos genes: {e}[/yellow]")
             gene_order = None
         
+        # Obter metadados das janelas genômicas com coordenadas ajustadas
+        window_center_size = config['dataset_input']['window_center_size']
+        dataset_dir = Path(config['dataset_input']['dataset_dir'])
+        gene_window_metadata = get_gene_window_metadata(dataset_dir, gene_order, window_center_size)
+        if gene_window_metadata:
+            console.print(f"  📊 Metadados de janelas genômicas obtidos para {len(gene_window_metadata)} genes")
+        
         # Construir balancing_info conforme estratégia
         if balancing_strategy == 'stratified':
             balanced_class_counts = {c: samples_per_class for c in original_class_counts.keys()}
@@ -4250,6 +4343,7 @@ def save_processed_dataset(
             'prediction_target': config['output']['prediction_target'],
             'class_names': processed_dataset.idx_to_target,
             'gene_order': gene_order,
+            'gene_window_metadata': gene_window_metadata,
             'tracks_per_gene': 6
         }
         console.print(f"  💾 Salvando metadata.json...")
@@ -4784,6 +4878,35 @@ def load_processed_dataset(
         except Exception as e:
             console.print(f"[yellow]⚠ Não foi possível obter ordem dos genes: {e}[/yellow]")
             gene_order = None
+    
+    # Carregar ou reconstruir gene_window_metadata
+    if 'gene_window_metadata' in metadata and metadata['gene_window_metadata']:
+        gene_window_metadata = metadata['gene_window_metadata']
+        console.print(f"[green]Metadados de janelas genômicas: {len(gene_window_metadata)} genes[/green]")
+    else:
+        # Cache antigo sem gene_window_metadata: reconstruir a partir do dataset base
+        console.print("[yellow]⚠ Cache não contém metadados de janelas genômicas. Reconstruindo...[/yellow]")
+        
+        # Obter gene_order se ainda não foi obtido
+        if gene_order is None and 'gene_order' in metadata:
+            gene_order = metadata['gene_order']
+        
+        if gene_order:
+            window_center_size = config['dataset_input']['window_center_size']
+            dataset_dir = Path(config['dataset_input']['dataset_dir'])
+            gene_window_metadata = get_gene_window_metadata(dataset_dir, gene_order, window_center_size)
+            
+            if gene_window_metadata:
+                # Atualizar metadata do cache com os metadados de janelas
+                metadata['gene_window_metadata'] = gene_window_metadata
+                metadata_updated = True
+                
+                console.print(f"[green]✓ Metadados de janelas genômicas reconstruídos[/green]")
+                console.print(f"[cyan]Genes com metadados: {', '.join(gene_window_metadata.keys())}[/cyan]")
+            else:
+                console.print(f"[yellow]⚠ Não foi possível obter metadados de janelas genômicas[/yellow]")
+        else:
+            console.print(f"[yellow]⚠ Não foi possível obter metadados de janelas: gene_order não disponível[/yellow]")
     
     # Salvar metadata atualizado se houve mudanças
     if metadata_updated:
