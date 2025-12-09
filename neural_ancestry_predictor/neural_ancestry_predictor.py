@@ -2035,7 +2035,8 @@ class DeepLIFT:
         """
         self.model = model
         self._baseline_cache = None
-        self._class_mean_cache: Dict[int, torch.Tensor] = {}  # Cache para média por classe
+        self._class_mean_cache: Dict[int, torch.Tensor] = {}  # Cache para média de atribuições por classe
+        self._class_input_mean_cache: Dict[int, Tuple[torch.Tensor, int]] = {}  # Cache para (média das entradas, num_samples) por classe
     
     def _get_baseline(self, input_tensor: torch.Tensor, baseline_type: str,
                       dataset: Optional[Any] = None) -> torch.Tensor:
@@ -2141,9 +2142,9 @@ class DeepLIFT:
         return attributions.cpu(), target_class
     
     def generate_class_mean(self, target_class_idx: int, dataset: Any,
-                            baseline_type: str = 'zeros') -> torch.Tensor:
+                            baseline_type: str = 'zeros') -> Tuple[torch.Tensor, torch.Tensor, int]:
         """
-        Gera a média das atribuições DeepLIFT para todas as amostras de uma classe.
+        Gera a média das atribuições DeepLIFT e das entradas para todas as amostras de uma classe.
         
         Args:
             target_class_idx: Índice da classe alvo
@@ -2151,11 +2152,15 @@ class DeepLIFT:
             baseline_type: 'zeros' ou 'mean'
             
         Returns:
-            Tensor com a média das atribuições [num_rows, effective_size]
+            Tupla (mean_attributions, mean_input, num_samples):
+            - mean_attributions: Tensor com a média das atribuições [num_rows, effective_size]
+            - mean_input: Tensor com a média das entradas [num_rows, effective_size]
+            - num_samples: Número de amostras usadas
         """
         # Verificar cache
-        if target_class_idx in self._class_mean_cache:
-            return self._class_mean_cache[target_class_idx]
+        if target_class_idx in self._class_mean_cache and target_class_idx in self._class_input_mean_cache:
+            mean_input, num_samples = self._class_input_mean_cache[target_class_idx]
+            return self._class_mean_cache[target_class_idx], mean_input, num_samples
         
         console.print(f"[cyan]Calculando média DeepLIFT para classe {target_class_idx}...[/cyan]")
         
@@ -2168,9 +2173,13 @@ class DeepLIFT:
         
         if len(class_samples) == 0:
             console.print(f"[yellow]⚠ Nenhuma amostra encontrada para classe {target_class_idx}[/yellow]")
-            return None
+            return None, None, 0
         
-        console.print(f"[cyan]  → {len(class_samples)} amostras encontradas[/cyan]")
+        num_samples = len(class_samples)
+        console.print(f"[cyan]  → {num_samples} amostras encontradas[/cyan]")
+        
+        # Calcular média das entradas
+        mean_input = torch.stack(class_samples).mean(dim=0)
         
         # Calcular DeepLIFT para cada amostra
         all_attributions = []
@@ -2187,17 +2196,18 @@ class DeepLIFT:
             
             # Progress (a cada 10 amostras)
             if (i + 1) % 10 == 0:
-                console.print(f"[dim]  → Processadas {i + 1}/{len(class_samples)} amostras[/dim]")
+                console.print(f"[dim]  → Processadas {i + 1}/{num_samples} amostras[/dim]")
         
-        # Calcular média
+        # Calcular média das atribuições
         mean_attributions = torch.stack(all_attributions).mean(dim=0)
         
-        # Armazenar no cache
+        # Armazenar nos caches
         self._class_mean_cache[target_class_idx] = mean_attributions
+        self._class_input_mean_cache[target_class_idx] = (mean_input, num_samples)
         
         console.print(f"[green]✓ Média DeepLIFT calculada para classe {target_class_idx}[/green]")
         
-        return mean_attributions
+        return mean_attributions, mean_input, num_samples
 
 
 # ==============================================================================
@@ -3087,6 +3097,11 @@ class Tester:
                 except Exception as e:
                     console.print(f"[yellow]⚠ Erro ao gerar Grad-CAM: {e}[/yellow]")
             
+            # Variáveis para modo de média de classe
+            deeplift_class_mean_mode = False
+            deeplift_class_mean_input = None
+            deeplift_class_mean_num_samples = 0
+            
             if self.deeplift is not None:
                 try:
                     # Determine target class for DeepLIFT
@@ -3112,11 +3127,12 @@ class Tester:
                             deeplift_target_class_name = predicted_name
                         
                         # Usar média de todas as amostras da classe alvo
-                        deeplift_map = self.deeplift.generate_class_mean(
+                        deeplift_map, deeplift_class_mean_input, deeplift_class_mean_num_samples = self.deeplift.generate_class_mean(
                             target_class_idx=deeplift_target_class_idx,
                             dataset=self.dataset,
                             baseline_type=self.deeplift_baseline
                         )
+                        deeplift_class_mean_mode = True
                 except Exception as e:
                     console.print(f"[yellow]⚠ Erro ao gerar DeepLIFT: {e}[/yellow]")
         
@@ -3154,7 +3170,13 @@ class Tester:
         # Detect if input is 2D or 1D
         if features_cpu.ndim == 3 and features_cpu.shape[0] == 1:
             # 2D input: [1, num_rows, effective_size]
-            img_data = features_cpu[0].numpy()  # [num_rows, effective_size]
+            # Se estamos no modo de média de classe, usar a média das entradas
+            if deeplift_class_mean_mode and deeplift_class_mean_input is not None:
+                img_data = deeplift_class_mean_input.numpy()  # [num_rows, effective_size]
+                input_title = f'{self.dataset_name.upper()} | Class {deeplift_target_class_name} ({deeplift_class_mean_num_samples} samples) | Input 2D Mean ({img_data.shape[0]}x{img_data.shape[1]})'
+            else:
+                img_data = features_cpu[0].numpy()  # [num_rows, effective_size]
+                input_title = f'{self.dataset_name.upper()} | Sample {sample_id} ({target_name}) | Input 2D ({img_data.shape[0]}x{img_data.shape[1]})'
             
             # Calculate zoom factors for later use
             zoom_factors = (viz_height / img_data.shape[0], viz_width / img_data.shape[1])
@@ -3173,8 +3195,7 @@ class Tester:
             plt.imshow(img_normalized, cmap='gray', aspect='auto', interpolation='nearest')
             
             plt.xlabel('Gene Position (rescaled)', fontsize=12)
-            plt.title(f'{self.dataset_name.upper()} | Sample {sample_id} ({target_name}) | Input 2D ({img_data.shape[0]}x{img_data.shape[1]})', 
-                     fontsize=14, fontweight='bold')
+            plt.title(input_title, fontsize=14, fontweight='bold')
             plt.colorbar(label='Normalized Value')
             
             # Configure Y axis with gene names
@@ -3302,13 +3323,25 @@ class Tester:
                 ]
                 cmap_black_center = LinearSegmentedColormap.from_list('black_center', colors_diverging)
                 
-                # Escala fixa para comparação entre amostras
+                # Escala: dinâmica para modo de média de classe, fixa para outros casos
+                if deeplift_class_mean_mode:
+                    # Escala dinâmica baseada nos dados
+                    dl_abs_max = max(abs(dl_resized.min()), abs(dl_resized.max()))
+                    dl_vmin, dl_vmax = -dl_abs_max, dl_abs_max
+                else:
+                    # Escala fixa para comparação entre amostras
+                    dl_vmin, dl_vmax = -0.10, 0.10
+                
                 im_dl = plt.imshow(dl_resized, cmap=cmap_black_center, aspect='auto', 
-                                  interpolation='nearest', vmin=-0.10, vmax=0.10)
+                                  interpolation='nearest', vmin=dl_vmin, vmax=dl_vmax)
                 plt.colorbar(im_dl, label='Attribution (+ → class, - → not class)')
-                # Show which class is being visualized and individual's superpopulation
+                
+                # Título: diferente para modo de média de classe
                 dl_class_label = deeplift_target_class_name if deeplift_target_class_name else predicted_name
-                plt.title(f'DeepLIFT: Feature Attribution for Class {dl_class_label} (Individual: {target_name})', fontsize=14, fontweight='bold')
+                if deeplift_class_mean_mode:
+                    plt.title(f'DeepLIFT: Mean Attribution for Class {dl_class_label} ({deeplift_class_mean_num_samples} samples)', fontsize=14, fontweight='bold')
+                else:
+                    plt.title(f'DeepLIFT: Feature Attribution for Class {dl_class_label} (Individual: {target_name})', fontsize=14, fontweight='bold')
                 
                 # Compute gene importance first (needed for xlabel)
                 gene_importance = []
@@ -3394,8 +3427,14 @@ class Tester:
             
             # Generate filename
             method_suffix = self.interp_method
-            correct_str = "correct" if predicted_idx == target_idx else "wrong"
-            filename = f"{sample_id}_{predicted_name}_{correct_str}_{method_suffix}.png"
+            
+            # Nome diferente para modo de média de classe
+            if deeplift_class_mean_mode:
+                filename = f"class_mean_{deeplift_target_class_name}_{deeplift_class_mean_num_samples}samples_{method_suffix}.png"
+            else:
+                correct_str = "correct" if predicted_idx == target_idx else "wrong"
+                filename = f"{sample_id}_{predicted_name}_{correct_str}_{method_suffix}.png"
+            
             filepath = output_dir / filename
             
             plt.savefig(filepath, dpi=150, bbox_inches='tight')
