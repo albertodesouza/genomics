@@ -93,6 +93,47 @@ SIZE_TO_SEQUENCE_NAME = {
 NUM_ONTOLOGIES = 6  # Número de ontologias RNA-seq por gene (valor padrão)
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Global Cache for Performance Optimization
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Cache global para dados de splits (evita recarregar do disco)
+_SPLIT_DATA_CACHE: Dict[str, list] = {}
+
+
+def _get_cached_split_data(cache_dir: Path, split: str) -> list:
+    """
+    Retorna dados do split com cache em memória.
+    Carrega do disco apenas na primeira vez.
+    
+    Args:
+        cache_dir: Diretório do cache
+        split: Nome do split (train/val/test)
+        
+    Returns:
+        Lista de tuplas (features, target) para todas as amostras do split
+    """
+    cache_key = f"{cache_dir}:{split}"
+    
+    if cache_key not in _SPLIT_DATA_CACHE:
+        data_file = cache_dir / f'{split}_data.pt'
+        if not data_file.exists():
+            raise FileNotFoundError(f"Data file not found: {data_file}")
+        
+        console.print(f"[dim]  Loading {split} data into memory cache...[/dim]")
+        _SPLIT_DATA_CACHE[cache_key] = torch.load(data_file, map_location='cpu')
+        console.print(f"[green]  ✓ {split} data cached ({len(_SPLIT_DATA_CACHE[cache_key])} samples)[/green]")
+    
+    return _SPLIT_DATA_CACHE[cache_key]
+
+
+def clear_split_cache():
+    """Limpa o cache de dados de splits para liberar memória."""
+    global _SPLIT_DATA_CACHE
+    _SPLIT_DATA_CACHE.clear()
+    console.print("[yellow]  Split data cache cleared[/yellow]")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Helper Function: Generate Ontology Labels from Dataset Metadata
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -1382,12 +1423,9 @@ def load_cache_data(
     if index >= split_size:
         raise ValueError(f"Índice {index} fora do range para split '{split}' (max: {split_size - 1})")
     
-    # Carregar dados do split
-    data_file = cache_dir / f'{split}_data.pt'
-    if not data_file.exists():
-        raise FileNotFoundError(f"Arquivo de dados não encontrado: {data_file}")
-    
-    data = torch.load(data_file, map_location='cpu')
+    # Carregar dados do split COM CACHE EM MEMÓRIA
+    # Isso evita recarregar o arquivo do disco a cada visualização
+    data = _get_cached_split_data(cache_dir, split)
     
     # Extrair features e target do indivíduo
     features, target = data[index]
