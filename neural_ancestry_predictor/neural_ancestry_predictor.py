@@ -3068,6 +3068,9 @@ class Tester:
             gene_names = GENE_ORDER
         tracks_per_gene = 6
         
+        # Get gene window metadata for genomic coordinates
+        gene_window_metadata = self.config['dataset_input'].get('gene_window_metadata', {})
+        
         # Compute interpretability maps if enabled
         gradcam_map = None
         deeplift_map = None
@@ -3343,20 +3346,51 @@ class Tester:
                 else:
                     plt.title(f'DeepLIFT: Feature Attribution for Class {dl_class_label} (Individual: {target_name})', fontsize=14, fontweight='bold')
                 
-                # Compute gene importance first (needed for xlabel)
-                gene_importance = []
+                # Compute top 5 most active regions (highest positive values, not absolute)
+                top_regions = []
+                total_cols = dl_np.shape[1]
+                
                 for i in range(len(gene_names)):
+                    gene_name = gene_names[i]
                     start_row = i * tracks_per_gene
                     end_row = (i + 1) * tracks_per_gene
                     if end_row <= dl_np.shape[0]:
-                        importance = np.abs(dl_np[start_row:end_row, :]).mean()
-                        gene_importance.append((gene_names[i], importance))
+                        gene_data = dl_np[start_row:end_row, :]
+                        # Find maximum positive value and its position
+                        max_val = gene_data.max()
+                        if max_val > 0:
+                            # Find position of maximum
+                            max_idx = np.unravel_index(gene_data.argmax(), gene_data.shape)
+                            col_idx = max_idx[1]
+                            
+                            # Calculate genomic coordinate
+                            if gene_name in gene_window_metadata:
+                                meta = gene_window_metadata[gene_name]
+                                chrom = meta.get('chromosome', 'N/A')
+                                start_pos = meta.get('start', 0)
+                                window_size = meta.get('window_size', 0)
+                                # Calculate position within the window
+                                genomic_pos = start_pos + int((col_idx / total_cols) * window_size) if window_size > 0 else start_pos
+                            else:
+                                chrom = 'N/A'
+                                genomic_pos = 0
+                            
+                            top_regions.append((gene_name, max_val, chrom, genomic_pos, col_idx))
                 
-                # Build xlabel with top genes included
-                if gene_importance:
-                    gene_importance.sort(key=lambda x: x[1], reverse=True)
-                    top_genes_str = ', '.join([f"{g[0]}({g[1]:.5f})" for g in gene_importance[:3]])
-                    plt.xlabel(f'Gene Position (rescaled) — Top genes: {top_genes_str}', fontsize=11)
+                # Sort by value (highest positive first) and take top 5
+                top_regions.sort(key=lambda x: x[1], reverse=True)
+                top_5_regions = top_regions[:5]
+                
+                # Print details to terminal
+                if top_5_regions:
+                    console.print(f"\n[bold cyan]Top 5 Regiões Mais Ativas (DeepLIFT):[/bold cyan]")
+                    for rank, (gene, val, chrom, pos, col) in enumerate(top_5_regions, 1):
+                        console.print(f"  {rank}. [green]{gene}[/green]: valor = {val:.6f}, {chrom}: {pos:,}")
+                
+                # Build xlabel with top 5 regions
+                if top_5_regions:
+                    top_regions_str = ', '.join([f"{r[0]}({r[1]:.5f})" for r in top_5_regions])
+                    plt.xlabel(f'Gene Position (rescaled) — Top regions: {top_regions_str}', fontsize=11)
                 else:
                     plt.xlabel('Gene Position (rescaled)', fontsize=12)
                 
@@ -5086,6 +5120,10 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
                 config['dataset_input']['gene_order'] = cache_metadata['gene_order']
                 console.print(f"[green]Gene order carregado do cache: {', '.join(cache_metadata['gene_order'])}[/green]")
             
+            # Passar gene_window_metadata do cache para o config
+            if 'gene_window_metadata' in cache_metadata and cache_metadata['gene_window_metadata']:
+                config['dataset_input']['gene_window_metadata'] = cache_metadata['gene_window_metadata']
+            
             result = (full_dataset, train_loader, val_loader, test_loader)
             
             # Copiar normalization_params para o diretório do experimento (referência)
@@ -5314,6 +5352,10 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
         if 'gene_order' in cache_metadata and cache_metadata['gene_order']:
             config['dataset_input']['gene_order'] = cache_metadata['gene_order']
             console.print(f"[green]Gene order carregado do cache: {', '.join(cache_metadata['gene_order'])}[/green]")
+        
+        # Passar gene_window_metadata do cache para o config
+        if 'gene_window_metadata' in cache_metadata and cache_metadata['gene_window_metadata']:
+            config['dataset_input']['gene_window_metadata'] = cache_metadata['gene_window_metadata']
         
         result = (full_dataset, train_loader, val_loader, test_loader)
         

@@ -1,5 +1,5 @@
 # Configuração para verificar apenas o gene TYR
-cache_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes/datasets/rna_seq_H1_32768_ds1_log_shuf_split0.7-0.15-0.15_seed13"
+cache_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes_1000/datasets/rna_seq_H1_32768_ds1_log_shuf_split0.7-0.15-0.15_seed13"
 dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes"
 
 split: "train"
@@ -27,7 +27,7 @@ gene_filter: "MC1R"  # Mostrar apenas gene MC1R (6 tracks)
 # dataset_dir_x_cache_dir:
 #  Compares original dataset data (.npz) vs. processed cache (.pt)
 #  Validates normalization and transformation pipeline
-comparison_mode: "dataset_dir_x_cache_dir"
+#comparison_mode: "dataset_dir_x_cache_dir"
 
 # Modo de navegação interativa
 # "single": Navegação atual (um indivíduo por vez)
