@@ -178,6 +178,86 @@ def generate_ontology_labels(dataset_metadata: Dict) -> List[str]:
     return labels
 
 
+def generate_ontology_labels_short(dataset_metadata: Dict) -> List[str]:
+    """
+    Gera labels curtas de ontologias (apenas código) a partir dos metadados do dataset.
+    
+    Args:
+        dataset_metadata: Dicionário com metadados do dataset (deve conter 'ontology_details')
+        
+    Returns:
+        Lista de labels curtas apenas com o código da ontologia (ex: "CL:1000458 (+)")
+        
+    Example:
+        >>> labels = generate_ontology_labels_short(metadata)
+        >>> labels[0]
+        'CL:1000458 (+)'
+    """
+    ontology_details = dataset_metadata.get('ontology_details', {})
+    
+    if not ontology_details:
+        # Fallback para labels padrão se metadados não tiverem ontology_details
+        return [
+            "CL:1000458 (+)",
+            "CL:0000346 (+)",
+            "CL:2000092 (+)",
+            "CL:1000458 (-)",
+            "CL:0000346 (-)",
+            "CL:2000092 (-)"
+        ]
+    
+    # Ordenar ontologias para ordem consistente
+    sorted_ontologies = sorted(ontology_details.keys())
+    
+    labels = []
+    # Primeiro todas as ontologias com strand +
+    for ontology_curie in sorted_ontologies:
+        label = f"{ontology_curie} (+)"
+        labels.append(label)
+    
+    # Depois todas as ontologias com strand -
+    for ontology_curie in sorted_ontologies:
+        label = f"{ontology_curie} (-)"
+        labels.append(label)
+    
+    return labels
+
+
+def save_figure_to_images(
+    fig: plt.Figure,
+    filename: str,
+    dpi: int = 150
+) -> Path:
+    """
+    Save figure to the images/ directory in neural_ancestry_predictor.
+    
+    Creates the images/ directory if it doesn't exist.
+    
+    Args:
+        fig: Matplotlib figure to save
+        filename: Filename for the image (should include extension like .png)
+        dpi: Resolution in dots per inch (default 150)
+        
+    Returns:
+        Path to the saved image file
+    """
+    # Get the directory where this script is located
+    script_dir = Path(__file__).parent
+    images_dir = script_dir / "images"
+    
+    # Create images directory if it doesn't exist
+    images_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Full path for the output file
+    output_path = images_dir / filename
+    
+    # Save the figure
+    fig.savefig(output_path, dpi=dpi, bbox_inches='tight')
+    console.print(f"[green]✓ Image saved: {output_path}[/green]")
+    
+    return output_path
+
+
 # ═══════════════════════════════════════════════════════════════════
 # Helper Function: Center Window Extraction
 # ═══════════════════════════════════════════════════════════════════
@@ -1922,12 +2002,12 @@ def plot_comparison(
         ax.plot(x_positions, alpha_track,
                 color='red', linewidth=1.0, linestyle='--', alpha=0.7, label=label2)
         
-        # Criar label apenas com ontologia (gene já está no título)
-        # Gerar labels dinamicamente dos metadados
+        # Criar label apenas com código da ontologia (gene já está no título)
+        # Gerar labels curtas dinamicamente dos metadados
         if dataset_metadata:
-            ontology_labels = generate_ontology_labels(dataset_metadata)
+            ontology_labels = generate_ontology_labels_short(dataset_metadata)
         else:
-            ontology_labels = generate_ontology_labels({})  # Usa fallback
+            ontology_labels = generate_ontology_labels_short({})  # Usa fallback
         
         gene_idx = track_idx // len(ontology_labels)
         ont_idx = track_idx % len(ontology_labels)
@@ -1937,7 +2017,7 @@ def plot_comparison(
             ylabel = f"Track {track_idx}"
         
         # Configurar subplot
-        ax.set_ylabel(ylabel, fontsize=5, fontweight='bold')
+        ax.set_ylabel(ylabel, fontsize=10, fontweight='bold')
         ax.grid(True, alpha=0.3, linestyle='--')
         ax.legend(loc='upper right', fontsize=8)
         
@@ -1954,24 +2034,24 @@ def plot_comparison(
         if ont_idx == NUM_ONTOLOGIES - 1 and gene_idx < len(genes_displayed) - 1:
             ax.axhline(y=ax.get_ylim()[0], color='gray', linewidth=2, alpha=0.8)
     
-    # Título principal
+    # Main title (in English)
     gene_info = f"Genes: {', '.join(genes_displayed)}" if len(genes_displayed) <= 3 else f"{len(genes_displayed)} genes"
     title = f'Sample {sample_id} - Cache vs AlphaGenome ({num_tracks} tracks)\n'
-    title += f'{gene_info} | MAE médio: {metrics["mae_mean"]:.6f} | Corr média: {metrics["corr_mean"]:.6f}'
+    title += f'{gene_info} | Mean MAE: {metrics["mae_mean"]:.6f} | Mean Corr: {metrics["corr_mean"]:.6f}'
     
     fig.suptitle(title, fontsize=14, fontweight='bold')
     
-    # Label do eixo X apenas no último subplot
-    axes[-1].set_xlabel('Posição na janela (bp)', fontsize=12, fontweight='bold')
+    # X-axis label on last subplot only
+    axes[-1].set_xlabel('Window Position (bp)', fontsize=12, fontweight='bold')
     
-    # Texto com instruções de navegação (se modo interativo)
+    # Navigation instructions (interactive mode)
     if viewer and config.get('show_navigation_help', True):
-        fig.text(0.5, 0.01, '← Anterior | → Próxima | Q Sair',
+        fig.text(0.5, 0.01, '← Previous | → Next | Q Quit',
                 ha='center', fontsize=10,
                 bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.7))
     
-    # Nota explicativa
-    note_text = 'Nota: Dados do cache já estão normalizados. Dados do AlphaGenome foram normalizados com mesmos parâmetros para comparação.'
+    # Explanatory note
+    note_text = 'Note: Cache data is already normalized. AlphaGenome data was normalized with the same parameters for comparison.'
     fig.text(0.5, 0.98, note_text,
             ha='center', fontsize=8, style='italic',
             transform=fig.transFigure)
@@ -2017,47 +2097,47 @@ def plot_individual_comparison(
     # Criar subplots (6 linhas x 1 coluna para 6 tracks empilhadas verticalmente)
     fig, axes = plt.subplots(6, 1, figsize=(14, 12))
     
-    # Título principal com gene
+    # Main title with gene (in English)
     label_1 = f"{sample_id_1} ({pop_1}/{superpop_1})"
     label_2 = f"{sample_id_2} ({pop_2}/{superpop_2})"
     
     fig.suptitle(
-        f"Gene: {gene_name} - Comparação: {label_1} vs {label_2}",
+        f"Gene: {gene_name} - Comparison: {label_1} vs {label_2}",
         fontsize=16, fontweight='bold'
     )
     
-    # Plotar cada track
+    # Plot each track
     for i in range(num_tracks):
         ax = axes[i]
         
-        # Plotar primeiro indivíduo (azul sólido)
+        # Plot first individual (solid blue)
         ax.plot(features_1[i], color='blue', linewidth=1.5, label=label_1, alpha=0.8)
         
-        # Plotar segundo indivíduo (vermelho tracejado)
+        # Plot second individual (dashed red)
         ax.plot(features_2[i], color='red', linewidth=1.5, linestyle='--', 
                 label=label_2, alpha=0.8)
         
-        # Usar nome da ontologia como ylabel (gerar dinamicamente dos metadados)
+        # Use short ontology code as ylabel (generated from metadata)
         if dataset_metadata:
-            ontology_labels = generate_ontology_labels(dataset_metadata)
+            ontology_labels = generate_ontology_labels_short(dataset_metadata)
         else:
-            ontology_labels = generate_ontology_labels({})  # Usa fallback
+            ontology_labels = generate_ontology_labels_short({})  # Fallback
         
         ylabel = ontology_labels[i] if i < len(ontology_labels) else f"Track {i}"
-        ax.set_ylabel(ylabel, fontsize=5, fontweight='bold')
+        ax.set_ylabel(ylabel, fontsize=10, fontweight='bold')
         ax.set_xlabel('Position', fontsize=8)
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=8, loc='best')
     
-    # Ajustar layout
+    # Adjust layout
     plt.tight_layout(rect=[0, 0.03, 1, 0.96])
     
-    # Adicionar instruções de navegação
+    # Navigation instructions
     if config.get('show_navigation_help', True) and viewer is not None:
         nav_text = (
-            "Navegação: ← → (ambos indivíduos) | "
-            "A D (segundo indivíduo) | "
-            "W Z (genes) | Q (sair)"
+            "Navigation: ← → (both individuals) | "
+            "A D (second individual) | "
+            "W Z (genes) | Q (quit)"
         )
         fig.text(0.5, 0.01, nav_text, ha='center', fontsize=9, 
                 style='italic', color='gray')
@@ -2173,14 +2253,14 @@ def plot_raw_data(
         # Plot raw data
         ax.plot(track_data, linewidth=0.8, color='blue', alpha=0.8)
         
-        # Labels - gerar dinamicamente dos metadados do dataset
+        # Labels - generate short labels from dataset metadata
         if dataset_metadata:
-            ontology_labels = generate_ontology_labels(dataset_metadata)
+            ontology_labels = generate_ontology_labels_short(dataset_metadata)
         else:
-            ontology_labels = generate_ontology_labels({})  # Usa fallback
+            ontology_labels = generate_ontology_labels_short({})  # Fallback
         
         ylabel = ontology_labels[idx] if idx < len(ontology_labels) else f'Track {idx}'
-        ax.set_ylabel(ylabel, fontsize=5, fontweight='bold')
+        ax.set_ylabel(ylabel, fontsize=10, fontweight='bold')
         ax.grid(True, alpha=0.3)
         
         # Show value range
@@ -2254,15 +2334,19 @@ def process_sample_raw_mode(
             # dataset_metadata já está disponível como parâmetro da função
             fig = plot_raw_data(raw_data, sample_id, gene_name, config, viewer, dataset_metadata)
         
-        # Save if requested
+        # Always save figure to images/ directory with specific filename
+        filename = f"raw_{sample_id}_{gene_name}.png"
+        save_figure_to_images(fig, filename)
+        
+        # Also save to output_dir if requested (for backward compatibility)
         if config.get('save_plots', False):
             output_dir = config.get('output_dir')
             if output_dir:
                 output_path = Path(output_dir)
                 output_path.mkdir(parents=True, exist_ok=True)
-                filename = f"{config.get('output_prefix', 'raw')}_{sample_id}_{gene_name}.png"
-                fig.savefig(output_path / filename, dpi=150, bbox_inches='tight')
-                console.print(f"[green]✓ Saved: {output_path / filename}[/green]")
+                output_filename = f"{config.get('output_prefix', 'raw')}_{sample_id}_{gene_name}.png"
+                fig.savefig(output_path / output_filename, dpi=150, bbox_inches='tight')
+                console.print(f"[green]✓ Also saved: {output_path / output_filename}[/green]")
         
         plt.show()
     
@@ -2683,7 +2767,11 @@ def process_sample_comparison_mode(
                 label1=label1, label2=label2, dataset_metadata=dataset_metadata
             )
             
-            # Save if requested
+            # Always save figure to images/ directory with specific filename
+            images_filename = f"comparison_{sample_id}_{gene_name}.png"
+            save_figure_to_images(fig, images_filename)
+            
+            # Also save to output_dir if requested (for backward compatibility)
             if config.get('save_plots', False):
                 output_dir = config.get('output_dir')
                 if output_dir:
@@ -2691,7 +2779,7 @@ def process_sample_comparison_mode(
                     output_path.mkdir(parents=True, exist_ok=True)
                     filename = f"{config.get('output_prefix', 'compare')}_{sample_id}_{gene_name}.png"
                     fig.savefig(output_path / filename, dpi=150, bbox_inches='tight')
-                    console.print(f"[green]✓ Saved: {output_path / filename}[/green]")
+                    console.print(f"[green]✓ Also saved: {output_path / filename}[/green]")
             
             # Interactive mode: store figure in viewer, don't show yet
             if viewer is not None:
@@ -2840,6 +2928,10 @@ def process_comparison_sample(
             gene_name, config, viewer, dataset_metadata
         )
         
+        # Always save figure to images/ directory with specific filename
+        images_filename = f"individual_comparison_{sample_id_1}_vs_{sample_id_2}_{gene_name}.png"
+        save_figure_to_images(fig, images_filename)
+        
         return fig
         
     except Exception as e:
@@ -2926,14 +3018,21 @@ def process_sample(
             genes_loaded, config, viewer, dataset_metadata=dataset_metadata
         )
         
-        # Salvar gráfico se configurado
+        # Always save figure to images/ directory with specific filename
+        genes_str = "_".join(genes_loaded[:3])  # Max 3 genes in filename
+        if len(genes_loaded) > 3:
+            genes_str += f"_plus{len(genes_loaded)-3}"
+        images_filename = f"verify_{sample_id}_{genes_str}.png"
+        save_figure_to_images(fig, images_filename)
+        
+        # Also save to output_dir if requested (for backward compatibility)
         if config.get('save_plots', False) and config.get('output_dir'):
             output_dir = Path(config['output_dir'])
             output_dir.mkdir(parents=True, exist_ok=True)
             output_prefix = config.get('output_prefix', 'verify')
             output_file = output_dir / f"{output_prefix}_{sample_id}.png"
             fig.savefig(output_file, dpi=150, bbox_inches='tight')
-            console.print(f"[green]✓ Gráfico salvo em: {output_file}[/green]")
+            console.print(f"[green]✓ Also saved: {output_file}[/green]")
         
         return fig
     
