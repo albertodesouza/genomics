@@ -2261,15 +2261,19 @@ class Trainer:
         # Configurar otimizador
         optimizer_type = config['training']['optimizer'].lower()
         lr = config['training']['learning_rate']
+        weight_decay = config['training'].get('weight_decay', 0.0)
         
         if optimizer_type == 'adam':
-            self.optimizer = optim.Adam(model.parameters(), lr=lr)
+            self.optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
         elif optimizer_type == 'adamw':
-            self.optimizer = optim.AdamW(model.parameters(), lr=lr)
+            self.optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
         elif optimizer_type == 'sgd':
-            self.optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
+            self.optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=weight_decay)
         else:
             raise ValueError(f"Otimizador não suportado: {optimizer_type}")
+        
+        if weight_decay > 0:
+            console.print(f"[green]✓ Weight decay (L2): {weight_decay}[/green]")
         
         # Configurar learning rate scheduler
         self.scheduler = None

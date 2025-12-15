@@ -366,6 +366,22 @@ training:
   # Valores típicos: 0.001 (1e-3) a 0.0001 (1e-4)
   learning_rate: 0.001
   
+  # Weight decay (regularização L2)
+  # Penaliza pesos grandes, ajudando a prevenir overfitting.
+  # Adiciona termo λ * ||w||² à função de loss.
+  # 
+  # Valores típicos:
+  #   0.0     = Sem regularização L2 (desabilita weight decay)
+  #   1e-5    = Regularização muito leve
+  #   1e-4    = Regularização leve (bom ponto de partida)
+  #   1e-3    = Regularização moderada
+  #   1e-2    = Regularização forte
+  #
+  # Se o modelo estiver sofrendo overfitting, aumente o valor.
+  # Se o modelo estiver underfitting ou convergindo muito devagar, reduza ou zere.
+  # Para DESABILITAR: coloque weight_decay: 0.0
+  weight_decay: 0.0001
+  
   # Função de loss
   # "cross_entropy": Para classificação (superpopulation, population)
   # "mse": Para regressão (frog_likelihood)
@@ -502,7 +518,7 @@ wandb:
   # true = loga métricas, gráficos, confusion matrix no W&B
   # false = não usa W&B
   # Requer: pip install wandb && wandb login
-  use_wandb: true
+  use_wandb: false
   
   # Nome do projeto no W&B
   project_name: "neural-ancestry-predictor-genes-1000"
@@ -644,7 +660,7 @@ debug:
 # "train": Treina a rede neural
 # "test": Carrega checkpoint e testa no conjunto especificado em test_dataset
 # Pode ser sobrescrito via --mode na linha de comando
-mode: "train"
+mode: "test"
 
 # Conjunto de dados a ser usado no modo test
 # "test": Conjunto de teste (padrão)
