@@ -2,8 +2,11 @@
 source ../scripts/start_genomics_universal.sh
 export CUDA_VISIBLE_DEVICES=0
 
-python3 neural_ancestry_predictor.py --config HSEAS/k14.yaml > HSEAS/results_k14.txt 2>&1
-python3 neural_ancestry_predictor.py --config HSEAS/k15.yaml > HSEAS/results_k15.txt 2>&1
+python3 neural_ancestry_predictor.py --config HSEAS/k111.yaml > HSEAS/results_k111.txt 2>&1
+python3 neural_ancestry_predictor.py --config HSEAS/k211.yaml > HSEAS/results_k211.txt 2>&1
+python3 neural_ancestry_predictor.py --config HSEAS/k231.yaml > HSEAS/results_k231.txt 2>&1
+# python3 neural_ancestry_predictor.py --config HSEAS/k14.yaml > HSEAS/results_k14.txt 2>&1
+# python3 neural_ancestry_predictor.py --config HSEAS/k15.yaml > HSEAS/results_k15.txt 2>&1
 # python3 neural_ancestry_predictor.py --config HSEAS/k11.yaml > HSEAS/results_k11.txt 2>&1
 # python3 neural_ancestry_predictor.py --config HSEAS/k13.yaml > HSEAS/results_k13.txt 2>&1
 # python3 neural_ancestry_predictor.py --config HSEAS/k21.yaml > HSEAS/results_k21.txt 2>&1

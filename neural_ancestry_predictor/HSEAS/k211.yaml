@@ -1,0 +1,697 @@
+# ═══════════════════════════════════════════════════════════════════
+# Neural Ancestry Predictor - Default Gene Configuration
+# ═══════════════════════════════════════════════════════════════════
+#
+# Este arquivo configura a rede neural para predição de ancestralidade
+# a partir de predições AlphaGenome armazenadas no dataset PyTorch.
+#
+# Uso:
+#   python3 neural_ancestry_predictor.py --config configs/default_genes.yaml
+#
+# ═══════════════════════════════════════════════════════════════════
+
+# ───────────────────────────────────────────────────────────────────
+# A) DATASET INPUT PARAMETERS
+# ───────────────────────────────────────────────────────────────────
+# Configurações de entrada do dataset
+
+dataset_input:
+  # Caminho para o diretório do dataset PyTorch
+  # Deve conter individuals/ e dataset_metadata.json
+  dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000"
+  
+  # Lista de outputs AlphaGenome a usar como entrada
+  # Opções disponíveis: rna_seq, atac, cage, chip_histone, chip_tf, dnase, etc.
+  # IMPORTANTE: Nomes devem estar em minúsculas (mesmo formato dos arquivos .npz)
+  # Quanto mais outputs, maior a dimensão de entrada
+  alphagenome_outputs:
+    - "rna_seq"
+  
+  # Modo de combinação de haplótipos
+  # Opções: "H1", "H2", "H1+H2"
+  # - "H1": Usa apenas haplótipo 1
+  # - "H2": Usa apenas haplótipo 2
+  # - "H1+H2": Concatena ambos os haplótipos (dobra tamanho de entrada)
+  haplotype_mode: "H1"
+  
+  # Tamanho do trecho central (em bases) a extrair de cada janela
+  # Cada janela tem ~1M bases. Este parâmetro seleciona o trecho central.
+  # Valores menores = menos features, treinamento mais rápido
+  # Valores maiores = mais informação, maior dimensionalidade
+  # Default: 100 bases (bem pequeno para começar)
+  # WINDOW_SIZE_4KB = 4096
+  # WINDOW_SIZE_8KB = 8192
+  # WINDOW_SIZE_16KB = 16384
+  # WINDOW_SIZE_32KB = 32768
+  # WINDOW_SIZE_64KB = 65536
+  # WINDOW_SIZE_128KB = 131072
+  # WINDOW_SIZE_256KB = 262144
+  # WINDOW_SIZE_512KB = 524288   # AlphaGenome: "500KB" = 524288 bp (512 KB real)
+  # WINDOW_SIZE_1MB = 1048576
+
+  window_center_size: 32768
+  
+  # Fator de downsampling a aplicar após extração do trecho central
+  # 1 = usar todas as bases selecionadas (sem downsampling)
+  # 2 = usar 1 a cada 2 bases
+  # 10 = usar 1 a cada 10 bases
+  # Maior downsampling = menor dimensionalidade, mais rápido, menos informação
+  downsample_factor: 1
+  
+  # Seleção de genes a usar na rede neural
+  # Lista específica de genes para incluir no treinamento
+  # A ordem dos genes é automaticamente obtida do dataset (salva no cache metadata)
+  # Você pode listar os genes em qualquer ordem - o sistema usará a ordem correta do dataset
+  # 
+  # Genes disponíveis: MC1R, TYRP1, TYR, SLC45A2, DDB1, EDAR, MFSD12, OCA2, HERC2, SLC24A5, TCHH
+  # Cada gene contribui com 6 linhas (6 ontologias RNA-seq)
+  # 
+  # Exemplos:
+  #   - Todos os genes (66 linhas): usar lista completa abaixo
+  #   - Apenas pigmentação: ["MC1R", "TYR", "OCA2", "SLC24A5", "SLC45A2"]
+  #   - Sem genes de cabelo: remover EDAR e TCHH da lista
+  # 
+  # NOTA: A ordem em que você lista os genes aqui não importa.
+  #       O sistema usa a ordem salva no metadata do cache (extraída do dataset base).
+  genes_to_use:
+    - "MC1R"
+    - "TYRP1"
+    - "TYR"
+    - "SLC45A2"
+    - "DDB1"
+    - "EDAR"
+    - "MFSD12"
+    - "OCA2"
+    - "HERC2"
+    - "SLC24A5"
+    - "TCHH"
+  
+  # Método de normalização dos dados
+  # Opções:
+  #   "zscore": Normalização Z-score padrão (mean=0, std=1)
+  #             Usa mean e std globais de todos os dados
+  #             Pode ter problemas com outliers extremos
+  #
+  #   "minmax_keep_zero": Min-Max mantendo zeros
+  #             Zeros permanecem zeros (importante para dados esparsos)
+  #             Valores não-zero são divididos pelo máximo não-zero
+  #             Resultado: valores em [0, 1]
+  #             Ideal para dados com muitos zeros (ATAC-seq, RNA-seq)
+  #
+  #   "log": Normalização logarítmica com log1p
+  #             Aplica log1p (log(1+x)) e divide pelo log1p(max)
+  #             Zeros permanecem zeros automaticamente
+  #             Comprime outliers extremos
+  #             Ideal para dados com distribuição exponencial/lognormal
+  #
+  # Recomendado: "minmax_keep_zero" ou "log" para dados AlphaGenome
+  normalization_method: "log"
+  
+  # Valor pré-definido para normalização (otimização de performance)
+  # Se 0 ou null: Computa automaticamente (demorado, ~30s-60s)
+  # Se diferente de 0: Usa este valor diretamente (instantâneo)
+  # 
+  # IMPORTANTE: Só funciona com métodos "log" e "minmax_keep_zero"
+  # Para "zscore" sempre computa (precisa mean e std)
+  # 
+  # Como usar:
+  # 1. Execute uma vez com 0 para computar
+  # 2. Veja o valor no log (ex: "log1p(max): 4.337291")
+  # 3. Configure aqui para próximas execuções
+  # 
+  # Valores típicos (ATAC-seq, 11 windows):
+  #   - log: ~4.33 a 4.34
+  #   - minmax_keep_zero: varia mais (ver log)
+  normalization_value: 0.0
+  
+  # Diretório para cache do dataset processado (normalizado e dividido)
+  # Se null, não usa cache (sempre reprocessa os dados)
+  # Se especificado:
+  #   - Se o cache existir e for válido, carrega de lá (economia de tempo)
+  #   - Se não existir, processa os dados e salva no cache
+  # O cache inclui: dados normalizados, splits de treino/val/teste, e metadados
+  # Ideal para múltiplas execuções com mesmo dataset e mesmos parâmetros
+  # null = desabilita cache; "processed_datasets/default_cache" = habilita
+  processed_cache_dir: /dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes_1000
+
+# ───────────────────────────────────────────────────────────────────
+# B) OUTPUT PARAMETERS
+# ───────────────────────────────────────────────────────────────────
+# Configurações do target de predição
+
+output:
+  # Target de predição
+  # Opções:
+  #   "superpopulation": Prediz superpopulação (5 classes: AFR, AMR, EAS, EUR, SAS)
+  #   "population": Prediz população (26 classes)
+  #   "frog_likelihood": Prediz likelihood FROG (150 valores - regressão)
+  prediction_target: "superpopulation"
+  
+  # Classes conhecidas (OPCIONAL - removido para usar metadados dinâmicos)
+  # Se não especificado ou null, carrega automaticamente dos metadados do dataset
+  # Se os metadados não estiverem disponíveis, pode especificar aqui como fallback
+  # 
+  # Para superpopulation (5 classes):
+  # known_classes: ["AFR", "AMR", "EAS", "EUR", "SAS"]
+  # 
+  # Para population (26 classes):
+  # known_classes: ["ACB", "ASW", "BEB", "CDX", "CEU", "CHB", "CHS", "CLM", 
+  #                 "ESN", "FIN", "GBR", "GIH", "GWD", "IBS", "ITU", "JPT", 
+  #                 "KHV", "LWK", "MSL", "MXL", "PEL", "PJL", "PUR", "STU", 
+  #                 "TSI", "YRI"]
+  # 
+  # Para frog_likelihood (regressão), deixe como null ou remova o campo
+  known_classes: null
+
+# ───────────────────────────────────────────────────────────────────
+# C) MODEL ARCHITECTURE
+# ───────────────────────────────────────────────────────────────────
+# Configurações da arquitetura da rede neural
+
+model:
+  # Tipo de rede neural
+  # Opções:
+  #   "NN": Rede neural totalmente conectada (fully connected)
+  #   "CNN": Rede neural convolucional (convolutional)
+  #   "CNN2": Rede neural convolucional multi-layer com global pooling
+  type: "CNN2"
+  
+  # Camadas ocultas: lista com número de neurônios em cada camada
+  # Exemplo: [256, 128, 64] = 3 camadas ocultas
+  # - As camadas exceto a ÚLTIMA usam activation configurável (relu/tanh/sigmoid)
+  # - A ÚLTIMA camada é sempre LINEAR (pré-softmax) automaticamente
+  # - Para 5 classes de saída, recomendado: última camada >= 32 neurônios
+  # 
+  # Camada de entrada é determinada automaticamente pelos dados
+  # Camada de saída é determinada pelo prediction_target
+  hidden_layers:
+    - 100
+    - 40
+    # - 64
+  
+  # Função de ativação para camadas ocultas INTERMEDIÁRIAS apenas
+  # (a última hidden layer é sempre linear antes do softmax)
+  # Opções: "relu", "tanh", "sigmoid"
+  activation: "relu"
+  
+  # Taxa de dropout (0.0 a 1.0)
+  # 0.0 = sem dropout
+  # Valores típicos: 0.2 a 0.5
+  # Ajuda a prevenir overfitting
+  dropout_rate: 0.5
+  
+  # Parâmetros específicos para CNN (ignorados se type='NN')
+  cnn:
+    # Tamanho do kernel de convolução [height, width]
+    # 
+    # Para dataset de GENES com MÚLTIPLAS TRACKS (ex: 6 ontologias RNA-seq):
+    #   Input shape: (11 genes × 6 tracks) = 66 linhas × 50000 bases
+    # 
+    # Opções de kernel:
+    #   [11, 20] - Processa 11 linhas (1 gene completo com todas tracks) × 20 bases
+    #              Aprende padrões combinando todas as tracks de um gene
+    #              Output: (66-11)/11+1 = 6 grupos × 2500 posições = 75,000 features
+    #   
+    #   [1, 20]  - Processa 1 linha (1 track específica) × 20 bases
+    #              Cada track processada independentemente
+    #              Output: (66-1)/1+1 = 66 linhas × 2500 posições = muito maior
+    kernel_size: [6, 32]
+    
+    # Número de filtros/kernels convolucionais
+    # Cada filtro aprende um padrão diferente
+    # Mais filtros = mais features detectadas, mais parâmetros
+    num_filters: 5
+    
+    # Stride (passo) da convolução - [vertical, horizontal]
+    # [11, 20] = stride 11 vertical (processa grupos de 11 linhas sem overlap)
+    #            stride 20 horizontal (move 20 bases por vez)
+    # 
+    # Com kernel [11, 20] e stride [11, 20] para input 66×50000:
+    #   - Dimensão vertical: (66 - 11) / 11 + 1 = 6 grupos
+    #   - Dimensão horizontal: (50000 - 20) / 20 + 1 = 2500 posições
+    #   - Flatten size: 5 filters × 6 × 2500 = 75,000 features
+    stride: [6, 32]
+    
+    # Padding - pode ser escalar ou lista [vertical, horizontal]
+    # Adiciona zeros nas bordas da entrada antes da convolução
+    # 
+    # Para input 66×50000 com kernel [11, 20] e stride [11, 20]:
+    #   - padding: 0 ou [0, 0] = sem padding (recomendado)
+    #   - Dimensão vertical: (66-11)/11+1 = 6 grupos (cada grupo = 1 gene com todas tracks)
+    #   - Dimensão horizontal: (50000-20)/20+1 = 2500 posições
+    # 
+    # Fórmula de dimensão de saída:
+    #   out_size = (in_size + 2*padding - kernel_size) / stride + 1
+    #   Vertical: (66 + 0 - 11) / 11 + 1 = 6
+    #   Horizontal: (50000 + 0 - 20) / 20 + 1 = 2500
+    #   Flatten: 5 filters × 6 × 2500 = 75,000
+    padding: 0
+    
+    # Tamanho do pooling [height, width] ou null para desabilitar
+    # Reduz dimensionalidade após convolução através de MaxPooling
+    # 
+    # Exemplos:
+    #   null        - Sem pooling (mantém dimensão pós-convolução)
+    #   [2, 2]      - MaxPool 2x2 (reduz ambas dimensões pela metade)
+    #   [1, 2]      - MaxPool vertical 1, horizontal 2 (reduz só largura)
+    # 
+    # ATENÇÃO: Pooling pode causar perda de informação, use com cautela
+    pool_size: null
+  
+  # Parâmetros específicos para CNN2 (ignorados se type!='CNN2')
+  # CNN2 é uma arquitetura multi-layer com global pooling, mais adequada
+  # para dados de genes com múltiplas tracks (ex: 11 genes × 6 ontologias).
+  # 
+  # Vantagens sobre CNN simples:
+  # - Menos parâmetros (~100-200k vs 5M+)
+  # - Hierarquia de features (padrões locais → globais)
+  # - Global pooling = invariante ao tamanho da entrada
+  # - Melhor para dados multi-track organizados por genes
+  #
+  # Quando usar CNN2 vs CNN:
+  # - CNN: Para dados simples, 1-2 tracks, exploração inicial
+  # - CNN2: Para dados complexos, múltiplas tracks por gene, produção
+  cnn2:
+    # Primeira camada convolucional (agrupa tracks de genes)
+    # Ex: Para 66 tracks (11 genes × 6 ontologias):
+    #   kernel [6, 32] + stride [6, 32] → agrupa cada gene em 1 feature
+    num_filters_stage1: 16
+    kernel_stage1: [6, 32]
+    stride_stage1: [6, 32]
+    
+    # Segunda camada convolucional (processa bases)
+    # Kernel [1, 5] mantém genes separados, processa ao longo das bases
+    num_filters_stage2: 32
+    
+    # Terceira camada convolucional (features mais abstratas)
+    # Aumenta profundidade de features sem aumentar muito os parâmetros
+    num_filters_stage3: 64
+    
+    # Kernels e strides para stages 2 e 3
+    # [1, 5] = processa 5 bases por vez, mantém genes separados
+    # [1, 2] = stride de 2 reduz dimensão espacial gradualmente
+    # [0, 2] = padding de 2 nas bordas horizontais
+    kernel_stages23: [1, 2]
+    stride_stages23: [1, 2]
+    padding_stages23: [0, 2]
+    
+    # Tamanho da camada fully connected intermediária
+    # Após global pooling, temos ~700 features → fc_hidden_size → num_classes
+    fc_hidden_size: 256
+    
+    # Tipo de global pooling: "max" ou "avg"
+    # max: captura features mais salientes (picos de expressão) - recomendado
+    # avg: média dos valores (preserva informação geral)
+    # NOTA: Ambos são determinísticos. AdaptiveAvgPool2d NÃO é usado porque
+    #       não tem implementação determinística no backward pass em CUDA.
+    global_pool_type: "max"
+
+# ───────────────────────────────────────────────────────────────────
+# D) DATA LOADING
+# ───────────────────────────────────────────────────────────────────
+# Configurações de carregamento de dados
+
+data_loading:
+  # Estratégia de carregamento dos dados em memória
+  # Opções:
+  #   "preload": Carrega todo o dataset na RAM de uma vez
+  #              - Rápido (acesso instantâneo aos dados)
+  #              - Usa muita memória (~11GB para dataset completo)
+  #              - Recomendado: máquinas com muita RAM (32GB+), máxima performance
+  #
+  #   "lazy": Lazy loading com liberação automática entre épocas
+  #           - Carrega arquivo .pt sob demanda (primeira época)
+  #           - LIBERA automaticamente após cada época (economiza memória!)
+  #           - Recarrega automaticamente na próxima época (pequeno overhead)
+  #           - Cache LRU mantém ~50 samples para acesso rápido
+  #           
+  #           Padrão de uso de memória esperado:
+  #           - Época 1: Memória sobe de ~0 → ~7.6 GB (carrega arquivo)
+  #           - Fim época 1: Memória cai de ~7.6 GB → ~400 MB (libera, mantém cache)
+  #           - Época 2: Memória sobe de ~400 MB → ~7.6 GB (recarrega)
+  #           - Fim época 2: Memória cai novamente...
+  #           
+  #           Overhead: ~5-10 segundos por época para reload
+  #           Economia: ~7 GB liberados entre épocas
+  #
+  # Para dataset de 1300 samples (66×32768 float32):
+  #   - preload: ~11GB RAM permanente
+  #   - lazy: ~11GB durante época, ~400MB entre épocas
+  #
+  # Quando usar cada modo:
+  #   - preload: Máxima velocidade, RAM abundante (32GB+)
+  #   - lazy: RAM limitada (16GB), aceita pequeno overhead de I/O
+  loading_strategy: "lazy"
+  
+  # Tamanho do cache LRU (apenas para loading_strategy="lazy")
+  # Número de samples a manter em cache após unload_data()
+  # Cache ajuda a evitar recarregar arquivo frequentemente
+  # Valores recomendados:
+  #   50-100 = cache pequeno (~150-300MB, econômico)
+  #   200-500 = cache médio (~600MB-1.5GB, melhor performance)
+  # Ignorado se loading_strategy="preload"
+  cache_size: 50
+
+# ───────────────────────────────────────────────────────────────────
+# E) TRAINING PARAMETERS
+# ───────────────────────────────────────────────────────────────────
+# Configurações de treinamento
+
+training:
+  # Otimizador
+  # Opções: "adam", "adamw", "sgd"
+  optimizer: "adam"
+  
+  # Taxa de aprendizado (learning rate)
+  # Valores típicos: 0.001 (1e-3) a 0.0001 (1e-4)
+  learning_rate: 0.001
+  
+  # Weight decay (regularização L2)
+  # Penaliza pesos grandes, ajudando a prevenir overfitting.
+  # Adiciona termo λ * ||w||² à função de loss.
+  # 
+  # Valores típicos:
+  #   0.0     = Sem regularização L2 (desabilita weight decay)
+  #   1e-5    = Regularização muito leve
+  #   1e-4    = Regularização leve (bom ponto de partida)
+  #   1e-3    = Regularização moderada
+  #   1e-2    = Regularização forte
+  #
+  # Se o modelo estiver sofrendo overfitting, aumente o valor.
+  # Se o modelo estiver underfitting ou convergindo muito devagar, reduza ou zere.
+  # Para DESABILITAR: coloque weight_decay: 0.0
+  weight_decay: 0.0001
+  
+  # Função de loss
+  # "cross_entropy": Para classificação (superpopulation, population)
+  # "mse": Para regressão (frog_likelihood)
+  loss_function: "cross_entropy"
+  
+  # Tamanho do batch (número de indivíduos por batch)
+  # Valores maiores = treinamento mais estável, mais memória
+  # Valores menores = mais atualizações, menos memória
+  # Deve ser ajustado de acordo com tamanho do dataset
+  batch_size: 50
+  
+  # Número de épocas de treinamento
+  # Uma época = passar por todo o dataset de treino uma vez
+  num_epochs: 400
+  
+  # Frequência de validação (em épocas)
+  # A cada N épocas, executa validação
+  validation_frequency: 3
+  
+  # ─────────────────────────────────────────────────────────────────
+  # Learning Rate Scheduler
+  # ─────────────────────────────────────────────────────────────────
+  # Ajusta a taxa de aprendizado durante o treinamento
+  
+  lr_scheduler:
+    # Habilitar scheduler
+    enabled: true
+    
+    # Tipo de scheduler
+    # "plateau": Reduz quando métrica para de melhorar (recomendado)
+    # "step": Reduz em intervalos fixos de épocas
+    # "cosine": Redução suave seguindo curva cosseno
+    # "cosine_warm_restarts": Cosseno com reinícios periódicos
+    # "exponential": Redução exponencial constante
+    # "multistep": Reduz em épocas específicas
+    type: "cosine_warm_restarts"
+    
+    # ─── Configurações para ReduceLROnPlateau ───
+    # Monitora melhoria de loss ("min") ou accuracy ("max")
+    mode: "min"
+    
+    # Fator de redução (novo_lr = lr * factor)
+    factor: 0.5
+    
+    # Número de épocas sem melhora antes de reduzir
+    patience: 30
+    
+    # Learning rate mínimo (não reduz abaixo disso)
+    min_lr: 0.0000001
+    
+    # ─── Configurações para StepLR ───
+    # Reduz a cada N épocas
+    step_size: 30
+    
+    # Fator de redução para StepLR
+    # gamma: 0.1
+    
+    # ─── Configurações para CosineAnnealingLR ───
+    # Número de épocas para completar o ciclo
+    T_max: 300
+    
+    # LR mínimo no final do ciclo
+    eta_min: 0.0000001
+    
+    # ─── Configurações para CosineAnnealingWarmRestarts ───
+    # Épocas para o primeiro ciclo (restart)
+    T_0: 50
+    
+    # Fator multiplicador do período após cada restart
+    # T_mult=1: ciclos iguais (50, 50, 50...)
+    # T_mult=2: ciclos crescentes (50, 100, 200...)
+    T_mult: 1
+    
+    # ─── Configurações para ExponentialLR ───
+    # Fator de decaimento por época (lr = lr * gamma)
+    # gamma: 0.95
+    
+    # ─── Configurações para MultiStepLR ───
+    # Épocas onde reduzir o LR
+    # milestones: [30, 60, 90]
+    # gamma: 0.1
+
+# ───────────────────────────────────────────────────────────────────
+# F) DATA SPLIT
+# ───────────────────────────────────────────────────────────────────
+# Configurações de divisão do dataset
+
+data_split:
+  # Fração dos dados para treinamento (0.0 a 1.0)
+  train_split: 0.7
+  
+  # Fração dos dados para validação (0.0 a 1.0)
+  val_split: 0.15
+  
+  # Fração dos dados para teste (0.0 a 1.0)
+  # Nota: train_split + val_split + test_split deve ser <= 1.0
+  test_split: 0.15
+  
+  # Seed para reprodutibilidade
+  # Use o mesmo seed para ter sempre a mesma divisão e inicialização de pesos
+  # null = aleatório (resultados não reprodutíveis)
+  random_seed: 13
+  
+  # Estratégia de balanceamento dos dados
+  # - "stratified": Balanceamento estratificado sequencial
+  #   • Agrupa amostras por classe e intercala
+  #   • Descarta excedentes para garantir mesmo número por classe
+  #   • Ideal para treino balanceado em produção
+  # - "shuffle": Randomização simples
+  #   • Preserva TODOS os dados (não descarta nada)
+  #   • Embaralha com seed fixa para reprodutibilidade
+  #   • Ideal para debug e verificação de dados
+  balancing_strategy: "shuffle"
+  
+  # Determinismo estrito para reprodutibilidade perfeita
+  # true = Determinismo ESTRITO - 100% reprodutível entre execuções
+  #        • Garante resultados idênticos com mesmo seed
+  #        • Útil para: comparar arquiteturas, debug, publicações
+  #        • Desvantagem: 10-30% mais lento em GPU
+  # false = Determinismo PARCIAL - ~99% reprodutível, mais rápido
+  #        • Permite otimizações não-determinísticas da GPU (cudnn.benchmark)
+  #        • Pequenas variações (~0.1-0.5% acc) podem ocorrer
+  #        • Útil para: treinos de produção, otimização de hiperparâmetros
+  # Nota: Requer random_seed configurado (não null)
+  strict_determinism: true
+
+# ───────────────────────────────────────────────────────────────────
+# G) WEIGHTS & BIASES
+# ───────────────────────────────────────────────────────────────────
+# Configurações de tracking e visualização com W&B
+
+wandb:
+  # Habilitar Weights & Biases
+  # true = loga métricas, gráficos, confusion matrix no W&B
+  # false = não usa W&B
+  # Requer: pip install wandb && wandb login
+  use_wandb: true
+  
+  # Nome do projeto no W&B
+  project_name: "neural-ancestry-predictor-genes-1000"
+  
+  # Nome do run (opcional)
+  # null = usa o nome do experimento automaticamente (ex: cnn_atac_H1_1002_log_k5x5_f20_s5_p0_L100-40_relu_0.0_adam)
+  # "custom_name" = especifica um nome customizado para o run no W&B
+  run_name: null
+  
+  # Frequência de logging (em batches)
+  # Log a cada N batches de treino
+  log_frequency: 100
+
+# ───────────────────────────────────────────────────────────────────
+# H) CHECKPOINTING
+# ───────────────────────────────────────────────────────────────────
+# Configurações de salvamento de checkpoints
+
+checkpointing:
+  # Diretório para salvar checkpoints
+  checkpoint_dir: "models"
+  
+  # Salvar checkpoints durante o treinamento
+  # true: Salva best_accuracy.pt, best_loss.pt e epoch_N.pt durante o treino + final.pt no fim
+  # false: Salva APENAS final.pt no fim do treinamento (máxima economia de espaço em disco)
+  save_during_training: true
+  
+  # Frequência de salvamento (em épocas)
+  # Salva checkpoint a cada N épocas (apenas se save_during_training = true)
+  save_frequency: 100
+  
+  # Caminho para checkpoint existente (para continuar treino ou testar)
+  # null = começar do zero
+  # Exemplo: "models/best_accuracy.pt"
+  load_checkpoint: null
+
+# ───────────────────────────────────────────────────────────────────
+# I) DEBUG/VISUALIZATION
+# ───────────────────────────────────────────────────────────────────
+# Opções de debug e visualização
+
+debug:
+  # Habilitar visualização interativa dos dados durante treinamento
+  # true = mostra gráfico com entrada/saída após cada batch (pressione Enter para continuar)
+  # false = treino normal sem visualização
+  # IMPORTANTE: Quando true, força batch_size=1 automaticamente
+  enable_visualization: false
+  
+  # Número máximo de amostras a visualizar por época
+  # null = visualiza todas as amostras da época
+  # N = visualiza apenas as primeiras N amostras
+  max_samples_per_epoch: null
+  
+  # Parâmetros de visualização da entrada 2D
+  visualization:
+    # Dimensões para rescale da imagem de entrada (apenas para visualização)
+    # A rede recebe os dados na forma 2D original, não rescalada
+    # 
+    # Para dataset de GENES (66 tracks = 11 genes × 6 ontologias):
+    #   height: 660 = 10 pixels por track (recomendado para ver detalhes)
+    #   height: 330 = 5 pixels por track (mais compacto)
+    #   height: 300 = 4.5 pixels por track (padrão, pode ser apertado)
+    width: 600   # Largura da imagem visualizada
+    height: 660  # Altura aumentada para 66 tracks (10 pixels/track)
+  
+  # Tainting de amostras para debug
+  # Marca amostras com valor sentinela (-2) em posições específicas
+  # baseadas na classe de saída, para verificar se rede aprende corretamente
+  # Fórmula: posição = classe * (input_vector_size / num_classes)
+  # Exemplo: 5 classes, 5500 features -> classe 0→pos 0, classe 1→pos 1100, etc.
+  taint_at_cache_save: false  # Taintar ao salvar no cache (dados salvos já vêm marcados)
+  taint_at_runtime: false      # Taintar durante __getitem__ (marca em tempo de execução)
+  
+  # ─────────────────────────────────────────────────────────────────
+  # Interpretabilidade (Grad-CAM e DeepLIFT)
+  # ─────────────────────────────────────────────────────────────────
+  # Técnicas de interpretabilidade para entender quais regiões gênicas
+  # mais contribuem para a predição de cada classe.
+  # Requer: mode="test" e enable_visualization=true
+  #
+  # Métodos disponíveis:
+  #   - gradcam: Grad-CAM - mapa de ativação ponderado por gradientes
+  #              Destaca regiões espaciais (genes/posições) importantes
+  #   - deeplift: DeepLIFT - atribuição por propagação de diferenças
+  #              Atribui importância a cada feature individual
+  #   - both: Executa ambos os métodos lado a lado
+  interpretability:
+    # Habilitar análise de interpretabilidade
+    # true = gera mapas de importância durante teste com visualização
+    # false = visualização normal sem interpretabilidade
+    enabled: false
+    
+    # Método de interpretabilidade a usar
+    # Opções: "gradcam", "deeplift", "both"
+    method: "gradcam"
+    
+    # Salvar imagens PNG das visualizações
+    # true = salva cada visualização como PNG no output_dir
+    # false = apenas exibe interativamente
+    save_images: true
+    
+    # Diretório para salvar imagens de interpretabilidade
+    # Relativo ao diretório do experimento ou caminho absoluto
+    output_dir: "interpretability_results"
+    
+    # Configuração específica do Grad-CAM
+    gradcam:
+      # Camada alvo para extrair ativações
+      # "auto" = última camada convolucional (recomendado)
+      # Para CNN: usa conv1
+      # Para CNN2: usa última conv em features (Stage 3)
+      target_layer: "auto"
+      
+      # Classe alvo para gerar o mapa de ativação
+      # "predicted" = usa a classe predita pela rede (padrão)
+      # "AFR", "AMR", "EAS", "EUR", "SAS" = classe específica
+      # Isso permite visualizar quais regiões ativam uma classe específica,
+      # independente do que a rede prediz para a amostra
+      target_class: "AFR"
+    
+    # Configuração específica do DeepLIFT
+    deeplift:
+      # Baseline (referência) para comparação
+      # "zeros" = tensor de zeros (padrão, simples)
+      # "mean" = média de todas as amostras do dataset de teste
+      baseline: "zeros"
+      
+      # Classe alvo para gerar as atribuições
+      # "predicted" = usa a classe predita pela rede (padrão)
+      # "AFR", "AMR", "EAS", "EUR", "SAS" = classe específica
+      target_class: "predicted"
+
+# ───────────────────────────────────────────────────────────────────
+# J) MODE
+# ───────────────────────────────────────────────────────────────────
+# Modo de operação
+
+# Modo de execução
+# "train": Treina a rede neural
+# "test": Carrega checkpoint e testa no conjunto especificado em test_dataset
+# Pode ser sobrescrito via --mode na linha de comando
+mode: "train"
+
+# Conjunto de dados a ser usado no modo test
+# "test": Conjunto de teste (padrão)
+# "train": Conjunto de treinamento
+# "val": Conjunto de validação
+test_dataset: "test"
+
+# ═══════════════════════════════════════════════════════════════════
+# NOTAS DE USO
+# ═══════════════════════════════════════════════════════════════════
+#
+# 1. Ajuste de Dimensionalidade:
+#    - Para reduzir tempo de treino: aumente downsample_factor ou reduza window_center_size
+#    - Para mais informação: aumente window_center_size ou adicione mais alphagenome_outputs
+#
+# 2. Ajuste de Capacidade do Modelo:
+#    - Underfitting (loss alto): aumente hidden_layers ou neurônios
+#    - Overfitting (val_loss > train_loss): adicione dropout, reduza neurônios
+#
+# 3. Ajuste de Convergência:
+#    - Treino instável: reduza learning_rate
+#    - Treino muito lento: aumente learning_rate ou batch_size
+#
+# 4. Targets de Predição:
+#    - superpopulation: Mais fácil (5 classes), bom para começar
+#    - population: Mais difícil (26 classes), requer mais dados/capacidade
+#    - frog_likelihood: Regressão (150 valores), mais difícil ainda
+#
+# 5. Haplotype Mode:
+#    - H1 ou H2: Menor dimensionalidade, mais rápido
+#    - H1+H2: Mais informação (diferenças entre haplótipos), dobra dimensão
+#
+# ═══════════════════════════════════════════════════════════════════
+
