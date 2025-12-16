@@ -518,7 +518,7 @@ wandb:
   # true = loga métricas, gráficos, confusion matrix no W&B
   # false = não usa W&B
   # Requer: pip install wandb && wandb login
-  use_wandb: false
+  use_wandb: true
   
   # Nome do projeto no W&B
   project_name: "neural-ancestry-predictor-genes-1000"
@@ -660,7 +660,7 @@ debug:
 # "train": Treina a rede neural
 # "test": Carrega checkpoint e testa no conjunto especificado em test_dataset
 # Pode ser sobrescrito via --mode na linha de comando
-mode: "test"
+mode: "train"
 
 # Conjunto de dados a ser usado no modo test
 # "test": Conjunto de teste (padrão)

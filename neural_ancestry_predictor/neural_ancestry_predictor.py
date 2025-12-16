@@ -5979,19 +5979,25 @@ def main():
             console.print("[bold cyan]Executando Testes Automáticos Após Treinamento[/bold cyan]")
         console.print("[bold cyan]═══════════════════════════════════════════════[/bold cyan]\n")
         
-        # Determinar qual checkpoint usar
         models_dir = experiment_dir / 'models'
-        if (models_dir / 'best_accuracy.pt').exists():
-            checkpoint_path = models_dir / 'best_accuracy.pt'
-            console.print(f"[green]Carregando melhor modelo (accuracy): {checkpoint_path}[/green]")
-        elif (models_dir / 'final.pt').exists():
-            checkpoint_path = models_dir / 'final.pt'
-            console.print(f"[green]Carregando modelo final: {checkpoint_path}[/green]")
-        else:
-            console.print("[yellow]⚠ Nenhum checkpoint encontrado para teste automático[/yellow]")
-            checkpoint_path = None
         
-        if checkpoint_path:
+        # Lista de checkpoints para testar (em ordem de prioridade)
+        checkpoints_to_test = []
+        if (models_dir / 'best_accuracy.pt').exists():
+            checkpoints_to_test.append(('best_accuracy', models_dir / 'best_accuracy.pt'))
+        if (models_dir / 'best_loss.pt').exists():
+            checkpoints_to_test.append(('best_loss', models_dir / 'best_loss.pt'))
+        if not checkpoints_to_test and (models_dir / 'final.pt').exists():
+            checkpoints_to_test.append(('final', models_dir / 'final.pt'))
+        
+        if not checkpoints_to_test:
+            console.print("[yellow]⚠ Nenhum checkpoint encontrado para teste automático[/yellow]")
+        
+        for checkpoint_name, checkpoint_path in checkpoints_to_test:
+            console.print(f"\n[bold magenta]{'═' * 50}[/bold magenta]")
+            console.print(f"[bold magenta]Testando com checkpoint: {checkpoint_name}.pt[/bold magenta]")
+            console.print(f"[bold magenta]{'═' * 50}[/bold magenta]")
+            
             # Limpar memória GPU antes de carregar checkpoint
             if device.type == 'cuda':
                 torch.cuda.empty_cache()
@@ -6000,41 +6006,38 @@ def main():
             checkpoint = torch.load(checkpoint_path, map_location='cpu')
             model.load_state_dict(checkpoint['model_state_dict'])
             
+            # Sufixo para arquivos de resultado
+            suffix = f'_{checkpoint_name}' if checkpoint_name != 'best_accuracy' else ''
+            
             # Teste no conjunto de treino
             console.print("\n[cyan]━━━ Testando no conjunto de TREINO ━━━[/cyan]")
-            train_results = run_test_and_save(model, train_loader, full_dataset, config, device, 'train', experiment_dir)
+            train_results = run_test_and_save(model, train_loader, full_dataset, config, device, f'train{suffix}', experiment_dir)
             
             # Teste no conjunto de validação
             console.print("\n[cyan]━━━ Testando no conjunto de VALIDAÇÃO ━━━[/cyan]")
-            val_results = run_test_and_save(model, val_loader, full_dataset, config, device, 'val', experiment_dir)
+            val_results = run_test_and_save(model, val_loader, full_dataset, config, device, f'val{suffix}', experiment_dir)
             
             # Teste no conjunto de teste
             console.print("\n[cyan]━━━ Testando no conjunto de TESTE ━━━[/cyan]")
-            test_results = run_test_and_save(model, test_loader, full_dataset, config, device, 'test', experiment_dir)
-            
-            console.print("\n[bold green]✓ Testes automáticos concluídos![/bold green]")
+            test_results = run_test_and_save(model, test_loader, full_dataset, config, device, f'test{suffix}', experiment_dir)
+        
+        console.print("\n[bold green]✓ Testes automáticos concluídos![/bold green]")
         
     elif config['mode'] == 'test':
-        # Carregar melhor checkpoint do experiment_dir
         models_dir = experiment_dir / 'models'
-        checkpoint_path = models_dir / 'best_accuracy.pt'
         
-        if not checkpoint_path.exists():
-            # Tentar final.pt como fallback
-            checkpoint_path = models_dir / 'final.pt'
-            if not checkpoint_path.exists():
-                console.print(f"[red]ERRO: Nenhum checkpoint encontrado em: {models_dir}[/red]")
-                sys.exit(1)
+        # Lista de checkpoints para testar
+        checkpoints_to_test = []
+        if (models_dir / 'best_accuracy.pt').exists():
+            checkpoints_to_test.append(('best_accuracy', models_dir / 'best_accuracy.pt'))
+        if (models_dir / 'best_loss.pt').exists():
+            checkpoints_to_test.append(('best_loss', models_dir / 'best_loss.pt'))
+        if not checkpoints_to_test and (models_dir / 'final.pt').exists():
+            checkpoints_to_test.append(('final', models_dir / 'final.pt'))
         
-        console.print(f"[yellow]Carregando checkpoint: {checkpoint_path}[/yellow]")
-        
-        # Limpar memória GPU antes de carregar checkpoint
-        if device.type == 'cuda':
-            torch.cuda.empty_cache()
-        
-        # Carregar checkpoint na CPU, depois aplicar ao modelo (já na GPU)
-        checkpoint = torch.load(checkpoint_path, map_location='cpu')
-        model.load_state_dict(checkpoint['model_state_dict'])
+        if not checkpoints_to_test:
+            console.print(f"[red]ERRO: Nenhum checkpoint encontrado em: {models_dir}[/red]")
+            sys.exit(1)
         
         # Selecionar conjunto de dados para teste
         test_dataset_choice = config.get('test_dataset', 'test').lower()
@@ -6049,17 +6052,31 @@ def main():
             selected_loader = test_loader
             dataset_name = "Test"
         
-        console.print(f"[cyan]Testando no conjunto de: {dataset_name}[/cyan]")
-        
-        # Limpeza CUDA final antes de testar
-        if device.type == 'cuda':
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-            console.print(f"[green]✓ Estado CUDA limpo (pré-teste)[/green]")
-        
-        # Testar
-        tester = Tester(model, selected_loader, full_dataset, config, device, wandb_run, dataset_name)
-        results = tester.test()
+        for checkpoint_name, checkpoint_path in checkpoints_to_test:
+            console.print(f"\n[bold magenta]{'═' * 50}[/bold magenta]")
+            console.print(f"[bold magenta]Testando com checkpoint: {checkpoint_name}.pt[/bold magenta]")
+            console.print(f"[bold magenta]{'═' * 50}[/bold magenta]")
+            console.print(f"[yellow]Carregando checkpoint: {checkpoint_path}[/yellow]")
+            
+            # Limpar memória GPU antes de carregar checkpoint
+            if device.type == 'cuda':
+                torch.cuda.empty_cache()
+            
+            # Carregar checkpoint na CPU, depois aplicar ao modelo (já na GPU)
+            checkpoint = torch.load(checkpoint_path, map_location='cpu')
+            model.load_state_dict(checkpoint['model_state_dict'])
+            
+            console.print(f"[cyan]Testando no conjunto de: {dataset_name}[/cyan]")
+            
+            # Limpeza CUDA final antes de testar
+            if device.type == 'cuda':
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                console.print(f"[green]✓ Estado CUDA limpo (pré-teste)[/green]")
+            
+            # Testar
+            tester = Tester(model, selected_loader, full_dataset, config, device, wandb_run, f"{dataset_name} ({checkpoint_name})")
+            results = tester.test()
     
     # Finalizar W&B
     if wandb_run:
