@@ -292,7 +292,7 @@ model:
     # [1, 2] = stride de 2 reduz dimensão espacial gradualmente
     # [0, 2] = padding de 2 nas bordas horizontais
     kernel_stages23: [1, 11]
-    stride_stages23: [1, 4]
+    stride_stages23: [1, 2]
     padding_stages23: [0, 2]
     
     # Tamanho da camada fully connected intermediária

@@ -276,8 +276,8 @@ model:
     # Ex: Para 66 tracks (11 genes × 6 ontologias):
     #   kernel [6, 32] + stride [6, 32] → agrupa cada gene em 1 feature
     num_filters_stage1: 16
-    kernel_stage1: [6, 64]
-    stride_stage1: [6, 64]
+    kernel_stage1: [6, 128]
+    stride_stage1: [6, 128]
     
     # Segunda camada convolucional (processa bases)
     # Kernel [1, 5] mantém genes separados, processa ao longo das bases

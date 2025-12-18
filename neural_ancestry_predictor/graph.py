@@ -23,34 +23,34 @@ data = {
         'W8',
         'W32',
         'W128',
-        'W512',
+#        'W512',
         'AG',
         '9G',
         '7G',
     ],
     'Accuracy': [
-        0.78,  # K11
+        0.77,  # K11
         0.80,  # K12
-        0.83,  # K13
-        0.81,  # K21
+        0.80,  # K13
+        0.80,  # K21
         0.80,  # K22
-        0.81,  # K23
+        0.78,  # K23
         0.78,  # FC128
         0.80,  # FC256
         0.80,  # FC512
         0.79,  # W8
         0.80,  # W32
         0.80,  # W128
-        0.85,  # W512
+#        0.85,  # W512
         0.80,  # AG
-        0.80,  # 9G
-        0.80,  # 7G
+        0.76,  # 9G
+        0.76,  # 7G
     ],
     'Parameter Count': [
-        376437,  # K11
+        195445,  # K11
         197749,  # K12
-        200821,  # K13
-        192629,  # K21
+        206965,  # K13
+        190069,  # K21
         197749,  # K22
         213109,  # K23
         106869,  # FC128
@@ -59,10 +59,10 @@ data = {
         197749,  # W8
         197749,  # W32
         197749,  # W128
-        197749,  # W512
+#        197749,  # W512
         197749,  # AG
-        197749,  # 9G
-        197749,  # 7G
+        164981,  # 9G
+        132213,  # 7G
     ],
 }
 
@@ -76,23 +76,34 @@ def create_dual_bar_chart():
     x = np.arange(len(data['Symbol']))
     width = 0.35  # Largura das barras
     
+    # Cores alternadas por grupo (grupos de 3)
+    # Tons de azul para Accuracy (claro/escuro alternando)
+    blues = ['#6495ED', '#0D1B5E']  # Cornflower Blue, Navy escuro
+    # Tons de vermelho para Parameter Count (claro/escuro alternando)
+    reds = ['#FF6B6B', '#8B0000']   # Coral claro, Dark Red
+    
+    # Criar lista de cores por barra (alternando a cada 3 elementos)
+    n_bars = len(data['Symbol'])
+    colors_accuracy = [blues[i // 3 % 2] for i in range(n_bars)]
+    colors_params = [reds[i // 3 % 2] for i in range(n_bars)]
+    
     # Eixo Y esquerdo - Accuracy
-    color_accuracy = '#2E86AB'  # Azul
+    color_accuracy_label = '#2E2EAB'  # Azul para o label
     ax1.set_xlabel('Symbol', fontsize=12, fontweight='bold')
-    ax1.set_ylabel('Accuracy', color=color_accuracy, fontsize=12, fontweight='bold')
+    ax1.set_ylabel('Accuracy', color=color_accuracy_label, fontsize=12, fontweight='bold')
     bars1 = ax1.bar(x - width/2, data['Accuracy'], width, 
-                    label='Accuracy', color=color_accuracy, alpha=0.8)
-    ax1.tick_params(axis='y', labelcolor=color_accuracy)
+                    label='Accuracy', color=colors_accuracy, alpha=0.8)
+    ax1.tick_params(axis='y', labelcolor=color_accuracy_label)
     ax1.set_ylim(0.0, 1.0)
     ax1.set_yticks(np.arange(0.0, 1.1, 0.1))
     
     # Eixo Y direito - Parameter Count
     ax2 = ax1.twinx()
-    color_params = '#E94F37'  # Vermelho
-    ax2.set_ylabel('Parameter Count', color=color_params, fontsize=12, fontweight='bold')
+    color_params_label = '#E93737'  # Vermelho para o label
+    ax2.set_ylabel('Parameter Count', color=color_params_label, fontsize=12, fontweight='bold')
     bars2 = ax2.bar(x + width/2, data['Parameter Count'], width,
-                    label='Parameter Count', color=color_params, alpha=0.8)
-    ax2.tick_params(axis='y', labelcolor=color_params)
+                    label='Parameter Count', color=colors_params, alpha=0.8)
+    ax2.tick_params(axis='y', labelcolor=color_params_label)
     ax2.set_ylim(0, 400000)
     ax2.set_yticks(np.arange(0, 450000, 50000))
     ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: format(int(x), ',')))
