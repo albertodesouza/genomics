@@ -3174,16 +3174,20 @@ class Tester:
         # ─────────────────────────────────────────────────────────────────
         ax1 = plt.subplot(num_rows_subplot, 1, 1)
         
+        # Limpar dataset_name: remover conteúdo entre parênteses e adicionar "SET"
+        import re
+        clean_dataset_name = re.sub(r'\s*\([^)]*\)', '', self.dataset_name).strip().upper() + ' SET'
+        
         # Detect if input is 2D or 1D
         if features_cpu.ndim == 3 and features_cpu.shape[0] == 1:
             # 2D input: [1, num_rows, effective_size]
             # Se estamos no modo de média de classe, usar a média das entradas
             if deeplift_class_mean_mode and deeplift_class_mean_input is not None:
                 img_data = deeplift_class_mean_input.numpy()  # [num_rows, effective_size]
-                input_title = f'{self.dataset_name.upper()} | Class {deeplift_target_class_name} ({deeplift_class_mean_num_samples} samples) | Input 2D Mean ({img_data.shape[0]}x{img_data.shape[1]})'
+                input_title = f'{clean_dataset_name} | Class {deeplift_target_class_name} ({deeplift_class_mean_num_samples} samples) | Input 2D Mean ({img_data.shape[0]}x{img_data.shape[1]})'
             else:
                 img_data = features_cpu[0].numpy()  # [num_rows, effective_size]
-                input_title = f'{self.dataset_name.upper()} | Sample {sample_id} ({target_name}) | Input 2D ({img_data.shape[0]}x{img_data.shape[1]})'
+                input_title = f'{clean_dataset_name} | Sample {sample_id} ({target_name}) | Input 2D ({img_data.shape[0]}x{img_data.shape[1]})'
             
             # Calculate zoom factors for later use
             zoom_factors = (viz_height / img_data.shape[0], viz_width / img_data.shape[1])
@@ -3201,9 +3205,17 @@ class Tester:
             # Plot as image (without overlay - interpretability maps shown separately)
             plt.imshow(img_normalized, cmap='gray', aspect='auto', interpolation='nearest')
             
-            plt.xlabel('Gene Position (rescaled)', fontsize=12)
+            plt.xlabel('Gene Position', fontsize=12)
             plt.title(input_title, fontsize=14, fontweight='bold')
             plt.colorbar(label='Normalized Value')
+            
+            # Configure X axis to show original scale (0 to window_center_size)
+            window_center_size = self.config['dataset_input']['window_center_size']
+            num_xticks = 5
+            xtick_positions = np.linspace(0, viz_width - 1, num_xticks)
+            xtick_labels = [f'{int(x)}' for x in np.linspace(0, window_center_size, num_xticks)]
+            ax1.set_xticks(xtick_positions)
+            ax1.set_xticklabels(xtick_labels)
             
             # Configure Y axis with gene names
             num_genes = len(gene_names)
@@ -3232,7 +3244,7 @@ class Tester:
             plt.plot(features_np, linewidth=0.5, alpha=0.7)
             plt.xlabel('Feature Index', fontsize=12)
             plt.ylabel('Feature Value', fontsize=12)
-            plt.title(f'{self.dataset_name.upper()} | Sample {sample_id} | Input Features (n={len(features_np)})', 
+            plt.title(f'{clean_dataset_name} | Sample {sample_id} | Input Features (n={len(features_np)})', 
                      fontsize=14, fontweight='bold')
             plt.grid(True, alpha=0.3)
         
@@ -3277,9 +3289,17 @@ class Tester:
                 if gene_importance:
                     gene_importance.sort(key=lambda x: x[1], reverse=True)
                     top_genes_str = ', '.join([f"{g[0]}({g[1]:.5f})" for g in gene_importance[:3]])
-                    plt.xlabel(f'Gene Position (rescaled) — Top genes: {top_genes_str}', fontsize=11)
+                    plt.xlabel(f'Gene Position — Top genes: {top_genes_str}', fontsize=11)
                 else:
-                    plt.xlabel('Gene Position (rescaled)', fontsize=12)
+                    plt.xlabel('Gene Position', fontsize=12)
+                
+                # Configure X axis to show original scale (0 to window_center_size)
+                window_center_size = self.config['dataset_input']['window_center_size']
+                num_xticks = 5
+                xtick_positions = np.linspace(0, viz_width - 1, num_xticks)
+                xtick_labels = [f'{int(x)}' for x in np.linspace(0, window_center_size, num_xticks)]
+                ax_gc.set_xticks(xtick_positions)
+                ax_gc.set_xticklabels(xtick_labels)
                 
                 # Configure Y axis (same style as first plot)
                 num_genes = len(gene_names)
@@ -3320,13 +3340,13 @@ class Tester:
                 
                 plt.sca(ax_dl)
                 
-                # Colormap personalizado: preto no centro, clareando para os extremos
-                # Azul claro (negativo) <- Preto (zero) -> Vermelho claro (positivo)
+                # Colormap personalizado: preto no centro, cores vivas nos extremos
+                # Azul vivo (negativo) <- Preto (zero) -> Vermelho vivo (positivo)
                 from matplotlib.colors import LinearSegmentedColormap
                 colors_diverging = [
-                    (0.6, 0.8, 1.0),   # Azul claro (negativo máximo)
+                    (0.2, 0.4, 0.9),   # Azul vivo (negativo máximo)
                     (0.0, 0.0, 0.0),   # Preto (zero)
-                    (1.0, 0.7, 0.6)    # Vermelho claro (positivo máximo)
+                    (0.9, 0.3, 0.2)    # Vermelho vivo (positivo máximo)
                 ]
                 cmap_black_center = LinearSegmentedColormap.from_list('black_center', colors_diverging)
                 
@@ -3390,13 +3410,81 @@ class Tester:
                     console.print(f"\n[bold cyan]Top 5 Regiões Mais Ativas (DeepLIFT):[/bold cyan]")
                     for rank, (gene, val, chrom, pos, col) in enumerate(top_5_regions, 1):
                         console.print(f"  {rank}. [green]{gene}[/green]: valor = {val:.6f}, {chrom}: {pos:,}")
+                    
+                    # Save to file if save_images is enabled
+                    if self.interp_save_images:
+                        # Create output directory
+                        top_regions_output_dir = Path(self.interp_output_dir)
+                        if not top_regions_output_dir.is_absolute():
+                            cache_dir = self.config.get('dataset_input', {}).get('processed_cache_dir', '.')
+                            top_regions_output_dir = Path(cache_dir) / top_regions_output_dir
+                        top_regions_output_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        # Generate filename
+                        if deeplift_class_mean_mode:
+                            txt_filename = f"top_regions_class_mean_{deeplift_target_class_name}_{deeplift_class_mean_num_samples}samples_deeplift.txt"
+                        else:
+                            correct_str = "correct" if predicted_idx == target_idx else "wrong"
+                            txt_filename = f"top_regions_{sample_id}_{predicted_name}_{correct_str}_deeplift.txt"
+                        
+                        txt_filepath = top_regions_output_dir / txt_filename
+                        
+                        with open(txt_filepath, 'w') as f:
+                            f.write(f"Top 5 Regiões Mais Ativas (DeepLIFT)\n")
+                            f.write(f"{'=' * 50}\n")
+                            if deeplift_class_mean_mode:
+                                f.write(f"Classe: {deeplift_target_class_name} ({deeplift_class_mean_num_samples} amostras)\n")
+                            else:
+                                f.write(f"Sample: {sample_id}\n")
+                                f.write(f"Target: {target_name}\n")
+                            f.write(f"{'=' * 50}\n\n")
+                            for rank, (gene, val, chrom, pos, col) in enumerate(top_5_regions, 1):
+                                f.write(f"{rank}. {gene}: valor = {val:.6f}, {chrom}: {pos:,}\n")
+                        
+                        console.print(f"[dim]Saved top regions: {txt_filepath}[/dim]")
+                    
+                    # Draw green circles centered on each top region
+                    # Use Ellipse to compensate for aspect ratio distortion
+                    from matplotlib.patches import Ellipse
+                    num_genes = len(gene_names)
+                    height_per_gene = viz_height / num_genes
+                    
+                    # Calculate aspect ratio to make circles appear circular
+                    # With aspect='auto', the image is stretched to fit the axes
+                    # If viz_width > viz_height, circles appear elongated horizontally
+                    # To compensate: make ellipse width larger in data units
+                    aspect_ratio = (viz_width / viz_height) / 3.5
+                    circle_height = height_per_gene  # Diameter in Y direction = height per gene
+                    circle_width = circle_height * aspect_ratio  # Multiply to compensate for horizontal stretch
+                    
+                    for gene_name_region, max_val, chrom, genomic_pos, col_idx in top_5_regions:
+                        # Find gene index
+                        if gene_name_region in gene_names:
+                            gene_idx = gene_names.index(gene_name_region)
+                            # X position: col_idx scaled to viz_width
+                            x_pos = (col_idx / total_cols) * viz_width
+                            # Y position: center of the gene
+                            y_pos = (gene_idx + 0.5) * height_per_gene
+                            
+                            # Create hollow green ellipse that appears as a circle
+                            ellipse = Ellipse((x_pos, y_pos), circle_width, circle_height, 
+                                            fill=False, edgecolor='green', linewidth=1.5)
+                            ax_dl.add_patch(ellipse)
                 
                 # Build xlabel with top 5 regions
                 if top_5_regions:
                     top_regions_str = ', '.join([f"{r[0]}({r[1]:.5f})" for r in top_5_regions])
-                    plt.xlabel(f'Gene Position (rescaled) — Top regions: {top_regions_str}', fontsize=11)
+                    plt.xlabel(f'Gene Position — Top regions: {top_regions_str}', fontsize=11)
                 else:
-                    plt.xlabel('Gene Position (rescaled)', fontsize=12)
+                    plt.xlabel('Gene Position', fontsize=12)
+                
+                # Configure X axis to show original scale (0 to window_center_size)
+                window_center_size = self.config['dataset_input']['window_center_size']
+                num_xticks = 5
+                xtick_positions = np.linspace(0, viz_width - 1, num_xticks)
+                xtick_labels = [f'{int(x)}' for x in np.linspace(0, window_center_size, num_xticks)]
+                ax_dl.set_xticks(xtick_positions)
+                ax_dl.set_xticklabels(xtick_labels)
                 
                 # Configure Y axis (same style as first plot)
                 num_genes = len(gene_names)
