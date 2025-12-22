@@ -256,6 +256,294 @@ def ref_cache_key(chrom: str, start0: int, end1: int) -> str:
 
 
 # ----------------------------
+# Gene Information APIs
+# ----------------------------
+
+@dataclass
+class GeneInfo:
+    """Information about a gene fetched from external APIs."""
+    symbol: str
+    description: str
+    function: str
+    biotype: str
+    chromosome: str
+    source: str
+
+
+def _fetch_ensembl_gene(gene_symbol: str, timeout_s: int = 15) -> Optional[dict]:
+    """Fetch gene info from Ensembl REST API."""
+    url = f"https://rest.ensembl.org/lookup/symbol/homo_sapiens/{gene_symbol}"
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    
+    try:
+        r = requests.get(url, headers=headers, timeout=timeout_s)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    return None
+
+
+def _fetch_ncbi_gene(gene_symbol: str, timeout_s: int = 15) -> Optional[dict]:
+    """Fetch gene info from NCBI Gene API."""
+    # First, search for the gene
+    search_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+    search_params = {
+        "db": "gene",
+        "term": f"{gene_symbol}[Gene Name] AND Homo sapiens[Organism]",
+        "retmode": "json",
+        "retmax": "1"
+    }
+    
+    try:
+        r = requests.get(search_url, params=search_params, timeout=timeout_s)
+        if r.status_code != 200:
+            return None
+        
+        data = r.json()
+        id_list = data.get("esearchresult", {}).get("idlist", [])
+        if not id_list:
+            return None
+        
+        gene_id = id_list[0]
+        
+        # Now fetch summary
+        summary_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+        summary_params = {
+            "db": "gene",
+            "id": gene_id,
+            "retmode": "json"
+        }
+        
+        r = requests.get(summary_url, params=summary_params, timeout=timeout_s)
+        if r.status_code == 200:
+            data = r.json()
+            result = data.get("result", {})
+            if gene_id in result:
+                return result[gene_id]
+    except Exception:
+        pass
+    return None
+
+
+def _fetch_uniprot_gene(gene_symbol: str, timeout_s: int = 15) -> Optional[dict]:
+    """Fetch protein function info from UniProt API."""
+    url = "https://rest.uniprot.org/uniprotkb/search"
+    params = {
+        "query": f"gene:{gene_symbol} AND organism_id:9606 AND reviewed:true",
+        "format": "json",
+        "size": "1",
+        "fields": "gene_names,protein_name,cc_function"
+    }
+    
+    try:
+        r = requests.get(url, params=params, timeout=timeout_s)
+        if r.status_code == 200:
+            data = r.json()
+            results = data.get("results", [])
+            if results:
+                return results[0]
+    except Exception:
+        pass
+    return None
+
+
+def fetch_gene_info(
+    gene_symbols: List[str], 
+    rate_limit_s: float = 0.34,  # ~3 req/s to stay under limits
+    timeout_s: int = 15
+) -> Dict[str, GeneInfo]:
+    """
+    Fetch information about genes from multiple APIs.
+    
+    Combines data from:
+    - Ensembl: description, biotype, chromosome
+    - NCBI Gene: functional summary
+    - UniProt: protein function
+    
+    Returns a dictionary mapping gene symbols to GeneInfo objects.
+    """
+    gene_info_map: Dict[str, GeneInfo] = {}
+    
+    for gene in gene_symbols:
+        description = ""
+        function = ""
+        biotype = ""
+        chromosome = ""
+        sources = []
+        
+        # Ensembl
+        ensembl_data = _fetch_ensembl_gene(gene, timeout_s)
+        if ensembl_data:
+            description = ensembl_data.get("description", "") or ""
+            biotype = ensembl_data.get("biotype", "") or ""
+            chromosome = ensembl_data.get("seq_region_name", "") or ""
+            sources.append("Ensembl")
+        
+        time.sleep(rate_limit_s)
+        
+        # NCBI
+        ncbi_data = _fetch_ncbi_gene(gene, timeout_s)
+        if ncbi_data:
+            ncbi_desc = ncbi_data.get("description", "") or ""
+            ncbi_summary = ncbi_data.get("summary", "") or ""
+            if ncbi_summary:
+                # Truncate long summaries
+                if len(ncbi_summary) > 300:
+                    ncbi_summary = ncbi_summary[:297] + "..."
+                function = ncbi_summary
+            if not description and ncbi_desc:
+                description = ncbi_desc
+            sources.append("NCBI")
+        
+        time.sleep(rate_limit_s)
+        
+        # UniProt
+        uniprot_data = _fetch_uniprot_gene(gene, timeout_s)
+        if uniprot_data:
+            # Extract function from comments
+            comments = uniprot_data.get("comments", [])
+            for comment in comments:
+                if comment.get("commentType") == "FUNCTION":
+                    texts = comment.get("texts", [])
+                    if texts:
+                        uniprot_func = texts[0].get("value", "")
+                        if uniprot_func and (not function or len(uniprot_func) > len(function)):
+                            if len(uniprot_func) > 300:
+                                uniprot_func = uniprot_func[:297] + "..."
+                            function = uniprot_func
+            sources.append("UniProt")
+        
+        time.sleep(rate_limit_s)
+        
+        # Create GeneInfo
+        gene_info_map[gene] = GeneInfo(
+            symbol=gene,
+            description=description or f"Gene {gene}",
+            function=function or "Function not available from APIs.",
+            biotype=biotype or "unknown",
+            chromosome=chromosome or "unknown",
+            source=", ".join(sources) if sources else "No data found"
+        )
+        
+        print(f"[API] Gene {gene}: fetched from {', '.join(sources) if sources else 'no sources'}")
+    
+    return gene_info_map
+
+
+# ----------------------------
+# rsID Information API
+# ----------------------------
+
+@dataclass
+class RsidInfo:
+    """Information about an rsID fetched from Ensembl Variation."""
+    rsid: str
+    description: str
+    clinical_significance: str
+    phenotypes: str
+    minor_allele: str
+    maf: str
+    source: str
+
+
+def fetch_rsid_info(
+    rsids: List[str],
+    rate_limit_s: float = 0.34,
+    timeout_s: int = 15
+) -> Dict[str, RsidInfo]:
+    """
+    Fetch information about rsIDs from Ensembl Variation API.
+    
+    Returns a dictionary mapping rsIDs to RsidInfo objects.
+    """
+    rsid_info_map: Dict[str, RsidInfo] = {}
+    
+    # Filter to only process rsIDs (start with "rs")
+    valid_rsids = [r for r in rsids if r.startswith("rs")]
+    
+    for rsid in valid_rsids:
+        url = f"https://rest.ensembl.org/variation/human/{rsid}"
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        
+        description = ""
+        clinical_sig = ""
+        phenotypes_str = ""
+        minor_allele = ""
+        maf = ""
+        
+        try:
+            r = requests.get(url, headers=headers, timeout=timeout_s)
+            if r.status_code == 200:
+                data = r.json()
+                
+                # Extract clinical significance
+                clinical_sigs = data.get("clinical_significance", [])
+                if clinical_sigs:
+                    clinical_sig = ", ".join(clinical_sigs)
+                
+                # Extract MAF info
+                minor_allele = data.get("minor_allele", "") or ""
+                maf_val = data.get("MAF")
+                if maf_val is not None:
+                    maf = f"{maf_val:.4f}"
+                
+                # Extract mappings for allele info
+                mappings = data.get("mappings", [])
+                if mappings:
+                    m = mappings[0]
+                    allele_str = m.get("allele_string", "")
+                    location = m.get("location", "")
+                    if allele_str and location:
+                        description = f"{location} ({allele_str})"
+                
+                # Fetch phenotypes separately if available
+                # Using phenotype endpoint
+                pheno_url = f"https://rest.ensembl.org/variation/human/{rsid}?pops=1;phenotypes=1"
+                try:
+                    r2 = requests.get(pheno_url, headers=headers, timeout=timeout_s)
+                    if r2.status_code == 200:
+                        data2 = r2.json()
+                        phenos = data2.get("phenotypes", [])
+                        if phenos:
+                            pheno_names = []
+                            for p in phenos[:5]:  # Limit to first 5
+                                trait = p.get("trait", "") or p.get("description", "")
+                                if trait:
+                                    pheno_names.append(trait)
+                            if pheno_names:
+                                phenotypes_str = "; ".join(pheno_names)
+                except Exception:
+                    pass
+                
+                rsid_info_map[rsid] = RsidInfo(
+                    rsid=rsid,
+                    description=description or rsid,
+                    clinical_significance=clinical_sig or "Not reported",
+                    phenotypes=phenotypes_str or "No phenotypes reported",
+                    minor_allele=minor_allele or "N/A",
+                    maf=maf or "N/A",
+                    source="Ensembl Variation"
+                )
+                
+                print(f"[API] rsID {rsid}: clinical={clinical_sig or 'N/A'}, phenotypes={'yes' if phenotypes_str else 'no'}")
+        except Exception as e:
+            rsid_info_map[rsid] = RsidInfo(
+                rsid=rsid,
+                description=rsid,
+                clinical_significance="Fetch failed",
+                phenotypes="Fetch failed",
+                minor_allele="N/A",
+                maf="N/A",
+                source="Error"
+            )
+        
+        time.sleep(rate_limit_s)
+    
+    return rsid_info_map
+
+
+# ----------------------------
 # Chamada de variantes
 # ----------------------------
 
@@ -479,6 +767,37 @@ def vep_annotate_variants_batched(
 
 
 # ----------------------------
+# Filtro de variantes centrais
+# ----------------------------
+
+def filter_central_variants(
+    occs: List[VariantOcc], 
+    central_window: Optional[int]
+) -> Tuple[List[VariantOcc], List[VariantOcc]]:
+    """
+    Filtra ocorrências por distância ao centro.
+    
+    Args:
+        occs: Lista de ocorrências de variantes
+        central_window: Tamanho da janela central (em bp). 
+                        Variantes dentro de ±(central_window/2) do centro são mantidas.
+                        Se None, mantém todas.
+    
+    Returns:
+        Tupla (occs_filtradas, occs_todas) onde:
+        - occs_filtradas: apenas variantes dentro da janela central
+        - occs_todas: todas as variantes (para comparação)
+    """
+    if central_window is None:
+        return occs, occs
+    
+    half_window = central_window // 2
+    filtered = [o for o in occs if o.distance_to_center <= half_window]
+    
+    return filtered, occs
+
+
+# ----------------------------
 # TSV helpers
 # ----------------------------
 
@@ -493,21 +812,6 @@ def write_tsv(path: Path, header: List[str], rows: List[List[str]]) -> None:
 # ----------------------------
 # Agregação e relatório
 # ----------------------------
-
-PIGMENTATION_GENES = {
-    "OCA2", "HERC2", "TYR", "SLC24A5", "SLC45A2", "MC1R", "MFSD12", "EDAR"
-}
-
-GENE_BACKGROUND = {
-    "HERC2": "Lócus regulatório famoso que modula expressão de OCA2; variantes nessa região explicam grande parte da variação de cor dos olhos (e influenciam pigmentação). :contentReference[oaicite:4]{index=4}",
-    "OCA2": "Gene fortemente associado a pigmentação; frequentemente co-analizado com HERC2 pela regulação enhancer-promoter (especialmente para cor dos olhos). :contentReference[oaicite:5]{index=5}",
-    "SLC24A5": "Variante missense A111T (rs1426654) é um dos maiores determinantes de pele mais clara em populações europeias (grande efeito e alta frequência em europeus). :contentReference[oaicite:6]{index=6}",
-    "SLC45A2": "Gene frequentemente associado à variação de cor de pele em humanos; aparece recorrentemente em modelos de pigmentação. :contentReference[oaicite:7]{index=7}",
-    "TYR": "Enzima chave da melanogênese; variantes podem impactar produção de melanina (p.ex., quadros de hipopigmentação em alguns contextos).",
-    "MC1R": "Receptor importante em via de melanogênese; variantes são clássicas em estudos de variação de pigmentação (p.ex., fenótipos de cabelo/pele em contextos populacionais).",
-    "MFSD12": "Implicado em estudos genéticos de pigmentação; aparece como gene com associação a variações de cor de pele em análises populacionais.",
-    "EDAR": "Lócus com variantes de grande efeito em traços ectodérmicos; frequentemente associado a assinaturas populacionais e, em alguns estudos, a traços relacionados."
-}
 
 
 def build_annotations(vep_json: List[dict]) -> Dict[VariantKey, VariantAnnotation]:
@@ -796,11 +1100,232 @@ def write_report_markdown(
         # Nota final com pointers
         f.write("## Notas práticas para aprofundar\n")
         f.write(
-            "1) Se você quer inferir “produção maior de proteína”, priorize variantes em regiões **codificantes** (missense/nonsense/frameshift) e em **splicing**; "
+            '1) Se você quer inferir "produção maior de proteína", priorize variantes em regiões **codificantes** (missense/nonsense/frameshift) e em **splicing**; '
             "para efeitos de expressão, cruze com eQTL/regulatory tracks.\n"
             "2) Se o VEP retornar rsIDs (colocated_variants), você pode cruzar com literatura/GTEx/ClinVar/Ensembl Variation.\n"
             "3) Para lotes muito grandes, VEP local (script + cache) tende a ser mais estável do que o REST. :contentReference[oaicite:10]{index=10}\n"
         )
+
+
+def write_phenotype_validation_report(
+    report_path: Path,
+    occs: List[VariantOcc],
+    occs_all: List[VariantOcc],
+    ann: Dict[VariantKey, VariantAnnotation],
+    central_window: Optional[int],
+    gene_sum: Dict[str, dict],
+    gene_info: Dict[str, GeneInfo],
+    rsid_info: Dict[str, RsidInfo]
+) -> None:
+    """
+    Generate a generic phenotype validation report.
+    
+    This report focuses on:
+    1. Variants near the center identified by DeepLIFT
+    2. Genes detected in the data (with information from APIs)
+    3. rsIDs found in the variants (with information from Ensembl Variation)
+    4. Statistical summary and next steps
+    """
+    n_filtered = len(occs)
+    n_all = len(occs_all)
+    unique_filtered = len({o.key for o in occs})
+    unique_all = len({o.key for o in occs_all})
+    
+    # Get detected genes from data
+    detected_genes = sorted({o.gene for o in occs})
+    
+    # Collect all rsIDs from annotations
+    all_rsids_in_data: Dict[str, List[Tuple[VariantKey, VariantAnnotation, int]]] = {}
+    for o in occs:
+        ann_entry = ann.get(o.key)
+        if ann_entry and ann_entry.rsids:
+            for rsid in ann_entry.rsids.split(","):
+                rsid = rsid.strip()
+                if rsid and rsid.startswith("rs"):
+                    if rsid not in all_rsids_in_data:
+                        all_rsids_in_data[rsid] = []
+                    all_rsids_in_data[rsid].append((o.key, ann_entry, o.distance_to_center))
+    
+    # Count variants by impact
+    total_high = 0
+    total_moderate = 0
+    total_missense = 0
+    for o in occs:
+        ann_entry = ann.get(o.key)
+        if ann_entry:
+            if ann_entry.worst_impact == "HIGH":
+                total_high += 1
+            elif ann_entry.worst_impact == "MODERATE":
+                total_moderate += 1
+            if "missense_variant" in ann_entry.consequence_terms:
+                total_missense += 1
+    
+    # Calculate distance statistics
+    if occs:
+        distances = [o.distance_to_center for o in occs]
+        avg_distance = sum(distances) / len(distances)
+        min_distance = min(distances)
+        max_distance = max(distances)
+    else:
+        avg_distance = min_distance = max_distance = 0
+    
+    with report_path.open("w", encoding="utf-8") as f:
+        f.write("# Phenotype Validation Report\n\n")
+        
+        f.write("## Overview\n\n")
+        f.write("This report analyzes variants identified by the DeepLIFT → VEP pipeline ")
+        f.write("to understand which genetic regions contribute to the phenotype of interest.\n\n")
+        
+        f.write("---\n\n")
+        
+        f.write("## Statistical Summary\n\n")
+        if central_window is not None:
+            half_win = central_window // 2
+            f.write("| Metric | Value |\n")
+            f.write("|--------|-------|\n")
+            f.write(f"| Central window | ±{half_win}bp from DeepLIFT center |\n")
+            f.write(f"| Total variants (1000bp) | {n_all} occurrences, {unique_all} unique |\n")
+            f.write(f"| Filtered variants (central window) | {n_filtered} occurrences, {unique_filtered} unique |\n")
+            if n_all > 0:
+                f.write(f"| Reduction | {100*(1 - n_filtered/n_all):.1f}% |\n")
+            f.write(f"| Mean distance to center | {avg_distance:.1f}bp |\n")
+            f.write(f"| Distance range | {min_distance}-{max_distance}bp |\n")
+        else:
+            f.write("| Metric | Value |\n")
+            f.write("|--------|-------|\n")
+            f.write("| Window | 1000bp (no central filter) |\n")
+            f.write(f"| Total variants | {n_all} occurrences, {unique_all} unique |\n")
+            f.write(f"| Mean distance to center | {avg_distance:.1f}bp |\n")
+        f.write("\n")
+        
+        f.write("---\n\n")
+        
+        f.write("## Detected Genes\n\n")
+        f.write(f"The following **{len(detected_genes)} genes** were identified in regions with high DeepLIFT attribution:\n\n")
+        
+        for gene in detected_genes:
+            gene_data = gene_sum.get(gene, {})
+            info = gene_info.get(gene)
+            
+            f.write(f"### {gene}\n\n")
+            
+            if info and info.source != "No data found":
+                f.write(f"- **Description**: {info.description}\n")
+                f.write(f"- **Function**: {info.function}\n")
+                f.write(f"- **Biotype**: {info.biotype}\n")
+                f.write(f"- **Chromosome**: {info.chromosome}\n")
+                f.write(f"- **Data source**: {info.source}\n")
+            else:
+                f.write(f"- **Description**: No API data available for this gene.\n")
+            
+            f.write(f"- **Unique variants**: {gene_data.get('unique_variants_count', 0)}\n")
+            f.write(f"- **HIGH impact**: {gene_data.get('impact_HIGH', 0)}\n")
+            f.write(f"- **MODERATE impact**: {gene_data.get('impact_MODERATE', 0)}\n")
+            f.write(f"- **Top consequences**: {gene_data.get('top_msc_str', 'N/A')}\n\n")
+        
+        f.write("---\n\n")
+        
+        f.write("## Annotated rsIDs\n\n")
+        
+        # Filter to rsIDs that we have info for
+        rsids_with_info = {rsid: data for rsid, data in all_rsids_in_data.items() 
+                          if rsid in rsid_info}
+        rsids_without_info = {rsid: data for rsid, data in all_rsids_in_data.items() 
+                             if rsid not in rsid_info}
+        
+        if rsids_with_info:
+            f.write(f"**{len(rsids_with_info)} rsIDs** found in the central window with Ensembl Variation annotations:\n\n")
+            
+            # Sort by number of occurrences
+            sorted_rsids = sorted(rsids_with_info.items(), 
+                                  key=lambda x: (-len(x[1]), x[0]))[:20]  # Top 20
+            
+            for rsid, occurrences in sorted_rsids:
+                info = rsid_info[rsid]
+                min_dist = min(d for _, _, d in occurrences)
+                key, ann_entry, _ = occurrences[0]
+                
+                f.write(f"### {rsid}\n\n")
+                f.write(f"- **Position**: {info.description}\n")
+                f.write(f"- **Clinical significance**: {info.clinical_significance}\n")
+                f.write(f"- **Associated phenotypes**: {info.phenotypes}\n")
+                f.write(f"- **Minor allele**: {info.minor_allele} (MAF: {info.maf})\n")
+                f.write(f"- **Occurrences in data**: {len(occurrences)}\n")
+                f.write(f"- **Min distance to DeepLIFT center**: {min_dist}bp\n")
+                f.write(f"- **Consequence**: {ann_entry.most_severe_consequence}\n\n")
+            
+            if len(rsids_with_info) > 20:
+                f.write(f"*... and {len(rsids_with_info) - 20} more rsIDs*\n\n")
+        else:
+            f.write("No rsIDs with Ensembl Variation annotations were found in the central window.\n\n")
+        
+        if rsids_without_info:
+            f.write(f"\n**{len(rsids_without_info)} additional rsIDs** found without detailed annotations:\n")
+            f.write(", ".join(sorted(rsids_without_info.keys())[:30]))
+            if len(rsids_without_info) > 30:
+                f.write(f" ... and {len(rsids_without_info) - 30} more")
+            f.write("\n\n")
+        
+        f.write("---\n\n")
+        
+        f.write("## Functional Impact Analysis\n\n")
+        f.write("Variants with potential functional impact:\n\n")
+        f.write("| Category | Count |\n")
+        f.write("|----------|-------|\n")
+        f.write(f"| HIGH impact (stop, frameshift, splice) | {total_high} |\n")
+        f.write(f"| MODERATE impact (missense, in-frame) | {total_moderate} |\n")
+        f.write(f"| Missense variants | {total_missense} |\n")
+        f.write("\n")
+        
+        f.write("---\n\n")
+        
+        f.write("## Summary\n\n")
+        
+        # Evaluate evidence
+        evidence_points = []
+        
+        if detected_genes:
+            evidence_points.append(f"- {len(detected_genes)} gene(s) identified by DeepLIFT")
+        
+        if rsids_with_info:
+            # Check for clinically significant variants
+            clinically_significant = [r for r, info in rsid_info.items() 
+                                      if info.clinical_significance not in ("Not reported", "Fetch failed", "")]
+            if clinically_significant:
+                evidence_points.append(f"- {len(clinically_significant)} rsID(s) with clinical significance annotations")
+            
+            # Check for phenotype associations
+            with_phenotypes = [r for r, info in rsid_info.items() 
+                              if info.phenotypes not in ("No phenotypes reported", "Fetch failed", "")]
+            if with_phenotypes:
+                evidence_points.append(f"- {len(with_phenotypes)} rsID(s) with associated phenotypes")
+        
+        if total_high > 0:
+            evidence_points.append(f"- {total_high} HIGH impact variant(s) detected")
+        
+        if total_moderate > 0:
+            evidence_points.append(f"- {total_moderate} MODERATE impact variant(s) detected")
+        
+        if central_window and n_filtered > 0:
+            evidence_points.append(f"- {n_filtered} variant(s) in the central region (DeepLIFT focus)")
+        
+        if evidence_points:
+            f.write("### Key Findings\n\n")
+            for point in evidence_points:
+                f.write(f"{point}\n")
+            f.write("\n")
+        else:
+            f.write("No significant findings in the analyzed region.\n\n")
+        
+        f.write("### Recommended Next Steps\n\n")
+        f.write("1. **Cross-reference with GWAS**: Compare detected variants with published GWAS for related phenotypes\n")
+        f.write("2. **Check eQTL databases**: Verify if variants affect gene expression (GTEx, eQTLGen)\n")
+        f.write("3. **Functional validation**: Consider experimental validation for HIGH/MODERATE impact variants\n")
+        f.write("4. **Population analysis**: Check allele frequencies across populations (gnomAD, 1000 Genomes)\n")
+        f.write("5. **Literature review**: Search for gene-phenotype associations in PubMed/OMIM\n\n")
+        
+        f.write("---\n\n")
+        f.write("*Report generated automatically by annotate_deeplift_windows.py*\n")
 
 
 # ----------------------------
@@ -841,6 +1366,7 @@ def main() -> int:
     indiv_sum_path = outdir / "summary_by_individual.tsv"
     indiv_gene_sum_path = outdir / "summary_by_individual_gene.tsv"
     report_path = outdir / "report_by_gene_by_individual.md"
+    validation_report_path = outdir / "pigmentation_validation_report.md"
 
     records = parse_input_file(input_path)
 
@@ -885,25 +1411,73 @@ def main() -> int:
             keys = call_variants_with_alignment(rec, ref_seq, start0)
 
         for k in keys:
-            occs.append(VariantOcc(key=k, sample=rec.sample, hap=rec.hap, gene=rec.gene, header=rec.header))
+            # Calcular distância ao centro da janela
+            distance = abs(k.pos_1based - rec.center_1based)
+            occs.append(VariantOcc(
+                key=k, 
+                sample=rec.sample, 
+                hap=rec.hap, 
+                gene=rec.gene, 
+                header=rec.header,
+                center_1based=rec.center_1based,
+                distance_to_center=distance
+            ))
             unique_keys_set[k] = None
 
     if not occs:
         print("[INFO] Nenhuma variante detectada. Encerrando.")
         return 0
 
-    unique_keys = list(unique_keys_set.keys())
-    print(f"[INFO] Variant occurrences: {len(occs)} | unique variants: {len(unique_keys)}")
+    # Aplicar filtro central se especificado
+    occs_all = occs  # Manter referência para estatísticas
+    occs, occs_all = filter_central_variants(occs, args.central_window)
+    
+    # Recalcular unique_keys apenas para variantes filtradas
+    unique_keys_set_filtered: Dict[VariantKey, None] = {}
+    for o in occs:
+        unique_keys_set_filtered[o.key] = None
+    unique_keys = list(unique_keys_set_filtered.keys())
+    
+    # Estatísticas
+    total_all = len(occs_all)
+    total_filtered = len(occs)
+    unique_all = len({o.key for o in occs_all})
+    unique_filtered = len(unique_keys)
+    
+    if args.central_window is not None:
+        half_win = args.central_window // 2
+        print(f"[INFO] Filtro central: ±{half_win}bp do centro (janela de {args.central_window}bp)")
+        print(f"[INFO] Variantes originais: {total_all} ocorrências, {unique_all} únicas")
+        print(f"[INFO] Variantes filtradas: {total_filtered} ocorrências, {unique_filtered} únicas")
+        print(f"[INFO] Redução: {100*(1 - total_filtered/total_all):.1f}% das ocorrências")
+    else:
+        print(f"[INFO] Variant occurrences: {total_filtered} | unique variants: {unique_filtered}")
 
-    # Salvar ocorrências
-    occ_header = ["chrom", "pos_1based", "ref", "alt", "sample", "hap", "gene", "header"]
-    occ_rows = [[o.key.chrom, str(o.key.pos_1based), o.key.ref, o.key.alt, o.sample, o.hap, o.gene, o.header] for o in occs]
+    # Salvar ocorrências (com distância ao centro)
+    occ_header = ["chrom", "pos_1based", "ref", "alt", "distance_to_center", "center_1based", "sample", "hap", "gene", "header"]
+    occ_rows = [
+        [o.key.chrom, str(o.key.pos_1based), o.key.ref, o.key.alt, 
+         str(o.distance_to_center), str(o.center_1based),
+         o.sample, o.hap, o.gene, o.header] 
+        for o in occs
+    ]
     write_tsv(occs_path, occ_header, occ_rows)
     print(f"[SAVED] variant occurrences TSV: {occs_path}")
 
-    # Salvar variantes únicas
-    uv_header = ["chrom", "pos_1based", "ref", "alt"]
-    uv_rows = [[k.chrom, str(k.pos_1based), k.ref, k.alt] for k in sorted(unique_keys, key=lambda x: (x.chrom, x.pos_1based, x.ref, x.alt))]
+    # Calcular distância mínima para cada variante única (a mesma variante pode aparecer em múltiplos indivíduos)
+    variant_min_distance: Dict[VariantKey, int] = {}
+    for o in occs:
+        if o.key not in variant_min_distance:
+            variant_min_distance[o.key] = o.distance_to_center
+        else:
+            variant_min_distance[o.key] = min(variant_min_distance[o.key], o.distance_to_center)
+    
+    # Salvar variantes únicas (com distância mínima ao centro)
+    uv_header = ["chrom", "pos_1based", "ref", "alt", "min_distance_to_center"]
+    uv_rows = [
+        [k.chrom, str(k.pos_1based), k.ref, k.alt, str(variant_min_distance.get(k, 0))] 
+        for k in sorted(unique_keys, key=lambda x: (x.chrom, x.pos_1based, x.ref, x.alt))
+    ]
     write_tsv(uniq_vars_path, uv_header, uv_rows)
     print(f"[SAVED] unique variants TSV: {uniq_vars_path}")
 
@@ -931,9 +1505,9 @@ def main() -> int:
 
         ann_map = build_annotations(vep_json)
 
-        # Salvar anotações (TSV)
+        # Salvar anotações (TSV) - inclui distância mínima ao centro
         va_header = [
-            "chrom", "pos_1based", "ref", "alt",
+            "chrom", "pos_1based", "ref", "alt", "min_distance_to_center",
             "most_severe_consequence", "worst_impact",
             "gene_symbols", "gene_ids", "transcript_ids", "protein_ids",
             "consequence_terms", "amino_acids", "codons", "rsids"
@@ -941,7 +1515,8 @@ def main() -> int:
         va_rows: List[List[str]] = []
         for k, a in sorted(ann_map.items(), key=lambda x: (x[0].chrom, x[0].pos_1based, x[0].ref, x[0].alt)):
             va_rows.append([
-                k.chrom, str(k.pos_1based), k.ref, k.alt,
+                k.chrom, str(k.pos_1based), k.ref, k.alt, 
+                str(variant_min_distance.get(k, 0)),
                 a.most_severe_consequence, a.worst_impact,
                 a.gene_symbols, a.gene_ids, a.transcript_ids, a.protein_ids,
                 a.consequence_terms, a.amino_acids, a.codons, a.rsids
@@ -1015,6 +1590,17 @@ def main() -> int:
     write_report_markdown(report_path, gene_sum, indiv_sum, indiv_gene_sum, ann_map, occs)
     print(f"[SAVED] report (Markdown): {report_path}")
 
+    # Relatório de validação de pigmentação
+    write_pigmentation_validation_report(
+        validation_report_path, 
+        occs, 
+        occs_all, 
+        ann_map, 
+        args.central_window,
+        gene_sum
+    )
+    print(f"[SAVED] pigmentation validation report (Markdown): {validation_report_path}")
+
     print("\n=== OUTPUTS PRINCIPAIS ===")
     print(f"[OUT] {parsed_records_path}")
     print(f"[OUT] {refs_dir} (FASTA de referência por região)")
@@ -1028,6 +1614,7 @@ def main() -> int:
     print(f"[OUT] {indiv_sum_path}")
     print(f"[OUT] {indiv_gene_sum_path}")
     print(f"[OUT] {report_path}")
+    print(f"[OUT] {validation_report_path}")
     print("==========================\n")
 
     return 0
