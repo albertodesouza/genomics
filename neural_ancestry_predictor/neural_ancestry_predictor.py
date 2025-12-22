@@ -2208,6 +2208,223 @@ class DeepLIFT:
         console.print(f"[green]✓ Média DeepLIFT calculada para classe {target_class_idx}[/green]")
         
         return mean_attributions, mean_input, num_samples
+    
+    def find_max_individuals_for_regions(
+        self, 
+        top_regions: List[Tuple], 
+        target_class_idx: int, 
+        dataset: Any,
+        baseline_type: str = 'zeros',
+        tracks_per_gene: int = 6,
+        gene_names: List[str] = None
+    ) -> Dict[str, Dict]:
+        """
+        Encontra o indivíduo com maior valor DeepLIFT em cada região especificada.
+        
+        Args:
+            top_regions: Lista de tuplas (gene_name, mean_val, chrom, genomic_pos, col_idx)
+            target_class_idx: Índice da classe alvo
+            dataset: Dataset para buscar amostras
+            baseline_type: 'zeros' ou 'mean'
+            tracks_per_gene: Número de tracks por gene (default 6)
+            gene_names: Lista ordenada de nomes de genes
+            
+        Returns:
+            Dict com estrutura:
+            {
+                gene_name: {
+                    'sample_id': str,
+                    'max_value': float,
+                    'col_idx': int,
+                    'all_region_values': Dict[str, float]  # valores em todas as 5 regiões
+                }
+            }
+        """
+        if not top_regions or gene_names is None:
+            return {}
+        
+        console.print(f"\n[cyan]Buscando indivíduos com maior DeepLIFT em cada região...[/cyan]")
+        
+        # Coletar amostras da classe alvo
+        class_samples = []
+        class_sample_ids = []
+        for i in range(len(dataset)):
+            sample, target, sample_idx = dataset[i]
+            if target == target_class_idx:
+                # Obter sample_id e metadata completo
+                if hasattr(dataset, 'get_sample_metadata'):
+                    sample_meta = dataset.get_sample_metadata(i)
+                    sample_id = sample_meta.get('sample_id', f'sample_{i}')
+                    superpopulation = sample_meta.get('superpopulation', 'UNK')
+                    population = sample_meta.get('population', 'UNK')
+                elif hasattr(dataset, '_sample_metadata') and dataset._sample_metadata:
+                    sample_id = dataset._sample_metadata.get(i, {}).get('sample_id', f'sample_{i}')
+                    superpopulation = 'UNK'
+                    population = 'UNK'
+                else:
+                    sample_id = f'sample_{i}'
+                    superpopulation = 'UNK'
+                    population = 'UNK'
+                class_samples.append((sample, i, sample_id, superpopulation, population))
+                class_sample_ids.append(sample_id)
+        
+        if not class_samples:
+            console.print(f"[yellow]⚠ Nenhuma amostra encontrada para classe {target_class_idx}[/yellow]")
+            return {}
+        
+        console.print(f"[cyan]  → {len(class_samples)} amostras da classe alvo[/cyan]")
+        
+        # Para cada região, encontrar o indivíduo com maior valor
+        device = next(self.model.parameters()).device
+        results = {}
+        
+        # Cache de atribuições individuais (sample_idx -> attributions)
+        attribution_cache = {}
+        
+        for region_idx, (gene_name, mean_val, chrom, genomic_pos, col_idx) in enumerate(top_regions):
+            console.print(f"[dim]  Processando região {region_idx + 1}/5: {gene_name}...[/dim]")
+            
+            # Encontrar índice do gene
+            if gene_name not in gene_names:
+                continue
+            gene_idx = gene_names.index(gene_name)
+            start_row = gene_idx * tracks_per_gene
+            end_row = (gene_idx + 1) * tracks_per_gene
+            
+            max_value = -float('inf')
+            max_sample_id = None
+            max_sample_cache_idx = None
+            max_superpopulation = 'UNK'
+            max_population = 'UNK'
+            
+            for sample, sample_cache_idx, sample_id, superpopulation, population in class_samples:
+                # Verificar cache
+                if sample_cache_idx not in attribution_cache:
+                    input_tensor = sample.unsqueeze(0).to(device)
+                    attr, _ = self.generate(input_tensor, target_class=target_class_idx,
+                                           baseline_type=baseline_type, dataset=dataset)
+                    attribution_cache[sample_cache_idx] = attr.numpy()
+                
+                attr_np = attribution_cache[sample_cache_idx]
+                
+                # Extrair valor na região específica
+                if end_row <= attr_np.shape[0] and col_idx < attr_np.shape[1]:
+                    # Média dos valores nas tracks do gene na coluna específica
+                    region_value = attr_np[start_row:end_row, col_idx].mean()
+                    
+                    if region_value > max_value:
+                        max_value = region_value
+                        max_sample_id = sample_id
+                        max_sample_cache_idx = sample_cache_idx
+                        max_superpopulation = superpopulation
+                        max_population = population
+            
+            if max_sample_id is not None:
+                # Calcular valores em todas as 5 regiões para este indivíduo
+                all_region_values = {}
+                attr_np = attribution_cache[max_sample_cache_idx]
+                
+                for other_gene, _, _, _, other_col_idx in top_regions:
+                    if other_gene in gene_names:
+                        other_gene_idx = gene_names.index(other_gene)
+                        other_start = other_gene_idx * tracks_per_gene
+                        other_end = (other_gene_idx + 1) * tracks_per_gene
+                        if other_end <= attr_np.shape[0] and other_col_idx < attr_np.shape[1]:
+                            all_region_values[other_gene] = float(attr_np[other_start:other_end, other_col_idx].mean())
+                
+                results[gene_name] = {
+                    'sample_id': max_sample_id,
+                    'superpopulation': max_superpopulation,
+                    'population': max_population,
+                    'max_value': float(max_value),
+                    'col_idx': col_idx,
+                    'genomic_pos': genomic_pos,
+                    'chrom': chrom,
+                    'all_region_values': all_region_values
+                }
+                
+                console.print(f"[green]    ✓ {gene_name}: {max_sample_id} ({max_superpopulation}/{max_population}, valor = {max_value:.6f})[/green]")
+        
+        return results
+
+
+def extract_dna_sequence(
+    dataset_dir: Path,
+    sample_id: str,
+    gene_name: str,
+    center_position: int,
+    window_center_size: int,
+    sequence_length: int = 1000,
+    haplotype: str = 'H1'
+) -> Optional[Tuple[str, str]]:
+    """
+    Extrai uma sequência de DNA centrada em uma posição específica.
+    
+    Args:
+        dataset_dir: Diretório base do dataset
+        sample_id: ID do indivíduo (ex: HG02635)
+        gene_name: Nome do gene (ex: DDB1)
+        center_position: Posição genômica central (para o header)
+        window_center_size: Tamanho da janela central usada no processamento
+        sequence_length: Comprimento da sequência a extrair (default 1000bp)
+        haplotype: Haplótipo a usar ('H1' ou 'H2')
+        
+    Returns:
+        Tupla (header, sequence) ou None se não encontrar
+    """
+    dataset_dir = Path(dataset_dir)
+    
+    # Caminho para o arquivo FASTA
+    fasta_path = dataset_dir / 'individuals' / sample_id / 'windows' / gene_name / f'{sample_id}.{haplotype}.window.fixed.fa'
+    
+    if not fasta_path.exists():
+        console.print(f"[yellow]⚠ Arquivo FASTA não encontrado: {fasta_path}[/yellow]")
+        return None
+    
+    try:
+        # Ler arquivo FASTA
+        with open(fasta_path, 'r') as f:
+            lines = f.readlines()
+        
+        # Primeira linha é o header, resto é a sequência
+        if len(lines) < 2:
+            return None
+        
+        # Concatenar todas as linhas de sequência (removendo newlines)
+        sequence = ''.join(line.strip() for line in lines[1:])
+        
+        # A sequência no FASTA é a janela original completa
+        # Precisamos encontrar o centro correspondente ao window_center_size
+        original_length = len(sequence)
+        original_center = original_length // 2
+        
+        # O window_center_size é o tamanho da janela central extraída
+        # O centro da janela central corresponde ao centro da sequência original
+        half_window = window_center_size // 2
+        
+        # Extrair a sequência central de sequence_length bases
+        half_seq = sequence_length // 2
+        
+        # A posição no centro da janela central
+        # center_position é a posição genômica, mas precisamos trabalhar com índices na sequência
+        # O índice na sequência é relativo ao centro
+        start_idx = original_center - half_seq
+        end_idx = original_center + half_seq
+        
+        # Garantir que estamos dentro dos limites
+        start_idx = max(0, start_idx)
+        end_idx = min(original_length, end_idx)
+        
+        extracted_seq = sequence[start_idx:end_idx]
+        
+        # Criar header FASTA
+        header = f">{sample_id}_{haplotype}_{gene_name}_center_{center_position}"
+        
+        return header, extracted_seq
+        
+    except Exception as e:
+        console.print(f"[yellow]⚠ Erro ao ler FASTA: {e}[/yellow]")
+        return None
 
 
 # ==============================================================================
@@ -3053,6 +3270,40 @@ class Tester:
         
         # Get class names (if available)
         class_names = ['AFR', 'AMR', 'EAS', 'EUR', 'SAS']  # For superpopulation
+        
+        # ─────────────────────────────────────────────────────────────────
+        # Idempotency check: skip if output already exists
+        # ─────────────────────────────────────────────────────────────────
+        if self.interpretability_enabled and self.interp_save_images:
+            output_dir = Path(self.interp_output_dir)
+            if not output_dir.is_absolute():
+                cache_dir = self.config.get('dataset_input', {}).get('processed_cache_dir', '.')
+                output_dir = Path(cache_dir) / output_dir
+            
+            # Determine expected filename
+            method_suffix = self.interp_method
+            if self.interp_method == 'deeplift' and self.deeplift_target_class != 'predicted':
+                # Class mean mode - check if class mean file exists
+                target_class_name = self.deeplift_target_class
+                # We need to know the number of samples, but we can check for any file matching the pattern
+                import glob
+                pattern = str(output_dir / f"class_mean_{target_class_name}_*samples_{method_suffix}.png")
+                existing_files = glob.glob(pattern)
+                if existing_files:
+                    console.print(f"[dim]⏭ Skipping visualization (already exists): {existing_files[0]}[/dim]")
+                    return
+            else:
+                # Individual mode
+                if target_idx < len(class_names):
+                    predicted_name_check = class_names[predicted_idx]
+                else:
+                    predicted_name_check = f"Class {predicted_idx}"
+                correct_str = "correct" if predicted_idx == target_idx else "wrong"
+                filename = f"{sample_id}_{predicted_name_check}_{correct_str}_{method_suffix}.png"
+                filepath = output_dir / filename
+                if filepath.exists():
+                    console.print(f"[dim]⏭ Skipping visualization (already exists): {filepath}[/dim]")
+                    return
         if target_idx < len(class_names):
             target_name = class_names[target_idx]
             predicted_name = class_names[predicted_idx]
@@ -3429,17 +3680,73 @@ class Tester:
                         
                         txt_filepath = top_regions_output_dir / txt_filename
                         
+                        # Find individuals with max DeepLIFT in each region (only in class_mean mode)
+                        max_individuals = {}
+                        if deeplift_class_mean_mode and self.deeplift is not None:
+                            max_individuals = self.deeplift.find_max_individuals_for_regions(
+                                top_regions=top_5_regions,
+                                target_class_idx=deeplift_target_class_idx,
+                                dataset=self.dataset,
+                                baseline_type=self.deeplift_baseline,
+                                tracks_per_gene=tracks_per_gene,
+                                gene_names=gene_names
+                            )
+                        
+                        # Get dataset_dir and window_center_size for DNA extraction
+                        dataset_dir = Path(self.config['dataset_input']['dataset_dir'])
+                        window_center_size = self.config['dataset_input']['window_center_size']
+                        
                         with open(txt_filepath, 'w') as f:
                             f.write(f"Top 5 Regiões Mais Ativas (DeepLIFT)\n")
-                            f.write(f"{'=' * 50}\n")
+                            f.write(f"{'=' * 80}\n")
                             if deeplift_class_mean_mode:
                                 f.write(f"Classe: {deeplift_target_class_name} ({deeplift_class_mean_num_samples} amostras)\n")
                             else:
                                 f.write(f"Sample: {sample_id}\n")
                                 f.write(f"Target: {target_name}\n")
-                            f.write(f"{'=' * 50}\n\n")
+                            f.write(f"{'=' * 80}\n\n")
+                            
                             for rank, (gene, val, chrom, pos, col) in enumerate(top_5_regions, 1):
-                                f.write(f"{rank}. {gene}: valor = {val:.6f}, {chrom}: {pos:,}\n")
+                                f.write(f"{rank}. {gene}: valor_medio = {val:.6f}, {chrom}: {pos:,}\n")
+                                
+                                # Add individual details if available
+                                if gene in max_individuals:
+                                    ind_info = max_individuals[gene]
+                                    ind_sample_id = ind_info['sample_id']
+                                    ind_superpop = ind_info.get('superpopulation', 'UNK')
+                                    ind_pop = ind_info.get('population', 'UNK')
+                                    ind_max_val = ind_info['max_value']
+                                    all_vals = ind_info['all_region_values']
+                                    
+                                    f.write(f"   Indivíduo com maior valor: {ind_sample_id} ({ind_superpop}/{ind_pop}, valor = {ind_max_val:.6f})\n")
+                                    
+                                    # Valores em todas as 5 regiões
+                                    vals_str = ', '.join([f"{g}={v:.5f}" for g, v in all_vals.items()])
+                                    f.write(f"   Valores nas 5 regiões: {vals_str}\n")
+                                    
+                                    # Extract DNA sequences for both haplotypes
+                                    for haplotype in ['H1', 'H2']:
+                                        dna_result = extract_dna_sequence(
+                                            dataset_dir=dataset_dir,
+                                            sample_id=ind_sample_id,
+                                            gene_name=gene,
+                                            center_position=pos,
+                                            window_center_size=window_center_size,
+                                            sequence_length=1000,
+                                            haplotype=haplotype
+                                        )
+                                        
+                                        if dna_result:
+                                            header, sequence = dna_result
+                                            f.write(f"   DNA {haplotype} (1000bp centradas em {chrom}:{pos:,}):\n")
+                                            f.write(f"   {header}\n")
+                                            # Write sequence in lines of 60 chars
+                                            for i in range(0, len(sequence), 60):
+                                                f.write(f"   {sequence[i:i+60]}\n")
+                                        else:
+                                            f.write(f"   DNA {haplotype}: não disponível\n")
+                                
+                                f.write("\n")
                         
                         console.print(f"[dim]Saved top regions: {txt_filepath}[/dim]")
                     
