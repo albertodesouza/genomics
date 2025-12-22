@@ -949,14 +949,15 @@ def write_report_markdown(
     indiv_sum: Dict[str, dict],
     indiv_gene_sum: Dict[Tuple[str, str], dict],
     ann: Dict[VariantKey, VariantAnnotation],
-    occs: List[VariantOcc]
+    occs: List[VariantOcc],
+    gene_info: Dict[str, GeneInfo]
 ) -> None:
     """
-    Gera um relatório textual com:
-      - visão geral
-      - destaques por gene
-      - destaques por indivíduo
-      - interpretação cautelosa para pigmentação (com base em genes clássicos)
+    Generate a textual report with:
+      - overview
+      - highlights by gene
+      - highlights by individual
+      - gene × individual matrix
     """
     n_occ = len(occs)
     uniq_vars = len({o.key for o in occs})
@@ -964,7 +965,7 @@ def write_report_markdown(
     genes = sorted(gene_sum.keys())
     indivs = sorted(indiv_sum.keys())
 
-    # top genes por HIGH+MODERATE (proxy de efeitos em proteína/splicing/regulação anotada)
+    # top genes by HIGH+MODERATE
     def score_gene(g: str) -> Tuple[int, int, int]:
         d = gene_sum[g]
         return (d.get("impact_HIGH", 0) + d.get("impact_MODERATE", 0),
@@ -973,7 +974,7 @@ def write_report_markdown(
 
     top_genes = sorted(genes, key=score_gene, reverse=True)[:15]
 
-    # top indiv por HIGH+MODERATE
+    # top individuals by HIGH+MODERATE
     def score_ind(i: str) -> Tuple[int, int, int]:
         d = indiv_sum[i]
         return (d.get("impact_HIGH", 0) + d.get("impact_MODERATE", 0),
@@ -982,32 +983,15 @@ def write_report_markdown(
 
     top_indivs = sorted(indivs, key=score_ind, reverse=True)[:15]
 
-    # helper: gene narrative
-    def gene_context(g: str) -> str:
-        if g in GENE_BACKGROUND:
-            return GENE_BACKGROUND[g]
-        return ""
-
-    # pigmentação: explicação geral + cautelas
-    pigment_intro = (
-        "### Interpretação cautelosa: o que dá (e o que não dá) para inferir\n"
-        "- Pigmentação (pele/olhos/cabelo) é **poligênica** e altamente dependente do contexto populacional; variantes em poucos lócus podem ter grande efeito "
-        "em certas populações (ex.: HERC2/OCA2 para cor dos olhos; SLC24A5 em variação de pele mais clara em europeus). :contentReference[oaicite:8]{index=8}\n"
-        "- O VEP indica **consequências funcionais** (p.ex., missense, splice, intronic) e frequentemente retorna **rsIDs** (quando a variante coincide com uma já catalogada). "
-        "Isso ajuda a priorizar candidatos, mas **não prova** aumento/diminuição de expressão ou “produção maior de proteína” sem dados adicionais (eQTL/expressão/proteômica).\n"
-        "- O que este relatório faz é: **destacar** genes e indivíduos com (i) maior carga de variantes, (ii) consequências mais severas e (iii) presença de rsIDs conhecidos, "
-        "especialmente em genes clássicos de pigmentação.\n"
-    )
-
     with report_path.open("w", encoding="utf-8") as f:
-        f.write("# Variant Annotation Report (por gene / por indivíduo)\n\n")
-        f.write("## Visão geral\n")
-        f.write(f"- Ocorrências (indivíduo×janela): **{n_occ}**\n")
-        f.write(f"- Variantes únicas (chrom,pos,ref,alt): **{uniq_vars}**\n")
-        f.write(f"- Genes (do seu arquivo): **{len(genes)}**\n")
-        f.write(f"- Indivíduos/hap (SAMPLE_HAP): **{len(indivs)}**\n\n")
+        f.write("# Variant Annotation Report (by gene / by individual)\n\n")
+        f.write("## Overview\n")
+        f.write(f"- Occurrences (individual × window): **{n_occ}**\n")
+        f.write(f"- Unique variants (chrom, pos, ref, alt): **{uniq_vars}**\n")
+        f.write(f"- Genes (from input): **{len(genes)}**\n")
+        f.write(f"- Individuals/hap (SAMPLE_HAP): **{len(indivs)}**\n\n")
 
-        f.write("## Destaques por gene (ordenado por HIGH+MODERATE)\n\n")
+        f.write("## Highlights by Gene (ordered by HIGH+MODERATE)\n\n")
         f.write("| Gene | Unique variants | Occurrences | HIGH | MODERATE | LOW | MODIFIER | Top consequences | rsIDs |\n")
         f.write("|---|---:|---:|---:|---:|---:|---:|---|---|\n")
         for g in top_genes:
@@ -1019,25 +1003,21 @@ def write_report_markdown(
             )
         f.write("\n")
 
-        # contexto para genes de pigmentação, se presentes
-        present_pig = [g for g in genes if g in PIGMENTATION_GENES]
-        if present_pig:
-            f.write("### Genes clássicos de pigmentação presentes no seu conjunto\n")
-            for g in present_pig:
-                d = gene_sum[g]
-                f.write(f"- **{g}**: unique={d['unique_variants_count']}, HIGH={d.get('impact_HIGH',0)}, MODERATE={d.get('impact_MODERATE',0)}. ")
-                ctx = gene_context(g)
-                if ctx:
-                    f.write(ctx)
-                f.write("\n")
+        # Gene descriptions from API
+        if gene_info:
+            f.write("### Gene Descriptions (from APIs)\n\n")
+            for g in genes:
+                info = gene_info.get(g)
+                if info and info.source != "No data found":
+                    f.write(f"- **{g}** ({info.biotype}): {info.description}")
+                    if info.function and info.function != "Function not available from APIs.":
+                        truncated_func = info.function[:150] + "..." if len(info.function) > 150 else info.function
+                        f.write(f" Function: {truncated_func}")
+                    f.write(f" [Source: {info.source}]\n")
             f.write("\n")
-        else:
-            f.write("### Genes clássicos de pigmentação\n")
-            f.write("Nenhum dos genes clássicos (OCA2/HERC2/SLC24A5/SLC45A2/TYR/MC1R/MFSD12/EDAR) apareceu explicitamente no seu arquivo. "
-                    "Se você esperava esses genes, verifique a lista de genes/janelas de entrada.\n\n")
 
-        f.write("## Destaques por indivíduo (SAMPLE_HAP) (ordenado por HIGH+MODERATE)\n\n")
-        f.write("| Indivíduo | Unique variants | Occurrences | HIGH | MODERATE | LOW | MODIFIER | Top consequences | rsIDs |\n")
+        f.write("## Highlights by Individual (SAMPLE_HAP) (ordered by HIGH+MODERATE)\n\n")
+        f.write("| Individual | Unique variants | Occurrences | HIGH | MODERATE | LOW | MODIFIER | Top consequences | rsIDs |\n")
         f.write("|---|---:|---:|---:|---:|---:|---:|---|---|\n")
         for i_id in top_indivs:
             d = indiv_sum[i_id]
@@ -1048,8 +1028,8 @@ def write_report_markdown(
             )
         f.write("\n")
 
-        f.write("## Matriz indivíduo × gene (resumo)\n\n")
-        f.write("Abaixo estão os pares (indivíduo, gene) com maior carga de HIGH+MODERATE.\n\n")
+        f.write("## Individual × Gene Matrix (summary)\n\n")
+        f.write("Below are the pairs (individual, gene) with highest HIGH+MODERATE count.\n\n")
         pairs = list(indiv_gene_sum.keys())
 
         def score_pair(p: Tuple[str, str]) -> Tuple[int, int, int]:
@@ -1059,7 +1039,7 @@ def write_report_markdown(
                     d.get("unique_variants_count", 0))
 
         top_pairs = sorted(pairs, key=score_pair, reverse=True)[:30]
-        f.write("| Indivíduo | Gene | Unique variants | Occurrences | HIGH | MODERATE | Top consequences | rsIDs |\n")
+        f.write("| Individual | Gene | Unique variants | Occurrences | HIGH | MODERATE | Top consequences | rsIDs |\n")
         f.write("|---|---|---:|---:|---:|---:|---|---|\n")
         for (i_id, g) in top_pairs:
             d = indiv_gene_sum[(i_id, g)]
@@ -1069,41 +1049,18 @@ def write_report_markdown(
             )
         f.write("\n")
 
-        f.write(pigment_intro)
+        # Interpretation notes
+        f.write("## Interpretation Notes\n\n")
+        f.write("- **VEP** indicates **functional consequences** (e.g., missense, splice, intronic) and often returns **rsIDs** when the variant matches a cataloged one.\n")
+        f.write("- This helps prioritize candidates, but does **not prove** increased/decreased expression without additional data (eQTL/expression/proteomics).\n")
+        f.write("- This report **highlights** genes and individuals with (i) higher variant burden, (ii) more severe consequences, and (iii) presence of known rsIDs.\n\n")
 
-        # Inferência por indivíduo focada em genes clássicos (se existirem)
-        if present_pig:
-            f.write("### Interpretação por indivíduo (focada em genes de pigmentação)\n")
-            f.write(
-                "Para cada indivíduo, observe especialmente:\n"
-                "- presença de **rsIDs** bem estudados (quando aparecem);\n"
-                "- consequências **MODERATE/HIGH** em genes de pigmentação;\n"
-                "- padrões consistentes entre H1 e H2.\n\n"
-            )
-            for i_id in sorted(indivs)[:50]:
-                # resumir somente se indivíduo tocar genes de pigmentação
-                touched = [(g, indiv_gene_sum[(i_id, g)]) for g in present_pig if (i_id, g) in indiv_gene_sum]
-                if not touched:
-                    continue
-                f.write(f"#### {i_id}\n")
-                for g, d in sorted(touched, key=lambda x: (-(x[1].get("impact_HIGH",0)+x[1].get("impact_MODERATE",0)), x[0])):
-                    f.write(
-                        f"- {g}: unique={d['unique_variants_count']}, HIGH={d.get('impact_HIGH',0)}, MODERATE={d.get('impact_MODERATE',0)}, "
-                        f"top={d.get('top_msc_str','')}, rsIDs={d.get('rsids_str','')}\n"
-                    )
-                f.write(
-                    "Interpretação: se houver rsIDs clássicos e/ou consequências MODERATE/HIGH em genes como HERC2/OCA2 (cor dos olhos) ou SLC24A5/SLC45A2 (pele), "
-                    "isso pode indicar um perfil genético com maior probabilidade de certas tendências de pigmentação, mas a conclusão depende de quais alelos específicos "
-                    "foram observados e do contexto populacional. :contentReference[oaicite:9]{index=9}\n\n"
-                )
-
-        # Nota final com pointers
-        f.write("## Notas práticas para aprofundar\n")
+        f.write("## Practical Notes\n")
         f.write(
-            '1) Se você quer inferir "produção maior de proteína", priorize variantes em regiões **codificantes** (missense/nonsense/frameshift) e em **splicing**; '
-            "para efeitos de expressão, cruze com eQTL/regulatory tracks.\n"
-            "2) Se o VEP retornar rsIDs (colocated_variants), você pode cruzar com literatura/GTEx/ClinVar/Ensembl Variation.\n"
-            "3) Para lotes muito grandes, VEP local (script + cache) tende a ser mais estável do que o REST. :contentReference[oaicite:10]{index=10}\n"
+            '1) To infer "increased protein production", prioritize variants in **coding regions** (missense/nonsense/frameshift) and **splicing**; '
+            "for expression effects, cross-reference with eQTL/regulatory tracks.\n"
+            "2) If VEP returns rsIDs (colocated_variants), you can cross-reference with literature/GTEx/ClinVar/Ensembl Variation.\n"
+            "3) For large batches, local VEP (script + cache) tends to be more stable than REST API.\n"
         )
 
 
@@ -1366,7 +1323,7 @@ def main() -> int:
     indiv_sum_path = outdir / "summary_by_individual.tsv"
     indiv_gene_sum_path = outdir / "summary_by_individual_gene.tsv"
     report_path = outdir / "report_by_gene_by_individual.md"
-    validation_report_path = outdir / "pigmentation_validation_report.md"
+    validation_report_path = outdir / "phenotype_validation_report.md"
 
     records = parse_input_file(input_path)
 
@@ -1586,20 +1543,49 @@ def main() -> int:
     write_tsv(indiv_gene_sum_path, ig_header, ig_rows)
     print(f"[SAVED] summary by individual+gene TSV: {indiv_gene_sum_path}")
 
+    # --- Fetch gene information from APIs ---
+    detected_genes = sorted({o.gene for o in occs})
+    print(f"[INFO] Fetching information for {len(detected_genes)} genes from APIs...")
+    gene_info = fetch_gene_info(detected_genes)
+    print(f"[INFO] Gene information fetched for {len([g for g in gene_info.values() if g.source != 'No data found'])} genes")
+
+    # --- Fetch rsID information from APIs ---
+    # Collect all rsIDs from VEP annotations
+    all_rsids: List[str] = []
+    for a in ann_map.values():
+        if a.rsids:
+            for rsid in a.rsids.split(","):
+                rsid = rsid.strip()
+                if rsid and rsid.startswith("rs"):
+                    all_rsids.append(rsid)
+    unique_rsids = sorted(set(all_rsids))
+    
+    # Limit to first 50 rsIDs to avoid too many API calls
+    rsids_to_fetch = unique_rsids[:50]
+    rsid_info: Dict[str, RsidInfo] = {}
+    if rsids_to_fetch:
+        print(f"[INFO] Fetching information for {len(rsids_to_fetch)} rsIDs from Ensembl Variation...")
+        rsid_info = fetch_rsid_info(rsids_to_fetch)
+        print(f"[INFO] rsID information fetched for {len(rsid_info)} variants")
+    else:
+        print("[INFO] No rsIDs to fetch (VEP may be disabled or no colocated variants)")
+
     # relatório textual
-    write_report_markdown(report_path, gene_sum, indiv_sum, indiv_gene_sum, ann_map, occs)
+    write_report_markdown(report_path, gene_sum, indiv_sum, indiv_gene_sum, ann_map, occs, gene_info)
     print(f"[SAVED] report (Markdown): {report_path}")
 
-    # Relatório de validação de pigmentação
-    write_pigmentation_validation_report(
+    # Relatório de validação de fenótipo
+    write_phenotype_validation_report(
         validation_report_path, 
         occs, 
         occs_all, 
         ann_map, 
         args.central_window,
-        gene_sum
+        gene_sum,
+        gene_info,
+        rsid_info
     )
-    print(f"[SAVED] pigmentation validation report (Markdown): {validation_report_path}")
+    print(f"[SAVED] phenotype validation report (Markdown): {validation_report_path}")
 
     print("\n=== OUTPUTS PRINCIPAIS ===")
     print(f"[OUT] {parsed_records_path}")
