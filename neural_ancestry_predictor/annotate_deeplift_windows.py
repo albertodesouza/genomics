@@ -73,6 +73,8 @@ class VariantOcc:
     hap: str
     gene: str
     header: str
+    center_1based: int  # Centro da janela (para calcular distância)
+    distance_to_center: int  # Distância absoluta ao centro
 
 
 @dataclass
@@ -813,6 +815,14 @@ def main() -> int:
     ap.add_argument("--ucsc-timeout", type=int, default=30)
     ap.add_argument("--vep-timeout", type=int, default=90)
     ap.add_argument("--no-vep", action="store_true", help="Pula VEP (gera só variantes vs referência).")
+    ap.add_argument(
+        "--central-window", 
+        type=int, 
+        default=None, 
+        metavar="BP",
+        help="Filtrar variantes para apenas aquelas dentro de ±(BP/2) do centro. "
+             "Ex: --central-window 50 mantém apenas variantes dentro de ±25bp do centro."
+    )
     args = ap.parse_args()
 
     input_path = Path(args.input_txt).expanduser().resolve()

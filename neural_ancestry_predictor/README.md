@@ -17,6 +17,7 @@ This module implements a YAML-configurable neural network that predicts ancestry
 - [Training](#training)
 - [Debug and Visualization](#debug-and-visualization)
 - [Testing and Evaluation](#testing-and-evaluation)
+- [Model Interpretability](#model-interpretability)
 - [Weights & Biases](#weights--biases)
 - [Hyperparameter Tuning](#hyperparameter-tuning)
 - [FAQ](#faq)
@@ -934,6 +935,71 @@ weighted avg       0.92      0.92      0.92        78
 - AFR: High recall (0.95) → identifies Africans well
 - AMR: Lower precision (0.88) → sometimes confuses with others
 - Strong diagonal → well-calibrated model
+
+---
+
+## Model Interpretability
+
+### Overview
+
+The Neural Ancestry Predictor includes **DeepLIFT** (Deep Learning Important Features) for understanding which genomic regions contribute most to ancestry predictions. This is essential for:
+
+- 🔬 **Validating** that the model learns biologically meaningful patterns
+- 📊 **Identifying** ancestry-informative genomic markers
+- 🧬 **Extracting** DNA sequences for further analysis (BLAT/BLAST)
+- 📝 **Publishing** interpretable results
+
+### Quick Start
+
+```yaml
+# configs/genes_interp.yaml
+debug:
+  enable_visualization: true
+  interpretability:
+    enabled: true
+    method: "deeplift"
+    save_images: true
+    output_dir: "interpretability_results"
+    deeplift:
+      baseline: "mean"      # Use dataset mean as reference
+      target_class: "AFR"   # Analyze AFR class patterns
+
+mode: "test"
+```
+
+```bash
+python3 neural_ancestry_predictor.py --config configs/genes_interp.yaml
+```
+
+### Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **Class Mean Mode** | Average attributions across all samples of a class for robust patterns |
+| **Top Regions** | Automatically identifies the 5 most important genomic regions |
+| **Individual Search** | Finds the individual with maximum attribution in each region |
+| **DNA Extraction** | Extracts 1000bp sequences (H1 + H2) for BLAT/BLAST analysis |
+| **Idempotency** | Skips already-generated outputs for efficient re-runs |
+
+### Example Output
+
+The system generates:
+1. **Visualization PNG**: Heatmaps of input data and attribution maps
+2. **Top Regions Report**: Detailed analysis with DNA sequences
+
+```
+Top 5 Regiões Mais Ativas (DeepLIFT):
+  1. DDB1: valor = 0.041460, chr11: 61,082,789
+  2. OCA2: valor = 0.039910, chr15: 28,000,123
+  3. HERC2: valor = 0.032900, chr15: 28,356,789
+  ...
+```
+
+### Full Documentation
+
+For complete documentation including theoretical background, configuration options, visualization details, and interpretation guide:
+
+📚 **[docs/DEEPLIFT.md](docs/DEEPLIFT.md)**
 
 ---
 
