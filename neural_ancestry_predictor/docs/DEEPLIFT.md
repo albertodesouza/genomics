@@ -196,24 +196,44 @@ The extracted sequences can be used for:
 
 ### Plot Components
 
-When running in test mode with visualization enabled, you'll see a multi-panel figure:
+When running in test mode with visualization enabled, you'll see two windows:
 
-#### Panel 1: Input Data
+#### Main Figure (2 panels)
+
+**Panel 1: Input Data**
 - Grayscale heatmap of the (normalized) input
 - Y-axis: Genes (11 genes × 6 tracks = 66 rows)
 - X-axis: Gene position (0 to window_center_size)
 
-#### Panel 2: DeepLIFT Attribution Map
+**Panel 2: DeepLIFT Attribution Map**
 - Diverging colormap: Blue (negative) ← Black (zero) → Red (positive)
 - Positive values indicate features that **support** the target class
 - Negative values indicate features that **oppose** the target class
 - Green circles mark the top 5 most active regions
 - X-axis shows top regions with their attribution values
 
-#### Panel 3: Output Probabilities
-- Bar chart of predicted class probabilities
-- Green bar: True class
-- Red border: Predicted class
+#### Track Profile Figure (separate interactive window)
+
+A line graph showing DeepLIFT values along the track with maximum activation for the **top 5 most active genes**:
+
+- **X-axis**: Genomic position (0 to window_center_size)
+- **Y-axis**: DeepLIFT attribution value
+- **Lines**: One colored line per gene (5 total - the most active ones)
+- **Legend**: Shows gene name and track index (e.g., "OCA2 (track 1)")
+
+**Track indices** (AlphaGenome outputs - 3 ontologies × 2 strands):
+- `0`: Ontology 1 (strand +)
+- `1`: Ontology 2 (strand +)
+- `2`: Ontology 3 (strand +)
+- `3`: Ontology 1 (strand -)
+- `4`: Ontology 2 (strand -)
+- `5`: Ontology 3 (strand -)
+
+**Interactive features** (matplotlib toolbar):
+- **Zoom**: Rectangular zoom selection
+- **Pan**: Drag to move view
+- **Home**: Reset to original view (autoescale)
+- **Save**: Export as image
 
 ### Colormap
 

@@ -18,6 +18,7 @@ This module implements a YAML-configurable neural network that predicts ancestry
 - [Debug and Visualization](#debug-and-visualization)
 - [Testing and Evaluation](#testing-and-evaluation)
 - [Model Interpretability](#model-interpretability)
+- [Variant Annotation](#variant-annotation-deeplift-post-processing)
 - [Weights & Biases](#weights--biases)
 - [Hyperparameter Tuning](#hyperparameter-tuning)
 - [FAQ](#faq)
@@ -1003,6 +1004,43 @@ For complete documentation including theoretical background, configuration optio
 
 ---
 
+## Variant Annotation (DeepLIFT Post-Processing)
+
+### Overview
+
+After running DeepLIFT interpretation, you can use **annotate_deeplift_windows.py** to analyze the genetic variants in the identified genomic regions. This tool:
+
+- 🔬 **Calls variants** by comparing individual DNA sequences against the hg38 reference genome
+- 🧬 **Annotates variants** using Ensembl VEP (consequence, impact, rsIDs)
+- 📊 **Fetches gene information** from Ensembl, NCBI, and UniProt APIs
+- 📝 **Generates reports** with HIGH impact variant analysis and phenotype validation
+
+### Quick Start
+
+```bash
+# Annotate DeepLIFT output with central window filter
+python3 annotate_deeplift_windows.py \
+    top_regions_class_mean_AFR_250samples_deeplift.txt \
+    --outdir variant_analysis \
+    --central-window 50
+```
+
+### Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **Central Window Filter** | Focus on variants near DeepLIFT center (90-95% reduction) |
+| **Haplotype Selection** | Analyze H1, H2, or both |
+| **HIGH Impact Analysis** | Detailed info on stop_gained, splice variants, frameshifts |
+| **Expression Strand** | Compare with DeepLIFT visualization |
+| **Multi-API Integration** | UCSC, VEP, Ensembl, NCBI, UniProt |
+
+### Full Documentation
+
+📚 **[docs/ANNOTATE_DEEPLIFT_WINDOWS.md](docs/ANNOTATE_DEEPLIFT_WINDOWS.md)**
+
+---
+
 ## Weights & Biases
 
 ### Configure W&B
@@ -1255,17 +1293,23 @@ plt.savefig('loss_curve.png', dpi=300, bbox_inches='tight')
 
 ```
 neural_ancestry_predictor/
-├── neural_ancestry_predictor.py    # Main program
+├── neural_ancestry_predictor.py      # Main training/inference program
+├── annotate_deeplift_windows.py      # DeepLIFT output variant annotation
+├── verify_processed_dataset.py       # Dataset verification tool
 ├── configs/
-│   └── default.yaml                 # Default configuration
-├── models/                          # Checkpoints (created automatically)
+│   ├── default.yaml                  # Default configuration
+│   ├── genes_interp.yaml             # Interpretability configuration
+│   └── ...
+├── docs/
+│   ├── DEEPLIFT.md                   # DeepLIFT documentation
+│   ├── ANNOTATE_DEEPLIFT_WINDOWS.md  # Variant annotation documentation
+│   └── ...
+├── models/                           # Checkpoints (created automatically)
 │   ├── best_loss.pt
 │   ├── best_accuracy.pt
-│   ├── epoch_10.pt
-│   ├── epoch_20.pt
 │   ├── normalization_params.json
 │   └── training_history.json
-└── README.md                        # This documentation
+└── README.md                         # This documentation
 ```
 
 ---

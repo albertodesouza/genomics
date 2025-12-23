@@ -3250,6 +3250,103 @@ class Tester:
         console.print(f"  Softmax:   {softmax_str}")
         console.print(f"[bold cyan]{'='*80}[/bold cyan]")
     
+    def _plot_deeplift_track_profile(
+        self,
+        dl_np: np.ndarray,
+        gene_names: List[str],
+        tracks_per_gene: int,
+        window_center_size: int,
+        title_suffix: str = ""
+    ):
+        """
+        Plots an interactive line graph showing DeepLIFT values along the track
+        with maximum activation for the top 5 most active genes.
+        
+        Args:
+            dl_np: DeepLIFT attribution map (num_rows x num_cols)
+            gene_names: List of gene names
+            tracks_per_gene: Number of tracks per gene (typically 6)
+            window_center_size: Size of the genomic window for x-axis
+            title_suffix: Optional suffix for the plot title
+        """
+        # X-axis: positions from 0 to window_center_size
+        num_cols = dl_np.shape[1]
+        x_positions = np.linspace(0, window_center_size, num_cols)
+        
+        # First pass: calculate max value for each gene to find top 5
+        gene_max_values = []
+        for gene_idx, gene_name in enumerate(gene_names):
+            start_row = gene_idx * tracks_per_gene
+            end_row = (gene_idx + 1) * tracks_per_gene
+            
+            if end_row > dl_np.shape[0]:
+                continue
+            
+            gene_data = dl_np[start_row:end_row, :]
+            max_val = gene_data.max()
+            max_track_idx = gene_data.max(axis=1).argmax()
+            
+            gene_max_values.append({
+                'gene_idx': gene_idx,
+                'gene_name': gene_name,
+                'max_val': max_val,
+                'max_track_idx': max_track_idx,
+                'start_row': start_row,
+                'end_row': end_row
+            })
+        
+        # Sort by max value and take top 5
+        gene_max_values.sort(key=lambda x: x['max_val'], reverse=True)
+        top_5_genes = gene_max_values[:5]
+        
+        # Create a new figure with interactive toolbar
+        fig, ax = plt.subplots(figsize=(14, 8))
+        fig.canvas.manager.set_window_title('DeepLIFT Track Profile - Top 5 Genes')
+        
+        # Use a colormap with distinct colors for 5 genes
+        cmap = plt.cm.get_cmap('tab10')
+        colors = [cmap(i) for i in range(5)]
+        
+        # Plot one line per top gene (using the track with maximum value)
+        for plot_idx, gene_info in enumerate(top_5_genes):
+            gene_name = gene_info['gene_name']
+            max_track_idx = gene_info['max_track_idx']
+            start_row = gene_info['start_row']
+            end_row = gene_info['end_row']
+            
+            # Get the values along the track with maximum
+            gene_data = dl_np[start_row:end_row, :]
+            track_values = gene_data[max_track_idx, :]
+            
+            # Legend shows gene name and track index (0-5)
+            label = f"{gene_name} (track {max_track_idx})"
+            ax.plot(x_positions, track_values, color=colors[plot_idx], 
+                   linewidth=1.5, label=label, alpha=0.8)
+        
+        # Configure axes
+        ax.set_xlabel('Genomic Position (bp)', fontsize=12)
+        ax.set_ylabel('DeepLIFT Attribution', fontsize=12)
+        ax.set_title(f'DeepLIFT Track Profile: Top 5 Most Active Genes{title_suffix}', 
+                    fontsize=14, fontweight='bold')
+        
+        # Grid and legend
+        ax.grid(True, alpha=0.3)
+        ax.axhline(y=0, color='black', linestyle='-', linewidth=0.5, alpha=0.5)
+        
+        # Legend outside plot
+        ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=10, 
+                 title='Gene (Track Index)', title_fontsize=11)
+        
+        # Adjust layout to accommodate legend
+        plt.tight_layout()
+        plt.subplots_adjust(right=0.82)
+        
+        # Enable interactive mode with toolbar (zoom, pan, home)
+        # The toolbar is automatically shown by matplotlib
+        
+        # Show the figure (non-blocking)
+        plt.show(block=False)
+    
     def _visualize_sample(self, features: torch.Tensor, targets: torch.Tensor, 
                          outputs: torch.Tensor, sample_idx: int, sample_id: str):
         """
@@ -3403,8 +3500,14 @@ class Tester:
         # Calculate number of rows for subplot
         # Row 1: Input features
         # Row 2: Interpretability maps (if any)
-        # Row 3 (or 2): Output probabilities
-        if num_interp_panels > 0:
+        # Row 3 (or 2): Output probabilities (NOT shown for DeepLIFT)
+        # For DeepLIFT: only 2 rows (Input + DeepLIFT), probabilities removed
+        is_deeplift_mode = self.interpretability_enabled and self.interp_method == 'deeplift' and has_deeplift
+        
+        if is_deeplift_mode:
+            num_rows_subplot = 2
+            fig_height = 10  # Just Input + DeepLIFT
+        elif num_interp_panels > 0:
             num_rows_subplot = 3
             fig_height = 14  # Increased for better spacing between plots
         else:
@@ -3816,33 +3919,34 @@ class Tester:
                     ax_dl.set_ylabel('Genes', fontsize=12)
         
         # ─────────────────────────────────────────────────────────────────
-        # Last Row: Output probabilities
+        # Last Row: Output probabilities (NOT shown for DeepLIFT mode)
         # ─────────────────────────────────────────────────────────────────
-        ax_prob = plt.subplot(num_rows_subplot, 1, num_rows_subplot)
-        bars = plt.bar(range(len(output_probs)), output_probs, color='steelblue', alpha=0.7)
-        bars[target_idx].set_color('green')
-        bars[predicted_idx].set_edgecolor('red')
-        bars[predicted_idx].set_linewidth(3)
-        
-        plt.xlabel('Class', fontsize=12)
-        plt.ylabel('Probability', fontsize=12)
-        plt.title('Network Output Probabilities', fontsize=14, fontweight='bold')
-        plt.xticks(range(len(output_probs)), 
-                  class_names[:len(output_probs)] if len(output_probs) <= len(class_names) 
-                  else [str(i) for i in range(len(output_probs))])
-        plt.grid(True, alpha=0.3, axis='y')
-        plt.ylim([0, 1])
-        
-        # Text with prediction and target
-        correct = "✓ CORRECT" if predicted_idx == target_idx else "✗ WRONG"
-        color = 'green' if predicted_idx == target_idx else 'red'
-        result_text = (f'{correct}\n'
-                      f'Target: {target_name} (class {target_idx})\n'
-                      f'Predicted: {predicted_name} (class {predicted_idx}, prob={output_probs[predicted_idx]:.3f})')
-        
-        plt.text(0.98, 0.98, result_text, transform=plt.gca().transAxes,
-                fontsize=11, verticalalignment='top', horizontalalignment='right',
-                bbox=dict(boxstyle='round', facecolor=color, alpha=0.3))
+        if not is_deeplift_mode:
+            ax_prob = plt.subplot(num_rows_subplot, 1, num_rows_subplot)
+            bars = plt.bar(range(len(output_probs)), output_probs, color='steelblue', alpha=0.7)
+            bars[target_idx].set_color('green')
+            bars[predicted_idx].set_edgecolor('red')
+            bars[predicted_idx].set_linewidth(3)
+            
+            plt.xlabel('Class', fontsize=12)
+            plt.ylabel('Probability', fontsize=12)
+            plt.title('Network Output Probabilities', fontsize=14, fontweight='bold')
+            plt.xticks(range(len(output_probs)), 
+                      class_names[:len(output_probs)] if len(output_probs) <= len(class_names) 
+                      else [str(i) for i in range(len(output_probs))])
+            plt.grid(True, alpha=0.3, axis='y')
+            plt.ylim([0, 1])
+            
+            # Text with prediction and target
+            correct = "✓ CORRECT" if predicted_idx == target_idx else "✗ WRONG"
+            color = 'green' if predicted_idx == target_idx else 'red'
+            result_text = (f'{correct}\n'
+                          f'Target: {target_name} (class {target_idx})\n'
+                          f'Predicted: {predicted_name} (class {predicted_idx}, prob={output_probs[predicted_idx]:.3f})')
+            
+            plt.text(0.98, 0.98, result_text, transform=plt.gca().transAxes,
+                    fontsize=11, verticalalignment='top', horizontalalignment='right',
+                    bbox=dict(boxstyle='round', facecolor=color, alpha=0.3))
         
         # Adjust layout with more vertical spacing between subplots
         plt.tight_layout()
@@ -3874,6 +3978,28 @@ class Tester:
             
             plt.savefig(filepath, dpi=150, bbox_inches='tight')
             console.print(f"[dim]Saved: {filepath}[/dim]")
+        
+        # ─────────────────────────────────────────────────────────────────
+        # DeepLIFT Track Profile: separate interactive line graph
+        # ─────────────────────────────────────────────────────────────────
+        if is_deeplift_mode and deeplift_map is not None:
+            # Get window_center_size for x-axis
+            window_center_size = self.config['dataset_input']['window_center_size']
+            
+            # Determine title suffix based on mode
+            if deeplift_class_mean_mode:
+                title_suffix = f" | Class {deeplift_target_class_name} ({deeplift_class_mean_num_samples} samples)"
+            else:
+                title_suffix = f" | {sample_id} ({target_name})"
+            
+            # Plot the track profile (non-blocking, separate window)
+            self._plot_deeplift_track_profile(
+                dl_np=deeplift_map if isinstance(deeplift_map, np.ndarray) else deeplift_map.cpu().numpy(),
+                gene_names=gene_names,
+                tracks_per_gene=tracks_per_gene,
+                window_center_size=window_center_size,
+                title_suffix=title_suffix
+            )
         
         # Connect key callback
         self._key_pressed = False
