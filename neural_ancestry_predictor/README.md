@@ -19,6 +19,7 @@ This module implements a YAML-configurable neural network that predicts ancestry
 - [Testing and Evaluation](#testing-and-evaluation)
 - [Model Interpretability](#model-interpretability)
 - [Variant Annotation](#variant-annotation-deeplift-post-processing)
+- [Hypothesis Validation](#hypothesis-validation)
 - [Weights & Biases](#weights--biases)
 - [Hyperparameter Tuning](#hyperparameter-tuning)
 - [FAQ](#faq)
@@ -1041,6 +1042,73 @@ python3 annotate_deeplift_windows.py \
 
 ---
 
+## Hypothesis Validation
+
+### Overview
+
+After running the DeepLIFT → VEP pipeline, you can use **validate_pigmentation_hypothesis.py** to systematically validate whether the identified genomic regions correspond to known phenotype-associated genes. This is essential for:
+
+- 🔬 **Validating** the pipeline before applying to new phenotypes (e.g., longevity)
+- 📊 **Comparing** results with published GWAS studies
+- 🧬 **Analyzing** biological mechanisms of detected variants
+- 📝 **Generating** comprehensive validation reports
+
+### Quick Start
+
+```bash
+# Basic validation
+python3 validate_pigmentation_hypothesis.py top_regions_reports_central2
+
+# With population frequencies from gnomAD
+python3 validate_pigmentation_hypothesis.py top_regions_reports_central2 --gnomad
+
+# Custom output file
+python3 validate_pigmentation_hypothesis.py top_regions_reports_central2 -o my_report.md
+```
+
+### Three-Level Validation
+
+The script performs validation at three levels:
+
+| Level | What it validates | Key metrics |
+|-------|-------------------|-------------|
+| **Level 1: Genes** | Are detected genes known pigmentation genes? | % match with literature, Crawford 2017 overlap |
+| **Level 2: Variants** | Are known pigmentation rsIDs present? | Known SNPs found, HIGH/MODERATE impact counts |
+| **Level 3: Mechanism** | Do variants make biological sense? | stop_gained, splice variants, missense analysis |
+
+### Example Output
+
+```
+=== Validation Result ===
+  Status: VALIDATED (++)
+  Score: 76.0/100
+[SAVED] Validation report: top_regions_reports_central2/pigmentation_validation.md
+```
+
+### Validation Scores
+
+| Score | Status |
+|-------|--------|
+| ≥ 80 | STRONGLY VALIDATED (+++) |
+| 60-79 | VALIDATED (++) |
+| 40-59 | PARTIALLY VALIDATED (+) |
+| < 40 | NOT VALIDATED (-) |
+
+### Application to Longevity
+
+Once validated with pigmentation (where results are easy to verify), the same pipeline can be applied to longevity studies:
+
+1. Train with longevity data (longevous vs non-longevous individuals)
+2. Run DeepLIFT to identify important genomic regions
+3. Annotate variants with `annotate_deeplift_windows.py`
+4. Create a `validate_longevity_hypothesis.py` with longevity genes (FOXO3, APOE, CETP, etc.)
+
+### Full Documentation
+
+📚 **[docs/VALIDATE_PIGMENTATION_HYPOTHESIS.md](docs/VALIDATE_PIGMENTATION_HYPOTHESIS.md)**
+
+---
+
 ## Weights & Biases
 
 ### Configure W&B
@@ -1295,6 +1363,7 @@ plt.savefig('loss_curve.png', dpi=300, bbox_inches='tight')
 neural_ancestry_predictor/
 ├── neural_ancestry_predictor.py      # Main training/inference program
 ├── annotate_deeplift_windows.py      # DeepLIFT output variant annotation
+├── validate_pigmentation_hypothesis.py  # Hypothesis validation script
 ├── verify_processed_dataset.py       # Dataset verification tool
 ├── configs/
 │   ├── default.yaml                  # Default configuration
@@ -1303,6 +1372,7 @@ neural_ancestry_predictor/
 ├── docs/
 │   ├── DEEPLIFT.md                   # DeepLIFT documentation
 │   ├── ANNOTATE_DEEPLIFT_WINDOWS.md  # Variant annotation documentation
+│   ├── VALIDATE_PIGMENTATION_HYPOTHESIS.md  # Hypothesis validation documentation
 │   └── ...
 ├── models/                           # Checkpoints (created automatically)
 │   ├── best_loss.pt
@@ -1340,6 +1410,15 @@ For issues or questions:
 ---
 
 ## Changelog
+
+### v1.2 (2025-12-23)
+- ✨ **NEW: Hypothesis Validation Script** (`validate_pigmentation_hypothesis.py`)
+- ✨ Three-level validation (genes, variants, mechanism)
+- ✨ Built-in database of 14 known pigmentation genes with GWAS references
+- ✨ Comparison with Crawford et al., 2017 (Science)
+- ✨ Optional gnomAD population frequency integration
+- ✨ Automatic validation score calculation (0-100)
+- 📚 Comprehensive documentation
 
 ### v1.1 (2025-11-14)
 - ✨ **NEW: Processed dataset cache** for 10-20x faster repeated runs
