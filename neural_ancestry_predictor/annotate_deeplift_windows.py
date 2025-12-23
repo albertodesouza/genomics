@@ -4,16 +4,17 @@
 """
 O que o script faz:
 
-1) Parseia seu TXT e extrai sequências FASTA (1000bp) por indivíduo/haplótipo/gene/center.
+1) Parseia seu TXT e extrai sequências FASTA por indivíduo/haplótipo/gene/center.
+   - O tamanho da janela é detectado automaticamente do comprimento das sequências.
 2) Baixa a sequência de referência hg38 (UCSC REST /getData/sequence).
-   - A UCSC usa start 0-based (inclusive) e end 1-based (exclusive) para API/intervalos. :contentReference[oaicite:1]{index=1}
+   - A UCSC usa start 0-based (inclusive) e end 1-based (exclusive) para API/intervalos.
 3) Chama variantes vs referência (SNVs por comparação; fallback com alinhamento simples se tamanhos divergirem).
-4) Anota variantes com Ensembl VEP REST (POST /vep/homo_sapiens/region) em lotes (<=200). :contentReference[oaicite:2]{index=2}
+4) Anota variantes com Ensembl VEP REST (POST /vep/homo_sapiens/region) em lotes (<=200).
 5) Gera saídas agregadas:
    - por gene
    - por indivíduo (sample + hap)
    - por (indivíduo, gene)
-6) Escreve um relatório Markdown com interpretação cautelosa para pigmentação.
+6) Escreve um relatório Markdown genérico para validação de fenótipo.
 
 Requisitos:
   pip install requests
@@ -106,7 +107,7 @@ ITEM_LINE_RE = re.compile(
 )
 
 DNA_BLOCK_RE = re.compile(
-    r"^\s*DNA\s+(?P<hap>H[12])\s*\(1000bp\s+centradas\s+em\s+(?P<chrom>chr(?:[0-9]+|X|Y|M))\s*:\s*(?P<center>[\d,]+)\)\s*:\s*$",
+    r"^\s*DNA\s+(?P<hap>H[12])\s*\((?P<bp>\d+)bp\s+centradas\s+em\s+(?P<chrom>chr(?:[0-9]+|X|Y|M))\s*:\s*(?P<center>[\d,]+)\)\s*:\s*$",
     re.IGNORECASE
 )
 
@@ -209,19 +210,23 @@ def parse_input_file(txt_path: Path) -> List[RegionRecord]:
 # UCSC referência hg38
 # ----------------------------
 
-def window_1000_centered(center_1based: int) -> Tuple[int, int]:
+def window_centered(center_1based: int, window_size: int) -> Tuple[int, int]:
     """
-    1000bp:
-      center0 = center_1based - 1
-      start0 = center0 - 500
-      end1   = center0 + 500
-    Comprimento = 1000 (end1 - start0)
+    Retorna (start0, end1) para janela de window_size bp centrada em center_1based.
+    
+    Args:
+        center_1based: Posição central (1-based)
+        window_size: Tamanho da janela em bp
+    
+    Returns:
+        Tupla (start0, end1) onde start0 é 0-based e end1 é exclusivo
     """
     center0 = center_1based - 1
-    start0 = center0 - 500
-    end1 = center0 + 500
+    half = window_size // 2
+    start0 = center0 - half
+    end1 = center0 + (window_size - half)  # Garante tamanho exato para janelas ímpares
     if start0 < 0:
-        raise ValueError(f"Start < 0 para center={center_1based}")
+        raise ValueError(f"Start < 0 para center={center_1based}, window_size={window_size}")
     return start0, end1
 
 
@@ -267,6 +272,7 @@ class GeneInfo:
     function: str
     biotype: str
     chromosome: str
+    strand: str  # "+" or "-" for protein expression strand
     source: str
 
 
@@ -370,6 +376,7 @@ def fetch_gene_info(
         function = ""
         biotype = ""
         chromosome = ""
+        strand = ""
         sources = []
         
         # Ensembl
@@ -378,6 +385,12 @@ def fetch_gene_info(
             description = ensembl_data.get("description", "") or ""
             biotype = ensembl_data.get("biotype", "") or ""
             chromosome = ensembl_data.get("seq_region_name", "") or ""
+            # Strand: 1 = forward (+), -1 = reverse (-)
+            strand_int = ensembl_data.get("strand")
+            if strand_int == 1:
+                strand = "+"
+            elif strand_int == -1:
+                strand = "-"
             sources.append("Ensembl")
         
         time.sleep(rate_limit_s)
@@ -423,10 +436,12 @@ def fetch_gene_info(
             function=function or "Function not available from APIs.",
             biotype=biotype or "unknown",
             chromosome=chromosome or "unknown",
+            strand=strand or "unknown",
             source=", ".join(sources) if sources else "No data found"
         )
         
-        print(f"[API] Gene {gene}: fetched from {', '.join(sources) if sources else 'no sources'}")
+        strand_str = f", strand={strand}" if strand else ""
+        print(f"[API] Gene {gene}: fetched from {', '.join(sources) if sources else 'no sources'}{strand_str}")
     
     return gene_info_map
 
@@ -445,6 +460,152 @@ class RsidInfo:
     minor_allele: str
     maf: str
     source: str
+
+
+# ----------------------------
+# HIGH Impact Variant Details
+# ----------------------------
+
+@dataclass
+class HighImpactVariantInfo:
+    """Detailed information about a HIGH impact variant."""
+    chrom: str
+    pos: int
+    ref: str
+    alt: str
+    gene: str
+    consequence: str
+    amino_acids: str  # e.g., "Y/*" for stop_gained
+    codons: str  # e.g., "taC/taG"
+    protein_position: str
+    transcript_id: str
+    rsid: str
+    clinical_significance: str
+    phenotypes: str
+    cosmic_id: str
+    maf: str
+    distance_to_center: int
+    ensembl_link: str
+    source: str
+
+
+def fetch_high_impact_details(
+    high_variants: List[Tuple['VariantKey', 'VariantAnnotation', int]],
+    rate_limit_s: float = 0.34,
+    timeout_s: int = 15
+) -> List[HighImpactVariantInfo]:
+    """
+    Fetch detailed information about HIGH impact variants from Ensembl APIs.
+    
+    Args:
+        high_variants: List of (VariantKey, VariantAnnotation, distance_to_center) tuples
+        rate_limit_s: Rate limit between API calls
+        timeout_s: Timeout for API calls
+    
+    Returns:
+        List of HighImpactVariantInfo objects with detailed information
+    """
+    results: List[HighImpactVariantInfo] = []
+    
+    for key, ann, distance in high_variants:
+        # Extract basic info from annotation
+        gene = ann.gene_symbols.split(",")[0] if ann.gene_symbols else "Unknown"
+        consequence = ann.most_severe_consequence
+        amino_acids = ann.amino_acids or ""
+        codons = ann.codons or ""
+        transcript_id = ann.transcript_ids.split(",")[0] if ann.transcript_ids else ""
+        
+        # Get rsID if available
+        rsid = ""
+        if ann.rsids:
+            rsids = [r for r in ann.rsids.split(",") if r.startswith("rs")]
+            if rsids:
+                rsid = rsids[0]
+        
+        # Get COSMIC ID if available
+        cosmic_id = ""
+        if ann.rsids:
+            cosmics = [r for r in ann.rsids.split(",") if r.startswith("COSV")]
+            if cosmics:
+                cosmic_id = cosmics[0]
+        
+        clinical_sig = ""
+        phenotypes_str = ""
+        maf = ""
+        protein_position = ""
+        
+        # Try to get more info from Ensembl Variation if we have an rsID
+        if rsid:
+            url = f"https://rest.ensembl.org/variation/human/{rsid}"
+            headers = {"Content-Type": "application/json", "Accept": "application/json"}
+            
+            try:
+                r = requests.get(url, headers=headers, timeout=timeout_s)
+                if r.status_code == 200:
+                    data = r.json()
+                    
+                    # Clinical significance
+                    clinical_sigs = data.get("clinical_significance", [])
+                    if clinical_sigs:
+                        clinical_sig = ", ".join(clinical_sigs)
+                    
+                    # Phenotypes
+                    phenotypes = data.get("phenotypes", [])
+                    if phenotypes:
+                        pheno_names = [p.get("trait", "") for p in phenotypes if p.get("trait")]
+                        if pheno_names:
+                            phenotypes_str = "; ".join(pheno_names[:3])  # Top 3
+                            if len(pheno_names) > 3:
+                                phenotypes_str += f" (+{len(pheno_names)-3} more)"
+                    
+                    # MAF
+                    maf_val = data.get("MAF")
+                    if maf_val is not None:
+                        maf = f"{maf_val:.4f}"
+                    
+                    print(f"[API] HIGH variant {rsid}: clinical={clinical_sig or 'N/A'}")
+                    
+            except Exception as e:
+                print(f"[WARN] Failed to fetch details for {rsid}: {e}", file=sys.stderr)
+            
+            time.sleep(rate_limit_s)
+        
+        # Try to get protein position from VEP consequence terms
+        # Parse from annotation if available (format: "position/total")
+        if ann.consequence_terms:
+            # VEP sometimes includes position info
+            pass
+        
+        # Build Ensembl link
+        ensembl_link = f"https://www.ensembl.org/Homo_sapiens/Variation/Explore?v={rsid}" if rsid else ""
+        if not ensembl_link and cosmic_id:
+            ensembl_link = f"https://cancer.sanger.ac.uk/cosmic/search?q={cosmic_id}"
+        if not ensembl_link:
+            # Link to region
+            ensembl_link = f"https://www.ensembl.org/Homo_sapiens/Location/View?r={key.chrom.replace('chr', '')}:{key.pos_1based-50}-{key.pos_1based+50}"
+        
+        results.append(HighImpactVariantInfo(
+            chrom=key.chrom,
+            pos=key.pos_1based,
+            ref=key.ref,
+            alt=key.alt,
+            gene=gene,
+            consequence=consequence,
+            amino_acids=amino_acids,
+            codons=codons,
+            protein_position=protein_position,
+            transcript_id=transcript_id,
+            rsid=rsid,
+            clinical_significance=clinical_sig or "Not reported",
+            phenotypes=phenotypes_str or "No phenotypes reported",
+            cosmic_id=cosmic_id,
+            maf=maf or "N/A",
+            distance_to_center=distance,
+            ensembl_link=ensembl_link,
+            source="Ensembl Variation" if rsid else "VEP annotation only"
+        ))
+    
+    return results
 
 
 def fetch_rsid_info(
@@ -950,7 +1111,8 @@ def write_report_markdown(
     indiv_gene_sum: Dict[Tuple[str, str], dict],
     ann: Dict[VariantKey, VariantAnnotation],
     occs: List[VariantOcc],
-    gene_info: Dict[str, GeneInfo]
+    gene_info: Dict[str, GeneInfo],
+    high_impact_info: Optional[List[HighImpactVariantInfo]] = None
 ) -> None:
     """
     Generate a textual report with:
@@ -1009,7 +1171,8 @@ def write_report_markdown(
             for g in genes:
                 info = gene_info.get(g)
                 if info and info.source != "No data found":
-                    f.write(f"- **{g}** ({info.biotype}): {info.description}")
+                    strand_info = f", strand={info.strand}" if info.strand and info.strand != "unknown" else ""
+                    f.write(f"- **{g}** ({info.biotype}{strand_info}): {info.description}")
                     if info.function and info.function != "Function not available from APIs.":
                         truncated_func = info.function[:150] + "..." if len(info.function) > 150 else info.function
                         f.write(f" Function: {truncated_func}")
@@ -1050,6 +1213,51 @@ def write_report_markdown(
         f.write("\n")
 
         # Interpretation notes
+        # HIGH Impact Variants - Detailed Analysis
+        if high_impact_info and len(high_impact_info) > 0:
+            f.write("## HIGH Impact Variants - Detailed Analysis\n\n")
+            f.write(f"Found **{len(high_impact_info)} HIGH impact variant(s)** that may significantly affect protein function:\n\n")
+            
+            for i, hv in enumerate(high_impact_info, 1):
+                f.write(f"### {i}. {hv.chrom}:{hv.pos} {hv.ref}>{hv.alt} ({hv.gene})\n\n")
+                f.write(f"| Property | Value |\n")
+                f.write(f"|----------|-------|\n")
+                f.write(f"| **Gene** | {hv.gene} |\n")
+                f.write(f"| **Consequence** | {hv.consequence} |\n")
+                if hv.amino_acids:
+                    f.write(f"| **Amino acid change** | {hv.amino_acids} |\n")
+                if hv.codons:
+                    f.write(f"| **Codon change** | {hv.codons} |\n")
+                f.write(f"| **Distance to DeepLIFT center** | {hv.distance_to_center}bp |\n")
+                if hv.rsid:
+                    f.write(f"| **rsID** | [{hv.rsid}]({hv.ensembl_link}) |\n")
+                if hv.cosmic_id:
+                    f.write(f"| **COSMIC ID** | {hv.cosmic_id} |\n")
+                f.write(f"| **Clinical significance** | {hv.clinical_significance} |\n")
+                f.write(f"| **Associated phenotypes** | {hv.phenotypes} |\n")
+                if hv.maf != "N/A":
+                    f.write(f"| **Minor allele frequency** | {hv.maf} |\n")
+                if hv.transcript_id:
+                    f.write(f"| **Transcript** | {hv.transcript_id} |\n")
+                f.write(f"| **Data source** | {hv.source} |\n")
+                f.write("\n")
+                
+                # Add interpretation for specific consequence types
+                if hv.consequence == "stop_gained":
+                    f.write(f"> ⚠️ **Stop gained**: This variant introduces a premature stop codon, ")
+                    f.write(f"likely resulting in a truncated, non-functional protein or nonsense-mediated decay (NMD).\n\n")
+                elif hv.consequence == "splice_donor_variant":
+                    f.write(f"> ⚠️ **Splice donor disruption**: This variant affects the splice donor site, ")
+                    f.write(f"potentially causing exon skipping or intron retention, leading to abnormal protein.\n\n")
+                elif hv.consequence == "splice_acceptor_variant":
+                    f.write(f"> ⚠️ **Splice acceptor disruption**: This variant affects the splice acceptor site, ")
+                    f.write(f"potentially causing aberrant splicing and abnormal protein production.\n\n")
+                elif hv.consequence == "frameshift_variant":
+                    f.write(f"> ⚠️ **Frameshift**: This insertion/deletion shifts the reading frame, ")
+                    f.write(f"likely producing a completely different and non-functional protein.\n\n")
+            
+            f.write("---\n\n")
+        
         f.write("## Interpretation Notes\n\n")
         f.write("- **VEP** indicates **functional consequences** (e.g., missense, splice, intronic) and often returns **rsIDs** when the variant matches a cataloged one.\n")
         f.write("- This helps prioritize candidates, but does **not prove** increased/decreased expression without additional data (eQTL/expression/proteomics).\n")
@@ -1070,6 +1278,7 @@ def write_phenotype_validation_report(
     occs_all: List[VariantOcc],
     ann: Dict[VariantKey, VariantAnnotation],
     central_window: Optional[int],
+    window_size: int,
     gene_sum: Dict[str, dict],
     gene_info: Dict[str, GeneInfo],
     rsid_info: Dict[str, RsidInfo]
@@ -1141,7 +1350,7 @@ def write_phenotype_validation_report(
             f.write("| Metric | Value |\n")
             f.write("|--------|-------|\n")
             f.write(f"| Central window | ±{half_win}bp from DeepLIFT center |\n")
-            f.write(f"| Total variants (1000bp) | {n_all} occurrences, {unique_all} unique |\n")
+            f.write(f"| Total variants ({window_size}bp) | {n_all} occurrences, {unique_all} unique |\n")
             f.write(f"| Filtered variants (central window) | {n_filtered} occurrences, {unique_filtered} unique |\n")
             if n_all > 0:
                 f.write(f"| Reduction | {100*(1 - n_filtered/n_all):.1f}% |\n")
@@ -1150,7 +1359,7 @@ def write_phenotype_validation_report(
         else:
             f.write("| Metric | Value |\n")
             f.write("|--------|-------|\n")
-            f.write("| Window | 1000bp (no central filter) |\n")
+            f.write(f"| Window | {window_size}bp (no central filter) |\n")
             f.write(f"| Total variants | {n_all} occurrences, {unique_all} unique |\n")
             f.write(f"| Mean distance to center | {avg_distance:.1f}bp |\n")
         f.write("\n")
@@ -1171,6 +1380,7 @@ def write_phenotype_validation_report(
                 f.write(f"- **Function**: {info.function}\n")
                 f.write(f"- **Biotype**: {info.biotype}\n")
                 f.write(f"- **Chromosome**: {info.chromosome}\n")
+                f.write(f"- **Expression strand**: {info.strand} (protein coding direction)\n")
                 f.write(f"- **Data source**: {info.source}\n")
             else:
                 f.write(f"- **Description**: No API data available for this gene.\n")
@@ -1305,6 +1515,13 @@ def main() -> int:
         help="Filtrar variantes para apenas aquelas dentro de ±(BP/2) do centro. "
              "Ex: --central-window 50 mantém apenas variantes dentro de ±25bp do centro."
     )
+    ap.add_argument(
+        "--haplotype",
+        type=str,
+        choices=["H1", "H2", "both"],
+        default="H1",
+        help="Qual haplótipo considerar: H1 (default), H2, ou both (ambos)."
+    )
     args = ap.parse_args()
 
     input_path = Path(args.input_txt).expanduser().resolve()
@@ -1327,6 +1544,32 @@ def main() -> int:
 
     records = parse_input_file(input_path)
 
+    # Filtrar por haplótipo
+    total_before_hap_filter = len(records)
+    if args.haplotype == "H1":
+        records = [r for r in records if r.hap.upper() == "H1"]
+    elif args.haplotype == "H2":
+        records = [r for r in records if r.hap.upper() == "H2"]
+    # else: "both" - mantém todos
+    
+    total_after_hap_filter = len(records)
+    if args.haplotype != "both":
+        print(f"[INFO] Haplótipo: {args.haplotype} (filtrados {total_after_hap_filter} de {total_before_hap_filter} records)")
+    else:
+        print(f"[INFO] Haplótipo: ambos (H1 + H2), {total_after_hap_filter} records")
+    
+    if not records:
+        print(f"[ERRO] Nenhum record encontrado para haplótipo {args.haplotype}. Encerrando.")
+        return 1
+
+    # Detectar tamanho da janela a partir dos dados
+    window_size = len(records[0].seq)
+    seq_sizes = {len(r.seq) for r in records}
+    if len(seq_sizes) > 1:
+        print(f"[WARN] Sequências com tamanhos diferentes detectadas: {sorted(seq_sizes)}")
+        print(f"[WARN] Usando tamanho da primeira sequência: {window_size}bp")
+    print(f"[INFO] Tamanho da janela detectado: {window_size}bp")
+
     # Salva parsed records
     pr_header = ["gene", "chrom", "center_1based", "sample", "hap", "header", "seq_len"]
     pr_rows = [[r.gene, r.chrom, str(r.center_1based), r.sample, r.hap, r.header, str(len(r.seq))] for r in records]
@@ -1341,7 +1584,7 @@ def main() -> int:
     unique_keys_set: Dict[VariantKey, None] = {}
 
     for rec in records:
-        start0, end1 = window_1000_centered(rec.center_1based)
+        start0, end1 = window_centered(rec.center_1based, window_size)
         cache_k = ref_cache_key(rec.chrom, start0, end1)
 
         if cache_k in ref_cache:
@@ -1570,8 +1813,20 @@ def main() -> int:
     else:
         print("[INFO] No rsIDs to fetch (VEP may be disabled or no colocated variants)")
 
+    # Fetch detailed information for HIGH impact variants
+    high_impact_info: List[HighImpactVariantInfo] = []
+    high_variants = [
+        (k, a, variant_min_distance.get(k, 0)) 
+        for k, a in ann_map.items() 
+        if a.worst_impact == "HIGH"
+    ]
+    if high_variants:
+        print(f"[INFO] Fetching detailed information for {len(high_variants)} HIGH impact variant(s)...")
+        high_impact_info = fetch_high_impact_details(high_variants)
+        print(f"[INFO] HIGH impact details fetched for {len(high_impact_info)} variant(s)")
+
     # relatório textual
-    write_report_markdown(report_path, gene_sum, indiv_sum, indiv_gene_sum, ann_map, occs, gene_info)
+    write_report_markdown(report_path, gene_sum, indiv_sum, indiv_gene_sum, ann_map, occs, gene_info, high_impact_info)
     print(f"[SAVED] report (Markdown): {report_path}")
 
     # Relatório de validação de fenótipo
@@ -1581,6 +1836,7 @@ def main() -> int:
         occs_all, 
         ann_map, 
         args.central_window,
+        window_size,
         gene_sum,
         gene_info,
         rsid_info

@@ -75,6 +75,7 @@ debug:
     deeplift:
       baseline: "mean"             # "zeros" or "mean"
       target_class: "AFR"          # Class name or "predicted"
+      fasta_length: 1000           # Length of DNA sequence to extract (bp)
 
 mode: "test"
 test_dataset: "train"              # Which split to analyze
@@ -89,6 +90,7 @@ test_dataset: "train"              # Which split to analyze
 | `output_dir` | string | Directory for output files |
 | `baseline` | `"zeros"`, `"mean"` | Reference input for DeepLIFT |
 | `target_class` | class name or `"predicted"` | Which class to compute attributions for |
+| `fasta_length` | integer (default: 1000) | Length of DNA sequence to extract (in bp) |
 
 ### Baseline Options
 
@@ -171,7 +173,7 @@ The output includes:
 
 ## DNA Sequence Extraction
 
-For each individual identified in the top regions analysis, the system extracts **1000 base pairs** of DNA sequence centered on the peak attribution position.
+For each individual identified in the top regions analysis, the system extracts DNA sequences centered on the peak attribution position. The sequence length is configurable via the `fasta_length` parameter (default: 1000 bp).
 
 ### Extraction Process
 

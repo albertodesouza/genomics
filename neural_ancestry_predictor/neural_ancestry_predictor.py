@@ -3178,6 +3178,7 @@ class Tester:
         self.interp_output_dir = interp_config.get('output_dir', 'interpretability_results')
         self.deeplift_baseline = interp_config.get('deeplift', {}).get('baseline', 'zeros')
         self.deeplift_target_class = interp_config.get('deeplift', {}).get('target_class', 'predicted')
+        self.deeplift_fasta_length = interp_config.get('deeplift', {}).get('fasta_length', 1000)
         self.gradcam_target_class = interp_config.get('gradcam', {}).get('target_class', 'predicted')
         
         # Inicializar objetos de interpretabilidade
@@ -3671,12 +3672,13 @@ class Tester:
                             top_regions_output_dir = Path(cache_dir) / top_regions_output_dir
                         top_regions_output_dir.mkdir(parents=True, exist_ok=True)
                         
-                        # Generate filename
+                        # Generate filename (include fasta_length in name)
+                        fasta_length = self.deeplift_fasta_length
                         if deeplift_class_mean_mode:
-                            txt_filename = f"top_regions_class_mean_{deeplift_target_class_name}_{deeplift_class_mean_num_samples}samples_deeplift.txt"
+                            txt_filename = f"top_regions_class_mean_{deeplift_target_class_name}_{deeplift_class_mean_num_samples}samples_{fasta_length}bp_deeplift.txt"
                         else:
                             correct_str = "correct" if predicted_idx == target_idx else "wrong"
-                            txt_filename = f"top_regions_{sample_id}_{predicted_name}_{correct_str}_deeplift.txt"
+                            txt_filename = f"top_regions_{sample_id}_{predicted_name}_{correct_str}_{fasta_length}bp_deeplift.txt"
                         
                         txt_filepath = top_regions_output_dir / txt_filename
                         
@@ -3732,13 +3734,13 @@ class Tester:
                                             gene_name=gene,
                                             center_position=pos,
                                             window_center_size=window_center_size,
-                                            sequence_length=1000,
+                                            sequence_length=fasta_length,
                                             haplotype=haplotype
                                         )
                                         
                                         if dna_result:
                                             header, sequence = dna_result
-                                            f.write(f"   DNA {haplotype} (1000bp centradas em {chrom}:{pos:,}):\n")
+                                            f.write(f"   DNA {haplotype} ({fasta_length}bp centradas em {chrom}:{pos:,}):\n")
                                             f.write(f"   {header}\n")
                                             # Write sequence in lines of 60 chars
                                             for i in range(0, len(sequence), 60):

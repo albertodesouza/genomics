@@ -666,6 +666,10 @@ debug:
       # "predicted" = usa a classe predita pela rede (padrão)
       # "AFR", "AMR", "EAS", "EUR", "SAS" = classe específica
       target_class: "AFR"
+      
+      # Tamanho da sequência FASTA a extrair para cada região (em bp)
+      # Sequência será centrada na posição de maior atribuição
+      fasta_length: 2000
 
 # ───────────────────────────────────────────────────────────────────
 # J) MODE
