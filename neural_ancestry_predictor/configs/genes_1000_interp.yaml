@@ -682,7 +682,7 @@ debug:
       # Distância mínima em bases (bp) entre dois pontos de destaque
       # Pontos mais próximos que esta distância são filtrados (mantém o de maior valor)
       # Isso evita que múltiplos pontos muito próximos sejam selecionados
-      min_distance_bp: 50
+      min_distance_bp: 100
 
 # ───────────────────────────────────────────────────────────────────
 # J) MODE
