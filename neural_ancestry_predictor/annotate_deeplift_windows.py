@@ -20,6 +20,13 @@ Requisitos:
   pip install requests
 
 Uso:
+  # Com arquivo de configuração YAML (recomendado):
+  python3 annotate_deeplift_windows.py --config configs/annotate_deeplift.yaml
+  
+  # Sobrescrever parâmetros do YAML via linha de comando:
+  python3 annotate_deeplift_windows.py --config configs/annotate_deeplift.yaml --central-window 50
+  
+  # Modo legado (sem YAML):
   python3 annotate_deeplift_windows.py <input.txt> --outdir out_variants
 
 Observações:
@@ -41,6 +48,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Iterable, Any
 
 import requests
+import yaml
 
 
 # ----------------------------
@@ -1499,14 +1507,51 @@ def write_phenotype_validation_report(
 # Main
 # ----------------------------
 
+def load_config(config_path: Path) -> dict:
+    """Carrega configuração de um arquivo YAML."""
+    with config_path.open("r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("input_txt", type=str, help="Arquivo TXT do seu pipeline (com FASTAs).")
-    ap.add_argument("--outdir", type=str, default="variant_annotation_out", help="Diretório de saída.")
-    ap.add_argument("--vep-batch-size", type=int, default=100, help="Batch VEP (<=200).")
-    ap.add_argument("--ucsc-timeout", type=int, default=30)
-    ap.add_argument("--vep-timeout", type=int, default=90)
-    ap.add_argument("--no-vep", action="store_true", help="Pula VEP (gera só variantes vs referência).")
+    ap = argparse.ArgumentParser(
+        description="Anotação de variantes em regiões identificadas por DeepLIFT.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Exemplos:
+  # Com arquivo de configuração YAML (recomendado):
+  python3 annotate_deeplift_windows.py --config configs/annotate_deeplift.yaml
+  
+  # Sobrescrever parâmetros do YAML via linha de comando:
+  python3 annotate_deeplift_windows.py --config configs/annotate_deeplift.yaml --central-window 50
+  
+  # Modo legado (sem YAML):
+  python3 annotate_deeplift_windows.py input.txt --outdir out_variants
+"""
+    )
+    
+    # Argumento de configuração YAML
+    ap.add_argument(
+        "--config", 
+        type=str, 
+        default=None,
+        metavar="YAML",
+        help="Arquivo de configuração YAML. Parâmetros de linha de comando sobrescrevem valores do YAML."
+    )
+    
+    # Argumentos que podem ser sobrescritos ou usados sem YAML
+    ap.add_argument(
+        "input_txt", 
+        type=str, 
+        nargs="?",  # Opcional quando --config é usado
+        default=None,
+        help="Arquivo TXT do seu pipeline (com FASTAs). Pode ser especificado no YAML."
+    )
+    ap.add_argument("--outdir", type=str, default=None, help="Diretório de saída.")
+    ap.add_argument("--vep-batch-size", type=int, default=None, help="Batch VEP (<=200).")
+    ap.add_argument("--ucsc-timeout", type=int, default=None)
+    ap.add_argument("--vep-timeout", type=int, default=None)
+    ap.add_argument("--no-vep", action="store_true", default=None, help="Pula VEP (gera só variantes vs referência).")
     ap.add_argument(
         "--central-window", 
         type=int, 
@@ -1519,47 +1564,122 @@ def main() -> int:
         "--haplotype",
         type=str,
         choices=["H1", "H2", "both"],
-        default="H1",
+        default=None,
         help="Qual haplótipo considerar: H1 (default), H2, ou both (ambos)."
     )
+    
     args = ap.parse_args()
+    
+    # ============================================
+    # Carregar configuração do YAML (se fornecido)
+    # ============================================
+    config: dict = {}
+    if args.config:
+        config_path = Path(args.config).expanduser().resolve()
+        if not config_path.exists():
+            print(f"[ERRO] Arquivo de configuração não encontrado: {config_path}", file=sys.stderr)
+            return 1
+        config = load_config(config_path)
+        print(f"[INFO] Configuração carregada de: {config_path}")
+    
+    # ============================================
+    # Resolver parâmetros (CLI sobrescreve YAML, YAML sobrescreve defaults)
+    # ============================================
+    
+    # input_txt
+    input_txt = args.input_txt
+    if input_txt is None:
+        input_txt = config.get("input", {}).get("input_file")
+    if input_txt is None:
+        print("[ERRO] Arquivo de entrada não especificado. Use --config ou forneça input_txt.", file=sys.stderr)
+        ap.print_help()
+        return 1
+    
+    # outdir
+    outdir = args.outdir
+    if outdir is None:
+        outdir = config.get("output", {}).get("outdir", "variant_annotation_out")
+    
+    # haplotype
+    haplotype = args.haplotype
+    if haplotype is None:
+        haplotype = config.get("filters", {}).get("haplotype", "H1")
+    
+    # central_window
+    central_window = args.central_window
+    if central_window is None:
+        central_window = config.get("filters", {}).get("central_window")
+    
+    # VEP settings
+    no_vep = args.no_vep
+    if no_vep is None:
+        no_vep = config.get("vep", {}).get("skip_vep", False)
+    
+    vep_batch_size = args.vep_batch_size
+    if vep_batch_size is None:
+        vep_batch_size = config.get("vep", {}).get("batch_size", 100)
+    
+    vep_timeout = args.vep_timeout
+    if vep_timeout is None:
+        vep_timeout = config.get("vep", {}).get("timeout", 90)
+    
+    # UCSC settings
+    ucsc_timeout = args.ucsc_timeout
+    if ucsc_timeout is None:
+        ucsc_timeout = config.get("ucsc", {}).get("timeout", 30)
+    
+    # API settings (apenas do YAML, sem CLI override)
+    api_rate_limit = config.get("api", {}).get("rate_limit", 0.34)
+    api_gene_timeout = config.get("api", {}).get("gene_timeout", 15)
+    max_rsids_to_fetch = config.get("api", {}).get("max_rsids_to_fetch", 50)
+    
+    # Imprimir configuração efetiva
+    print("[INFO] Configuração efetiva:")
+    print(f"       input_file: {input_txt}")
+    print(f"       outdir: {outdir}")
+    print(f"       haplotype: {haplotype}")
+    print(f"       central_window: {central_window}")
+    print(f"       skip_vep: {no_vep}")
+    print(f"       vep_batch_size: {vep_batch_size}")
+    print(f"       vep_timeout: {vep_timeout}")
+    print(f"       ucsc_timeout: {ucsc_timeout}")
 
-    input_path = Path(args.input_txt).expanduser().resolve()
-    outdir = Path(args.outdir).expanduser().resolve()
-    outdir.mkdir(parents=True, exist_ok=True)
+    input_path = Path(input_txt).expanduser().resolve()
+    outdir_path = Path(outdir).expanduser().resolve()
+    outdir_path.mkdir(parents=True, exist_ok=True)
 
-    refs_dir = outdir / "reference_fasta"
+    refs_dir = outdir_path / "reference_fasta"
     refs_dir.mkdir(exist_ok=True)
 
     # Outputs principais
-    parsed_records_path = outdir / "parsed_records.tsv"
-    occs_path = outdir / "variant_occurrences.tsv"
-    uniq_vars_path = outdir / "unique_variants.tsv"
-    vep_ann_path = outdir / "vep_annotated_variants.tsv"
-    gene_sum_path = outdir / "summary_by_gene.tsv"
-    indiv_sum_path = outdir / "summary_by_individual.tsv"
-    indiv_gene_sum_path = outdir / "summary_by_individual_gene.tsv"
-    report_path = outdir / "report_by_gene_by_individual.md"
-    validation_report_path = outdir / "phenotype_validation_report.md"
+    parsed_records_path = outdir_path / "parsed_records.tsv"
+    occs_path = outdir_path / "variant_occurrences.tsv"
+    uniq_vars_path = outdir_path / "unique_variants.tsv"
+    vep_ann_path = outdir_path / "vep_annotated_variants.tsv"
+    gene_sum_path = outdir_path / "summary_by_gene.tsv"
+    indiv_sum_path = outdir_path / "summary_by_individual.tsv"
+    indiv_gene_sum_path = outdir_path / "summary_by_individual_gene.tsv"
+    report_path = outdir_path / "report_by_gene_by_individual.md"
+    validation_report_path = outdir_path / "phenotype_validation_report.md"
 
     records = parse_input_file(input_path)
 
     # Filtrar por haplótipo
     total_before_hap_filter = len(records)
-    if args.haplotype == "H1":
+    if haplotype == "H1":
         records = [r for r in records if r.hap.upper() == "H1"]
-    elif args.haplotype == "H2":
+    elif haplotype == "H2":
         records = [r for r in records if r.hap.upper() == "H2"]
     # else: "both" - mantém todos
     
     total_after_hap_filter = len(records)
-    if args.haplotype != "both":
-        print(f"[INFO] Haplótipo: {args.haplotype} (filtrados {total_after_hap_filter} de {total_before_hap_filter} records)")
+    if haplotype != "both":
+        print(f"[INFO] Haplótipo: {haplotype} (filtrados {total_after_hap_filter} de {total_before_hap_filter} records)")
     else:
         print(f"[INFO] Haplótipo: ambos (H1 + H2), {total_after_hap_filter} records")
     
     if not records:
-        print(f"[ERRO] Nenhum record encontrado para haplótipo {args.haplotype}. Encerrando.")
+        print(f"[ERRO] Nenhum record encontrado para haplótipo {haplotype}. Encerrando.")
         return 1
 
     # Detectar tamanho da janela a partir dos dados
@@ -1592,7 +1712,7 @@ def main() -> int:
         else:
             ref_seq = ucsc_get_sequence_hg38(
                 rec.chrom, start0, end1,
-                timeout_s=args.ucsc_timeout,
+                timeout_s=ucsc_timeout,
                 retries=5, backoff_s=0.8
             )
             ref_cache[cache_k] = ref_seq
@@ -1630,7 +1750,7 @@ def main() -> int:
 
     # Aplicar filtro central se especificado
     occs_all = occs  # Manter referência para estatísticas
-    occs, occs_all = filter_central_variants(occs, args.central_window)
+    occs, occs_all = filter_central_variants(occs, central_window)
     
     # Recalcular unique_keys apenas para variantes filtradas
     unique_keys_set_filtered: Dict[VariantKey, None] = {}
@@ -1644,9 +1764,9 @@ def main() -> int:
     unique_all = len({o.key for o in occs_all})
     unique_filtered = len(unique_keys)
     
-    if args.central_window is not None:
-        half_win = args.central_window // 2
-        print(f"[INFO] Filtro central: ±{half_win}bp do centro (janela de {args.central_window}bp)")
+    if central_window is not None:
+        half_win = central_window // 2
+        print(f"[INFO] Filtro central: ±{half_win}bp do centro (janela de {central_window}bp)")
         print(f"[INFO] Variantes originais: {total_all} ocorrências, {unique_all} únicas")
         print(f"[INFO] Variantes filtradas: {total_filtered} ocorrências, {unique_filtered} únicas")
         print(f"[INFO] Redução: {100*(1 - total_filtered/total_all):.1f}% das ocorrências")
@@ -1683,7 +1803,7 @@ def main() -> int:
 
     # Rodar VEP (se habilitado)
     ann_map: Dict[VariantKey, VariantAnnotation] = {}
-    if not args.no_vep:
+    if not no_vep:
         vep_params = {
             "hgvs": "1",
             "protein": "1",
@@ -1695,10 +1815,10 @@ def main() -> int:
 
         vep_json = vep_annotate_variants_batched(
             unique_keys,
-            outdir=outdir,
-            batch_size=args.vep_batch_size,
+            outdir=outdir_path,
+            batch_size=vep_batch_size,
             extra_params=vep_params,
-            timeout_s=args.vep_timeout,
+            timeout_s=vep_timeout,
             max_retries=6,
             backoff_s=1.0
         )
@@ -1724,7 +1844,7 @@ def main() -> int:
         write_tsv(vep_ann_path, va_header, va_rows)
         print(f"[SAVED] VEP annotated variants TSV: {vep_ann_path}")
     else:
-        print("[INFO] --no-vep habilitado: pulando anotação VEP.")
+        print("[INFO] VEP desabilitado: pulando anotação VEP.")
 
     # Agregações (usam ann_map quando existe; caso não, buckets UNKNOWN)
     gene_sum, indiv_sum, indiv_gene_sum = summarize_gene_individual(occs, ann_map)
@@ -1789,7 +1909,7 @@ def main() -> int:
     # --- Fetch gene information from APIs ---
     detected_genes = sorted({o.gene for o in occs})
     print(f"[INFO] Fetching information for {len(detected_genes)} genes from APIs...")
-    gene_info = fetch_gene_info(detected_genes)
+    gene_info = fetch_gene_info(detected_genes, rate_limit_s=api_rate_limit, timeout_s=api_gene_timeout)
     print(f"[INFO] Gene information fetched for {len([g for g in gene_info.values() if g.source != 'No data found'])} genes")
 
     # --- Fetch rsID information from APIs ---
@@ -1803,12 +1923,12 @@ def main() -> int:
                     all_rsids.append(rsid)
     unique_rsids = sorted(set(all_rsids))
     
-    # Limit to first 50 rsIDs to avoid too many API calls
-    rsids_to_fetch = unique_rsids[:50]
+    # Limit rsIDs to fetch based on config
+    rsids_to_fetch = unique_rsids[:max_rsids_to_fetch]
     rsid_info: Dict[str, RsidInfo] = {}
     if rsids_to_fetch:
         print(f"[INFO] Fetching information for {len(rsids_to_fetch)} rsIDs from Ensembl Variation...")
-        rsid_info = fetch_rsid_info(rsids_to_fetch)
+        rsid_info = fetch_rsid_info(rsids_to_fetch, rate_limit_s=api_rate_limit, timeout_s=api_gene_timeout)
         print(f"[INFO] rsID information fetched for {len(rsid_info)} variants")
     else:
         print("[INFO] No rsIDs to fetch (VEP may be disabled or no colocated variants)")
@@ -1822,7 +1942,7 @@ def main() -> int:
     ]
     if high_variants:
         print(f"[INFO] Fetching detailed information for {len(high_variants)} HIGH impact variant(s)...")
-        high_impact_info = fetch_high_impact_details(high_variants)
+        high_impact_info = fetch_high_impact_details(high_variants, rate_limit_s=api_rate_limit, timeout_s=api_gene_timeout)
         print(f"[INFO] HIGH impact details fetched for {len(high_impact_info)} variant(s)")
 
     # relatório textual
@@ -1835,7 +1955,7 @@ def main() -> int:
         occs, 
         occs_all, 
         ann_map, 
-        args.central_window,
+        central_window,
         window_size,
         gene_sum,
         gene_info,
@@ -1848,9 +1968,9 @@ def main() -> int:
     print(f"[OUT] {refs_dir} (FASTA de referência por região)")
     print(f"[OUT] {occs_path}")
     print(f"[OUT] {uniq_vars_path}")
-    if not args.no_vep:
-        print(f"[OUT] {outdir / 'vep_chunks'} (JSON por lote)")
-        print(f"[OUT] {outdir / 'vep_annotations.all.json'}")
+    if not no_vep:
+        print(f"[OUT] {outdir_path / 'vep_chunks'} (JSON por lote)")
+        print(f"[OUT] {outdir_path / 'vep_annotations.all.json'}")
         print(f"[OUT] {vep_ann_path}")
     print(f"[OUT] {gene_sum_path}")
     print(f"[OUT] {indiv_sum_path}")

@@ -1019,7 +1019,13 @@ After running DeepLIFT interpretation, you can use **annotate_deeplift_windows.p
 ### Quick Start
 
 ```bash
-# Annotate DeepLIFT output with central window filter
+# Using YAML configuration (recommended)
+python3 annotate_deeplift_windows.py --config configs/annotate_deeplift.yaml
+
+# Override YAML parameters from command line
+python3 annotate_deeplift_windows.py --config configs/annotate_deeplift.yaml --central-window 50
+
+# Legacy mode (without YAML)
 python3 annotate_deeplift_windows.py \
     top_regions_class_mean_AFR_250samples_deeplift.txt \
     --outdir variant_analysis \
@@ -1030,6 +1036,7 @@ python3 annotate_deeplift_windows.py \
 
 | Feature | Description |
 |---------|-------------|
+| **YAML Configuration** | All parameters in a single config file for reproducibility |
 | **Central Window Filter** | Focus on variants near DeepLIFT center (90-95% reduction) |
 | **Haplotype Selection** | Analyze H1, H2, or both |
 | **HIGH Impact Analysis** | Detailed info on stop_gained, splice variants, frameshifts |

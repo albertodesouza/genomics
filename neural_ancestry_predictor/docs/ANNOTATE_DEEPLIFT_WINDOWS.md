@@ -9,6 +9,7 @@ This tool annotates genetic variants identified by DeepLIFT in the Neural Ancest
 - [Overview](#overview)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Configuration](#configuration)
 - [Input Format](#input-format)
 - [Command-Line Options](#command-line-options)
 - [Output Files](#output-files)
@@ -60,25 +61,110 @@ pip install requests
 
 ## Quick Start
 
-### Basic Usage
+### Using YAML Configuration (Recommended)
 
 ```bash
+# Run with configuration file
+python3 annotate_deeplift_windows.py --config configs/annotate_deeplift.yaml
+
+# Override specific parameters from command line
+python3 annotate_deeplift_windows.py --config configs/annotate_deeplift.yaml --central-window 50
+```
+
+### Legacy Mode (Command Line Only)
+
+```bash
+# Basic usage
 python3 annotate_deeplift_windows.py input.txt --outdir output_folder
-```
 
-### With Central Window Filter (Recommended)
-
-```bash
+# With central window filter
 python3 annotate_deeplift_windows.py input.txt --outdir output_folder --central-window 50
-```
 
-This filters variants to only those within ±25bp of the DeepLIFT-identified center, typically reducing variants by 90-95%.
-
-### Skip VEP (Fast Mode)
-
-```bash
+# Skip VEP for fast analysis
 python3 annotate_deeplift_windows.py input.txt --outdir output_folder --no-vep
 ```
+
+---
+
+## Configuration
+
+### YAML Configuration File
+
+The tool supports YAML configuration files for easier reproducibility and parameter management. Configuration files are stored in `configs/` directory.
+
+**Example: `configs/annotate_deeplift.yaml`**
+
+```yaml
+# Input/Output
+input:
+  input_file: "/path/to/top_regions_deeplift.txt"
+
+output:
+  outdir: "my_analysis_results"
+
+# Analysis Filters
+filters:
+  haplotype: "H1"        # H1, H2, or both
+  central_window: 100    # null for no filter, or N for ±(N/2)bp
+
+# VEP Settings
+vep:
+  skip_vep: false
+  batch_size: 100        # Max 200
+  timeout: 90            # Seconds
+
+# UCSC Settings
+ucsc:
+  timeout: 30            # Seconds
+
+# API Settings
+api:
+  rate_limit: 0.34       # Seconds between API calls
+  gene_timeout: 15       # Timeout for gene/rsID APIs
+  max_rsids_to_fetch: 50 # Limit rsID lookups
+```
+
+### Configuration Sections
+
+| Section | Description |
+|---------|-------------|
+| `input` | Path to input file from DeepLIFT analysis |
+| `output` | Output directory for results |
+| `filters` | Haplotype selection and central window filter |
+| `vep` | VEP annotation settings (batch size, timeout, skip) |
+| `ucsc` | UCSC API timeout |
+| `api` | Rate limiting and timeout for gene/rsID APIs |
+
+### Priority Order
+
+Command-line arguments **override** YAML values, which **override** default values:
+
+```
+CLI arguments > YAML config > Default values
+```
+
+**Example:**
+```bash
+# YAML has central_window: 100, but CLI overrides to 50
+python3 annotate_deeplift_windows.py --config configs/annotate_deeplift.yaml --central-window 50
+```
+
+### Creating a New Configuration
+
+1. Copy the example configuration:
+   ```bash
+   cp configs/annotate_deeplift.yaml configs/my_experiment.yaml
+   ```
+
+2. Edit the new file with your parameters:
+   ```bash
+   vim configs/my_experiment.yaml
+   ```
+
+3. Run with your configuration:
+   ```bash
+   python3 annotate_deeplift_windows.py --config configs/my_experiment.yaml
+   ```
 
 ---
 
@@ -118,14 +204,17 @@ Key elements parsed:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `input_txt` | (required) | Input file from neural_ancestry_predictor.py |
+| `--config` | `None` | YAML configuration file path |
+| `input_txt` | (from YAML or required) | Input file from neural_ancestry_predictor.py |
 | `--outdir` | `variant_annotation_out` | Output directory |
-| `--vep-batch-size` | `100` | VEP batch size (max 200) |
-| `--ucsc-timeout` | `30` | UCSC API timeout (seconds) |
-| `--vep-timeout` | `90` | VEP API timeout (seconds) |
-| `--no-vep` | `false` | Skip VEP annotation (faster) |
-| `--central-window` | `None` | Filter variants to ±(N/2)bp from center |
 | `--haplotype` | `H1` | Which haplotype: `H1`, `H2`, or `both` |
+| `--central-window` | `None` | Filter variants to ±(N/2)bp from center |
+| `--no-vep` | `false` | Skip VEP annotation (faster) |
+| `--vep-batch-size` | `100` | VEP batch size (max 200) |
+| `--vep-timeout` | `90` | VEP API timeout (seconds) |
+| `--ucsc-timeout` | `30` | UCSC API timeout (seconds) |
+
+> **Note:** When using `--config`, all parameters can be specified in the YAML file. Command-line arguments override YAML values.
 
 ### Central Window Filter
 
@@ -323,7 +412,42 @@ Known rsIDs are annotated with:
 
 ## Examples
 
-### Example 1: Pigmentation Analysis
+### Example 1: Using YAML Configuration
+
+```bash
+# Run with default configuration
+python3 annotate_deeplift_windows.py --config configs/annotate_deeplift.yaml
+```
+
+**Expected output:**
+```
+[INFO] Configuração carregada de: configs/annotate_deeplift.yaml
+[INFO] Configuração efetiva:
+       input_file: /path/to/top_regions_deeplift.txt
+       outdir: my_analysis
+       haplotype: H1
+       central_window: 100
+       skip_vep: False
+       vep_batch_size: 100
+       vep_timeout: 90
+       ucsc_timeout: 30
+[INFO] Haplótipo: H1 (filtrados 20 de 40 records)
+[INFO] Tamanho da janela detectado: 2000bp
+[INFO] Filtro central: ±50bp do centro (janela de 100bp)
+[INFO] Variantes filtradas: 1514 ocorrências, 1514 únicas
+```
+
+### Example 2: Override YAML Parameters
+
+```bash
+# Use YAML config but override central window
+python3 annotate_deeplift_windows.py \
+    --config configs/annotate_deeplift.yaml \
+    --central-window 50 \
+    --haplotype both
+```
+
+### Example 3: Legacy Mode (No YAML)
 
 ```bash
 python3 annotate_deeplift_windows.py \
@@ -344,16 +468,7 @@ python3 annotate_deeplift_windows.py \
 [INFO] Fetching detailed information for 5 HIGH impact variant(s)...
 ```
 
-### Example 2: Both Haplotypes, Full Window
-
-```bash
-python3 annotate_deeplift_windows.py \
-    input.txt \
-    --outdir full_analysis \
-    --haplotype both
-```
-
-### Example 3: Fast Analysis (No VEP)
+### Example 4: Fast Analysis (No VEP)
 
 ```bash
 python3 annotate_deeplift_windows.py \
@@ -462,6 +577,13 @@ Some genes may not have complete information in all databases. The tool graceful
 ---
 
 ## Version History
+
+### v1.4 (2025-12)
+- ✨ **YAML configuration file support** (`--config`)
+- ✨ New `configs/annotate_deeplift.yaml` template
+- ✨ All parameters configurable via YAML
+- ✨ CLI arguments override YAML values
+- ✨ Improved output with effective configuration display
 
 ### v1.3 (2025-12)
 - ✨ HIGH impact variant detailed analysis
