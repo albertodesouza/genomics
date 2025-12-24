@@ -2281,8 +2281,21 @@ class DeepLIFT:
         # Cache de atribuições individuais (sample_idx -> attributions)
         attribution_cache = {}
         
-        for region_idx, (gene_name, mean_val, chrom, genomic_pos, col_idx) in enumerate(top_regions):
-            console.print(f"[dim]  Processando região {region_idx + 1}/5: {gene_name}...[/dim]")
+        num_regions = len(top_regions)
+        for region_idx, region_tuple in enumerate(top_regions):
+            # Suportar tanto formato per_gene (5 campos) quanto global (7 campos)
+            gene_name = region_tuple[0]
+            mean_val = region_tuple[1]
+            chrom = region_tuple[2]
+            genomic_pos = region_tuple[3]
+            col_idx = region_tuple[4]
+            track_idx = region_tuple[6] if len(region_tuple) > 6 else None
+            
+            # Chave única para modo global (diferencia múltiplas entradas do mesmo gene)
+            region_key = f"{gene_name}_{col_idx}_{track_idx}" if track_idx is not None else gene_name
+            
+            track_info = f" (track {track_idx})" if track_idx is not None else ""
+            console.print(f"[dim]  Processando região {region_idx + 1}/{num_regions}: {gene_name}{track_info}...[/dim]")
             
             # Encontrar índice do gene
             if gene_name not in gene_names:
@@ -2320,19 +2333,24 @@ class DeepLIFT:
                         max_population = population
             
             if max_sample_id is not None:
-                # Calcular valores em todas as 5 regiões para este indivíduo
+                # Calcular valores em todas as N regiões para este indivíduo
                 all_region_values = {}
                 attr_np = attribution_cache[max_sample_cache_idx]
                 
-                for other_gene, _, _, _, other_col_idx in top_regions:
+                for other_region in top_regions:
+                    other_gene = other_region[0]
+                    other_col_idx = other_region[4]
+                    other_track_idx = other_region[6] if len(other_region) > 6 else None
+                    other_key = f"{other_gene}_{other_col_idx}_{other_track_idx}" if other_track_idx is not None else other_gene
+                    
                     if other_gene in gene_names:
                         other_gene_idx = gene_names.index(other_gene)
                         other_start = other_gene_idx * tracks_per_gene
                         other_end = (other_gene_idx + 1) * tracks_per_gene
                         if other_end <= attr_np.shape[0] and other_col_idx < attr_np.shape[1]:
-                            all_region_values[other_gene] = float(attr_np[other_start:other_end, other_col_idx].mean())
+                            all_region_values[other_key] = float(attr_np[other_start:other_end, other_col_idx].mean())
                 
-                results[gene_name] = {
+                results[region_key] = {
                     'sample_id': max_sample_id,
                     'superpopulation': max_superpopulation,
                     'population': max_population,
@@ -2340,10 +2358,12 @@ class DeepLIFT:
                     'col_idx': col_idx,
                     'genomic_pos': genomic_pos,
                     'chrom': chrom,
-                    'all_region_values': all_region_values
+                    'all_region_values': all_region_values,
+                    'gene_name': gene_name,
+                    'track_idx': track_idx
                 }
                 
-                console.print(f"[green]    ✓ {gene_name}: {max_sample_id} ({max_superpopulation}/{max_population}, valor = {max_value:.6f})[/green]")
+                console.print(f"[green]    ✓ {gene_name}{track_info}: {max_sample_id} ({max_superpopulation}/{max_population}, valor = {max_value:.6f})[/green]")
         
         return results
 
@@ -3179,6 +3199,9 @@ class Tester:
         self.deeplift_baseline = interp_config.get('deeplift', {}).get('baseline', 'zeros')
         self.deeplift_target_class = interp_config.get('deeplift', {}).get('target_class', 'predicted')
         self.deeplift_fasta_length = interp_config.get('deeplift', {}).get('fasta_length', 1000)
+        self.top_regions_mode = interp_config.get('deeplift', {}).get('top_regions_mode', 'per_gene')
+        self.top_regions_count = interp_config.get('deeplift', {}).get('top_regions_count', 5)
+        self.min_distance_bp = interp_config.get('deeplift', {}).get('min_distance_bp', 50)
         self.gradcam_target_class = interp_config.get('gradcam', {}).get('target_class', 'predicted')
         
         # Inicializar objetos de interpretabilidade
@@ -3249,6 +3272,140 @@ class Tester:
         console.print(f"  Logits:    {logits_str}")
         console.print(f"  Softmax:   {softmax_str}")
         console.print(f"[bold cyan]{'='*80}[/bold cyan]")
+    
+    def _get_genomic_coord(
+        self,
+        gene_name: str,
+        col_idx: int,
+        total_cols: int,
+        gene_window_metadata: Dict
+    ) -> Tuple[int, str]:
+        """
+        Calcula a coordenada genômica para uma posição (col_idx) dentro de um gene.
+        
+        Returns:
+            Tuple[genomic_pos, chrom]
+        """
+        if gene_name in gene_window_metadata:
+            meta = gene_window_metadata[gene_name]
+            chrom = meta.get('chromosome', 'N/A')
+            start_pos = meta.get('start', 0)
+            window_size = meta.get('window_size', 0)
+            genomic_pos = start_pos + int((col_idx / total_cols) * window_size) if window_size > 0 else start_pos
+        else:
+            chrom = 'N/A'
+            genomic_pos = 0
+        return genomic_pos, chrom
+    
+    def _compute_top_regions_per_gene(
+        self,
+        dl_np: np.ndarray,
+        gene_names: List[str],
+        tracks_per_gene: int,
+        gene_window_metadata: Dict,
+        top_n: int
+    ) -> List[Tuple]:
+        """
+        Modo per_gene: encontra 1 ponto máximo por gene e ordena os genes.
+        
+        Cada gene pode aparecer no máximo 1 vez nos resultados.
+        Este é o modo original, compatível com publicações anteriores.
+        
+        Returns:
+            Lista de tuplas (gene_name, max_val, chrom, genomic_pos, col_idx)
+        """
+        top_regions = []
+        total_cols = dl_np.shape[1]
+        
+        for i in range(len(gene_names)):
+            gene_name = gene_names[i]
+            start_row = i * tracks_per_gene
+            end_row = (i + 1) * tracks_per_gene
+            if end_row <= dl_np.shape[0]:
+                gene_data = dl_np[start_row:end_row, :]
+                # Encontra valor máximo positivo e sua posição
+                max_val = gene_data.max()
+                if max_val > 0:
+                    max_idx = np.unravel_index(gene_data.argmax(), gene_data.shape)
+                    col_idx = max_idx[1]
+                    genomic_pos, chrom = self._get_genomic_coord(
+                        gene_name, col_idx, total_cols, gene_window_metadata)
+                    top_regions.append((gene_name, max_val, chrom, genomic_pos, col_idx))
+        
+        # Ordena por valor (maior primeiro) e retorna top N
+        top_regions.sort(key=lambda x: x[1], reverse=True)
+        return top_regions[:top_n]
+    
+    def _compute_top_regions_global(
+        self,
+        dl_np: np.ndarray,
+        gene_names: List[str],
+        tracks_per_gene: int,
+        gene_window_metadata: Dict,
+        top_n: int,
+        min_distance_bp: int = 50
+    ) -> List[Tuple]:
+        """
+        Modo global: considera cada posição (row, col) da matriz como candidato.
+        
+        Permite múltiplos pontos por gene. Útil para análise mais detalhada
+        quando um gene tem várias regiões de interesse.
+        
+        Args:
+            dl_np: DeepLIFT attribution map
+            gene_names: List of gene names
+            tracks_per_gene: Number of tracks per gene
+            gene_window_metadata: Metadata for each gene window
+            top_n: Number of top regions to return
+            min_distance_bp: Minimum distance in base pairs between selected regions
+        
+        Returns:
+            Lista de tuplas (gene_name, val, chrom, genomic_pos, col_idx, row_idx, track_idx)
+        """
+        candidates = []
+        total_cols = dl_np.shape[1]
+        
+        for row_idx in range(dl_np.shape[0]):
+            gene_idx = row_idx // tracks_per_gene
+            if gene_idx >= len(gene_names):
+                continue
+            gene_name = gene_names[gene_idx]
+            track_idx = row_idx % tracks_per_gene
+            
+            for col_idx in range(total_cols):
+                val = dl_np[row_idx, col_idx]
+                if val > 0:
+                    genomic_pos, chrom = self._get_genomic_coord(
+                        gene_name, col_idx, total_cols, gene_window_metadata)
+                    # Inclui track_idx para identificação única
+                    candidates.append((gene_name, val, chrom, genomic_pos, col_idx, row_idx, track_idx))
+        
+        # Ordena por valor (maior primeiro)
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        
+        # Filtrar candidatos muito próximos (manter apenas os de maior valor)
+        selected = []
+        for candidate in candidates:
+            gene_name, val, chrom, genomic_pos, col_idx, row_idx, track_idx = candidate
+            
+            # Verificar se está muito próximo de algum ponto já selecionado
+            too_close = False
+            for selected_region in selected:
+                sel_gene, sel_val, sel_chrom, sel_genomic_pos, sel_col_idx, sel_row_idx, sel_track_idx = selected_region
+                
+                # Só verificar distância se for o mesmo cromossomo
+                if chrom == sel_chrom:
+                    distance = abs(genomic_pos - sel_genomic_pos)
+                    if distance < min_distance_bp:
+                        too_close = True
+                        break
+            
+            if not too_close:
+                selected.append(candidate)
+                if len(selected) >= top_n:
+                    break
+        
+        return selected
     
     def _plot_deeplift_track_profile(
         self,
@@ -3378,14 +3535,22 @@ class Tester:
                 cache_dir = self.config.get('dataset_input', {}).get('processed_cache_dir', '.')
                 output_dir = Path(cache_dir) / output_dir
             
-            # Determine expected filename
+            # Determine expected filename with interpretability parameters
             method_suffix = self.interp_method
-            if self.interp_method == 'deeplift' and self.deeplift_target_class != 'predicted':
+            is_deeplift = self.interp_method == 'deeplift'
+            
+            # Build interpretability suffix for filename matching
+            if is_deeplift:
+                interp_suffix = f"{self.top_regions_mode}_top{self.top_regions_count}_{self.deeplift_fasta_length}bp_dist{self.min_distance_bp}bp_base_{self.deeplift_baseline}"
+            else:
+                interp_suffix = ""
+            
+            if is_deeplift and self.deeplift_target_class != 'predicted':
                 # Class mean mode - check if class mean file exists
                 target_class_name = self.deeplift_target_class
                 # We need to know the number of samples, but we can check for any file matching the pattern
                 import glob
-                pattern = str(output_dir / f"class_mean_{target_class_name}_*samples_{method_suffix}.png")
+                pattern = str(output_dir / f"class_mean_{target_class_name}_*samples_{interp_suffix}_{method_suffix}.png")
                 existing_files = glob.glob(pattern)
                 if existing_files:
                     console.print(f"[dim]⏭ Skipping visualization (already exists): {existing_files[0]}[/dim]")
@@ -3397,7 +3562,10 @@ class Tester:
                 else:
                     predicted_name_check = f"Class {predicted_idx}"
                 correct_str = "correct" if predicted_idx == target_idx else "wrong"
-                filename = f"{sample_id}_{predicted_name_check}_{correct_str}_{method_suffix}.png"
+                if interp_suffix:
+                    filename = f"{sample_id}_{predicted_name_check}_{correct_str}_{interp_suffix}_{method_suffix}.png"
+                else:
+                    filename = f"{sample_id}_{predicted_name_check}_{correct_str}_{method_suffix}.png"
                 filepath = output_dir / filename
                 if filepath.exists():
                     console.print(f"[dim]⏭ Skipping visualization (already exists): {filepath}[/dim]")
@@ -3725,46 +3893,45 @@ class Tester:
                 else:
                     plt.title(f'DeepLIFT: Feature Attribution for Class {dl_class_label} (Individual: {target_name})', fontsize=14, fontweight='bold')
                 
-                # Compute top 5 most active regions (highest positive values, not absolute)
-                top_regions = []
-                total_cols = dl_np.shape[1]
+                # Compute top N most active regions using configured mode
+                is_global_mode = self.top_regions_mode == 'global'
+                top_n = self.top_regions_count
                 
-                for i in range(len(gene_names)):
-                    gene_name = gene_names[i]
-                    start_row = i * tracks_per_gene
-                    end_row = (i + 1) * tracks_per_gene
-                    if end_row <= dl_np.shape[0]:
-                        gene_data = dl_np[start_row:end_row, :]
-                        # Find maximum positive value and its position
-                        max_val = gene_data.max()
-                        if max_val > 0:
-                            # Find position of maximum
-                            max_idx = np.unravel_index(gene_data.argmax(), gene_data.shape)
-                            col_idx = max_idx[1]
-                            
-                            # Calculate genomic coordinate
-                            if gene_name in gene_window_metadata:
-                                meta = gene_window_metadata[gene_name]
-                                chrom = meta.get('chromosome', 'N/A')
-                                start_pos = meta.get('start', 0)
-                                window_size = meta.get('window_size', 0)
-                                # Calculate position within the window
-                                genomic_pos = start_pos + int((col_idx / total_cols) * window_size) if window_size > 0 else start_pos
-                            else:
-                                chrom = 'N/A'
-                                genomic_pos = 0
-                            
-                            top_regions.append((gene_name, max_val, chrom, genomic_pos, col_idx))
+                if is_global_mode:
+                    # Modo global: considera cada posição da matriz como candidato
+                    # Permite múltiplos pontos por gene
+                    top_regions_raw = self._compute_top_regions_global(
+                        dl_np, gene_names, tracks_per_gene, gene_window_metadata, top_n,
+                        min_distance_bp=self.min_distance_bp)
+                else:
+                    # Modo per_gene: 1 ponto máximo por gene (modo original)
+                    top_regions_raw = self._compute_top_regions_per_gene(
+                        dl_np, gene_names, tracks_per_gene, gene_window_metadata, top_n)
                 
-                # Sort by value (highest positive first) and take top 5
-                top_regions.sort(key=lambda x: x[1], reverse=True)
-                top_5_regions = top_regions[:5]
+                # Normalizar formato para (gene_name, val, chrom, genomic_pos, col_idx)
+                # O modo global retorna tuplas com campos extras (row_idx, track_idx)
+                if is_global_mode and top_regions_raw and len(top_regions_raw[0]) > 5:
+                    top_5_regions = [(r[0], r[1], r[2], r[3], r[4]) for r in top_regions_raw]
+                    top_regions_with_track = top_regions_raw  # Manter versão completa para output
+                else:
+                    top_5_regions = top_regions_raw
+                    top_regions_with_track = None
                 
                 # Print details to terminal
                 if top_5_regions:
-                    console.print(f"\n[bold cyan]Top 5 Regiões Mais Ativas (DeepLIFT):[/bold cyan]")
-                    for rank, (gene, val, chrom, pos, col) in enumerate(top_5_regions, 1):
-                        console.print(f"  {rank}. [green]{gene}[/green]: valor = {val:.6f}, {chrom}: {pos:,}")
+                    mode_label = "global" if is_global_mode else "per_gene"
+                    console.print(f"\n[bold cyan]Top {top_n} Regiões Mais Ativas (DeepLIFT, modo={mode_label}):[/bold cyan]")
+                    for rank, region_tuple in enumerate(top_5_regions, 1):
+                        gene, val, chrom, pos, col = region_tuple[:5]
+                        # No modo global, mostrar track se disponível
+                        if top_regions_with_track and rank <= len(top_regions_with_track):
+                            track_idx = top_regions_with_track[rank-1][6] if len(top_regions_with_track[rank-1]) > 6 else None
+                            if track_idx is not None:
+                                console.print(f"  {rank}. [green]{gene}[/green] (track {track_idx}): valor = {val:.6f}, {chrom}: {pos:,}")
+                            else:
+                                console.print(f"  {rank}. [green]{gene}[/green]: valor = {val:.6f}, {chrom}: {pos:,}")
+                        else:
+                            console.print(f"  {rank}. [green]{gene}[/green]: valor = {val:.6f}, {chrom}: {pos:,}")
                     
                     # Save to file if save_images is enabled
                     if self.interp_save_images:
@@ -3775,13 +3942,14 @@ class Tester:
                             top_regions_output_dir = Path(cache_dir) / top_regions_output_dir
                         top_regions_output_dir.mkdir(parents=True, exist_ok=True)
                         
-                        # Generate filename (include fasta_length in name)
+                        # Generate filename with all interpretability parameters
                         fasta_length = self.deeplift_fasta_length
+                        interp_suffix = f"{self.top_regions_mode}_top{top_n}_{fasta_length}bp_dist{self.min_distance_bp}bp_base_{self.deeplift_baseline}"
                         if deeplift_class_mean_mode:
-                            txt_filename = f"top_regions_class_mean_{deeplift_target_class_name}_{deeplift_class_mean_num_samples}samples_{fasta_length}bp_deeplift.txt"
+                            txt_filename = f"top_regions_class_mean_{deeplift_target_class_name}_{deeplift_class_mean_num_samples}samples_{interp_suffix}_deeplift.txt"
                         else:
                             correct_str = "correct" if predicted_idx == target_idx else "wrong"
-                            txt_filename = f"top_regions_{sample_id}_{predicted_name}_{correct_str}_{fasta_length}bp_deeplift.txt"
+                            txt_filename = f"top_regions_{sample_id}_{predicted_name}_{correct_str}_{interp_suffix}_deeplift.txt"
                         
                         txt_filepath = top_regions_output_dir / txt_filename
                         
@@ -3802,7 +3970,8 @@ class Tester:
                         window_center_size = self.config['dataset_input']['window_center_size']
                         
                         with open(txt_filepath, 'w') as f:
-                            f.write(f"Top 5 Regiões Mais Ativas (DeepLIFT)\n")
+                            mode_desc = "modo global" if is_global_mode else "modo per_gene"
+                            f.write(f"Top {top_n} Regiões Mais Ativas (DeepLIFT, {mode_desc})\n")
                             f.write(f"{'=' * 80}\n")
                             if deeplift_class_mean_mode:
                                 f.write(f"Classe: {deeplift_target_class_name} ({deeplift_class_mean_num_samples} amostras)\n")
@@ -3811,11 +3980,25 @@ class Tester:
                                 f.write(f"Target: {target_name}\n")
                             f.write(f"{'=' * 80}\n\n")
                             
-                            for rank, (gene, val, chrom, pos, col) in enumerate(top_5_regions, 1):
-                                f.write(f"{rank}. {gene}: valor_medio = {val:.6f}, {chrom}: {pos:,}\n")
+                            for rank, region_tuple in enumerate(top_5_regions, 1):
+                                gene, val, chrom, pos, col = region_tuple[:5]
+                                
+                                # No modo global, mostrar track se disponível
+                                track_info = ""
+                                region_key = gene  # Chave para max_individuals
+                                if top_regions_with_track and rank <= len(top_regions_with_track):
+                                    raw_region = top_regions_with_track[rank-1]
+                                    if len(raw_region) > 6:
+                                        track_idx = raw_region[6]
+                                        track_info = f" (track {track_idx})"
+                                        # Chave única para modo global: gene_col_track
+                                        region_key = f"{gene}_{col}_{track_idx}"
+                                
+                                f.write(f"{rank}. {gene}{track_info}: valor_medio = {val:.6f}, {chrom}: {pos:,}\n")
                                 
                                 # Add individual details if available
-                                if gene in max_individuals:
+                                if region_key in max_individuals or gene in max_individuals:
+                                    ind_info = max_individuals.get(region_key) or max_individuals.get(gene)
                                     ind_info = max_individuals[gene]
                                     ind_sample_id = ind_info['sample_id']
                                     ind_superpop = ind_info.get('superpopulation', 'UNK')
@@ -3825,9 +4008,9 @@ class Tester:
                                     
                                     f.write(f"   Indivíduo com maior valor: {ind_sample_id} ({ind_superpop}/{ind_pop}, valor = {ind_max_val:.6f})\n")
                                     
-                                    # Valores em todas as 5 regiões
+                                    # Valores em todas as N regiões
                                     vals_str = ', '.join([f"{g}={v:.5f}" for g, v in all_vals.items()])
-                                    f.write(f"   Valores nas 5 regiões: {vals_str}\n")
+                                    f.write(f"   Valores nas {top_n} regiões: {vals_str}\n")
                                     
                                     # Extract DNA sequences for both haplotypes
                                     for haplotype in ['H1', 'H2']:
@@ -3858,6 +4041,7 @@ class Tester:
                     # Draw green circles centered on each top region
                     # Use Ellipse to compensate for aspect ratio distortion
                     from matplotlib.patches import Ellipse
+                    total_cols = dl_np.shape[1]  # Needed for position calculation
                     num_genes = len(gene_names)
                     height_per_gene = viz_height / num_genes
                     
@@ -3883,12 +4067,7 @@ class Tester:
                                             fill=False, edgecolor='green', linewidth=1.5)
                             ax_dl.add_patch(ellipse)
                 
-                # Build xlabel with top 5 regions
-                if top_5_regions:
-                    top_regions_str = ', '.join([f"{r[0]}({r[1]:.5f})" for r in top_5_regions])
-                    plt.xlabel(f'Gene Position — Top regions: {top_regions_str}', fontsize=11)
-                else:
-                    plt.xlabel('Gene Position', fontsize=12)
+                plt.xlabel('Gene Position', fontsize=12)
                 
                 # Configure X axis to show original scale (0 to window_center_size)
                 window_center_size = self.config['dataset_input']['window_center_size']
@@ -3964,15 +4143,31 @@ class Tester:
                 output_dir = Path(cache_dir) / output_dir
             output_dir.mkdir(parents=True, exist_ok=True)
             
-            # Generate filename
+            # Generate filename with interpretability parameters
             method_suffix = self.interp_method
+            
+            # Build interpretability suffix with key parameters
+            interp_params = []
+            if is_deeplift_mode:
+                interp_params.append(f"{self.top_regions_mode}")
+                interp_params.append(f"top{self.top_regions_count}")
+                interp_params.append(f"{self.deeplift_fasta_length}bp")
+                interp_params.append(f"dist{self.min_distance_bp}bp")
+                interp_params.append(f"base_{self.deeplift_baseline}")
+            interp_suffix = "_".join(interp_params) if interp_params else ""
             
             # Nome diferente para modo de média de classe
             if deeplift_class_mean_mode:
-                filename = f"class_mean_{deeplift_target_class_name}_{deeplift_class_mean_num_samples}samples_{method_suffix}.png"
+                if interp_suffix:
+                    filename = f"class_mean_{deeplift_target_class_name}_{deeplift_class_mean_num_samples}samples_{interp_suffix}_{method_suffix}.png"
+                else:
+                    filename = f"class_mean_{deeplift_target_class_name}_{deeplift_class_mean_num_samples}samples_{method_suffix}.png"
             else:
                 correct_str = "correct" if predicted_idx == target_idx else "wrong"
-                filename = f"{sample_id}_{predicted_name}_{correct_str}_{method_suffix}.png"
+                if interp_suffix:
+                    filename = f"{sample_id}_{predicted_name}_{correct_str}_{interp_suffix}_{method_suffix}.png"
+                else:
+                    filename = f"{sample_id}_{predicted_name}_{correct_str}_{method_suffix}.png"
             
             filepath = output_dir / filename
             

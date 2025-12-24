@@ -670,6 +670,19 @@ debug:
       # Tamanho da sequência FASTA a extrair para cada região (em bp)
       # Sequência será centrada na posição de maior atribuição
       fasta_length: 2000
+      
+      # Modo de seleção de top regions
+      # "per_gene" = 1 ponto máximo por gene, ordena genes (padrão, compatível com artigo)
+      # "global" = todos os pontos da matriz considerados igualmente, permite múltiplos pontos por gene
+      top_regions_mode: "global"
+      
+      # Número de regiões de destaque a identificar
+      top_regions_count: 20
+      
+      # Distância mínima em bases (bp) entre dois pontos de destaque
+      # Pontos mais próximos que esta distância são filtrados (mantém o de maior valor)
+      # Isso evita que múltiplos pontos muito próximos sejam selecionados
+      min_distance_bp: 50
 
 # ───────────────────────────────────────────────────────────────────
 # J) MODE
