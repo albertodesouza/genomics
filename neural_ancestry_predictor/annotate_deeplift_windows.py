@@ -103,7 +103,7 @@ HEADER_RE = re.compile(
 )
 
 ITEM_LINE_RE = re.compile(
-    r"^\s*\d+\.\s*(?P<gene>[A-Za-z0-9]+)\s*:.*\b(?P<chrom>chr(?:[0-9]+|X|Y|M))\s*:\s*(?P<center>[\d,]+)\s*$"
+    r"^\s*\d+\.\s*(?P<gene>[A-Za-z0-9]+)\s*(?:\(track\s+\d+\))?\s*:.*\b(?P<chrom>chr(?:[0-9]+|X|Y|M))\s*:\s*(?P<center>[\d,]+)\s*$"
 )
 
 DNA_BLOCK_RE = re.compile(
