@@ -75,7 +75,10 @@ debug:
     deeplift:
       baseline: "mean"             # "zeros" or "mean"
       target_class: "AFR"          # Class name or "predicted"
-      fasta_length: 1000           # Length of DNA sequence to extract (bp)
+      fasta_length: 2000           # Length of DNA sequence to extract (bp)
+      top_regions_mode: "global"   # "per_gene" or "global"
+      top_regions_count: 20        # Number of top regions to identify
+      min_distance_bp: 50          # Minimum distance (bp) between regions
 
 mode: "test"
 test_dataset: "train"              # Which split to analyze
@@ -91,6 +94,9 @@ test_dataset: "train"              # Which split to analyze
 | `baseline` | `"zeros"`, `"mean"` | Reference input for DeepLIFT |
 | `target_class` | class name or `"predicted"` | Which class to compute attributions for |
 | `fasta_length` | integer (default: 1000) | Length of DNA sequence to extract (in bp) |
+| `top_regions_mode` | `"per_gene"`, `"global"` | Mode for selecting top regions |
+| `top_regions_count` | integer (default: 5) | Number of top regions to identify |
+| `min_distance_bp` | integer (default: 50) | Minimum distance (bp) between regions (global mode only) |
 
 ### Baseline Options
 
@@ -145,14 +151,34 @@ When in class mean mode:
 
 ## Top Regions Analysis
 
-After computing attributions, the system identifies the **Top 5 Most Active Regions**:
+After computing attributions, the system identifies the **Top N Most Active Regions** based on the configured `top_regions_count`.
 
-### How Regions are Identified
+### Selection Modes
+
+#### Per-Gene Mode (`top_regions_mode: "per_gene"`)
+
+The original mode, compatible with published results:
 
 1. For each gene, find the maximum positive attribution value across all 6 tracks
 2. Record the column index (position within the gene window)
 3. Rank genes by their peak attribution value
-4. Select the top 5 genes
+4. Select the top N genes
+
+**Limitation**: Each gene can appear at most once in the results.
+
+#### Global Mode (`top_regions_mode: "global"`)
+
+A more detailed analysis mode:
+
+1. Consider every position (track, column) in the attribution matrix as a candidate
+2. Sort all candidates by attribution value (highest first)
+3. Filter candidates that are closer than `min_distance_bp` to an already-selected region
+4. Select the top N regions
+
+**Advantages**:
+- Multiple points from the same gene can be selected
+- Identifies distinct peaks within a single gene
+- `min_distance_bp` prevents selecting redundant nearby points
 
 ### Individual Search
 
@@ -167,7 +193,7 @@ The output includes:
 - Sample ID
 - Superpopulation and population
 - Attribution value
-- Values at all 5 top regions for comparison
+- Values at all N top regions for comparison
 
 ---
 
@@ -209,8 +235,13 @@ When running in test mode with visualization enabled, you'll see two windows:
 - Diverging colormap: Blue (negative) ← Black (zero) → Red (positive)
 - Positive values indicate features that **support** the target class
 - Negative values indicate features that **oppose** the target class
-- Green circles mark the top 5 most active regions
-- X-axis shows top regions with their attribution values
+- Green circles mark the top N most active regions (as configured)
+
+### Example Output
+
+![DeepLIFT Class Mean Example](../images/class_mean_AFR_250samples_global_top20_2000bp_dist100bp_base_mean_deeplift.png)
+
+*Example: DeepLIFT attribution map for AFR class mean (250 samples, global mode with 20 top regions, 100bp minimum distance)*
 
 #### Track Profile Figure (separate interactive window)
 
@@ -251,49 +282,61 @@ The custom colormap uses:
 
 ## Output Files
 
-When `save_images: true`, the following files are generated:
+When `save_images: true`, the following files are generated. Filenames include all interpretability parameters for traceability.
 
 ### Visualization PNG
 
 **Class mean mode:**
 ```
-{output_dir}/class_mean_{class}_{N}samples_deeplift.png
+{output_dir}/class_mean_{class}_{N}samples_{mode}_top{count}_{fasta_length}bp_dist{min_dist}bp_base_{baseline}_deeplift.png
+```
+
+**Example:**
+```
+class_mean_AFR_250samples_global_top20_2000bp_dist50bp_base_mean_deeplift.png
 ```
 
 **Individual mode:**
 ```
-{output_dir}/{sample_id}_{predicted_class}_{correct|wrong}_deeplift.png
+{output_dir}/{sample_id}_{predicted_class}_{correct|wrong}_{mode}_top{count}_{fasta_length}bp_dist{min_dist}bp_base_{baseline}_deeplift.png
 ```
 
 ### Top Regions Report
 
 **Filename:**
 ```
-{output_dir}/top_regions_class_mean_{class}_{N}samples_deeplift.txt
+{output_dir}/top_regions_class_mean_{class}_{N}samples_{mode}_top{count}_{fasta_length}bp_dist{min_dist}bp_base_{baseline}_deeplift.txt
+```
+
+**Example:**
+```
+top_regions_class_mean_AFR_250samples_global_top20_2000bp_dist50bp_base_mean_deeplift.txt
 ```
 
 **Format:**
 ```
-Top 5 Regiões Mais Ativas (DeepLIFT)
+Top 20 Regiões Mais Ativas (DeepLIFT, modo global)
 ================================================================================
 Classe: AFR (250 amostras)
 ================================================================================
 
 1. DDB1: valor_medio = 0.041460, chr11: 61,082,789
    Indivíduo com maior valor: HG02635 (AFR/YRI, valor = 0.089234)
-   Valores nas 5 regiões: DDB1=0.08923, OCA2=0.04512, HERC2=0.03245, TYR=0.02834, SLC24A5=0.02156
-   DNA H1 (1000bp centradas em chr11:61,082,789):
+   Valores nas 20 regiões: DDB1=0.08923, OCA2=0.04512, ...
+   DNA H1 (2000bp centradas em chr11:61,082,789):
    >HG02635_H1_DDB1_center_61082789
    ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG
    ...
-   DNA H2 (1000bp centradas em chr11:61,082,789):
+   DNA H2 (2000bp centradas em chr11:61,082,789):
    >HG02635_H2_DDB1_center_61082789
    ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG
    ...
 
-2. OCA2: valor_medio = 0.039910, chr15: 28,000,123
+2. OCA2 (track 1): valor_medio = 0.039910, chr15: 28,000,123
    ...
 ```
+
+**Note**: In global mode, the track index is shown when a gene appears multiple times.
 
 ---
 
@@ -302,15 +345,16 @@ Classe: AFR (250 amostras)
 The visualization system is **idempotent**: if output files already exist, they are skipped:
 
 ```
-[dim]⏭ Skipping visualization (already exists): .../class_mean_AFR_250samples_deeplift.png[/dim]
+[dim]⏭ Skipping visualization (already exists): .../class_mean_AFR_250samples_global_top20_2000bp_dist50bp_base_mean_deeplift.png[/dim]
 ```
 
 This allows you to:
 - Re-run the analysis without recomputing everything
 - Add new samples without regenerating existing results
 - Resume interrupted runs
+- Run with different parameters without overwriting previous results
 
-To force regeneration, delete the existing output files.
+Since filenames include all parameters, changing any setting (mode, count, distance, baseline, fasta_length) will create new output files.
 
 ---
 
@@ -330,6 +374,10 @@ debug:
     deeplift:
       baseline: "mean"
       target_class: "AFR"
+      fasta_length: 2000
+      top_regions_mode: "global"
+      top_regions_count: 20
+      min_distance_bp: 50
 
 mode: "test"
 test_dataset: "train"
@@ -344,24 +392,27 @@ python3 neural_ancestry_predictor.py --config configs/genes_interp.yaml
 ### 3. Review Console Output
 
 ```
-Top 5 Regiões Mais Ativas (DeepLIFT):
+Top 20 Regiões Mais Ativas (DeepLIFT, modo=global):
   1. DDB1: valor = 0.041460, chr11: 61,082,789
-  2. OCA2: valor = 0.039910, chr15: 28,000,123
-  3. HERC2: valor = 0.032900, chr15: 28,356,789
-  4. TYR: valor = 0.030990, chr11: 89,178,456
-  5. SLC24A5: valor = 0.023640, chr15: 48,426,123
+  2. OCA2 (track 1): valor = 0.039910, chr15: 28,000,123
+  3. OCA2 (track 3): valor = 0.038500, chr15: 28,000,250
+  4. HERC2: valor = 0.032900, chr15: 28,356,789
+  5. TYR: valor = 0.030990, chr11: 89,178,456
+  ...
 
 Buscando indivíduos com maior DeepLIFT em cada região...
   → 250 amostras da classe alvo
-  ✓ DDB1: HG02635 (AFR/YRI, valor = 0.089234)
-  ✓ OCA2: NA19143 (AFR/ESN, valor = 0.078562)
+  Processando região 1/20: DDB1...
+    ✓ DDB1: HG02635 (AFR/YRI, valor = 0.089234)
+  Processando região 2/20: OCA2 (track 1)...
+    ✓ OCA2: NA19143 (AFR/ESN, valor = 0.078562)
   ...
 ```
 
 ### 4. Examine Output Files
 
-- View `interpretability_results/class_mean_AFR_250samples_deeplift.png`
-- Analyze `interpretability_results/top_regions_class_mean_AFR_250samples_deeplift.txt`
+- View `interpretability_results/class_mean_AFR_250samples_global_top20_2000bp_dist50bp_base_mean_deeplift.png`
+- Analyze `interpretability_results/top_regions_class_mean_AFR_250samples_global_top20_2000bp_dist50bp_base_mean_deeplift.txt`
 - Use extracted DNA sequences for BLAT/BLAST analysis
 
 ---
@@ -440,6 +491,6 @@ For large datasets, the individual search can be memory-intensive. Consider:
 ---
 
 **Author**: Neural Ancestry Predictor Team  
-**Last Updated**: 2025-12-22  
-**Version**: 1.0
+**Last Updated**: 2025-12-24  
+**Version**: 1.1
 
