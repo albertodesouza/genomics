@@ -42,9 +42,11 @@ import json
 import re
 import sys
 import time
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, asdict
 from math import ceil
 from pathlib import Path
+from threading import Lock
 from typing import Dict, List, Optional, Tuple, Iterable, Any
 
 import requests
@@ -100,6 +102,102 @@ class VariantAnnotation:
     amino_acids: str
     codons: str
     rsids: str
+
+
+# ----------------------------
+# Cache para APIs (persistente em disco)
+# ----------------------------
+
+class APICache:
+    """Cache persistente em disco para resultados de APIs."""
+    
+    def __init__(self, cache_dir: Optional[Path] = None):
+        self.cache_dir = cache_dir
+        self.gene_cache: Dict[str, dict] = {}
+        self.rsid_cache: Dict[str, dict] = {}
+        self._lock = Lock()
+        
+        if cache_dir:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            self._load_cache()
+    
+    def _load_cache(self) -> None:
+        """Carrega cache do disco."""
+        if not self.cache_dir:
+            return
+        
+        gene_file = self.cache_dir / "gene_cache.json"
+        rsid_file = self.cache_dir / "rsid_cache.json"
+        
+        if gene_file.exists():
+            try:
+                self.gene_cache = json.loads(gene_file.read_text(encoding="utf-8"))
+                print(f"[CACHE] Loaded {len(self.gene_cache)} genes from cache")
+            except Exception as e:
+                print(f"[WARN] Failed to load gene cache: {e}", file=sys.stderr)
+        
+        if rsid_file.exists():
+            try:
+                self.rsid_cache = json.loads(rsid_file.read_text(encoding="utf-8"))
+                print(f"[CACHE] Loaded {len(self.rsid_cache)} rsIDs from cache")
+            except Exception as e:
+                print(f"[WARN] Failed to load rsID cache: {e}", file=sys.stderr)
+    
+    def save_cache(self) -> None:
+        """Salva cache no disco."""
+        if not self.cache_dir:
+            return
+        
+        with self._lock:
+            gene_file = self.cache_dir / "gene_cache.json"
+            rsid_file = self.cache_dir / "rsid_cache.json"
+            
+            try:
+                gene_file.write_text(json.dumps(self.gene_cache, indent=2, ensure_ascii=False), encoding="utf-8")
+            except Exception as e:
+                print(f"[WARN] Failed to save gene cache: {e}", file=sys.stderr)
+            
+            try:
+                rsid_file.write_text(json.dumps(self.rsid_cache, indent=2, ensure_ascii=False), encoding="utf-8")
+            except Exception as e:
+                print(f"[WARN] Failed to save rsID cache: {e}", file=sys.stderr)
+    
+    def get_gene(self, gene: str) -> Optional[dict]:
+        """Retorna informações do gene do cache, ou None se não existir."""
+        return self.gene_cache.get(gene)
+    
+    def set_gene(self, gene: str, info: dict) -> None:
+        """Armazena informações do gene no cache."""
+        with self._lock:
+            self.gene_cache[gene] = info
+    
+    def get_rsid(self, rsid: str) -> Optional[dict]:
+        """Retorna informações do rsID do cache, ou None se não existir."""
+        return self.rsid_cache.get(rsid)
+    
+    def set_rsid(self, rsid: str, info: dict) -> None:
+        """Armazena informações do rsID no cache."""
+        with self._lock:
+            self.rsid_cache[rsid] = info
+
+
+# Rate limiter global para chamadas paralelas
+class RateLimiter:
+    """Rate limiter thread-safe para controlar chamadas de API."""
+    
+    def __init__(self, min_interval: float = 0.1):
+        self.min_interval = min_interval
+        self._lock = Lock()
+        self._last_call = 0.0
+    
+    def wait(self) -> None:
+        """Aguarda até que seja seguro fazer a próxima chamada."""
+        with self._lock:
+            now = time.time()
+            elapsed = now - self._last_call
+            if elapsed < self.min_interval:
+                time.sleep(self.min_interval - elapsed)
+            self._last_call = time.time()
 
 
 # ----------------------------
@@ -362,94 +460,169 @@ def _fetch_uniprot_gene(gene_symbol: str, timeout_s: int = 15) -> Optional[dict]
     return None
 
 
+def _fetch_single_gene(
+    gene: str, 
+    timeout_s: int, 
+    rate_limiter: Optional[RateLimiter],
+    cache: Optional[APICache]
+) -> Tuple[str, GeneInfo]:
+    """Fetch information for a single gene (thread-safe)."""
+    
+    # Check cache first
+    if cache:
+        cached = cache.get_gene(gene)
+        if cached:
+            info = GeneInfo(
+                symbol=cached["symbol"],
+                description=cached["description"],
+                function=cached["function"],
+                biotype=cached["biotype"],
+                chromosome=cached["chromosome"],
+                strand=cached["strand"],
+                source=cached["source"] + " (cached)"
+            )
+            return gene, info
+    
+    description = ""
+    function = ""
+    biotype = ""
+    chromosome = ""
+    strand = ""
+    sources = []
+    
+    # Ensembl
+    if rate_limiter:
+        rate_limiter.wait()
+    ensembl_data = _fetch_ensembl_gene(gene, timeout_s)
+    if ensembl_data:
+        description = ensembl_data.get("description", "") or ""
+        biotype = ensembl_data.get("biotype", "") or ""
+        chromosome = ensembl_data.get("seq_region_name", "") or ""
+        strand_int = ensembl_data.get("strand")
+        if strand_int == 1:
+            strand = "+"
+        elif strand_int == -1:
+            strand = "-"
+        sources.append("Ensembl")
+    
+    # NCBI
+    if rate_limiter:
+        rate_limiter.wait()
+    ncbi_data = _fetch_ncbi_gene(gene, timeout_s)
+    if ncbi_data:
+        ncbi_desc = ncbi_data.get("description", "") or ""
+        ncbi_summary = ncbi_data.get("summary", "") or ""
+        if ncbi_summary:
+            if len(ncbi_summary) > 300:
+                ncbi_summary = ncbi_summary[:297] + "..."
+            function = ncbi_summary
+        if not description and ncbi_desc:
+            description = ncbi_desc
+        sources.append("NCBI")
+    
+    # UniProt
+    if rate_limiter:
+        rate_limiter.wait()
+    uniprot_data = _fetch_uniprot_gene(gene, timeout_s)
+    if uniprot_data:
+        comments = uniprot_data.get("comments", [])
+        for comment in comments:
+            if comment.get("commentType") == "FUNCTION":
+                texts = comment.get("texts", [])
+                if texts:
+                    uniprot_func = texts[0].get("value", "")
+                    if uniprot_func and (not function or len(uniprot_func) > len(function)):
+                        if len(uniprot_func) > 300:
+                            uniprot_func = uniprot_func[:297] + "..."
+                        function = uniprot_func
+        sources.append("UniProt")
+    
+    info = GeneInfo(
+        symbol=gene,
+        description=description or f"Gene {gene}",
+        function=function or "Function not available from APIs.",
+        biotype=biotype or "unknown",
+        chromosome=chromosome or "unknown",
+        strand=strand or "unknown",
+        source=", ".join(sources) if sources else "No data found"
+    )
+    
+    # Save to cache
+    if cache:
+        cache.set_gene(gene, asdict(info))
+    
+    return gene, info
+
+
 def fetch_gene_info(
     gene_symbols: List[str], 
-    rate_limit_s: float = 0.34,  # ~3 req/s to stay under limits
-    timeout_s: int = 15
+    rate_limit_s: float = 0.1,
+    timeout_s: int = 15,
+    workers: int = 8,
+    cache: Optional[APICache] = None
 ) -> Dict[str, GeneInfo]:
     """
-    Fetch information about genes from multiple APIs.
+    Fetch information about genes from multiple APIs (parallelized).
     
     Combines data from:
     - Ensembl: description, biotype, chromosome
     - NCBI Gene: functional summary
     - UniProt: protein function
     
+    Args:
+        gene_symbols: List of gene symbols to fetch
+        rate_limit_s: Minimum interval between API calls (per thread)
+        timeout_s: Timeout for API calls
+        workers: Number of parallel workers
+        cache: Optional APICache for persistent caching
+    
     Returns a dictionary mapping gene symbols to GeneInfo objects.
     """
     gene_info_map: Dict[str, GeneInfo] = {}
+    rate_limiter = RateLimiter(rate_limit_s)
     
+    # Check how many are already cached
+    cached_count = 0
+    to_fetch = []
     for gene in gene_symbols:
-        description = ""
-        function = ""
-        biotype = ""
-        chromosome = ""
-        strand = ""
-        sources = []
+        if cache and cache.get_gene(gene):
+            cached_count += 1
+        to_fetch.append(gene)
+    
+    if cached_count > 0:
+        print(f"[CACHE] {cached_count}/{len(gene_symbols)} genes already in cache")
+    
+    # Parallel fetch
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(_fetch_single_gene, gene, timeout_s, rate_limiter, cache): gene
+            for gene in to_fetch
+        }
         
-        # Ensembl
-        ensembl_data = _fetch_ensembl_gene(gene, timeout_s)
-        if ensembl_data:
-            description = ensembl_data.get("description", "") or ""
-            biotype = ensembl_data.get("biotype", "") or ""
-            chromosome = ensembl_data.get("seq_region_name", "") or ""
-            # Strand: 1 = forward (+), -1 = reverse (-)
-            strand_int = ensembl_data.get("strand")
-            if strand_int == 1:
-                strand = "+"
-            elif strand_int == -1:
-                strand = "-"
-            sources.append("Ensembl")
-        
-        time.sleep(rate_limit_s)
-        
-        # NCBI
-        ncbi_data = _fetch_ncbi_gene(gene, timeout_s)
-        if ncbi_data:
-            ncbi_desc = ncbi_data.get("description", "") or ""
-            ncbi_summary = ncbi_data.get("summary", "") or ""
-            if ncbi_summary:
-                # Truncate long summaries
-                if len(ncbi_summary) > 300:
-                    ncbi_summary = ncbi_summary[:297] + "..."
-                function = ncbi_summary
-            if not description and ncbi_desc:
-                description = ncbi_desc
-            sources.append("NCBI")
-        
-        time.sleep(rate_limit_s)
-        
-        # UniProt
-        uniprot_data = _fetch_uniprot_gene(gene, timeout_s)
-        if uniprot_data:
-            # Extract function from comments
-            comments = uniprot_data.get("comments", [])
-            for comment in comments:
-                if comment.get("commentType") == "FUNCTION":
-                    texts = comment.get("texts", [])
-                    if texts:
-                        uniprot_func = texts[0].get("value", "")
-                        if uniprot_func and (not function or len(uniprot_func) > len(function)):
-                            if len(uniprot_func) > 300:
-                                uniprot_func = uniprot_func[:297] + "..."
-                            function = uniprot_func
-            sources.append("UniProt")
-        
-        time.sleep(rate_limit_s)
-        
-        # Create GeneInfo
-        gene_info_map[gene] = GeneInfo(
-            symbol=gene,
-            description=description or f"Gene {gene}",
-            function=function or "Function not available from APIs.",
-            biotype=biotype or "unknown",
-            chromosome=chromosome or "unknown",
-            strand=strand or "unknown",
-            source=", ".join(sources) if sources else "No data found"
-        )
-        
-        strand_str = f", strand={strand}" if strand else ""
-        print(f"[API] Gene {gene}: fetched from {', '.join(sources) if sources else 'no sources'}{strand_str}")
+        completed = 0
+        for future in as_completed(futures):
+            gene = futures[future]
+            try:
+                _, info = future.result()
+                gene_info_map[gene] = info
+                completed += 1
+                
+                # Print progress
+                cached_str = " (cached)" if "(cached)" in info.source else ""
+                strand_str = f", strand={info.strand}" if info.strand and info.strand != "unknown" else ""
+                print(f"[API] [{completed}/{len(to_fetch)}] Gene {gene}: {info.source.replace(' (cached)', '')}{strand_str}{cached_str}")
+                
+            except Exception as e:
+                print(f"[WARN] Failed to fetch gene {gene}: {e}", file=sys.stderr)
+                gene_info_map[gene] = GeneInfo(
+                    symbol=gene,
+                    description=f"Gene {gene}",
+                    function="Fetch failed",
+                    biotype="unknown",
+                    chromosome="unknown",
+                    strand="unknown",
+                    source="Error"
+                )
     
     return gene_info_map
 
@@ -616,98 +789,199 @@ def fetch_high_impact_details(
     return results
 
 
+def _fetch_single_rsid(
+    rsid: str,
+    timeout_s: int,
+    rate_limiter: Optional[RateLimiter],
+    cache: Optional[APICache]
+) -> Tuple[str, RsidInfo]:
+    """Fetch information for a single rsID (thread-safe)."""
+    
+    # Check cache first
+    if cache:
+        cached = cache.get_rsid(rsid)
+        if cached:
+            info = RsidInfo(
+                rsid=cached["rsid"],
+                description=cached["description"],
+                clinical_significance=cached["clinical_significance"],
+                phenotypes=cached["phenotypes"],
+                minor_allele=cached["minor_allele"],
+                maf=cached["maf"],
+                source=cached["source"] + " (cached)"
+            )
+            return rsid, info
+    
+    url = f"https://rest.ensembl.org/variation/human/{rsid}"
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    
+    description = ""
+    clinical_sig = ""
+    phenotypes_str = ""
+    minor_allele = ""
+    maf = ""
+    
+    try:
+        if rate_limiter:
+            rate_limiter.wait()
+        r = requests.get(url, headers=headers, timeout=timeout_s)
+        if r.status_code == 200:
+            data = r.json()
+            
+            # Extract clinical significance
+            clinical_sigs = data.get("clinical_significance", [])
+            if clinical_sigs:
+                clinical_sig = ", ".join(clinical_sigs)
+            
+            # Extract MAF info
+            minor_allele = data.get("minor_allele", "") or ""
+            maf_val = data.get("MAF")
+            if maf_val is not None:
+                maf = f"{maf_val:.4f}"
+            
+            # Extract mappings for allele info
+            mappings = data.get("mappings", [])
+            if mappings:
+                m = mappings[0]
+                allele_str = m.get("allele_string", "")
+                location = m.get("location", "")
+                if allele_str and location:
+                    description = f"{location} ({allele_str})"
+            
+            # Fetch phenotypes separately
+            if rate_limiter:
+                rate_limiter.wait()
+            pheno_url = f"https://rest.ensembl.org/variation/human/{rsid}?pops=1;phenotypes=1"
+            try:
+                r2 = requests.get(pheno_url, headers=headers, timeout=timeout_s)
+                if r2.status_code == 200:
+                    data2 = r2.json()
+                    phenos = data2.get("phenotypes", [])
+                    if phenos:
+                        pheno_names = []
+                        for p in phenos[:5]:
+                            trait = p.get("trait", "") or p.get("description", "")
+                            if trait:
+                                pheno_names.append(trait)
+                        if pheno_names:
+                            phenotypes_str = "; ".join(pheno_names)
+            except Exception:
+                pass
+            
+            info = RsidInfo(
+                rsid=rsid,
+                description=description or rsid,
+                clinical_significance=clinical_sig or "Not reported",
+                phenotypes=phenotypes_str or "No phenotypes reported",
+                minor_allele=minor_allele or "N/A",
+                maf=maf or "N/A",
+                source="Ensembl Variation"
+            )
+            
+            # Save to cache
+            if cache:
+                cache.set_rsid(rsid, asdict(info))
+            
+            return rsid, info
+            
+    except Exception:
+        pass
+    
+    # Return error info
+    info = RsidInfo(
+        rsid=rsid,
+        description=rsid,
+        clinical_significance="Fetch failed",
+        phenotypes="Fetch failed",
+        minor_allele="N/A",
+        maf="N/A",
+        source="Error"
+    )
+    return rsid, info
+
+
 def fetch_rsid_info(
     rsids: List[str],
-    rate_limit_s: float = 0.34,
-    timeout_s: int = 15
+    rate_limit_s: float = 0.1,
+    timeout_s: int = 15,
+    workers: int = 8,
+    cache: Optional[APICache] = None
 ) -> Dict[str, RsidInfo]:
     """
-    Fetch information about rsIDs from Ensembl Variation API.
+    Fetch information about rsIDs from Ensembl Variation API (parallelized).
+    
+    Args:
+        rsids: List of rsIDs to fetch
+        rate_limit_s: Minimum interval between API calls
+        timeout_s: Timeout for API calls
+        workers: Number of parallel workers
+        cache: Optional APICache for persistent caching
     
     Returns a dictionary mapping rsIDs to RsidInfo objects.
     """
     rsid_info_map: Dict[str, RsidInfo] = {}
+    rate_limiter = RateLimiter(rate_limit_s)
     
     # Filter to only process rsIDs (start with "rs")
     valid_rsids = [r for r in rsids if r.startswith("rs")]
     
+    if not valid_rsids:
+        return rsid_info_map
+    
+    # Check how many are already cached
+    cached_count = 0
     for rsid in valid_rsids:
-        url = f"https://rest.ensembl.org/variation/human/{rsid}"
-        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        if cache and cache.get_rsid(rsid):
+            cached_count += 1
+    
+    if cached_count > 0:
+        print(f"[CACHE] {cached_count}/{len(valid_rsids)} rsIDs already in cache")
+    
+    # Parallel fetch
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(_fetch_single_rsid, rsid, timeout_s, rate_limiter, cache): rsid
+            for rsid in valid_rsids
+        }
         
-        description = ""
-        clinical_sig = ""
-        phenotypes_str = ""
-        minor_allele = ""
-        maf = ""
+        completed = 0
+        batch_results: List[Tuple[str, str, bool]] = []  # (rsid, clinical, cached)
+        batch_size = 10
         
-        try:
-            r = requests.get(url, headers=headers, timeout=timeout_s)
-            if r.status_code == 200:
-                data = r.json()
+        for future in as_completed(futures):
+            rsid = futures[future]
+            try:
+                _, info = future.result()
+                rsid_info_map[rsid] = info
+                completed += 1
                 
-                # Extract clinical significance
-                clinical_sigs = data.get("clinical_significance", [])
-                if clinical_sigs:
-                    clinical_sig = ", ".join(clinical_sigs)
+                # Accumulate results for batch printing
+                cached = "(cached)" in info.source
+                clin = info.clinical_significance if info.clinical_significance != "Not reported" else "N/A"
+                batch_results.append((rsid, clin, cached))
                 
-                # Extract MAF info
-                minor_allele = data.get("minor_allele", "") or ""
-                maf_val = data.get("MAF")
-                if maf_val is not None:
-                    maf = f"{maf_val:.4f}"
-                
-                # Extract mappings for allele info
-                mappings = data.get("mappings", [])
-                if mappings:
-                    m = mappings[0]
-                    allele_str = m.get("allele_string", "")
-                    location = m.get("location", "")
-                    if allele_str and location:
-                        description = f"{location} ({allele_str})"
-                
-                # Fetch phenotypes separately if available
-                # Using phenotype endpoint
-                pheno_url = f"https://rest.ensembl.org/variation/human/{rsid}?pops=1;phenotypes=1"
-                try:
-                    r2 = requests.get(pheno_url, headers=headers, timeout=timeout_s)
-                    if r2.status_code == 200:
-                        data2 = r2.json()
-                        phenos = data2.get("phenotypes", [])
-                        if phenos:
-                            pheno_names = []
-                            for p in phenos[:5]:  # Limit to first 5
-                                trait = p.get("trait", "") or p.get("description", "")
-                                if trait:
-                                    pheno_names.append(trait)
-                            if pheno_names:
-                                phenotypes_str = "; ".join(pheno_names)
-                except Exception:
-                    pass
-                
+                # Print batch every 10 or at the end
+                if completed % batch_size == 0 or completed == len(valid_rsids):
+                    print(f"[API] [{completed}/{len(valid_rsids)}] rsIDs fetched:")
+                    for r_id, r_clin, r_cached in batch_results:
+                        cached_str = " (cached)" if r_cached else ""
+                        # Truncate long clinical significance
+                        if len(r_clin) > 40:
+                            r_clin = r_clin[:37] + "..."
+                        print(f"       • {r_id}: {r_clin}{cached_str}")
+                    batch_results = []  # Reset batch
+                    
+            except Exception as e:
+                print(f"[WARN] Failed to fetch rsID {rsid}: {e}", file=sys.stderr)
                 rsid_info_map[rsid] = RsidInfo(
                     rsid=rsid,
-                    description=description or rsid,
-                    clinical_significance=clinical_sig or "Not reported",
-                    phenotypes=phenotypes_str or "No phenotypes reported",
-                    minor_allele=minor_allele or "N/A",
-                    maf=maf or "N/A",
-                    source="Ensembl Variation"
+                    description=rsid,
+                    clinical_significance="Fetch failed",
+                    phenotypes="Fetch failed",
+                    minor_allele="N/A",
+                    maf="N/A",
+                    source="Error"
                 )
-                
-                print(f"[API] rsID {rsid}: clinical={clinical_sig or 'N/A'}, phenotypes={'yes' if phenotypes_str else 'no'}")
-        except Exception as e:
-            rsid_info_map[rsid] = RsidInfo(
-                rsid=rsid,
-                description=rsid,
-                clinical_significance="Fetch failed",
-                phenotypes="Fetch failed",
-                minor_allele="N/A",
-                maf="N/A",
-                source="Error"
-            )
-        
-        time.sleep(rate_limit_s)
     
     return rsid_info_map
 
@@ -1629,9 +1903,16 @@ Exemplos:
         ucsc_timeout = config.get("ucsc", {}).get("timeout", 30)
     
     # API settings (apenas do YAML, sem CLI override)
-    api_rate_limit = config.get("api", {}).get("rate_limit", 0.34)
+    api_workers = config.get("api", {}).get("workers", 8)
+    api_rate_limit = config.get("api", {}).get("rate_limit", 0.1)
     api_gene_timeout = config.get("api", {}).get("gene_timeout", 15)
     max_rsids_to_fetch = config.get("api", {}).get("max_rsids_to_fetch", 50)
+    api_cache_dir = config.get("api", {}).get("cache_dir", "annotate_deeplift_windows_cache")
+    
+    # Criar diretório de cache
+    cache_path = Path(api_cache_dir).expanduser().resolve()
+    api_cache = APICache(cache_path)
+    print(f"[INFO] API cache: {cache_path}")
     
     # Imprimir configuração efetiva
     print("[INFO] Configuração efetiva:")
@@ -1641,8 +1922,8 @@ Exemplos:
     print(f"       central_window: {central_window}")
     print(f"       skip_vep: {no_vep}")
     print(f"       vep_batch_size: {vep_batch_size}")
-    print(f"       vep_timeout: {vep_timeout}")
-    print(f"       ucsc_timeout: {ucsc_timeout}")
+    print(f"       api_workers: {api_workers}")
+    print(f"       api_cache_dir: {api_cache_dir}")
 
     input_path = Path(input_txt).expanduser().resolve()
     outdir_path = Path(outdir).expanduser().resolve()
@@ -1906,10 +2187,16 @@ Exemplos:
     write_tsv(indiv_gene_sum_path, ig_header, ig_rows)
     print(f"[SAVED] summary by individual+gene TSV: {indiv_gene_sum_path}")
 
-    # --- Fetch gene information from APIs ---
+    # --- Fetch gene information from APIs (parallelized with cache) ---
     detected_genes = sorted({o.gene for o in occs})
-    print(f"[INFO] Fetching information for {len(detected_genes)} genes from APIs...")
-    gene_info = fetch_gene_info(detected_genes, rate_limit_s=api_rate_limit, timeout_s=api_gene_timeout)
+    print(f"[INFO] Fetching information for {len(detected_genes)} genes from APIs ({api_workers} workers)...")
+    gene_info = fetch_gene_info(
+        detected_genes, 
+        rate_limit_s=api_rate_limit, 
+        timeout_s=api_gene_timeout,
+        workers=api_workers,
+        cache=api_cache
+    )
     print(f"[INFO] Gene information fetched for {len([g for g in gene_info.values() if g.source != 'No data found'])} genes")
 
     # --- Fetch rsID information from APIs ---
@@ -1927,8 +2214,14 @@ Exemplos:
     rsids_to_fetch = unique_rsids[:max_rsids_to_fetch]
     rsid_info: Dict[str, RsidInfo] = {}
     if rsids_to_fetch:
-        print(f"[INFO] Fetching information for {len(rsids_to_fetch)} rsIDs from Ensembl Variation...")
-        rsid_info = fetch_rsid_info(rsids_to_fetch, rate_limit_s=api_rate_limit, timeout_s=api_gene_timeout)
+        print(f"[INFO] Fetching information for {len(rsids_to_fetch)} rsIDs from Ensembl Variation ({api_workers} workers)...")
+        rsid_info = fetch_rsid_info(
+            rsids_to_fetch, 
+            rate_limit_s=api_rate_limit, 
+            timeout_s=api_gene_timeout,
+            workers=api_workers,
+            cache=api_cache
+        )
         print(f"[INFO] rsID information fetched for {len(rsid_info)} variants")
     else:
         print("[INFO] No rsIDs to fetch (VEP may be disabled or no colocated variants)")
@@ -1962,6 +2255,10 @@ Exemplos:
         rsid_info
     )
     print(f"[SAVED] phenotype validation report (Markdown): {validation_report_path}")
+
+    # Salvar cache de APIs
+    api_cache.save_cache()
+    print(f"[CACHE] Saved API cache to {cache_path}")
 
     print("\n=== OUTPUTS PRINCIPAIS ===")
     print(f"[OUT] {parsed_records_path}")

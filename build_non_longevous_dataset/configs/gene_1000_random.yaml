@@ -5,9 +5,9 @@
 # ═══════════════════════════════════════════════════════════════════
 
 project:
-  name: "non_longevous_dataset_genes"
+  name: "non_longevous_dataset_genes_1000_random"
   description: "Small dataset with around 1000 individuos"
-  output_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000"
+  output_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_random"
 
 # ═══════════════════════════════════════════════════════════════════
 # Debug Options
@@ -47,7 +47,6 @@ sample_selection:
   level: "population"
   
   # Samples per group (depending on level selected)
-  # 3 indivíduos por população = ~78 indivíduos no total
   samples_per_group: 50
   
   # Optional: specific groups to include (leave empty for all)
@@ -88,7 +87,7 @@ build_window_params:
     
     # OR multiple genes from file (one per line)
     # If gene_list_file is provided, it overrides single gene above
-    gene_list_file: ../docs/ancestry_gene_list.txt       # Path to file with gene list
+    gene_list_file: ../docs/random_1000_genes.txt       # Path to file with gene list
   
   # ═══════════════════════════════════════════════════════════════
   # SNP Mode Options
