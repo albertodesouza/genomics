@@ -87,7 +87,7 @@ build_window_params:
     
     # OR multiple genes from file (one per line)
     # If gene_list_file is provided, it overrides single gene above
-    gene_list_file: ../docs/random_1000_genes.txt       # Path to file with gene list
+    gene_list_file: ../docs/random_11_genes.txt       # Path to file with gene list
   
   # ═══════════════════════════════════════════════════════════════
   # SNP Mode Options

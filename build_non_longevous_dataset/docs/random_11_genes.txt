@@ -1,11 +1,11 @@
-RIDA # chr8:98102343-98117171, 14828 bp, protein_coding
-SFMBT2 # chr10:7158623-7411488, 252865 bp, protein_coding
-C6orf52 # chr6:10671417-10694797, 23380 bp, protein_coding
-SEM1 # chr7:96481625-96709880, 228255 bp, protein_coding
-HERC6 # chr4:88378738-88443097, 64359 bp, protein_coding
-SUMF2 # chr7:56064001-56080670, 16669 bp, protein_coding
-KIAA0319 # chr6:24544103-24646191, 102088 bp, protein_coding
-ATP11B # chr3:182793502-182921629, 128127 bp, protein_coding
-FOXN2 # chr2:48314636-48379295, 64659 bp, protein_coding
-BCL3 # chr19:44747704-44760044, 12340 bp, protein_coding
-FBXO5 # chr6:152970518-152983579, 13061 bp, protein_coding
+RIDA # chr8:98102343-98117171, 14828 bp, reactive intermediate imine deaminase A
+SFMBT2 # chr10:7158623-7411488, 252865 bp, Scm like with four mbt domains 2
+C6orf52 # chr6:10671417-10694797, 23380 bp, chromosome 6 open reading frame 52
+SEM1 # chr7:96481625-96709880, 228255 bp, SEM1 26S proteasome subunit 
+HERC6 # chr4:88378738-88443097, 64359 bp, HECT and RLD domain containing E3 ubiquitin protein ligase family member 6
+SUMF2 # chr7:56064001-56080670, 16669 bp, sulfatase modifying factor 2
+KIAA0319 # chr6:24544103-24646191, 102088 bp, KIAA0319
+ATP11B # chr3:182793502-182921629, 128127 bp, ATPase phospholipid transporting 11B
+FOXN2 # chr2:48314636-48379295, 64659 bp, forkhead box N2
+BCL3 # chr19:44747704-44760044, 12340 bp, BCL3 transcription coactivator
+FBXO5 # chr6:152970518-152983579, 13061 bp, F-box protein 5
