@@ -70,7 +70,7 @@ def draw_layer_3d(ax, x_pos, height, width, depth, color, label_text=None,
     """
     # Ajustar profundidade visual
     depth_visual = min(depth, 15)  # Limitar profundidade visual
-    depth_offset = 1.5
+    depth_offset = 3.0  # Aumentado para maior visibilidade
     
     rgb = hex_to_rgb(color)
     
@@ -82,10 +82,10 @@ def draw_layer_3d(ax, x_pos, height, width, depth, color, label_text=None,
         rect = FancyBboxPatch(
             (x_pos + offset, -height/2 + offset * 0.3),
             width, height,
-            boxstyle="round,pad=0.02,rounding_size=0.5",
+            boxstyle="round,pad=0.02,rounding_size=1.0",
             facecolor=tuple(c * shade for c in rgb),
             edgecolor='black',
-            linewidth=0.5,
+            linewidth=1.0,
             alpha=alpha
         )
         ax.add_patch(rect)
@@ -94,27 +94,27 @@ def draw_layer_3d(ax, x_pos, height, width, depth, color, label_text=None,
     if label_text:
         if label_pos == 'top':
             ax.text(x_pos + width/2 + (depth_visual-1) * depth_offset / 2, 
-                   height/2 + (depth_visual-1) * depth_offset * 0.3 + 5,
-                   label_text, ha='center', va='bottom', fontsize=12,
+                   height/2 + (depth_visual-1) * depth_offset * 0.3 + 10,
+                   label_text, ha='center', va='bottom', fontsize=24,
                    fontweight='bold', wrap=True)
         else:
             ax.text(x_pos + width/2 + (depth_visual-1) * depth_offset / 2, 
-                   -height/2 - 5,
-                   label_text, ha='center', va='top', fontsize=12,
+                   -height/2 - 10,
+                   label_text, ha='center', va='top', fontsize=24,
                    fontweight='bold', wrap=True)
     
     return x_pos + width + depth_visual * depth_offset
 
 
 def draw_arrow(ax, x_start, x_end, y=0, label_text=None, color='gray'):
-    """Desenha uma seta entre camadas com label opcional."""
+    """Desenha uma seta entre camadas com label opcional embaixo."""
     ax.annotate('', xy=(x_end, y), xytext=(x_start, y),
-                arrowprops=dict(arrowstyle='->', color=color, lw=1.5))
+                arrowprops=dict(arrowstyle='->', color=color, lw=3.0))
     
     if label_text:
         mid_x = (x_start + x_end) / 2
-        ax.text(mid_x, y + 8, label_text, ha='center', va='bottom', 
-                fontsize=11, style='italic', color='darkgray')
+        ax.text(mid_x, y - 18, label_text, ha='center', va='top', 
+                fontsize=18, style='italic', color='dimgray')
 
 
 def draw_fc_layer(ax, x_pos, num_neurons, max_show=10, color='#DDA0DD', 
@@ -140,32 +140,32 @@ def draw_fc_layer(ax, x_pos, num_neurons, max_show=10, color='#DDA0DD',
         for i in range(top_neurons):
             y = total_height/2 - i * spacing
             circle = Circle((x_pos, y), neuron_size/2, 
-                           facecolor=rgb, edgecolor='black', linewidth=0.5)
+                           facecolor=rgb, edgecolor='black', linewidth=1.0)
             ax.add_patch(circle)
         
         # Pontos no meio
         for i in range(3):
             y = total_height/2 - (top_neurons + 0.5) * spacing - i * spacing * 0.4
-            dot = Circle((x_pos, y), 0.8, facecolor='black')
+            dot = Circle((x_pos, y), 1.5, facecolor='black')
             ax.add_patch(dot)
         
         # Neurônios de baixo
         for i in range(bottom_neurons):
             y = -total_height/2 + (bottom_neurons - 1 - i) * spacing
             circle = Circle((x_pos, y), neuron_size/2,
-                           facecolor=rgb, edgecolor='black', linewidth=0.5)
+                           facecolor=rgb, edgecolor='black', linewidth=1.0)
             ax.add_patch(circle)
     else:
         for i in range(num_show):
             y = total_height/2 - i * spacing - spacing/2
             circle = Circle((x_pos, y), neuron_size/2,
-                           facecolor=rgb, edgecolor='black', linewidth=0.5)
+                           facecolor=rgb, edgecolor='black', linewidth=1.0)
             ax.add_patch(circle)
     
     # Label
     if label_text:
-        ax.text(x_pos, total_height/2 + 8, label_text, 
-                ha='center', va='bottom', fontsize=12, fontweight='bold')
+        ax.text(x_pos, total_height/2 + 16, label_text, 
+                ha='center', va='bottom', fontsize=24, fontweight='bold')
     
     return x_pos + spacing
 
@@ -173,105 +173,106 @@ def draw_fc_layer(ax, x_pos, num_neurons, max_show=10, color='#DDA0DD',
 def draw_cnn2_architecture():
     """
     Desenha a arquitetura completa do CNN2AncestryPredictor.
+    Otimizado para colunas de artigos IEEE (fontes grandes).
     """
-    fig, ax = plt.subplots(1, 1, figsize=(16, 8))
+    fig, ax = plt.subplots(1, 1, figsize=(20, 12))
     
     # Título
     ax.set_title('CNN2AncestryPredictor Architecture\n'
                  '11 Genes → 5 Ancestry Classes', 
-                 fontsize=18, fontweight='bold', pad=20)
+                 fontsize=36, fontweight='bold', pad=30)
     
     x_pos = 0
-    spacing = 25
+    spacing = 55  # Espaçamento maior entre camadas
     
     # ========== INPUT ==========
     # 66 x 32768 (representado como retângulo horizontal - largo e baixo)
-    input_height = 8   # Altura menor para ficar horizontal
-    input_width = 20   # Largura maior para representar as 32768 colunas
+    input_height = 16   # Altura menor para ficar horizontal
+    input_width = 40    # Largura maior para representar as 32768 colunas
     
     end_x = draw_layer_3d(ax, x_pos, input_height, input_width, 1, 
-                          COLOR_INPUT, 'Input\n66×32768\n(1 canal)')
+                          COLOR_INPUT, 'Input\n66×32,768')
     
     # Seta para Conv1
-    x_pos = end_x + 5
-    draw_arrow(ax, end_x, end_x + spacing - 5, 0, 
+    x_pos = end_x + 10
+    draw_arrow(ax, end_x, end_x + spacing - 10, 0, 
                'Conv2d\nk=(6,32)\ns=(6,32)', 'darkblue')
     x_pos = end_x + spacing
     
     # ========== CONV1 + ReLU ==========
     # Output: 16 x 11 x 1024
-    conv1_height = 18
-    conv1_width = 6
+    conv1_height = 36
+    conv1_width = 12
     
     end_x = draw_layer_3d(ax, x_pos, conv1_height, conv1_width, 16, 
                           COLOR_CONV, 'Stage 1\n16×11×1024\n+ ReLU')
     
     # Seta para Conv2
-    draw_arrow(ax, end_x, end_x + spacing - 5, 0,
+    draw_arrow(ax, end_x, end_x + spacing - 10, 0,
                'Conv2d\nk=(1,5)\ns=(1,2)', 'darkblue')
     x_pos = end_x + spacing
     
     # ========== CONV2 + ReLU ==========
     # Output: 32 x 11 x 512
-    conv2_height = 16
-    conv2_width = 5
+    conv2_height = 32
+    conv2_width = 10
     
     end_x = draw_layer_3d(ax, x_pos, conv2_height, conv2_width, 32, 
                           COLOR_CONV, 'Stage 2\n32×11×512\n+ ReLU')
     
     # Seta para Conv3
-    draw_arrow(ax, end_x, end_x + spacing - 5, 0,
+    draw_arrow(ax, end_x, end_x + spacing - 10, 0,
                'Conv2d\nk=(1,5)\ns=(1,2)', 'darkblue')
     x_pos = end_x + spacing
     
     # ========== CONV3 + ReLU ==========
     # Output: 64 x 11 x 256
-    conv3_height = 14
-    conv3_width = 4
+    conv3_height = 28
+    conv3_width = 8
     
     end_x = draw_layer_3d(ax, x_pos, conv3_height, conv3_width, 64, 
                           COLOR_CONV, 'Stage 3\n64×11×256\n+ ReLU')
     
     # Seta para Global Pool
-    draw_arrow(ax, end_x, end_x + spacing - 5, 0,
+    draw_arrow(ax, end_x, end_x + spacing - 10, 0,
                'MaxPool2d\nk=(1,256)', 'darkgreen')
     x_pos = end_x + spacing
     
     # ========== GLOBAL POOL ==========
     # Output: 64 x 11 x 1
-    pool_height = 12
-    pool_width = 3
+    pool_height = 24
+    pool_width = 6
     
     end_x = draw_layer_3d(ax, x_pos, pool_height, pool_width, 64, 
                           COLOR_POOL, 'Global Pool\n64×11×1')
     
     # Seta para Flatten
-    draw_arrow(ax, end_x, end_x + spacing - 5, 0, 'Flatten', 'purple')
+    draw_arrow(ax, end_x, end_x + spacing - 10, 0, 'Flatten', 'purple')
     x_pos = end_x + spacing
     
     # ========== FLATTEN / FC LAYERS ==========
     # 704 neurons
-    fc_spacing = 20
+    fc_spacing = 45
     
     end_x = draw_fc_layer(ax, x_pos, 704, max_show=7, color=COLOR_FC,
-                          label_text='Flatten\n704', neuron_size=2.5)
+                          label_text='Flatten\n704', neuron_size=5)
     
     # Seta para FC
-    draw_arrow(ax, x_pos + 5, x_pos + fc_spacing, 0, 'Linear', 'darkred')
-    x_pos = x_pos + fc_spacing + 5
+    draw_arrow(ax, x_pos + 10, x_pos + fc_spacing, 0, 'Linear', 'darkred')
+    x_pos = x_pos + fc_spacing + 10
     
     # ========== FC ==========
     # 256 neurons
     end_x = draw_fc_layer(ax, x_pos, 256, max_show=6, color=COLOR_FC,
-                          label_text='FC\n256\n+ ReLU\n+ Dropout', neuron_size=2.5)
+                          label_text='F.C.\n256', neuron_size=5)
     
     # Seta para Output
-    draw_arrow(ax, x_pos + 5, x_pos + fc_spacing, 0, 'Linear', 'darkred')
-    x_pos = x_pos + fc_spacing + 5
+    draw_arrow(ax, x_pos + 10, x_pos + fc_spacing, 0, 'Linear', 'darkred')
+    x_pos = x_pos + fc_spacing + 10
     
     # ========== OUTPUT ==========
     # 5 classes
-    output_neuron_size = 3.5
+    output_neuron_size = 9
     end_x = draw_fc_layer(ax, x_pos, 5, max_show=5, color=COLOR_OUTPUT,
                           label_text='Output\n5 classes', neuron_size=output_neuron_size)
     
@@ -280,7 +281,7 @@ def draw_cnn2_architecture():
     spacing_output = output_neuron_size * 1.5  # neuron_size * 1.5 para output
     for i, cls in enumerate(ancestry_classes):
         y = (5 * spacing_output)/2 - i * spacing_output - spacing_output/2
-        ax.text(x_pos + 8, y, cls, fontsize=12, va='center', fontweight='bold',
+        ax.text(x_pos + 16, y, cls, fontsize=24, va='center', fontweight='bold',
                 color='darkblue')
     
     # ========== LEGENDA ==========
@@ -288,15 +289,15 @@ def draw_cnn2_architecture():
         mpatches.Patch(facecolor=COLOR_INPUT, edgecolor='black', label='Input'),
         mpatches.Patch(facecolor=COLOR_CONV, edgecolor='black', label='Conv + ReLU'),
         mpatches.Patch(facecolor=COLOR_POOL, edgecolor='black', label='MaxPool'),
-        mpatches.Patch(facecolor=COLOR_FC, edgecolor='black', label='FC + ReLU + Dropout'),
+        mpatches.Patch(facecolor=COLOR_FC, edgecolor='black', label='F.C.'),
         mpatches.Patch(facecolor=COLOR_OUTPUT, edgecolor='black', label='Output'),
     ]
-    ax.legend(handles=legend_elements, loc='lower center', fontsize=11,
-              ncol=5, framealpha=0.9)
+    ax.legend(handles=legend_elements, loc='upper center', fontsize=28,
+              ncol=5, framealpha=0.9, bbox_to_anchor=(0.5, 0.15))
     
     # Configurações do plot
-    ax.set_xlim(-10, x_pos + 35)
-    ax.set_ylim(-35, 50)
+    ax.set_xlim(-20, x_pos + 70)
+    ax.set_ylim(-90, 100)
     ax.set_aspect('equal')
     ax.axis('off')
     
@@ -314,7 +315,7 @@ if __name__ == '__main__':
     fig_name = 'cnn2_ancestry_predictor_architecture.png'
     fig_path = os.path.join(fig_dir, fig_name)
     
-    fig.savefig(fig_path, dpi=150, bbox_inches='tight', 
+    fig.savefig(fig_path, dpi=300, bbox_inches='tight', 
                 pad_inches=0.2, facecolor='white')
     print(f"Figura salva em: {fig_path}")
     

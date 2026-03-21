@@ -79,6 +79,7 @@ debug:
       top_regions_mode: "global"   # "per_gene" or "global"
       top_regions_count: 20        # Number of top regions to identify
       min_distance_bp: 50          # Minimum distance (bp) between regions
+      show_top_regions_xlabel: true # Include top regions list in x-axis label
 
 mode: "test"
 test_dataset: "train"              # Which split to analyze
@@ -97,6 +98,7 @@ test_dataset: "train"              # Which split to analyze
 | `top_regions_mode` | `"per_gene"`, `"global"` | Mode for selecting top regions |
 | `top_regions_count` | integer (default: 5) | Number of top regions to identify |
 | `min_distance_bp` | integer (default: 50) | Minimum distance (bp) between regions (global mode only) |
+| `show_top_regions_xlabel` | `true`, `false` | Include top regions in DeepLIFT x-axis label |
 
 ### Baseline Options
 

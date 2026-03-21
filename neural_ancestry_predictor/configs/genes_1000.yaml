@@ -74,18 +74,18 @@ dataset_input:
   # NOTA: A ordem em que você lista os genes aqui não importa.
   #       O sistema usa a ordem salva no metadata do cache (extraída do dataset base).
   genes_to_use:
-    - "MC1R"
-    - "TYRP1"
-    - "TYR"
-    - "SLC45A2"
     - "DDB1"
     - "EDAR"
+    - "HERC2"
+    - "MC1R"
     - "MFSD12"
     - "OCA2"
-    - "HERC2"
     - "SLC24A5"
+    - "SLC45A2"
     - "TCHH"
-  
+    - "TYR"
+    - "TYRP1"
+
   # Método de normalização dos dados
   # Opções:
   #   "zscore": Normalização Z-score padrão (mean=0, std=1)

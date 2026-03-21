@@ -2640,10 +2640,20 @@ class Trainer:
              "EDAR", "MFSD12", "OCA2", "HERC2", "SLC24A5", "TCHH"])
         if genes_to_use:
             # Maintain gene order from dataset
-            gene_names = [gene for gene in GENE_ORDER if gene in genes_to_use]
+            gene_names_original = [gene for gene in GENE_ORDER if gene in genes_to_use]
         else:
-            gene_names = GENE_ORDER
+            gene_names_original = GENE_ORDER
         tracks_per_gene = 6
+        
+        # Check if alphabetical ordering is requested for visualization
+        viz_gene_order = self.config.get('debug', {}).get('visualization', {}).get('gene_order', 'dataset')
+        if viz_gene_order == 'alphabetical':
+            gene_names = sorted(gene_names_original)
+            # Create reordering indices: map from new order to original order
+            gene_reorder_indices = [gene_names_original.index(g) for g in gene_names]
+        else:
+            gene_names = gene_names_original
+            gene_reorder_indices = None
         
         # Create figure
         plt.clf()
@@ -2657,6 +2667,16 @@ class Trainer:
         if features_cpu.ndim == 3 and features_cpu.shape[0] == 1:
             # 2D input: [1, num_rows, effective_size]
             img_data = features_cpu[0].numpy()  # [num_rows, effective_size]
+            
+            # Reorder genes if alphabetical ordering is requested
+            if gene_reorder_indices is not None:
+                reordered_rows = []
+                for new_idx in range(len(gene_reorder_indices)):
+                    orig_idx = gene_reorder_indices[new_idx]
+                    start_row = orig_idx * tracks_per_gene
+                    end_row = (orig_idx + 1) * tracks_per_gene
+                    reordered_rows.append(img_data[start_row:end_row, :])
+                img_data = np.vstack(reordered_rows)
             
             # Rescale for visualization
             viz_height = self.config.get('debug', {}).get('visualization', {}).get('height', 300)
@@ -2675,10 +2695,12 @@ class Trainer:
             
             # Plot as image
             plt.imshow(img_normalized, cmap='gray', aspect='auto', interpolation='nearest')
-            plt.xlabel('Genomic Position (rescaled)', fontsize=12)
+            plt.xlabel('Genomic Position (rescaled)', fontsize=20)
             plt.title(f'Epoch {epoch + 1} | Sample {sample_id} ({target_name}) | Input 2D ({img_data.shape[0]}x{img_data.shape[1]} → {viz_height}x{viz_width})', 
-                     fontsize=14, fontweight='bold')
-            plt.colorbar(label='Normalized Value')
+                     fontsize=24, fontweight='bold')
+            cbar = plt.colorbar()
+            cbar.set_label('Normalized Value', fontsize=19)
+            cbar.ax.tick_params(labelsize=17)
             
             # Configure Y axis with gene names
             num_genes = len(gene_names)
@@ -2695,20 +2717,20 @@ class Trainer:
                 y_minor_ticks = [(i * tracks_per_gene + tracks_per_gene / 2) * pixels_per_row 
                                  for i in range(num_genes)]
                 ax1.set_yticks(y_minor_ticks, minor=True)
-                ax1.set_yticklabels(gene_names, minor=True, fontsize=10)
+                ax1.set_yticklabels(gene_names, minor=True, fontsize=17)
                 ax1.tick_params(axis='y', which='minor', length=0)  # Hide minor tick marks
                 
-                ax1.set_ylabel('Genes', fontsize=12)
+                ax1.set_ylabel('Genes', fontsize=20)
             else:
-                ax1.set_ylabel('Tracks (rescaled)', fontsize=12)
+                ax1.set_ylabel('Tracks (rescaled)', fontsize=20)
         else:
             # 1D input (fallback for backwards compatibility)
             features_np = features_cpu.numpy().flatten()
             plt.plot(features_np, linewidth=0.5, alpha=0.7)
-            plt.xlabel('Feature Index', fontsize=12)
-            plt.ylabel('Feature Value', fontsize=12)
+            plt.xlabel('Feature Index', fontsize=20)
+            plt.ylabel('Feature Value', fontsize=20)
             plt.title(f'Epoch {epoch + 1} | Sample {sample_id} | Input Features (n={len(features_np)})', 
-                     fontsize=14, fontweight='bold')
+                     fontsize=24, fontweight='bold')
             plt.grid(True, alpha=0.3)
             
         # Plot output probabilities
@@ -2718,9 +2740,9 @@ class Trainer:
         bars[predicted_idx].set_edgecolor('red')
         bars[predicted_idx].set_linewidth(3)
         
-        plt.xlabel('Class', fontsize=12)
-        plt.ylabel('Probability', fontsize=12)
-        plt.title('Network Output Probabilities', fontsize=14, fontweight='bold')
+        plt.xlabel('Class', fontsize=20)
+        plt.ylabel('Probability', fontsize=20)
+        plt.title('Network Output Probabilities', fontsize=24, fontweight='bold')
         plt.xticks(range(len(output_probs)), 
                   class_names[:len(output_probs)] if len(output_probs) <= len(class_names) 
                   else [str(i) for i in range(len(output_probs))])
@@ -2735,7 +2757,7 @@ class Trainer:
                       f'Predicted: {predicted_name} (class {predicted_idx}, prob={output_probs[predicted_idx]:.3f})')
         
         plt.text(0.98, 0.98, result_text, transform=plt.gca().transAxes,
-                fontsize=11, verticalalignment='top', horizontalalignment='right',
+                fontsize=19, verticalalignment='top', horizontalalignment='right',
                 bbox=dict(boxstyle='round', facecolor=color, alpha=0.3))
         
         plt.tight_layout()
@@ -3202,6 +3224,7 @@ class Tester:
         self.top_regions_mode = interp_config.get('deeplift', {}).get('top_regions_mode', 'per_gene')
         self.top_regions_count = interp_config.get('deeplift', {}).get('top_regions_count', 5)
         self.min_distance_bp = interp_config.get('deeplift', {}).get('min_distance_bp', 50)
+        self.show_top_regions_xlabel = interp_config.get('deeplift', {}).get('show_top_regions_xlabel', True)
         self.gradcam_target_class = interp_config.get('gradcam', {}).get('target_class', 'predicted')
         
         # Inicializar objetos de interpretabilidade
@@ -3481,18 +3504,18 @@ class Tester:
                    linewidth=1.5, label=label, alpha=0.8)
         
         # Configure axes
-        ax.set_xlabel('Genomic Position (bp)', fontsize=12)
-        ax.set_ylabel('DeepLIFT Attribution', fontsize=12)
+        ax.set_xlabel('Genomic Position (bp)', fontsize=20)
+        ax.set_ylabel('DeepLIFT Attribution', fontsize=20)
         ax.set_title(f'DeepLIFT Track Profile: Top 5 Most Active Genes{title_suffix}', 
-                    fontsize=14, fontweight='bold')
+                    fontsize=24, fontweight='bold')
         
         # Grid and legend
         ax.grid(True, alpha=0.3)
         ax.axhline(y=0, color='black', linestyle='-', linewidth=0.5, alpha=0.5)
         
         # Legend outside plot
-        ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=10, 
-                 title='Gene (Track Index)', title_fontsize=11)
+        ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=17, 
+                 title='Gene (Track Index)', title_fontsize=19)
         
         # Adjust layout to accommodate legend
         plt.tight_layout()
@@ -3584,10 +3607,20 @@ class Tester:
              "EDAR", "MFSD12", "OCA2", "HERC2", "SLC24A5", "TCHH"])
         if genes_to_use:
             # Maintain gene order from dataset
-            gene_names = [gene for gene in GENE_ORDER if gene in genes_to_use]
+            gene_names_original = [gene for gene in GENE_ORDER if gene in genes_to_use]
         else:
-            gene_names = GENE_ORDER
+            gene_names_original = GENE_ORDER
         tracks_per_gene = 6
+        
+        # Check if alphabetical ordering is requested for visualization
+        viz_gene_order = self.config.get('debug', {}).get('visualization', {}).get('gene_order', 'dataset')
+        if viz_gene_order == 'alphabetical':
+            gene_names = sorted(gene_names_original)
+            # Create reordering indices: map from new order to original order
+            gene_reorder_indices = [gene_names_original.index(g) for g in gene_names]
+        else:
+            gene_names = gene_names_original
+            gene_reorder_indices = None
         
         # Get gene window metadata for genomic coordinates
         gene_window_metadata = self.config['dataset_input'].get('gene_window_metadata', {})
@@ -3712,6 +3745,17 @@ class Tester:
                 img_data = features_cpu[0].numpy()  # [num_rows, effective_size]
                 input_title = f'{clean_dataset_name} | Sample {sample_id} ({target_name}) | Input 2D ({img_data.shape[0]}x{img_data.shape[1]})'
             
+            # Reorder genes if alphabetical ordering is requested
+            if gene_reorder_indices is not None:
+                # Reorder rows: each gene has tracks_per_gene rows
+                reordered_rows = []
+                for new_idx in range(len(gene_reorder_indices)):
+                    orig_idx = gene_reorder_indices[new_idx]
+                    start_row = orig_idx * tracks_per_gene
+                    end_row = (orig_idx + 1) * tracks_per_gene
+                    reordered_rows.append(img_data[start_row:end_row, :])
+                img_data = np.vstack(reordered_rows)
+            
             # Calculate zoom factors for later use
             zoom_factors = (viz_height / img_data.shape[0], viz_width / img_data.shape[1])
             
@@ -3728,9 +3772,11 @@ class Tester:
             # Plot as image (without overlay - interpretability maps shown separately)
             plt.imshow(img_normalized, cmap='gray', aspect='auto', interpolation='nearest')
             
-            plt.xlabel('Gene Position', fontsize=12)
-            plt.title(input_title, fontsize=14, fontweight='bold')
-            plt.colorbar(label='Normalized Value')
+            plt.xlabel('Gene Position', fontsize=20)
+            plt.title(input_title, fontsize=24, fontweight='bold')
+            cbar = plt.colorbar()
+            cbar.set_label('Normalized Value', fontsize=19)
+            cbar.ax.tick_params(labelsize=17)
             
             # Configure X axis to show original scale (0 to window_center_size)
             window_center_size = self.config['dataset_input']['window_center_size']
@@ -3738,7 +3784,7 @@ class Tester:
             xtick_positions = np.linspace(0, viz_width - 1, num_xticks)
             xtick_labels = [f'{int(x)}' for x in np.linspace(0, window_center_size, num_xticks)]
             ax1.set_xticks(xtick_positions)
-            ax1.set_xticklabels(xtick_labels)
+            ax1.set_xticklabels(xtick_labels, fontsize=17)
             
             # Configure Y axis with gene names
             num_genes = len(gene_names)
@@ -3755,20 +3801,20 @@ class Tester:
                 y_minor_ticks = [(i * tracks_per_gene + tracks_per_gene / 2) * pixels_per_row 
                                  for i in range(num_genes)]
                 ax1.set_yticks(y_minor_ticks, minor=True)
-                ax1.set_yticklabels(gene_names, minor=True, fontsize=10)
+                ax1.set_yticklabels(gene_names, minor=True, fontsize=17)
                 ax1.tick_params(axis='y', which='minor', length=0)  # Hide minor tick marks
                 
-                ax1.set_ylabel('Genes', fontsize=12)
+                ax1.set_ylabel('Genes', fontsize=20)
             else:
-                ax1.set_ylabel('Tracks (rescaled)', fontsize=12)
+                ax1.set_ylabel('Tracks (rescaled)', fontsize=20)
         else:
             # 1D input (fallback for backwards compatibility)
             features_np = features_cpu.numpy().flatten()
             plt.plot(features_np, linewidth=0.5, alpha=0.7)
-            plt.xlabel('Feature Index', fontsize=12)
-            plt.ylabel('Feature Value', fontsize=12)
+            plt.xlabel('Feature Index', fontsize=20)
+            plt.ylabel('Feature Value', fontsize=20)
             plt.title(f'{clean_dataset_name} | Sample {sample_id} | Input Features (n={len(features_np)})', 
-                     fontsize=14, fontweight='bold')
+                     fontsize=24, fontweight='bold')
             plt.grid(True, alpha=0.3)
         
         # ─────────────────────────────────────────────────────────────────
@@ -3788,16 +3834,29 @@ class Tester:
             # Plot Grad-CAM
             if has_gradcam:
                 cam_np = gradcam_map.numpy()
+                
+                # Reorder genes if alphabetical ordering is requested
+                if gene_reorder_indices is not None:
+                    reordered_rows = []
+                    for new_idx in range(len(gene_reorder_indices)):
+                        orig_idx = gene_reorder_indices[new_idx]
+                        start_row = orig_idx * tracks_per_gene
+                        end_row = (orig_idx + 1) * tracks_per_gene
+                        reordered_rows.append(cam_np[start_row:end_row, :])
+                    cam_np = np.vstack(reordered_rows)
+                
                 # Usar block_reduce para preservar picos ao invés de interpolação
                 cam_resized = block_reduce_2d(cam_np, (viz_height, viz_width), func=downsample_agg)
                 
                 plt.sca(ax_gc)
                 im_gc = plt.imshow(cam_resized, cmap='hot', aspect='auto', interpolation='nearest',
                                    vmin=0.0, vmax=0.0025)
-                plt.colorbar(im_gc, label='Activation')
+                cbar_gc = plt.colorbar(im_gc)
+                cbar_gc.set_label('Activation', fontsize=19)
+                cbar_gc.ax.tick_params(labelsize=17)
                 # Show which class is being visualized and individual's superpopulation
                 gc_class_label = gradcam_target_class_name if gradcam_target_class_name else predicted_name
-                plt.title(f'Grad-CAM: Important Regions for Class {gc_class_label} (Individual: {target_name})', fontsize=14, fontweight='bold')
+                plt.title(f'Grad-CAM: Important Regions for Class {gc_class_label} (Individual: {target_name})', fontsize=24, fontweight='bold')
                 
                 # Compute gene importance first (needed for xlabel)
                 gene_importance = []
@@ -3812,9 +3871,9 @@ class Tester:
                 if gene_importance:
                     gene_importance.sort(key=lambda x: x[1], reverse=True)
                     top_genes_str = ', '.join([f"{g[0]}({g[1]:.5f})" for g in gene_importance[:3]])
-                    plt.xlabel(f'Gene Position — Top genes: {top_genes_str}', fontsize=11)
+                    plt.xlabel(f'Gene Position — Top genes: {top_genes_str}', fontsize=19)
                 else:
-                    plt.xlabel('Gene Position', fontsize=12)
+                    plt.xlabel('Gene Position', fontsize=20)
                 
                 # Configure X axis to show original scale (0 to window_center_size)
                 window_center_size = self.config['dataset_input']['window_center_size']
@@ -3822,7 +3881,7 @@ class Tester:
                 xtick_positions = np.linspace(0, viz_width - 1, num_xticks)
                 xtick_labels = [f'{int(x)}' for x in np.linspace(0, window_center_size, num_xticks)]
                 ax_gc.set_xticks(xtick_positions)
-                ax_gc.set_xticklabels(xtick_labels)
+                ax_gc.set_xticklabels(xtick_labels, fontsize=17)
                 
                 # Configure Y axis (same style as first plot)
                 num_genes = len(gene_names)
@@ -3839,14 +3898,24 @@ class Tester:
                     y_minor_ticks = [(i * tracks_per_gene + tracks_per_gene / 2) * pixels_per_row 
                                      for i in range(num_genes)]
                     ax_gc.set_yticks(y_minor_ticks, minor=True)
-                    ax_gc.set_yticklabels(gene_names, minor=True, fontsize=10)
+                    ax_gc.set_yticklabels(gene_names, minor=True, fontsize=17)
                     ax_gc.tick_params(axis='y', which='minor', length=0)
                     
-                    ax_gc.set_ylabel('Genes', fontsize=12)
+                    ax_gc.set_ylabel('Genes', fontsize=20)
             
             # Plot DeepLIFT
             if has_deeplift:
                 dl_np = deeplift_map.numpy()
+                
+                # Reorder genes if alphabetical ordering is requested
+                if gene_reorder_indices is not None:
+                    reordered_rows = []
+                    for new_idx in range(len(gene_reorder_indices)):
+                        orig_idx = gene_reorder_indices[new_idx]
+                        start_row = orig_idx * tracks_per_gene
+                        end_row = (orig_idx + 1) * tracks_per_gene
+                        reordered_rows.append(dl_np[start_row:end_row, :])
+                    dl_np = np.vstack(reordered_rows)
                 
                 # Usar block_reduce para preservar picos ao invés de interpolação
                 # Para DeepLIFT (valores positivos e negativos), usar max do valor absoluto
@@ -3863,15 +3932,20 @@ class Tester:
                 
                 plt.sca(ax_dl)
                 
-                # Colormap personalizado: preto no centro, cores vivas nos extremos
-                # Azul vivo (negativo) <- Preto (zero) -> Vermelho vivo (positivo)
+                # Colormap personalizado: cor configurável no centro, cores vivas nos extremos
+                # Azul brilhante (negativo) <- Branco/Preto (zero) -> Vermelho brilhante (positivo)
                 from matplotlib.colors import LinearSegmentedColormap
+                colormap_center = self.config.get('debug', {}).get('interpretability', {}).get('deeplift', {}).get('colormap_center', 'white')
+                if colormap_center == 'black':
+                    center_color = (0.0, 0.0, 0.0)  # Preto
+                else:
+                    center_color = (1.0, 1.0, 1.0)  # Branco (padrão)
                 colors_diverging = [
-                    (0.2, 0.4, 0.9),   # Azul vivo (negativo máximo)
-                    (0.0, 0.0, 0.0),   # Preto (zero)
-                    (0.9, 0.3, 0.2)    # Vermelho vivo (positivo máximo)
+                    (0.0, 0.5, 1.0),   # Azul brilhante (negativo máximo)
+                    center_color,      # Cor central (zero)
+                    (1.0, 0.2, 0.0)    # Vermelho brilhante (positivo máximo)
                 ]
-                cmap_black_center = LinearSegmentedColormap.from_list('black_center', colors_diverging)
+                cmap_diverging = LinearSegmentedColormap.from_list('diverging_center', colors_diverging)
                 
                 # Escala: dinâmica para modo de média de classe, fixa para outros casos
                 if deeplift_class_mean_mode:
@@ -3882,16 +3956,30 @@ class Tester:
                     # Escala fixa para comparação entre amostras
                     dl_vmin, dl_vmax = -0.10, 0.10
                 
-                im_dl = plt.imshow(dl_resized, cmap=cmap_black_center, aspect='auto', 
+                # Aplicar transformação gamma para comprimir valores pequenos
+                # gamma > 1.0: valores pequenos ficam mais próximos do centro (branco/preto)
+                # gamma = 1.0: comportamento linear (sem transformação)
+                colormap_gamma = self.config.get('debug', {}).get('interpretability', {}).get('deeplift', {}).get('colormap_gamma', 2.0)
+                if colormap_gamma != 1.0:
+                    # Normalizar para [-1, 1], aplicar gamma preservando sinal, depois desnormalizar
+                    dl_normalized = dl_resized / max(abs(dl_vmin), abs(dl_vmax))
+                    dl_display = np.sign(dl_normalized) * (np.abs(dl_normalized) ** (1.0 / colormap_gamma))
+                    dl_display = dl_display * max(abs(dl_vmin), abs(dl_vmax))
+                else:
+                    dl_display = dl_resized
+                
+                im_dl = plt.imshow(dl_display, cmap=cmap_diverging, aspect='auto', 
                                   interpolation='nearest', vmin=dl_vmin, vmax=dl_vmax)
-                plt.colorbar(im_dl, label='Attribution (+ → class, - → not class)')
+                cbar_dl = plt.colorbar(im_dl)
+                cbar_dl.set_label('Attribution (+ → class, - → not class)', fontsize=19)
+                cbar_dl.ax.tick_params(labelsize=17)
                 
                 # Título: diferente para modo de média de classe
                 dl_class_label = deeplift_target_class_name if deeplift_target_class_name else predicted_name
                 if deeplift_class_mean_mode:
-                    plt.title(f'DeepLIFT: Mean Attribution for Class {dl_class_label} ({deeplift_class_mean_num_samples} samples)', fontsize=14, fontweight='bold')
+                    plt.title(f'DeepLIFT: Mean Attribution for Class {dl_class_label} ({deeplift_class_mean_num_samples} samples)', fontsize=24, fontweight='bold')
                 else:
-                    plt.title(f'DeepLIFT: Feature Attribution for Class {dl_class_label} (Individual: {target_name})', fontsize=14, fontweight='bold')
+                    plt.title(f'DeepLIFT: Feature Attribution for Class {dl_class_label} (Individual: {target_name})', fontsize=24, fontweight='bold')
                 
                 # Compute top N most active regions using configured mode
                 is_global_mode = self.top_regions_mode == 'global'
@@ -4063,11 +4151,32 @@ class Tester:
                             y_pos = (gene_idx + 0.5) * height_per_gene
                             
                             # Create hollow green ellipse that appears as a circle
-                            ellipse = Ellipse((x_pos, y_pos), circle_width, circle_height, 
-                                            fill=False, edgecolor='green', linewidth=1.5)
-                            ax_dl.add_patch(ellipse)
+                            ellipse_dl = Ellipse((x_pos, y_pos), circle_width, circle_height, 
+                                            fill=False, edgecolor='lime', linewidth=2.5)
+                            ax_dl.add_patch(ellipse_dl)
+
+                            # Add matching circle on the input plot
+                            ellipse_in = Ellipse((x_pos, y_pos), circle_width, circle_height, 
+                                            fill=False, edgecolor='lime', linewidth=2.5)
+                            ax1.add_patch(ellipse_in)
                 
-                plt.xlabel('Gene Position', fontsize=12)
+                # Optional: include top regions in X-axis label
+                if self.show_top_regions_xlabel and top_5_regions:
+                    top_regions_labels = []
+                    for idx, region_tuple in enumerate(top_5_regions):
+                        gene = region_tuple[0]
+                        val = region_tuple[1]
+                        label = f"{gene}({val:.5f})"
+                        if top_regions_with_track and idx < len(top_regions_with_track):
+                            raw_region = top_regions_with_track[idx]
+                            if len(raw_region) > 6:
+                                track_idx = raw_region[6]
+                                label = f"{gene}(t{track_idx},{val:.5f})"
+                        top_regions_labels.append(label)
+                    top_regions_str = ', '.join(top_regions_labels)
+                    plt.xlabel(f"Gene Position\nTop regions: {top_regions_str}", fontsize=19)
+                else:
+                    plt.xlabel('Gene Position', fontsize=20)
                 
                 # Configure X axis to show original scale (0 to window_center_size)
                 window_center_size = self.config['dataset_input']['window_center_size']
@@ -4075,7 +4184,7 @@ class Tester:
                 xtick_positions = np.linspace(0, viz_width - 1, num_xticks)
                 xtick_labels = [f'{int(x)}' for x in np.linspace(0, window_center_size, num_xticks)]
                 ax_dl.set_xticks(xtick_positions)
-                ax_dl.set_xticklabels(xtick_labels)
+                ax_dl.set_xticklabels(xtick_labels, fontsize=17)
                 
                 # Configure Y axis (same style as first plot)
                 num_genes = len(gene_names)
@@ -4092,10 +4201,10 @@ class Tester:
                     y_minor_ticks = [(i * tracks_per_gene + tracks_per_gene / 2) * pixels_per_row 
                                      for i in range(num_genes)]
                     ax_dl.set_yticks(y_minor_ticks, minor=True)
-                    ax_dl.set_yticklabels(gene_names, minor=True, fontsize=10)
+                    ax_dl.set_yticklabels(gene_names, minor=True, fontsize=17)
                     ax_dl.tick_params(axis='y', which='minor', length=0)
                     
-                    ax_dl.set_ylabel('Genes', fontsize=12)
+                    ax_dl.set_ylabel('Genes', fontsize=20)
         
         # ─────────────────────────────────────────────────────────────────
         # Last Row: Output probabilities (NOT shown for DeepLIFT mode)
@@ -4107,9 +4216,9 @@ class Tester:
             bars[predicted_idx].set_edgecolor('red')
             bars[predicted_idx].set_linewidth(3)
             
-            plt.xlabel('Class', fontsize=12)
-            plt.ylabel('Probability', fontsize=12)
-            plt.title('Network Output Probabilities', fontsize=14, fontweight='bold')
+            plt.xlabel('Class', fontsize=20)
+            plt.ylabel('Probability', fontsize=20)
+            plt.title('Network Output Probabilities', fontsize=24, fontweight='bold')
             plt.xticks(range(len(output_probs)), 
                       class_names[:len(output_probs)] if len(output_probs) <= len(class_names) 
                       else [str(i) for i in range(len(output_probs))])
@@ -4124,7 +4233,7 @@ class Tester:
                           f'Predicted: {predicted_name} (class {predicted_idx}, prob={output_probs[predicted_idx]:.3f})')
             
             plt.text(0.98, 0.98, result_text, transform=plt.gca().transAxes,
-                    fontsize=11, verticalalignment='top', horizontalalignment='right',
+                    fontsize=19, verticalalignment='top', horizontalalignment='right',
                     bbox=dict(boxstyle='round', facecolor=color, alpha=0.3))
         
         # Adjust layout with more vertical spacing between subplots

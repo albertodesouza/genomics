@@ -59,6 +59,205 @@ except ImportError:
     from dataset_builder import IndividualDatasetBuilder, DatasetMetadataBuilder
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# FROGAncestryCalc Accuracy Evaluation Functions
+# ═══════════════════════════════════════════════════════════════════════════════
+
+SUPERPOPULATION_ORDER = ['AFR', 'AMR', 'EAS', 'EUR', 'SAS']
+
+
+def aggregate_likelihood_by_superpopulation(
+    likelihood: List[float],
+    pop_names: List[str],
+    mapping: Dict[str, Dict[str, str]]
+) -> Dict[str, float]:
+    """
+    Aggregate likelihood values by superpopulation.
+    
+    Args:
+        likelihood: Vector of likelihood values (~150 values)
+        pop_names: List of FROG population names corresponding to likelihood
+        mapping: Population mapping from FROG to 1000G
+        
+    Returns:
+        Dictionary with aggregated likelihood per superpopulation
+    """
+    superpop_likelihood = {sp: 0.0 for sp in SUPERPOPULATION_ORDER}
+    
+    for val, pop_name in zip(likelihood, pop_names):
+        if pop_name in mapping:
+            superpop = mapping[pop_name]['superpopulation_code']
+            if superpop in superpop_likelihood:
+                superpop_likelihood[superpop] += val
+    
+    return superpop_likelihood
+
+
+def predict_superpopulation(
+    likelihood: List[float],
+    pop_names: List[str],
+    mapping: Dict[str, Dict[str, str]]
+) -> str:
+    """
+    Predict superpopulation based on highest aggregated likelihood.
+    
+    Args:
+        likelihood: Vector of likelihood values
+        pop_names: List of FROG population names
+        mapping: Population mapping from FROG to 1000G
+        
+    Returns:
+        Predicted superpopulation code (AFR, AMR, EAS, EUR, SAS)
+    """
+    superpop_likelihood = aggregate_likelihood_by_superpopulation(
+        likelihood, pop_names, mapping
+    )
+    
+    # Return superpopulation with highest likelihood
+    return max(superpop_likelihood, key=superpop_likelihood.get)
+
+
+def evaluate_frog_accuracy(
+    output_dir: Path,
+    population_mapping: Dict[str, Dict[str, str]]
+) -> Tuple[float, np.ndarray, List[str], List[str]]:
+    """
+    Evaluate FROGAncestryCalc accuracy at superpopulation level.
+    
+    Iterates over all individuals in the dataset, compares predicted
+    superpopulation (from frog_likelihood) with actual superpopulation.
+    
+    Args:
+        output_dir: Base directory of the dataset
+        population_mapping: Mapping from FROG populations to 1000G
+        
+    Returns:
+        Tuple with:
+        - accuracy: float (0.0 to 1.0)
+        - confusion_matrix: numpy array (5x5)
+        - y_true: list of actual superpopulations
+        - y_pred: list of predicted superpopulations
+    """
+    individuals_dir = output_dir / "individuals"
+    
+    if not individuals_dir.exists():
+        raise FileNotFoundError(f"Diretório de indivíduos não encontrado: {individuals_dir}")
+    
+    y_true = []
+    y_pred = []
+    skipped = 0
+    
+    # Iterate over all individuals
+    for individual_dir in sorted(individuals_dir.iterdir()):
+        if not individual_dir.is_dir():
+            continue
+        
+        metadata_file = individual_dir / "individual_metadata.json"
+        if not metadata_file.exists():
+            skipped += 1
+            continue
+        
+        # Load individual metadata
+        with open(metadata_file, 'r') as f:
+            metadata = json.load(f)
+        
+        # Check if frog_likelihood is available
+        if 'frog_likelihood' not in metadata or 'frog_population_names' not in metadata:
+            skipped += 1
+            continue
+        
+        # Get actual superpopulation
+        actual_superpop = metadata.get('superpopulation', '')
+        if actual_superpop not in SUPERPOPULATION_ORDER:
+            skipped += 1
+            continue
+        
+        # Predict superpopulation from frog_likelihood
+        predicted_superpop = predict_superpopulation(
+            metadata['frog_likelihood'],
+            metadata['frog_population_names'],
+            population_mapping
+        )
+        
+        y_true.append(actual_superpop)
+        y_pred.append(predicted_superpop)
+    
+    if not y_true:
+        raise ValueError("Nenhum indivíduo com dados válidos de frog_likelihood encontrado")
+    
+    # Calculate accuracy
+    correct = sum(1 for t, p in zip(y_true, y_pred) if t == p)
+    accuracy = correct / len(y_true)
+    
+    # Build confusion matrix
+    confusion_matrix = np.zeros((5, 5), dtype=int)
+    superpop_to_idx = {sp: i for i, sp in enumerate(SUPERPOPULATION_ORDER)}
+    
+    for true_sp, pred_sp in zip(y_true, y_pred):
+        true_idx = superpop_to_idx[true_sp]
+        pred_idx = superpop_to_idx[pred_sp]
+        confusion_matrix[true_idx, pred_idx] += 1
+    
+    if skipped > 0:
+        print(f"[WARN] {skipped} indivíduos ignorados (sem dados de frog_likelihood)")
+    
+    return accuracy, confusion_matrix, y_true, y_pred
+
+
+def print_confusion_matrix(confusion_matrix: np.ndarray, labels: List[str]) -> None:
+    """
+    Print formatted confusion matrix to terminal.
+    
+    Args:
+        confusion_matrix: 2D numpy array
+        labels: List of class labels
+    """
+    # Header
+    header = "          " + "".join(f"{label:>8}" for label in labels)
+    print(header)
+    
+    # Rows
+    for i, label in enumerate(labels):
+        row_values = "".join(f"{confusion_matrix[i, j]:>8}" for j in range(len(labels)))
+        print(f"    {label:<6}{row_values}")
+
+
+def print_frog_accuracy_report(
+    accuracy: float,
+    confusion_matrix: np.ndarray,
+    y_true: List[str],
+    y_pred: List[str]
+) -> None:
+    """
+    Print complete accuracy evaluation report.
+    
+    Args:
+        accuracy: Overall accuracy (0.0 to 1.0)
+        confusion_matrix: 5x5 numpy array
+        y_true: List of actual superpopulations
+        y_pred: List of predicted superpopulations
+    """
+    total = len(y_true)
+    correct = sum(1 for t, p in zip(y_true, y_pred) if t == p)
+    
+    print(f"\n[INFO] Avaliando {total} indivíduos...")
+    print(f"\nAcurácia Geral: {accuracy*100:.1f}% ({correct}/{total})")
+    
+    # Per-class accuracy
+    print("\nAcurácia por Superpopulação:")
+    for i, sp in enumerate(SUPERPOPULATION_ORDER):
+        sp_total = confusion_matrix[i, :].sum()
+        sp_correct = confusion_matrix[i, i]
+        if sp_total > 0:
+            sp_acc = sp_correct / sp_total * 100
+            print(f"  {sp}: {sp_acc:.1f}% ({sp_correct}/{sp_total})")
+        else:
+            print(f"  {sp}: N/A (0 amostras)")
+    
+    print("\nMatriz de Confusão (linhas=real, colunas=predito):\n")
+    print_confusion_matrix(confusion_matrix, SUPERPOPULATION_ORDER)
+
+
 def load_config(config_path: Path) -> dict:
     """
     Load YAML configuration file.
@@ -1014,6 +1213,50 @@ def main():
             
         except Exception as e:
             print(f"[ERROR] Erro ao gerar metadados do dataset: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # Step 7: Evaluate FROGAncestryCalc accuracy
+    if steps.get('evaluate_frog_accuracy', False):
+        print("\n" + "="*80)
+        print("PASSO 7: AVALIAÇÃO DE ACURÁCIA FROGAncestryCalc (Superpopulação)")
+        print("="*80)
+        
+        try:
+            # Load population mapping if not already loaded
+            script_dir = Path(__file__).parent
+            project_root = script_dir.parent
+            mapping_file = project_root / "FROGAncestryCalc/population_mapping_1000genomes.csv"
+            
+            if not mapping_file.exists():
+                print(f"[ERROR] Arquivo de mapeamento não encontrado: {mapping_file}")
+                print("[WARN] Pulando avaliação de acurácia.")
+            else:
+                # Load mapping
+                import pandas as pd
+                mapping_df = pd.read_csv(mapping_file)
+                population_mapping = {}
+                for _, row in mapping_df.iterrows():
+                    frog_pop = row['FROGAncestryCalc_Population']
+                    population_mapping[frog_pop] = {
+                        'code_1000g': row['Pop_Code_1000G'],
+                        'full_name_1000g': row['Full_Name_1000G'],
+                        'superpopulation_code': row['Superpopulation_1000G'],
+                        'superpopulation_name': row['Superpopulation_Full_Name']
+                    }
+                
+                # Evaluate accuracy
+                accuracy, confusion_matrix, y_true, y_pred = evaluate_frog_accuracy(
+                    output_dir, population_mapping
+                )
+                
+                # Print report
+                print_frog_accuracy_report(accuracy, confusion_matrix, y_true, y_pred)
+                
+                print(f"\n[INFO] ✓ Avaliação de acurácia concluída!")
+                
+        except Exception as e:
+            print(f"[ERROR] Erro ao avaliar acurácia: {e}")
             import traceback
             traceback.print_exc()
     

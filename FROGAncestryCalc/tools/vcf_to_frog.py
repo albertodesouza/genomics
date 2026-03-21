@@ -7,18 +7,23 @@ Converts VCF files (from 1000 Genomes, WGS, or other sources) to the pipe-delimi
 format required by FROGAncestryCalc.
 
 Usage:
-    python vcf_to_frog.py <input.vcf.gz> <snp_list.txt> <output.txt> [alleles_file.txt]
+    python vcf_to_frog.py <input.vcf.gz> <snp_list.txt> <output.txt> [alleles_file.txt] [--missing-mode {ref,nn}]
 
 Arguments:
     input.vcf.gz      - VCF file (can be gzipped)
     snp_list.txt      - File with one rsID per line
     output.txt        - Output file in FROGAncestryCalc format
-    alleles_file.txt  - Optional: File with reference alleles (SNPInfo/55_aisnps_alleles.txt)
+    alleles_file.txt  - Optional: File with SNP coordinates and reference alleles
+
+Options:
+    --missing-mode ref  - Missing SNPs become REF/REF when reference alleles are available
+    --missing-mode nn   - Missing SNPs become NN even when using alleles_file for coordinate mapping
 
 Author: Modified for FROGAncestryCalc pipeline
 License: MIT
 """
 
+import argparse
 import sys
 import gzip
 import os
@@ -62,6 +67,83 @@ def load_reference_alleles(alleles_file):
     
     return ref_alleles
 
+def load_allowed_alleles(alleles_file):
+    """
+    Loads allowed alleles from SNPInfo alleles file.
+    
+    Args:
+        alleles_file: Path to alleles file (e.g., SNPInfo/55_aisnps_alleles.txt)
+        
+    Returns:
+        Dictionary mapping {rsID: set(allowed_alleles)}
+    """
+    allowed_alleles = {}
+    
+    with open(alleles_file, 'r') as f:
+        for i, line in enumerate(f):
+            if i == 0:  # Skip header
+                continue
+            
+            parts = line.strip().split('\t')
+            if len(parts) < 5:
+                continue
+            
+            rs_id = parts[1]
+            alleles = parts[4]
+            if '/' in alleles:
+                allowed_alleles[rs_id] = set(alleles.split('/'))
+    
+    return allowed_alleles
+
+def complement_base(base):
+    """Returns the DNA complement of a single base."""
+    complements = {
+        'A': 'T',
+        'T': 'A',
+        'C': 'G',
+        'G': 'C',
+        'N': 'N',
+        '.': '.',
+    }
+    return complements.get(base.upper(), base)
+
+def complement_allele_string(allele_string):
+    """Complements a comma-separated allele string."""
+    if allele_string in ('', '.'):
+        return allele_string
+    return ','.join(complement_base(allele) for allele in allele_string.split(','))
+
+def normalize_strand_for_panel(snp_id, ref, alt, allowed_alleles):
+    """
+    Normalizes REF/ALT alleles to match the strand/orientation expected by the panel.
+    
+    Args:
+        snp_id: SNP rsID
+        ref: VCF REF allele
+        alt: VCF ALT allele string
+        allowed_alleles: Dictionary mapping rsID -> set(allowed alleles)
+        
+    Returns:
+        Tuple: (normalized_ref, normalized_alt, strand_mode)
+        strand_mode is one of: 'direct', 'complement', 'unknown'
+    """
+    expected = allowed_alleles.get(snp_id)
+    if not expected:
+        return ref, alt, 'unknown'
+    
+    observed = {ref}
+    if alt and alt != '.':
+        observed.update(alt.split(','))
+    
+    if observed.issubset(expected):
+        return ref, alt, 'direct'
+    
+    complemented = {complement_base(base) for base in observed}
+    if complemented.issubset(expected):
+        return complement_base(ref), complement_allele_string(alt), 'complement'
+    
+    return ref, alt, 'unknown'
+
 def convert_genotype(gt_field, ref, alt):
     """
     Converts VCF genotype notation (0/1, 0|1) to allele notation (AG, AT, etc.)
@@ -100,7 +182,7 @@ def convert_genotype(gt_field, ref, alt):
     bases.sort()
     return ''.join(bases)
 
-def vcf_to_frog(vcf_file, snp_list_file, output_file, alleles_file=None):
+def vcf_to_frog(vcf_file, snp_list_file, output_file, alleles_file=None, missing_mode='ref'):
     """
     Main conversion function
     
@@ -108,16 +190,20 @@ def vcf_to_frog(vcf_file, snp_list_file, output_file, alleles_file=None):
         vcf_file: Path to VCF file
         snp_list_file: Path to file with SNP IDs (one per line)
         output_file: Path to output file
-        alleles_file: Optional path to alleles file for reference alleles
+        alleles_file: Optional path to alleles file for position mapping and reference alleles
+        missing_mode: How to handle missing SNPs. 'ref' uses REF/REF when possible,
+            'nn' always writes NN for SNPs absent from the VCF.
     """
     
     # Load reference alleles and position mapping if provided
     ref_alleles_from_file = {}
+    allowed_alleles_from_file = {}
     pos_to_rsid = {}  # Maps "chr:pos" to rsID
     
     if alleles_file and os.path.exists(alleles_file):
         print(f"📋 Loading reference alleles and positions from {alleles_file}...")
         ref_alleles_from_file = load_reference_alleles(alleles_file)
+        allowed_alleles_from_file = load_allowed_alleles(alleles_file)
         
         # Build position to rsID mapping
         with open(alleles_file, 'r') as f:
@@ -136,6 +222,10 @@ def vcf_to_frog(vcf_file, snp_list_file, output_file, alleles_file=None):
         
         print(f"   Loaded {len(ref_alleles_from_file)} reference alleles")
         print(f"   Created position mapping for {len(pos_to_rsid)} SNPs")
+        if missing_mode == 'nn':
+            print("   Missing SNP mode: NN (alleles file will be used only for coordinate mapping)")
+        else:
+            print("   Missing SNP mode: REF/REF when reference alleles are available")
     
     # Read target SNP list
     print(f"📋 Loading SNP list from {snp_list_file}...")
@@ -150,6 +240,7 @@ def vcf_to_frog(vcf_file, snp_list_file, output_file, alleles_file=None):
     found_snps = set()
     snp_ref_alleles = {}  # {snp_id: ref_allele} - from VCF
     snp_alt_alleles = {}  # {snp_id: alt_allele} - for logging
+    snp_strand_modes = {}  # {snp_id: strand handling mode}
     
     print(f"\n🔍 Processing VCF file: {vcf_file}")
     
@@ -199,12 +290,26 @@ def vcf_to_frog(vcf_file, snp_list_file, output_file, alleles_file=None):
             
             found_snps.add(snp_id)
             snp_order.append(snp_id)
+
+            normalized_ref, normalized_alt, strand_mode = normalize_strand_for_panel(
+                snp_id,
+                ref[0],
+                alt,
+                allowed_alleles_from_file,
+            )
             
             # Store reference and alt alleles from VCF
-            snp_ref_alleles[snp_id] = ref[0]
-            snp_alt_alleles[snp_id] = alt[0] if alt else '.'
+            snp_ref_alleles[snp_id] = normalized_ref
+            snp_alt_alleles[snp_id] = normalized_alt[0] if normalized_alt else '.'
+            snp_strand_modes[snp_id] = strand_mode
             
             print(f"\n✓ Processing {snp_id} (chr{chrom}:{pos})")
+            if strand_mode == 'complement':
+                print(f"  ↳ Using strand complement to match panel alleles: REF={ref[0]}/{normalized_ref}")
+            elif strand_mode == 'unknown':
+                expected = '/'.join(sorted(allowed_alleles_from_file.get(snp_id, [])))
+                if expected:
+                    print(f"  ↳ Warning: observed alleles do not match panel alleles ({expected}); keeping VCF alleles")
             
             # Process genotypes for each sample
             format_field = fields[8].split(':')
@@ -213,7 +318,7 @@ def vcf_to_frog(vcf_file, snp_list_file, output_file, alleles_file=None):
             for i, sample in enumerate(samples):
                 sample_data = fields[9 + i].split(':')
                 gt = sample_data[gt_index]
-                genotypes[sample][snp_id] = convert_genotype(gt, ref[0], alt[0])
+                genotypes[sample][snp_id] = convert_genotype(gt, normalized_ref, normalized_alt)
     
     # Process missing SNPs and determine how to handle them
     missing_snps = target_snps - found_snps
@@ -229,7 +334,7 @@ def vcf_to_frog(vcf_file, snp_list_file, output_file, alleles_file=None):
         
         # Determine which missing SNPs have reference alleles
         for snp in missing_snps:
-            if snp in ref_alleles_from_file:
+            if missing_mode == 'ref' and snp in ref_alleles_from_file:
                 snps_with_ref.add(snp)
             else:
                 snps_without_ref.add(snp)
@@ -253,26 +358,34 @@ def vcf_to_frog(vcf_file, snp_list_file, output_file, alleles_file=None):
             # Case 1: Found in VCF
             ref = snp_ref_alleles.get(snp, '?')
             alt = snp_alt_alleles.get(snp, '?')
+            strand_mode = snp_strand_modes.get(snp, 'direct')
             
             # Count valid genotypes vs NN for this SNP
             valid_count = sum(1 for s in samples if genotypes[s].get(snp, 'NN') != 'NN')
             nn_count = len(samples) - valid_count
             
             status = f"✓ {snp}: Found in VCF (REF={ref}, ALT={alt})"
+            if strand_mode == 'complement':
+                status += " [strand complemented]"
+            elif strand_mode == 'unknown':
+                status += " [panel allele mismatch]"
             if nn_count > 0:
                 status += f" - {valid_count} valid, {nn_count} NN"
             else:
                 status += f" - all {valid_count} samples have data"
             print(status)
             
-        elif snp in ref_alleles_from_file:
+        elif missing_mode == 'ref' and snp in ref_alleles_from_file:
             # Case 2: Not in VCF, but have reference allele
             ref = ref_alleles_from_file[snp]
             print(f"⚠ {snp}: Not in VCF, using REF/REF ({ref}{ref}) for all {len(samples)} samples")
             snps_with_ref.add(snp)
         else:
             # Case 3: Not in VCF and no reference allele
-            print(f"✗ {snp}: Not in VCF and no reference available - using NN for all {len(samples)} samples")
+            if missing_mode == 'nn' and snp in ref_alleles_from_file:
+                print(f"⚠ {snp}: Not in VCF, using NN due to --missing-mode nn for all {len(samples)} samples")
+            else:
+                print(f"✗ {snp}: Not in VCF and no reference available - using NN for all {len(samples)} samples")
             snps_without_ref.add(snp)
     
     print(f"{'='*70}")
@@ -290,7 +403,7 @@ def vcf_to_frog(vcf_file, snp_list_file, output_file, alleles_file=None):
                 if snp in found_snps:
                     # Case 1: SNP was in VCF - use stored genotype
                     row.append(genotypes[sample].get(snp, 'NN'))
-                elif snp in ref_alleles_from_file:
+                elif missing_mode == 'ref' and snp in ref_alleles_from_file:
                     # Case 2: SNP not in VCF but we have reference - use REF/REF
                     ref = ref_alleles_from_file[snp]
                     row.append(ref + ref)
@@ -309,22 +422,44 @@ def vcf_to_frog(vcf_file, snp_list_file, output_file, alleles_file=None):
         print(f"     - SNPs marked as NN: {len(snps_without_ref)}")
     print(f"   Ready for FROGAncestryCalc analysis\n")
 
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description=(
+            "Convert a VCF into FROGAncestryCalc format. When an alleles file is "
+            "provided, it is used to map GRCh coordinates to rsIDs; missing SNPs can "
+            "be written as REF/REF or NN."
+        )
+    )
+    parser.add_argument("vcf_file", help="VCF file (plain text or gzipped)")
+    parser.add_argument("snp_list_file", help="File with one rsID per line")
+    parser.add_argument("output_file", help="Output file in FROGAncestryCalc format")
+    parser.add_argument(
+        "alleles_file",
+        nargs="?",
+        help="Optional SNPInfo alleles file for coordinate mapping and reference alleles",
+    )
+    parser.add_argument(
+        "--missing-mode",
+        choices=["ref", "nn"],
+        default="ref",
+        help=(
+            "How to encode SNPs missing from the VCF. "
+            "'ref' uses REF/REF when reference alleles are known; "
+            "'nn' always writes NN. Default: ref"
+        ),
+    )
+    return parser.parse_args()
+
+
 def main():
     """Main entry point"""
-    if len(sys.argv) < 4 or len(sys.argv) > 5:
-        print(__doc__)
-        print("\nError: Wrong number of arguments")
-        print("\nUsage:")
-        print("  python vcf_to_frog.py <input.vcf.gz> <snp_list.txt> <output.txt> [alleles_file.txt]")
-        print("\nExample:")
-        print("  python vcf_to_frog.py 1000genomes.vcf.gz tools/aisnps_55_list.txt input/my_samples.txt")
-        print("  python vcf_to_frog.py 1000genomes.vcf.gz tools/aisnps_55_list.txt input/my_samples.txt SNPInfo/55_aisnps_alleles.txt")
-        sys.exit(1)
+    args = parse_args()
     
-    vcf_file = sys.argv[1]
-    snp_list_file = sys.argv[2]
-    output_file = sys.argv[3]
-    alleles_file = sys.argv[4] if len(sys.argv) == 5 else None
+    vcf_file = args.vcf_file
+    snp_list_file = args.snp_list_file
+    output_file = args.output_file
+    alleles_file = args.alleles_file
     
     # Validate input files
     if not os.path.exists(vcf_file):
@@ -340,7 +475,13 @@ def main():
         sys.exit(1)
     
     try:
-        vcf_to_frog(vcf_file, snp_list_file, output_file, alleles_file)
+        vcf_to_frog(
+            vcf_file,
+            snp_list_file,
+            output_file,
+            alleles_file=alleles_file,
+            missing_mode=args.missing_mode,
+        )
     except Exception as e:
         print(f"\n❌ Error: {str(e)}")
         import traceback

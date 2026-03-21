@@ -185,6 +185,12 @@ pipeline:
     
     # Step 6: Generate PyTorch Dataset metadata (aggregates all individuals)
     generate_dataset_metadata: true
+    
+    # Step 7: Evaluate FROGAncestryCalc accuracy
+    # Calculates accuracy at superpopulation level (AFR, AMR, EAS, EUR, SAS)
+    # Uses frog_likelihood from each individual to predict superpopulation
+    # Prints accuracy score and confusion matrix
+    evaluate_frog_accuracy: true
   
   # Parallel processing
   parallel:

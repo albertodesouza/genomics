@@ -15,11 +15,19 @@ FROG-kb (Forensic Resource/Reference On Genetics - Knowledge base) Ancestry Infe
   - [Available Tools](#available-tools)
   - [Option 1: From 1000 Genomes Project](#option-1-from-1000-genomes-project)
   - [Option 2: From Your Own VCF File](#option-2-from-your-own-vcf-file)
+  - [VCF Conversion Notes](#vcf-conversion-notes)
   - [Option 3: From Whole Genome Sequencing](#option-3-from-whole-genome-sequencing)
+  - [Option 4: From a BAM File](#option-4-from-a-bam-file)
   - [SNP List Reference](#snp-list-reference)
   - [Installation of Required Tools](#installation-of-required-tools)
   - [Notes on Genome Builds](#notes-on-genome-builds)
 - [Output Files](#-output-files)
+  - [Visualization](#visualization)
+- [Admixture Estimation](#-admixture-estimation)
+  - [MLE Mode](#mle-mode)
+  - [ADMIXTURE Mode](#admixture-mode)
+  - [Panel Selection](#panel-selection)
+  - [Caveats and Limitations](#caveats-and-limitations)
 - [Project Structure](#️-project-structure)
 - [Requirements](#️-requirements)
 - [Modifications from Original](#-modifications-from-original)
@@ -109,9 +117,15 @@ The `tools/` directory contains scripts to extract the required SNPs from variou
 | Tool | Description |
 |------|-------------|
 | `vcf_to_frog.py` | Convert VCF files to FROGAncestryCalc format |
+| `plot_frog_ancestry_pie.py` | Generate a pie chart and summary TSV from likelihood output |
+| `admixture_estimate.py` | Estimate ancestry admixture proportions (MLE and/or ADMIXTURE) |
+| `run_frog_from_bam.sh` | End-to-end pipeline: BAM → variant calling → FROG analysis |
 | `extract_snps_from_1000genomes.sh` | Download and extract SNPs from 1000 Genomes Project |
 | `extract_snps_from_wgs.sh` | Extract SNPs from whole genome sequencing data (FASTQ/BAM/VCF) |
 | `aisnps_55_list.txt` | List of the 55 AISNP rs IDs |
+| `aisnps_128_list.txt` | List of the 128 AISNP rs IDs |
+| `aisnps_55_grch37.bed` | BED coordinates for 55 AISNPs (GRCh37) |
+| `aisnps_128_grch37.bed` | BED coordinates for 128 AISNPs (GRCh37) |
 
 ### Option 1: From 1000 Genomes Project
 
@@ -147,12 +161,48 @@ python3 tools/convert_grch37_to_grch38.py
 If you already have a VCF file (from sequencing, microarray, or other sources):
 
 ```bash
-# Convert VCF to FROGAncestryCalc format
+# Recommended for typical GRCh37/hg19 variant-only VCFs
 python3 tools/vcf_to_frog.py \
     your_samples.vcf.gz \
     tools/aisnps_55_list.txt \
-    input/your_data.txt
+    input/your_data.txt \
+    SNPInfo/55_aisnps_alleles.txt \
+    --missing-mode nn
 ```
+
+```bash
+# GRCh38/hg38 VCFs
+python3 tools/vcf_to_frog.py \
+    your_samples.vcf.gz \
+    tools/aisnps_55_list.txt \
+    input/your_data.txt \
+    SNPInfo/55_aisnps_alleles_grch38.txt \
+    --missing-mode nn
+```
+
+```bash
+# Backward-compatible behavior: missing SNPs become REF/REF
+python3 tools/vcf_to_frog.py \
+    your_samples.vcf.gz \
+    tools/aisnps_55_list.txt \
+    input/your_data.txt \
+    SNPInfo/55_aisnps_alleles.txt
+```
+
+### VCF Conversion Notes
+
+- `vcf_to_frog.py` accepts an optional `alleles_file` argument that is used to:
+  - map genomic coordinates (`chrom:pos`) to `rsID`
+  - optionally fill missing SNPs as `REF/REF`
+- Many VCFs store `.` in the `ID` column instead of `rsIDs`. In that case, providing the correct `SNPInfo/*.txt` file is strongly recommended, otherwise the converter may not recognize the target AISNPs.
+- Missing SNP handling is controlled by `--missing-mode`:
+  - `--missing-mode ref` (default): missing SNPs become `REF/REF` when reference alleles are available
+  - `--missing-mode nn`: missing SNPs always become `NN`
+- For **variant-only VCFs** (common in sequencing and consumer pipelines), `--missing-mode nn` is recommended because missing sites may mean:
+  - homozygous reference
+  - filtered out
+  - not confidently called
+- Use `--missing-mode ref` only when absence of a variant confidently implies homozygous reference, such as in an all-sites VCF or another well-characterized pipeline.
 
 ### Option 3: From Whole Genome Sequencing
 
@@ -185,6 +235,30 @@ Extract SNPs from raw sequencing data:
 - `bcftools`, `samtools` (for all types)
 - `bwa` (for FASTQ alignment)
 - Reference genome (GRCh37/hg19 or GRCh38/hg38)
+
+### Option 4: From a BAM File
+
+If you have aligned reads in BAM format, the `run_frog_from_bam.sh` script handles the full pipeline automatically:
+
+```bash
+# Basic usage (auto-detects genome build and reference)
+bash tools/run_frog_from_bam.sh -i sample.bam
+
+# With pie chart generation
+bash tools/run_frog_from_bam.sh -i sample.bam -p
+
+# With explicit reference genome
+bash tools/run_frog_from_bam.sh -i sample.bam -r /path/to/reference.fasta -p
+```
+
+The script performs the following steps:
+1. Detects the BAM genome build (GRCh37 or GRCh38) and chromosome naming convention
+2. Locates or downloads a matching reference genome
+3. Calls genotypes at the 55 AISNP positions using `bcftools mpileup` + `bcftools call`
+4. Converts the resulting VCF to FROGAncestryCalc format
+5. Runs FROGAncestryCalc and optionally generates visualizations
+
+For the 128 AISNP panel, manual extraction is required (see [Admixture Estimation](#-admixture-estimation) for details).
 
 ### SNP List Reference
 
@@ -275,6 +349,125 @@ All output files are tab-delimited and can be opened in Excel.
 
 **Note:** Output files from previous jobs (including any `errFile.txt`) are deleted at the start of a new job.
 
+### Visualization
+
+You can generate a quick visualization from the likelihood output:
+
+```bash
+# Auto-detect a single *_likelihood.txt file in output/
+python3 tools/plot_frog_ancestry_pie.py output
+
+# Or point directly to a specific likelihood file
+python3 tools/plot_frog_ancestry_pie.py output/your_sample_likelihood.txt
+
+# Show more populations explicitly
+python3 tools/plot_frog_ancestry_pie.py output --top-n 10
+```
+
+The visualization script creates:
+
+| File | Description |
+|------|-------------|
+| `*_ancestry_pie.png` | Pie chart of normalized relative likelihoods |
+| `*_ancestry_summary.tsv` | Full population ranking with relative percentages and metadata |
+
+**Important:** The displayed percentages are **normalized relative likelihoods**, not exact biological admixture fractions. They are useful for visualization and comparison, but should not be interpreted as precise ancestry percentages.
+
+## 🧪 Admixture Estimation
+
+FROGAncestryCalc's native analysis computes the likelihood that an individual belongs to each reference population independently, ranking populations by best fit. However, it does **not** estimate **admixture proportions** -- i.e., which fraction of an individual's ancestry derives from each ancestral group.
+
+The `admixture_estimate.py` script fills this gap by providing two complementary approaches for estimating ancestry admixture:
+
+### MLE Mode
+
+Maximum Likelihood Estimation using FROG's own reference allele frequencies (`referenceData_*.txt`). Estimates the proportions of ancestry from each superpopulation that best explain the individual's observed genotypes.
+
+```bash
+# MLE with the default 55 AISNP panel
+python3 tools/admixture_estimate.py mle input/sample_55aisnps.txt
+
+# MLE with the 128 AISNP panel
+python3 tools/admixture_estimate.py mle input/sample_128aisnps.txt --panel 128AI
+
+# Control bootstrap iterations (default: 100; set to 0 to skip)
+python3 tools/admixture_estimate.py mle input/sample.txt --panel 128AI --n-bootstrap 50
+```
+
+Output files:
+- `*_admixture_mle.tsv` -- proportions with optional confidence intervals
+- `*_admixture_mle_pie.png` -- pie chart visualization
+
+### ADMIXTURE Mode
+
+Runs the official [ADMIXTURE](https://dalexander.github.io/admixture/) tool in supervised mode with a 1000 Genomes Phase 3 reference panel. Requires a FROG-formatted reference file with 1000 Genomes genotypes.
+
+```bash
+# ADMIXTURE supervised mode with 1000G reference
+python3 tools/admixture_estimate.py admixture input/sample.txt \
+    --reference input/whole_1000genomes_55aisnps.txt
+
+# Run both MLE and ADMIXTURE and generate a comparison chart
+python3 tools/admixture_estimate.py both input/sample.txt \
+    --reference input/whole_1000genomes_55aisnps.txt
+```
+
+**Requirements:** `admixture` and `plink` must be installed and available in `$PATH`.
+
+### Panel Selection
+
+The `--panel` argument selects which reference data and alleles file to use:
+
+| Panel | Reference Data | Alleles File | Populations | SNPs |
+|-------|---------------|--------------|-------------|------|
+| `55AI` (default) | `referenceData_55.txt` | `55_aisnps_alleles.txt` | 158 | 55 |
+| `128AI` | `referenceData_128.txt` | `128_aisnps_alleles.txt` | 128 | 128 |
+
+When `--panel` is specified, the `--reference-data` and `--alleles` arguments are set automatically. They can still be overridden explicitly if needed.
+
+### Extracting 128 AISNPs from a BAM File
+
+To use the 128 AISNP panel, extract genotypes from your BAM at the 128 positions:
+
+```bash
+# 1. Create target positions (GRCh37; use appropriate coords for GRCh38)
+awk 'BEGIN{OFS="\t"} NR>1{print $3,$4}' SNPInfo/128_aisnps_alleles.txt | \
+    LC_ALL=C sort -k1,1V -k2,2n > /tmp/128_targets.tsv
+bgzip -f /tmp/128_targets.tsv && tabix -f -s1 -b2 -e2 /tmp/128_targets.tsv.gz
+
+# 2. Call genotypes
+bcftools mpileup -Ou -f reference.fasta -T /tmp/128_targets.tsv.gz -q20 -Q20 sample.bam | \
+    bcftools call -m -Oz -o output/sample_128aisnps.vcf.gz
+bcftools index output/sample_128aisnps.vcf.gz
+
+# 3. Convert to FROG format
+python3 tools/vcf_to_frog.py \
+    output/sample_128aisnps.vcf.gz \
+    tools/aisnps_128_list.txt \
+    input/sample_128aisnps.txt \
+    SNPInfo/128_aisnps_alleles.txt \
+    --missing-mode nn
+
+# 4. Run admixture estimation
+python3 tools/admixture_estimate.py mle input/sample_128aisnps.txt --panel 128AI
+```
+
+### Caveats and Limitations
+
+1. **FROGAncestryCalc vs. admixture estimation.** FROGAncestryCalc answers "which *single* population does this individual most resemble?", not "what mixture of populations produced this individual?". For admixed individuals (e.g., most people of Latin American, Caribbean, or African-American ancestry), the likelihood rankings may be misleading because the best-matching single population is often a proxy rather than a true ancestral source. Use `admixture_estimate.py` for admixture proportions.
+
+2. **Small marker panels.** Both 55 and 128 AISNPs are very small panels compared to commercial ancestry services (which use hundreds of thousands of SNPs). Results have wide confidence intervals and should be treated as rough estimates, not precise measurements. The 128 panel provides better resolution than the 55 panel but still cannot distinguish closely related populations.
+
+3. **Superpopulation-level estimation only.** The MLE admixture model groups populations into broad superpopulations (African, European, East Asian, South Asian, American, Middle Eastern & North African, Central Asian, Oceanian). Estimating proportions for all 128+ individual populations from 128 SNPs is statistically underdetermined (as many parameters as data points) and would produce unreliable results.
+
+4. **"American" ancestry reflects Indigenous/Amerindian heritage.** In the 128 AISNP panel, the "American" superpopulation includes reference populations such as Maya, Karitiana, Surui, Quechua, Nahuas, and Pima. A high "American" component in the MLE results indicates Indigenous American ancestry. The 55 panel lacks sufficient Amerindian reference populations, so Indigenous ancestry may instead appear as "East Asian" (due to shared deep ancestry) or be absorbed by other categories.
+
+5. **Panel-dependent results.** The 55 and 128 panels use largely different sets of SNPs (only 13 overlap) and different reference populations (158 vs. 128). Results from the two panels are not directly comparable and may assign substantially different proportions to the same superpopulations. This reflects differences in the informative content and reference data of each panel, not errors in the method.
+
+6. **ADMIXTURE mode requires a 1000 Genomes reference file.** The supervised ADMIXTURE mode needs a FROG-formatted file containing genotypes for 1000 Genomes individuals at the target SNPs (`whole_1000genomes_*aisnps.txt`). This file is currently available only for the 55 AISNP panel. For the 128 panel, use MLE mode.
+
+7. **No mitochondrial or Y-chromosome markers.** All AISNPs are autosomal. The analysis captures genome-wide admixture proportions but provides no information about specific maternal (mtDNA) or paternal (Y-chromosome) lineages.
+
 ## 🗂️ Project Structure
 
 ```
@@ -305,11 +498,17 @@ FROGAncestryCalc/
 │   └── precision_sample.txt
 ├── log/                        # Execution logs
 │   └── workingLog.txt
-├── tools/                      # Data extraction tools
+├── tools/                      # Data extraction and analysis tools
 │   ├── vcf_to_frog.py          # VCF converter
+│   ├── plot_frog_ancestry_pie.py  # Likelihood visualization
+│   ├── admixture_estimate.py   # Admixture proportion estimation (MLE / ADMIXTURE)
+│   ├── run_frog_from_bam.sh    # BAM-to-FROG end-to-end pipeline
 │   ├── extract_snps_from_1000genomes.sh  # 1000G extractor
 │   ├── extract_snps_from_wgs.sh          # WGS extractor
-│   └── aisnps_55_list.txt      # SNP list
+│   ├── aisnps_55_list.txt      # SNP list (55 panel)
+│   ├── aisnps_128_list.txt     # SNP list (128 panel)
+│   ├── aisnps_55_grch37.bed    # BED coordinates (55 panel, GRCh37)
+│   └── aisnps_128_grch37.bed   # BED coordinates (128 panel, GRCh37)
 ├── obsolete/                   # Original files with bugs
 ├── run.sh                      # Execution script
 ├── recompile.sh                # Recompilation script
@@ -322,6 +521,8 @@ FROGAncestryCalc/
 - **Java:** 17+ (OpenJDK recommended)
 - **Shell:** Bash
 - **OS:** Linux/Unix
+- **Python 3** (for tools): `numpy`, `scipy`, `matplotlib`
+- **Optional** (for ADMIXTURE mode): `admixture`, `plink` (install via conda/bioconda)
 
 ## 🔄 Modifications from Original
 
@@ -393,10 +594,11 @@ rm -f log/workingLog.txt
 
 ## 📚 Population Coverage
 
-The tool calculates ancestry likelihoods for **160 populations** including:
+The tool calculates ancestry likelihoods across multiple reference panels:
 
-- **22 populations** from the **1000 Genomes Project Phase 3**
-- **138 populations** from other sources (ALFRED, HGDP, regional studies, etc.)
+- **55AI panel:** 158 populations (22 from 1000 Genomes + 136 from ALFRED/HGDP/other)
+- **128AI panel:** 128 populations (all from ALFRED/HGDP/other)
+- **combined panel:** 192 SNPs across the union of populations from both panels
 
 Major population groups include:
 - African populations (Yoruba, Mbuti, Biaka, Luhya, etc.)
@@ -411,11 +613,11 @@ Major population groups include:
 
 Two comprehensive mapping files are available to understand the population structure:
 
-#### 1. **`population_mapping_complete.csv`** - All 160 Populations
+#### 1. **`population_mapping_complete.csv`** - All Populations
 
-Lists **all 160 populations** in FROGAncestryCalc and identifies their source database:
+Lists all populations in FROGAncestryCalc across all panels and maps each to a superpopulation category (African, European, East Asian, South Asian, American, Middle Eastern & North African, Central Asian, Oceanian). Includes:
 - 22 populations from **1000 Genomes Project Phase 3** (with full metadata)
-- 138 populations from **ALFRED, HGDP, and other sources**
+- All populations from **ALFRED, HGDP, and other sources** used across 55AI, 128AI, and other panels
 
 #### 2. **`population_mapping_1000genomes.csv`** - 1000 Genomes Only
 
@@ -540,7 +742,18 @@ Peruvian(PEL),PEL,Peruvian in Lima Peru,AMR,Admixed American
    - Check that all required SNPs are present
    - Ensure no extra columns or missing data
 
-4. **Java version issues**
+4. **"No SNPs found in VCF"**
+   - Many VCFs do not store `rsIDs` in the `ID` column
+   - Provide `SNPInfo/55_aisnps_alleles.txt` for GRCh37 or `SNPInfo/55_aisnps_alleles_grch38.txt` for GRCh38 so the converter can map `chrom:pos` to `rsID`
+   - Verify that your genome build matches the alleles file you supplied
+
+5. **"Ancestry result looks overly concentrated"**
+   - This is common when plotting normalized likelihoods as percentages
+   - For variant-only VCFs, avoid assuming that missing sites are homozygous reference unless you are sure that is correct
+   - Re-run `vcf_to_frog.py` with `--missing-mode nn` for a more conservative input file
+   - Prefer interpreting `*_rankOrder.txt` and `*_ancestry_summary.tsv` as rankings/relative affinity, not exact admixture fractions
+
+6. **Java version issues**
    - Requires Java 17 or higher
    - Check version: `java -version`
 

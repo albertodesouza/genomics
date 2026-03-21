@@ -82,50 +82,59 @@ def create_dual_bar_chart():
     x = np.arange(len(data['Symbol']))
     width = 0.35  # Largura das barras
     
-    # Cores alternadas por grupo (grupos de 3)
+    # Cores alternadas por grupo
     # Tons de azul para Accuracy (claro/escuro alternando)
     blues = ['#6495ED', '#0D1B5E']  # Cornflower Blue, Navy escuro
     # Tons de vermelho para Parameter Count (claro/escuro alternando)
     reds = ['#FF6B6B', '#8B0000']   # Coral claro, Dark Red
     
-    # Criar lista de cores por barra (alternando a cada 3 elementos)
-    n_bars = len(data['Symbol'])
-    colors_accuracy = [blues[i // 3 % 2] for i in range(n_bars)]
-    colors_params = [reds[i // 3 % 2] for i in range(n_bars)]
+    # Definir grupos manualmente:
+    # Grupo 0: K11, K12, K13 (indices 0, 1, 2)
+    # Grupo 1: K21, K22, K23 (indices 3, 4, 5)
+    # Grupo 2: FC128, FC256, FC512 (indices 6, 7, 8)
+    # Grupo 3: W8, W32, W128 (indices 9, 10, 11)
+    # Grupo 4: AG, 9G, 7G, 1G (indices 12, 13, 14, 15)
+    # Grupo 5: 1GR (indice 16)
+    groups = [0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 4, 5]
+    
+    # Criar lista de cores por barra (alternando por grupo)
+    colors_accuracy = [blues[groups[i] % 2] for i in range(len(groups))]
+    colors_params = [reds[groups[i] % 2] for i in range(len(groups))]
     
     # Eixo Y esquerdo - Accuracy
     color_accuracy_label = '#2E2EAB'  # Azul para o label
-    ax1.set_xlabel('Symbol', fontsize=12, fontweight='bold')
-    ax1.set_ylabel('Accuracy', color=color_accuracy_label, fontsize=12, fontweight='bold')
+    ax1.set_xlabel('Symbol', fontsize=24, fontweight='bold')
+    ax1.set_ylabel('Accuracy', color=color_accuracy_label, fontsize=24, fontweight='bold')
     bars1 = ax1.bar(x - width/2, data['Accuracy'], width, 
                     label='Accuracy', color=colors_accuracy, alpha=0.8)
-    ax1.tick_params(axis='y', labelcolor=color_accuracy_label)
+    ax1.tick_params(axis='y', labelcolor=color_accuracy_label, labelsize=20)
     ax1.set_ylim(0.0, 1.0)
     ax1.set_yticks(np.arange(0.0, 1.1, 0.1))
     
     # Eixo Y direito - Parameter Count
     ax2 = ax1.twinx()
     color_params_label = '#E93737'  # Vermelho para o label
-    ax2.set_ylabel('Parameter Count', color=color_params_label, fontsize=12, fontweight='bold')
+    ax2.set_ylabel('Parameter Count', color=color_params_label, fontsize=24, fontweight='bold')
     bars2 = ax2.bar(x + width/2, data['Parameter Count'], width,
                     label='Parameter Count', color=colors_params, alpha=0.8)
-    ax2.tick_params(axis='y', labelcolor=color_params_label)
+    ax2.tick_params(axis='y', labelcolor=color_params_label, labelsize=20)
     ax2.set_ylim(0, 400000)
     ax2.set_yticks(np.arange(0, 450000, 50000))
     ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: format(int(x), ',')))
     
     # Configuracao do eixo X
     ax1.set_xticks(x)
-    ax1.set_xticklabels(data['Symbol'], rotation=45, ha='right', fontsize=10)
+    ax1.set_xticklabels(data['Symbol'], rotation=45, ha='right', fontsize=20)
     
     # Titulo
     plt.title('Comparacao de Accuracy e Parameter Count por Experimento', 
-              fontsize=14, fontweight='bold', pad=20)
+              fontsize=28, fontweight='bold', pad=40)
     
     # Legenda combinada
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right', fontsize=10)
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right', 
+               bbox_to_anchor=(1.0, 1.0), fontsize=18, labelspacing=0.2)
     
     # Grid apenas no eixo Y esquerdo (accuracy)
     ax1.yaxis.grid(True, linestyle='--', alpha=0.7)

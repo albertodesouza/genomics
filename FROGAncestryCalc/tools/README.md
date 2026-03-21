@@ -6,6 +6,7 @@ This directory contains scripts to extract the 55 Ancestry Informative SNPs (AIS
 
 - **`aisnps_55_list.txt`** - List of 55 SNP rsIDs (one per line)
 - **`vcf_to_frog.py`** - Python script to convert VCF to FROGAncestryCalc format
+- **`plot_frog_ancestry_pie.py`** - Generate a pie chart and summary TSV from likelihood output
 - **`extract_snps_from_1000genomes.sh`** - Download and extract from 1000 Genomes
 - **`extract_snps_from_wgs.sh`** - Extract from WGS data (FASTQ/BAM/VCF)
 
@@ -25,10 +26,19 @@ echo -e "HG02561\nHG02562\nHG03055" > samples.txt
 ### From Your Own VCF
 
 ```bash
+# Recommended for typical GRCh37/hg19 variant-only VCFs
 python3 tools/vcf_to_frog.py \
     your_data.vcf.gz \
     tools/aisnps_55_list.txt \
-    input/output.txt
+    input/output.txt \
+    SNPInfo/55_aisnps_alleles.txt \
+    --missing-mode nn
+```
+
+### Visualize Likelihood Output
+
+```bash
+python3 tools/plot_frog_ancestry_pie.py output
 ```
 
 ### From Sequencing Data
@@ -52,13 +62,18 @@ Converts VCF files to FROGAncestryCalc pipe-delimited format.
 
 **Usage:**
 ```bash
-python3 vcf_to_frog.py <input.vcf.gz> <snp_list.txt> <output.txt>
+python3 vcf_to_frog.py <input.vcf.gz> <snp_list.txt> <output.txt> [alleles_file.txt] [--missing-mode {ref,nn}]
 ```
 
 **Arguments:**
 - `input.vcf.gz` - VCF file (can be gzipped or plain text)
 - `snp_list.txt` - File with SNP IDs (one rsID per line)
 - `output.txt` - Output file in FROGAncestryCalc format
+- `alleles_file.txt` - Optional SNPInfo file for coordinate-to-rsID mapping and reference alleles
+
+**Options:**
+- `--missing-mode ref` - Missing SNPs become `REF/REF` when reference alleles are known
+- `--missing-mode nn` - Missing SNPs always become `NN`
 
 **Features:**
 - Handles both phased (`0|1`) and unphased (`0/1`) genotypes
@@ -66,13 +81,38 @@ python3 vcf_to_frog.py <input.vcf.gz> <snp_list.txt> <output.txt>
 - Converts numeric genotypes to allele notation (e.g., `0/1` → `AG`)
 - Reports missing SNPs
 - Handles multi-allelic sites (uses first alternate allele)
+- Can map `chrom:pos` coordinates to `rsIDs` using the appropriate `SNPInfo` file
+- Lets you choose whether missing SNPs become `REF/REF` or `NN`
+
+**Important Notes:**
+- Many VCFs store `.` in the `ID` column instead of `rsIDs`. In this case, provide the correct `SNPInfo/*.txt` file so the converter can identify the target AISNPs by genomic position.
+- For **variant-only VCFs**, `--missing-mode nn` is recommended because missing sites may be homozygous reference, filtered out, or not confidently called.
+- Use `--missing-mode ref` only when absence of a site confidently implies homozygous reference, such as in an all-sites VCF or another well-characterized pipeline.
 
 **Example:**
 ```bash
+# GRCh37 / hg19
 python3 tools/vcf_to_frog.py \
-    1000genomes.vcf.gz \
+    your_data.vcf.gz \
     tools/aisnps_55_list.txt \
-    input/1000g_samples.txt
+    input/output.txt \
+    SNPInfo/55_aisnps_alleles.txt \
+    --missing-mode nn
+
+# GRCh38 / hg38
+python3 tools/vcf_to_frog.py \
+    your_data.vcf.gz \
+    tools/aisnps_55_list.txt \
+    input/output.txt \
+    SNPInfo/55_aisnps_alleles_grch38.txt \
+    --missing-mode nn
+
+# Backward-compatible behavior
+python3 tools/vcf_to_frog.py \
+    your_data.vcf.gz \
+    tools/aisnps_55_list.txt \
+    input/output.txt \
+    SNPInfo/55_aisnps_alleles.txt
 ```
 
 **Output Format:**
@@ -81,6 +121,27 @@ Individual|rs10497191|rs1079597|rs11652805|...
 Sample1|CC|CT|AA|...
 Sample2|TT|CC|AG|...
 ```
+
+---
+
+### plot_frog_ancestry_pie.py
+
+Creates a quick visualization from FROGAncestryCalc likelihood output.
+
+**Usage:**
+```bash
+python3 tools/plot_frog_ancestry_pie.py output
+python3 tools/plot_frog_ancestry_pie.py output/your_sample_likelihood.txt
+python3 tools/plot_frog_ancestry_pie.py output --top-n 10
+```
+
+**What it creates:**
+- `*_ancestry_pie.png` - Pie chart of normalized relative likelihoods
+- `*_ancestry_summary.tsv` - Full ranking with relative percentages and metadata
+
+**Important:**
+- The displayed percentages are normalized relative likelihoods, not exact biological admixture fractions.
+- The script is intended for quick visualization and comparison, not for formal admixture estimation.
 
 ---
 
@@ -319,6 +380,10 @@ Common reference indicators:
 - GRCh37/hg19: "b37", "hg19", "GRCh37"
 - GRCh38/hg38: "b38", "hg38", "GRCh38"
 
+**Recommended `vcf_to_frog.py` alleles files:**
+- GRCh37/hg19: `SNPInfo/55_aisnps_alleles.txt`
+- GRCh38/hg38: `SNPInfo/55_aisnps_alleles_grch38.txt`
+
 ### SNP Coordinates
 
 The 55 AISNPs span multiple chromosomes. Missing SNPs in output may indicate:
@@ -360,10 +425,16 @@ For critical applications, consider adding quality filters:
 
 ```bash
 # Filter VCF before conversion
+# Note: this example assumes rsIDs are present in the VCF ID column
 bcftools view -i 'QUAL>=30 && DP>=10' input.vcf.gz | \
 bcftools view -i "ID=@tools/aisnps_55_list.txt" -Oz -o filtered.vcf.gz
 
-python3 tools/vcf_to_frog.py filtered.vcf.gz tools/aisnps_55_list.txt input/sample.txt
+python3 tools/vcf_to_frog.py \
+    filtered.vcf.gz \
+    tools/aisnps_55_list.txt \
+    input/sample.txt \
+    SNPInfo/55_aisnps_alleles.txt \
+    --missing-mode nn
 ```
 
 ## 🐛 Troubleshooting
@@ -372,9 +443,10 @@ python3 tools/vcf_to_frog.py filtered.vcf.gz tools/aisnps_55_list.txt input/samp
 - Install bcftools: `conda install -c bioconda bcftools`
 
 **Error: "No SNPs found in VCF"**
-- Check if SNP IDs use rsID format (not chr:pos)
-- Verify genome build matches
-- Ensure VCF contains these specific SNPs
+- Many VCFs use `.` in the `ID` column instead of `rsIDs`
+- Provide `SNPInfo/55_aisnps_alleles.txt` for GRCh37 or `SNPInfo/55_aisnps_alleles_grch38.txt` for GRCh38 so the converter can map `chrom:pos` to `rsID`
+- Verify genome build matches the alleles file you supplied
+- Ensure the VCF actually contains these AISNP sites
 
 **Error: "Reference genome not found"**
 - Download reference genome (GRCh37 or GRCh38)
@@ -384,6 +456,12 @@ python3 tools/vcf_to_frog.py filtered.vcf.gz tools/aisnps_55_list.txt input/samp
 - Normal if using targeted sequencing or microarray
 - Check coverage of your data
 - Some SNPs may need imputation
+
+**Warning: "Ancestry result looks overly concentrated"**
+- This is common when plotting normalized likelihoods as percentages
+- For variant-only VCFs, avoid assuming that missing sites are homozygous reference unless you are sure that is correct
+- Re-run `vcf_to_frog.py` with `--missing-mode nn` for a more conservative input file
+- Interpret the visualization as relative affinity/ranking, not exact admixture fractions
 
 ## 📚 Additional Resources
 

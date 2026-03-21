@@ -574,6 +574,11 @@ debug:
     # "max" = máximo do bloco (preserva picos de ativação - recomendado)
     # "mean" = média do bloco (visão geral, mas pode esconder picos)
     downsample_aggregation: "max"
+    
+    # Ordenação dos genes nos gráficos
+    # "dataset" = mantém a ordem original do dataset (padrão)
+    # "alphabetical" = ordena os genes em ordem alfabética
+    gene_order: "alphabetical"
   
   # ─────────────────────────────────────────────────────────────────
   # Tainting de amostras para debug
@@ -674,15 +679,34 @@ debug:
       # Modo de seleção de top regions
       # "per_gene" = 1 ponto máximo por gene, ordena genes (padrão, compatível com artigo)
       # "global" = todos os pontos da matriz considerados igualmente, permite múltiplos pontos por gene
-      top_regions_mode: "global"
+      top_regions_mode: "per_gene"
       
       # Número de regiões de destaque a identificar
-      top_regions_count: 20
+      top_regions_count: 5
       
       # Distância mínima em bases (bp) entre dois pontos de destaque
       # Pontos mais próximos que esta distância são filtrados (mantém o de maior valor)
       # Isso evita que múltiplos pontos muito próximos sejam selecionados
-      min_distance_bp: 100
+      min_distance_bp: 1000
+      
+      # Mostrar a lista de Top regions no label do eixo X do mapa DeepLIFT
+      # true = inclui a lista no eixo X, false = apenas "Gene Position"
+      show_top_regions_xlabel: true
+      
+      # Cor central do colormap de attribution (valor zero)
+      # "white" = fundo branco no centro (melhor contraste, padrão)
+      # "black" = fundo preto no centro
+      colormap_center: "white"
+      
+      # Gamma para transformação não-linear do colormap
+      # Controla quão rápido as cores caem para o centro (branco/preto)
+      # gamma = 1.0: transição linear (sem transformação)
+      # gamma < 1.0: valores pequenos ficam mais próximos do centro (branco/preto),
+      #              destacando apenas os picos de attribution mais fortes
+      #              quanto menor o gamma, mais "comprimidos" os valores baixos
+      # gamma > 1.0: valores pequenos ficam mais coloridos (efeito oposto)
+      # Valores recomendados: 0.3 a 0.7 para destacar apenas os picos de attribution
+      colormap_gamma: 0.65
 
 # ───────────────────────────────────────────────────────────────────
 # J) MODE

@@ -72,18 +72,18 @@ dataset_input:
   # NOTA: A ordem em que você lista os genes aqui não importa.
   #       O sistema usa a ordem salva no metadata do cache (extraída do dataset base).
   genes_to_use:
-    - "FBXO5"
-    - "SEM1"
-    - "KIAA0319"
-    - "RIDA"
-    - "C6orf52"
-    - "BCL3"
-    - "HERC6"
-    - "SFMBT2"
+    # - "ATP11B"
+    # - "BCL3"
+    # - "C6orf52"
+    # - "FBXO5"
+    # - "FOXN2"
+    # - "HERC6"
+    # - "KIAA0319"
+    # - "RIDA"
+    # - "SEM1"
+    # - "SFMBT2"
     - "SUMF2"
-    - "FOXN2"
-    - "ATP11B"
-  
+
   # Método de normalização dos dados
   # Opções:
   #   "zscore": Normalização Z-score padrão (mean=0, std=1)
