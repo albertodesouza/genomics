@@ -15,6 +15,7 @@ This module implements a YAML-configurable neural network that predicts ancestry
 - [Processed Dataset Cache](#processed-dataset-cache)
 - [Dataset Verification](#dataset-verification)
 - [Training](#training)
+- [Sklearn Baselines and PCA Cache](#sklearn-baselines-and-pca-cache)
 - [Debug and Visualization](#debug-and-visualization)
 - [Testing and Evaluation](#testing-and-evaluation)
 - [Model Interpretability](#model-interpretability)
@@ -779,6 +780,79 @@ checkpointing:
 
 ---
 
+## Sklearn Baselines and PCA Cache
+
+### Overview
+
+In addition to `NN`/`CNN`/`CNN2`, the project now supports sklearn baselines:
+- `SVM` (LinearSVC, optional probability calibration)
+- `RF` (Random Forest)
+- `XGBOOST` (if `xgboost` is installed)
+
+These baselines use a preprocessing pipeline with:
+1. `StandardScaler` fit on train split
+2. `IncrementalPCA` fit on train split
+3. Classifier fit on PCA-reduced train matrix
+4. Evaluation on train/val/test
+
+### Main config keys
+
+```yaml
+model:
+  type: "SVM"  # "SVM", "RF", "XGBOOST", "NN", "CNN", "CNN2"
+  sklearn:
+    pca_components: 300
+    use_pca_cache: true
+    pca_align_n_train: false
+    svm:
+      C: 1.0
+      max_iter: 20000
+      calibrate_probabilities: true
+      calibration_cv: 3
+```
+
+### PCA cache for repeated experiments
+
+With `model.sklearn.use_pca_cache: true`, reduced matrices are persisted in:
+- `processed_cache_dir/pca_cache/<dataset_tag>_pca<requested_k>/`
+
+Saved artifacts include:
+- `X_train.npy`, `y_train.npy`, `X_val.npy`, `y_val.npy`, `X_test.npy`, `y_test.npy`
+- `scaler_pca.joblib` (fitted scaler + PCA)
+- `pca_metadata.json`
+
+Benefits:
+- Avoids recomputing PCA when only classifier/hyperparameters change
+- Reuses the same cache across SVM/RF/XGBoost runs with matching dataset + PCA settings
+
+### Important PCA details
+
+- `pca_components` can be automatically reduced to a LAPACK-safe value for very large `D` (feature dimension), preventing int32 overflow in large intermediate matrices.
+- `pca_align_n_train: true` can reduce effective `k` to a divisor of `n_train`, avoiding tail padding in final `IncrementalPCA.partial_fit`.
+
+### Progress bars
+
+PCA steps now use Rich progress bars when running with console output:
+- StandardScaler fit (train)
+- IncrementalPCA fit (train)
+- PCA transforms (train/val/test in cache build; train in no-cache path)
+
+### Utility scripts added
+
+```bash
+# Build/rebuild PCA cache from config
+python3 sklearn_pca_cache.py --config configs/genes_1000.yaml
+python3 sklearn_pca_cache.py --config configs/genes_1000.yaml --force
+
+# Plot cumulative explained variance for IncrementalPCA
+python3 plot_sklearn_pca_variance.py --config configs/genes_1000.yaml --output runs/pca_variance.png
+
+# Plot confusion matrix PNGs from train/val/test_results.json
+python3 plot_sklearn_confusion_matrices.py --experiment-dirs /path/to/svm_run /path/to/rf_run /path/to/xgboost_run
+```
+
+---
+
 ## Debug and Visualization
 
 ### Interactive Data Inspection
@@ -1369,6 +1443,9 @@ plt.savefig('loss_curve.png', dpi=300, bbox_inches='tight')
 ```
 neural_ancestry_predictor/
 ├── neural_ancestry_predictor.py      # Main training/inference program
+├── sklearn_pca_cache.py              # Shared StandardScaler+IncrementalPCA disk cache for sklearn baselines
+├── plot_sklearn_pca_variance.py      # Cumulative explained variance plot (IncrementalPCA)
+├── plot_sklearn_confusion_matrices.py # Confusion matrix plotting from sklearn result JSONs
 ├── annotate_deeplift_windows.py      # DeepLIFT output variant annotation
 ├── validate_pigmentation_hypothesis.py  # Hypothesis validation script
 ├── verify_processed_dataset.py       # Dataset verification tool
@@ -1417,6 +1494,18 @@ For issues or questions:
 ---
 
 ## Changelog
+
+### v1.3 (2026-03-22)
+- ✨ **NEW: sklearn baselines** (`SVM`, `RF`, `XGBOOST`) integrated in main train/test flow
+- ✨ **NEW: shared PCA cache** (`sklearn_pca_cache.py`) with metadata validation and force rebuild option
+- ✨ **NEW: robust IncrementalPCA guardrails**
+  - automatic LAPACK-safe cap for very high-dimensional inputs
+  - optional `pca_align_n_train` to avoid tail padding
+- ✨ **NEW: progress bars for PCA/scaler stages** in cache and no-cache paths
+- ✨ **NEW: diagnostics utilities**
+  - `plot_sklearn_pca_variance.py` for cumulative explained variance
+  - `plot_sklearn_confusion_matrices.py` for train/val/test confusion-matrix PNGs
+- 🔧 Matplotlib backend handling improved for headless execution (`TkAgg` fallback to `Agg`)
 
 ### v1.2 (2025-12-23)
 - ✨ **NEW: Hypothesis Validation Script** (`validate_pigmentation_hypothesis.py`)
