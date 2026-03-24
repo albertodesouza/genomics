@@ -1,0 +1,75 @@
+# ═══════════════════════════════════════════════════════════════════
+# VCF to 23andMe Converter - Configuration
+# ═══════════════════════════════════════════════════════════════════
+#
+# Usage:
+#   source ../scripts/start_genomics_universal.sh
+#   python vcf_to_23andme.py --config configs/default.yaml
+
+# ───────────────────────────────────────────────────────────────────
+# Input
+# ───────────────────────────────────────────────────────────────────
+input:
+  # Path to input VCF file (.vcf or .vcf.gz)
+  vcf_file: "/home/lume2/Documents/Alberto/meu-genoma/alberto_genoma/A56102411139365.vcf.gz"
+
+  # Sample to extract from the VCF (optional).
+  # If not specified, the first sample in the VCF is used.
+  # Useful when the VCF contains multiple samples.
+  # sample: "NA12878"
+
+# ───────────────────────────────────────────────────────────────────
+# Output
+# ───────────────────────────────────────────────────────────────────
+output:
+  # Path to the output file in 23andMe format
+  output_file: "/home/lume2/Documents/Alberto/meu-genoma/alberto_genoma/A56102411139365.23andme.txt"
+
+  # Output format version: "V5" (default) or "V3"
+  # V5: detailed header with quality disclaimers and NCBI links
+  # V3: simplified header
+  format_version: "V5"
+
+  # If true, variants without rsID in the VCF ID column are skipped.
+  # If false (default), variants without rsID are assigned a positional
+  # identifier in the format i{chrom}_{pos} (e.g., i1_12783).
+  skip_no_rsid: false
+
+  # Optional: path to a custom SNP panel file (one rsID per line).
+  # If provided, only variants matching the panel are included in the output.
+  # Takes priority over filter_by_chip_panel.
+  # snp_panel: "/path/to/custom_snp_panel.txt"
+
+  # Automatically download and filter by the Illumina chip panel
+  # matching the selected format_version:
+  #   V5 -> Infinium Global Screening Array v1.0 (~640K SNPs)
+  #   V3 -> HumanOmniExpress-12 v1.1 (~960K SNPs)
+  # The panel is downloaded once and cached in annotation.ref_dir.
+  # Ignored if snp_panel is explicitly set. Default: false.
+  filter_by_chip_panel: "V5"
+
+# ───────────────────────────────────────────────────────────────────
+# dbSNP Annotation
+# ───────────────────────────────────────────────────────────────────
+# Many VCFs produced by variant callers (e.g. GATK HaplotypeCaller)
+# do not include rsIDs. This section controls automatic annotation
+# with dbSNP rsIDs via bcftools.
+annotation:
+  # Whether to annotate the VCF with dbSNP rsIDs if they are missing.
+  # When enabled, the converter checks if the VCF needs annotation,
+  # downloads dbSNP if necessary, and produces an annotated copy
+  # (.rsid.vcf.gz) alongside the original VCF.
+  enabled: true
+
+  # Directory to store dbSNP reference files (downloaded automatically).
+  # The dbSNP common variants file (~1.2 GB for GRCh37) will be
+  # downloaded here on first run and reused for subsequent conversions.
+  ref_dir: "/dados/GENOMICS_DATA/top3/refs/"
+
+# ───────────────────────────────────────────────────────────────────
+# Reference genome build
+# ───────────────────────────────────────────────────────────────────
+# The converter auto-detects the build (GRCh37 or GRCh38) from VCF
+# headers. This value is used as a fallback if auto-detection fails.
+# Options: "GRCh37" or "GRCh38"
+reference_build: "GRCh37"

@@ -18,6 +18,7 @@ _A technical-scientific guide to `genomes_analyzer.py`_
   - [Neural Ancestry Predictor](#neural-ancestry-predictor)
   - [FROGAncestryCalc — AISNP-Based Ancestry Analysis](#frogancestrycalc--aisnp-based-ancestry-analysis)
   - [Genes Difference Count — Pairwise Genetic Comparison Tool](#genes-difference-count--pairwise-genetic-comparison-tool)
+  - [VCF to 23andMe Converter](#vcf-to-23andme-converter)
 
 ---
 
@@ -953,4 +954,39 @@ Includes:
 - 📊 Output format details
 - 🚀 Performance optimization tips
 - 🧬 Algorithm details (IUPAC compatibility, alignment strategies)
+
+---
+
+### VCF to 23andMe Converter
+
+> **📁 Location**: This module is in `vcf_to_23andme/`
+
+**VCF to 23andMe** converts whole-genome or exome VCF files into the 23andMe raw data format (V3 or V5), making WGS/WES data compatible with personal genomics tools such as GEDmatch, Promethease, and DNA.Land.
+
+#### Key Features
+
+✅ **Automatic rsID Annotation** — Detects VCFs without rsIDs (e.g. from GATK) and annotates them with dbSNP via `bcftools`, downloading the reference automatically  
+✅ **Genome Build Auto-Detection** — Identifies GRCh37 or GRCh38 from VCF headers (contig lengths, reference line, chromosome naming)  
+✅ **Chip Panel Filtering** — Optionally filters output to the Illumina chip SNP panel matching the selected format (GSA for V5, OmniExpress for V3), auto-downloaded and cached  
+✅ **Multi-Sample Support** — Extracts a specific sample from multi-sample VCFs  
+✅ **Read-Only Input** — The original VCF file is never modified  
+
+#### Quick Example
+
+```bash
+cd vcf_to_23andme
+source ../scripts/start_genomics_universal.sh
+python vcf_to_23andme.py --config configs/my_conversion.yaml
+```
+
+#### Documentation
+
+📚 **Complete Documentation**: [vcf_to_23andme/README.md](vcf_to_23andme/README.md)
+
+Includes:
+- ⚙️ YAML configuration reference
+- 🧬 dbSNP annotation pipeline details
+- 📋 SNP panel filtering (automatic and custom)
+- 🔍 Genome build auto-detection heuristics
+- 📄 23andMe output format (V3 vs V5)
 
