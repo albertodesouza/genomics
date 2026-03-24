@@ -1,0 +1,115 @@
+# ═══════════════════════════════════════════════════════════════
+# SNP Ancestry Predictor — Default Configuration
+# ═══════════════════════════════════════════════════════════════
+#
+# Usage:
+#   source ../scripts/start_genomics_universal.sh
+#   python3 snp_ancestry_predictor.py --config configs/default.yaml
+
+# ── Input Data ────────────────────────────────────────────────
+input:
+  # JSON file with train/val/test splits and per-individual metadata
+  splits_metadata: "/dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes_1000/datasets/rna_seq_H1_32768_ds1_log_shuf_split0.7-0.15-0.15_seed13/splits_metadata.json"
+
+  # Directory containing per-individual subdirectories
+  individuals_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000/individuals"
+
+  # Multi-sample VCF pattern — {chrom} is replaced by chromosome name
+  vcf_pattern: "/dados/GENOMICS_DATA/top3/longevity_dataset/vcf_chromosomes/1kGP_high_coverage_Illumina.{chrom}.filtered.SNV_INDEL_SV_phased_panel.vcf.gz"
+
+  # Chromosomes to process (chrX naming variations are handled automatically)
+  chromosomes:
+    - "chr1"
+    - "chr2"
+    - "chr3"
+    - "chr4"
+    - "chr5"
+    - "chr6"
+    - "chr7"
+    - "chr8"
+    - "chr9"
+    - "chr10"
+    - "chr11"
+    - "chr12"
+    - "chr13"
+    - "chr14"
+    - "chr15"
+    - "chr16"
+    - "chr17"
+    - "chr18"
+    - "chr19"
+    - "chr20"
+    - "chr21"
+    - "chr22"
+    - "chrX"
+
+# ── VCF-to-23andMe Conversion (Step 1) ───────────────────────
+conversion:
+  # 23andMe output format version: "V5" (current) or "V3" (legacy)
+  format_version: "V5"
+
+  # Skip variants without an rsID (recommended — positional IDs are not useful
+  # for cross-individual frequency computation)
+  skip_no_rsid: true
+
+  # Optional: restrict output to a predefined set of SNPs (one rsID per line).
+  # Set to null to include all biallelic SNPs with rsIDs.
+  snp_panel: null
+
+  # Output filename template inside each individual's directory.
+  # {sample_id} is replaced by the individual's sample ID.
+  output_filename: "{sample_id}_23andme.txt"
+
+# ── Statistics Computation (Step 2) ──────────────────────────
+statistics:
+  # Path where per-population allele frequency statistics are saved (JSON).
+  output_file: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000/snp_ancestry_statistics.json"
+
+  # Which split subsets to use as the reference panel.
+  # Options: any combination of "train", "val", "test".
+  reference_subsets:
+    - "train"
+
+  # Minimum minor allele frequency (MAF) — SNPs below this threshold are
+  # discarded as uninformative for ancestry discrimination.
+  min_maf: 0.01
+
+  # Maximum number of SNPs to retain, selected by highest Fst.
+  # Set to null to keep all SNPs that pass the MAF filter.
+  # Recommended: 500000 for a good balance of accuracy and file size.
+  max_snps: 500000
+
+  # Optional: restrict statistics to a predefined set of SNPs.
+  # Useful for using the same panel in both Step 1 and Step 2.
+  snp_panel: null
+
+# ── Ancestry Prediction (Step 3) ─────────────────────────────
+prediction:
+  # Ancestry level: "superpopulation" (5 classes) or "population" (26 classes)
+  level: "superpopulation"
+
+  # Estimation method:
+  #   "mle"           — Maximum Likelihood Classification (single assignment)
+  #   "admixture_mle" — Admixture proportion estimation (mixture model)
+  method: "mle"
+
+  # Which split subsets to evaluate (individuals with known labels).
+  evaluation_subsets:
+    - "test"
+
+  # Directory where prediction results (JSON) are saved.
+  results_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000/ancestry_results"
+
+  # Parameters specific to the admixture_mle method.
+  admixture_mle:
+    # Number of random restarts for the SLSQP optimiser (more = slower but
+    # more robust against local minima).
+    n_restarts: 20
+
+# ── Pipeline Control ─────────────────────────────────────────
+pipeline:
+  steps:
+    # Each step is idempotent and can be toggled independently.
+    generate_23andme: true
+    compute_statistics: true
+    predict_ancestry: true
