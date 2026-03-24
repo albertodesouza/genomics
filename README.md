@@ -19,6 +19,7 @@ _A technical-scientific guide to `genomes_analyzer.py`_
   - [FROGAncestryCalc — AISNP-Based Ancestry Analysis](#frogancestrycalc--aisnp-based-ancestry-analysis)
   - [Genes Difference Count — Pairwise Genetic Comparison Tool](#genes-difference-count--pairwise-genetic-comparison-tool)
   - [VCF to 23andMe Converter](#vcf-to-23andme-converter)
+  - [SNP Ancestry Predictor](#snp-ancestry-predictor)
 
 ---
 
@@ -989,4 +990,40 @@ Includes:
 - 📋 SNP panel filtering (automatic and custom)
 - 🔍 Genome build auto-detection heuristics
 - 📄 23andMe output format (V3 vs V5)
+
+---
+
+### SNP Ancestry Predictor
+
+> **📁 Location**: This module is in `snp_ancestry_predictor/`
+
+**SNP Ancestry Predictor** is a three-step pipeline that predicts genetic ancestry from genome-wide SNP data using allele frequency-based methods. It extracts per-individual genotypes from multi-sample 1000 Genomes VCFs, computes population-level allele frequency statistics, and classifies individuals at the superpopulation (5 classes) or population (26 classes) level.
+
+#### Key Features
+
+✅ **End-to-End Pipeline** — From multi-sample VCFs to ancestry predictions in three configurable steps  
+✅ **On-the-Fly dbSNP Annotation** — Adds rsIDs to VCFs lacking them via `bcftools annotate` (streamed, no intermediate files)  
+✅ **Chip Panel Filtering** — Restricts output to Illumina chip SNPs (~296K for V5), producing manageable file sizes  
+✅ **Two Estimation Methods** — Maximum Likelihood Classification (single assignment) and Admixture MLE (mixture proportions)  
+✅ **Fst-Based SNP Selection** — Automatically selects the most ancestry-informative SNPs  
+✅ **Idempotent Execution** — Each step checks for existing outputs and resumes safely  
+
+#### Quick Example
+
+```bash
+cd snp_ancestry_predictor
+source ../scripts/start_genomics_universal.sh
+python3 snp_ancestry_predictor.py --config configs/default.yaml
+```
+
+#### Documentation
+
+📚 **Complete Documentation**: [snp_ancestry_predictor/README.md](snp_ancestry_predictor/README.md)
+
+Includes:
+- ⚙️ Full YAML configuration reference
+- 📐 Mathematical description of MLC and Admixture MLE methods
+- 📊 Output format and evaluation metrics
+- 🧬 dbSNP annotation and chip panel filtering details
+- ❓ FAQ and performance guidelines
 

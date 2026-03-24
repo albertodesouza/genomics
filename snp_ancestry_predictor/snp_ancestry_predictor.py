@@ -443,7 +443,7 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
 
 
 def step2_compute_statistics(config: dict, console: Console) -> None:
-    """Compute per-population allele frequencies from VCFs."""
+    """Compute per-population allele frequencies from 23andMe files."""
     inp = config["input"]
     stat_cfg = config.get("statistics", {})
     pred_cfg = config.get("prediction", {})
@@ -484,35 +484,18 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
         stat_panel = load_snp_panel(stat_cfg["snp_panel"])
         console.print(f"  SNP panel filter: {len(stat_panel):,} SNPs")
 
-    chroms = inp.get("chromosomes", DEFAULT_CHROMS)
-    vcf_pat = inp["vcf_pattern"]
     min_maf = stat_cfg.get("min_maf", 0.01)
     max_snps = stat_cfg.get("max_snps", None)
 
-    inc_expr = 'TYPE="snp" && N_ALT=1 && ID~"^rs"'
-    sample_csv = ",".join(ref_ids)
-    n_ref = len(ref_ids)
+    ind_dir = Path(inp["individuals_dir"])
+    fname_tpl = config.get("conversion", {}).get(
+        "output_filename", "{sample_id}_23andme.txt"
+    )
 
-    conv = config.get("conversion", {})
-    dbsnp_vcf: Optional[str] = None
-    if conv.get("annotate_dbsnp", False):
-        build = conv.get("genome_build", "GRCh38")
-        ref_dir = conv.get("ref_dir", str(SCRIPT_DIR / "refs"))
-        first_vcf = next(
-            (find_vcf(vcf_pat, c) for c in chroms if find_vcf(vcf_pat, c)),
-            None,
-        )
-        if first_vcf:
-            vcf_style = detect_vcf_chrom_style(first_vcf)
-            console.print(f"  Preparing dbSNP ({build}) for rsID annotation...")
-            dbsnp_path = ensure_dbsnp_available(build, Path(ref_dir), vcf_style)
-            dbsnp_vcf = str(dbsnp_path)
-            console.print(f"  dbSNP ready: {dbsnp_path.name}")
-
-    snp_ref_allele: Dict[str, str] = {}
+    tracked_allele: Dict[str, str] = {}
     snp_chrom_pos: Dict[str, Tuple[str, str]] = {}
-    snp_ref_count: Dict[str, List[int]] = {}
-    snp_total_count: Dict[str, List[int]] = {}
+    snp_count: Dict[str, List[int]] = {}
+    snp_total: Dict[str, List[int]] = {}
 
     with Progress(
         SpinnerColumn(),
@@ -522,55 +505,53 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
         TimeRemainingColumn(),
         console=console,
     ) as prog:
-        task = prog.add_task("Step 2 — chromosomes", total=len(chroms))
+        task = prog.add_task("Step 2 — reading 23andMe files", total=len(ref_ids))
 
-        for chrom in chroms:
-            vcf = find_vcf(vcf_pat, chrom)
-            if not vcf:
+        for sid in ref_ids:
+            prog.update(task, description=f"Step 2 — {sid}")
+            pidx = ind_pop_idx[sid]
+
+            fpath = ind_dir / sid / fname_tpl.format(sample_id=sid)
+            if not fpath.exists():
+                console.print(
+                    f"  [yellow]23andMe file missing for {sid}, skipping[/yellow]"
+                )
                 prog.advance(task)
                 continue
 
-            prog.update(task, description=f"Step 2 — {chrom}")
-
-            proc, p_ann = _start_bcftools_query(
-                vcf, sample_csv, inc_expr, dbsnp_vcf,
-            )
-
-            for line in proc.stdout:
-                parts = line.rstrip("\n").split("\t")
-                if len(parts) < 5 + n_ref:
-                    continue
-
-                rsid = parts[2]
-                if stat_panel is not None and rsid not in stat_panel:
-                    continue
-
-                ref = parts[3]
-                nc = normalize_chrom(parts[0])
-                pos = parts[1]
-
-                rc = [0] * K
-                tc = [0] * K
-
-                for i in range(n_ref):
-                    dose = GT_DOSE.get(parts[5 + i])
-                    if dose is None:
+            with open(fpath) as f:
+                for line in f:
+                    if line.startswith("#"):
                         continue
-                    pidx = ind_pop_idx[ref_ids[i]]
-                    rc[pidx] += 2 - dose
-                    tc[pidx] += 2
+                    parts = line.rstrip("\n").split("\t")
+                    if len(parts) < 4:
+                        continue
 
-                snp_ref_allele[rsid] = ref
-                snp_chrom_pos[rsid] = (nc, pos)
-                snp_ref_count[rsid] = rc
-                snp_total_count[rsid] = tc
+                    rsid = parts[0]
+                    geno = parts[3]
 
-            proc.wait()
-            if p_ann is not None:
-                p_ann.wait()
+                    if geno == "--" or len(geno) != 2:
+                        continue
+                    if stat_panel is not None and rsid not in stat_panel:
+                        continue
+
+                    if rsid not in tracked_allele:
+                        tracked_allele[rsid] = geno[0]
+                        snp_chrom_pos[rsid] = (parts[1], parts[2])
+                        snp_count[rsid] = [0] * K
+                        snp_total[rsid] = [0] * K
+
+                    dose = sum(1 for c in geno if c == tracked_allele[rsid])
+                    snp_count[rsid][pidx] += dose
+                    snp_total[rsid][pidx] += 2
+
             prog.advance(task)
 
-    console.print(f"  Total SNPs collected: {len(snp_ref_count):,}")
+    console.print(f"  Total SNPs collected: {len(snp_count):,}")
+
+    snp_ref_allele = tracked_allele
+    snp_ref_count = snp_count
+    snp_total_count = snp_total
 
     freq_data: Dict[str, List[float]] = {}
     fst_values: Dict[str, float] = {}

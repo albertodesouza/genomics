@@ -159,11 +159,9 @@ pipeline:
 
 The simplified Fst used for SNP selection is:
 
-```
-Fst(i) = Var_between(p_i) / (p_bar_i * (1 - p_bar_i))
-```
+$$F_{ST}(i) = \frac{\mathrm{Var}_{\text{between}}(p_i)}{\bar{p}_i \,(1 - \bar{p}_i)}$$
 
-where `p_bar_i` is the mean allele frequency across populations and `Var_between` is the variance of per-population frequencies. Higher Fst indicates greater differentiation across populations and therefore more ancestry-informative SNPs.
+where $\bar{p}_i$ is the mean allele frequency across populations and $\mathrm{Var}_{\text{between}}$ is the variance of per-population frequencies. Higher $F_{ST}$ indicates greater differentiation across populations and therefore more ancestry-informative SNPs.
 
 ### Step 3 — Predict Ancestry
 
@@ -243,27 +241,23 @@ The YAML configuration file has five sections. All paths can be absolute or rela
 
 MLC assigns each individual to the single population that maximises the likelihood of their observed genotypes.
 
-**Model:** Under Hardy-Weinberg equilibrium, the probability of observing genotype *g* at SNP *i* given population allele frequency *p* is:
+**Model:** Under Hardy-Weinberg equilibrium, the probability of observing genotype $g_i$ at SNP $i$ given population allele frequency $p$ is:
 
-```
-P(g_i = 2 | p) = p^2                    (homozygous reference)
-P(g_i = 1 | p) = 2 * p * (1 - p)        (heterozygous)
-P(g_i = 0 | p) = (1 - p)^2              (homozygous alternate)
-```
+$$P(g_i = 2 \mid p) = p^2 \qquad \text{(homozygous reference)}$$
 
-where *g_i* is the count of the reference allele (0, 1, or 2), and *p* is the reference allele frequency in the candidate population.
+$$P(g_i = 1 \mid p) = 2\,p\,(1 - p) \qquad \text{(heterozygous)}$$
 
-**Classification rule:** The log-likelihood for population *k* across all *N* usable SNPs is:
+$$P(g_i = 0 \mid p) = (1 - p)^2 \qquad \text{(homozygous alternate)}$$
 
-```
-L(k) = sum_{i=1}^{N} log P(g_i | p_{i,k})
-```
+where $g_i \in \{0, 1, 2\}$ is the count of the tracked allele, and $p$ is its frequency in the candidate population.
+
+**Classification rule:** The log-likelihood for population $k$ across all $N$ usable SNPs is:
+
+$$\mathcal{L}(k) = \sum_{i=1}^{N} \log P(g_i \mid p_{i,k})$$
 
 The predicted population is:
 
-```
-k* = argmax_k L(k)
-```
+$$k^* = \arg\max_k \; \mathcal{L}(k)$$
 
 **Properties:**
 - Fast: vectorised computation over all SNPs and populations simultaneously.
@@ -274,37 +268,29 @@ k* = argmax_k L(k)
 
 Admixture MLE estimates the proportion of ancestry from each reference population, modelling the individual as a mixture.
 
-**Model:** Let alpha = (alpha_1, ..., alpha_K) be the admixture proportions with alpha_k >= 0 and sum_k alpha_k = 1. The mixed allele frequency at SNP *i* is:
+**Model:** Let $\boldsymbol{\alpha} = (\alpha_1, \dots, \alpha_K)$ be the admixture proportions with $\alpha_k \ge 0$ and $\sum_k \alpha_k = 1$. The mixed allele frequency at SNP $i$ is:
 
-```
-p_mixed_i = sum_{k=1}^{K} alpha_k * p_{i,k}
-```
+$$p_i^{\text{mix}} = \sum_{k=1}^{K} \alpha_k \, p_{i,k}$$
 
 The genotype probability under the mixture model is:
 
-```
-P(g_i | alpha) = P(g_i | p_mixed_i)
-```
+$$P(g_i \mid \boldsymbol{\alpha}) = P\!\left(g_i \mid p_i^{\text{mix}}\right)$$
 
-using the same Hardy-Weinberg formulas as MLC but with the mixed frequency `p_mixed_i`.
+using the same Hardy-Weinberg formulas as MLC but with the mixed frequency $p_i^{\text{mix}}$.
 
 **Estimation:** The proportions are found by minimising the negative log-likelihood:
 
-```
-NLL(alpha) = - sum_{i=1}^{N} log P(g_i | p_mixed_i(alpha))
-```
+$$\mathrm{NLL}(\boldsymbol{\alpha}) = -\sum_{i=1}^{N} \log P\!\left(g_i \mid p_i^{\text{mix}}(\boldsymbol{\alpha})\right)$$
 
 subject to:
-- `sum_k alpha_k = 1`
-- `alpha_k >= 0` for all *k*
+
+$$\sum_{k=1}^{K} \alpha_k = 1, \qquad \alpha_k \ge 0 \;\; \forall \, k$$
 
 This constrained optimisation is solved with Sequential Least-Squares Programming (SLSQP) from `scipy.optimize.minimize`, using multiple random restarts (default: 20) to mitigate local minima. The initial restart uses uniform proportions; subsequent restarts draw from a symmetric Dirichlet distribution.
 
 **Classification:** The predicted ancestry is the population with the highest estimated proportion:
 
-```
-k* = argmax_k alpha_k
-```
+$$k^* = \arg\max_k \; \alpha_k$$
 
 **Properties:**
 - Provides a full vector of ancestry proportions per individual.
