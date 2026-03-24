@@ -19,6 +19,7 @@ This module extracts SNP genotypes from multi-sample 1000 Genomes VCF files, con
 - [Configuration Reference](#configuration-reference)
 - [Ancestry Estimation Methods](#ancestry-estimation-methods)
   - [Maximum Likelihood Classification (MLC)](#maximum-likelihood-classification-mlc)
+  - [Admixture EM](#admixture-em)
   - [Admixture MLE](#admixture-mle)
 - [Output Format](#output-format)
   - [Per-individual result files](#per-individual-result-files)
@@ -37,14 +38,14 @@ The **SNP Ancestry Predictor** is a three-step pipeline that:
 
 1. **Extracts SNP genotypes** from multi-sample 1000 Genomes VCF files and writes per-individual files in the widely-used 23andMe raw data format.
 2. **Computes reference allele frequency statistics** from a configurable subset of individuals (train, validation, and/or test splits).
-3. **Predicts ancestry** for evaluation individuals using either Maximum Likelihood Classification (single population assignment) or Admixture MLE (mixture proportion estimation).
+3. **Predicts ancestry** for evaluation individuals using Maximum Likelihood Classification (single population assignment), Admixture EM (fast mixture proportion estimation), or Admixture MLE (numerical optimisation-based mixture estimation).
 
 ### Key Features
 
 - Fully configurable via a single YAML file
 - Batch VCF processing via `bcftools` for high throughput
 - Supports both superpopulation (5 classes: AFR, AMR, EAS, EUR, SAS) and population (26 classes) prediction levels
-- Two estimation methods: Maximum Likelihood Classification and Admixture MLE
+- Three estimation methods: Maximum Likelihood Classification, Admixture EM (fast), and Admixture MLE
 - Idempotent execution: safely resume after interruption
 - MAF filtering and Fst-based SNP selection for optimal ancestry discrimination
 - Detailed evaluation metrics: accuracy, precision, recall, F1, confusion matrix
@@ -175,7 +176,7 @@ where $\bar{p}_i$ is the mean allele frequency across populations and $\mathrm{V
 
 1. Loads the statistics JSON from Step 2.
 2. For each evaluation individual, reads their 23andMe file (loading only the SNPs present in the statistics).
-3. Applies the configured method (`mle` or `admixture_mle`) to predict ancestry.
+3. Applies the configured method (`mle`, `admixture_em`, or `admixture_mle`) to predict ancestry.
 4. Computes accuracy, precision, recall, F1-score, and confusion matrix.
 5. Prints results to the console and saves them as JSON.
 
@@ -224,10 +225,12 @@ The YAML configuration file has five sections. All paths can be absolute or rela
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `level` | string | `"superpopulation"` | `"superpopulation"` (5 classes) or `"population"` (26 classes) |
-| `method` | string | `"mle"` | `"mle"` or `"admixture_mle"` |
+| `method` | string | `"admixture_em"` | `"mle"`, `"admixture_em"`, or `"admixture_mle"` |
 | `evaluation_subsets` | list | `["test"]` | Split subsets to evaluate |
 | `results_dir` | string | `"results"` | Directory for prediction output |
-| `admixture_mle.n_restarts` | int | `20` | Random restarts for the admixture optimiser |
+| `admixture_em.max_iter` | int | `1000` | Maximum EM iterations per individual |
+| `admixture_em.tol` | float | `1e-7` | Convergence tolerance on proportions |
+| `admixture_mle.n_restarts` | int | `20` | Random restarts for the L-BFGS-B optimiser |
 
 ### `pipeline`
 
@@ -268,9 +271,39 @@ $$k^* = \arg\max_k \; \mathcal{L}(k)$$
 - Produces a single hard classification.
 - Works well when populations are clearly separated and individual ancestry is predominantly from one source.
 
+### Admixture EM
+
+Admixture EM estimates ancestry proportions using the classical Expectation-Maximization algorithm from FRAPPE (Tang et al., 2005). This is the **recommended** method for admixture estimation — it is much faster than `admixture_mle` and produces equivalent results.
+
+**Model:** The same mixture model as Admixture MLE (below). Let $\boldsymbol{\alpha} = (\alpha_1, \dots, \alpha_K)$ be the admixture proportions with $\alpha_k \ge 0$ and $\sum_k \alpha_k = 1$. The mixed allele frequency at SNP $j$ is:
+
+$$p_j^{\text{mix}} = \sum_{k=1}^{K} \alpha_k \, f_{kj}$$
+
+**Algorithm:** Each allele copy is treated as belonging latently to one of the $K$ populations. The EM algorithm iterates:
+
+**E-step** — compute the posterior responsibility that allele copies at SNP $j$ came from population $k$:
+
+$$r_{jk}^{\text{ref}} = \frac{\alpha_k \, f_{kj}}{p_j^{\text{mix}}} \qquad r_{jk}^{\text{alt}} = \frac{\alpha_k \, (1 - f_{kj})}{1 - p_j^{\text{mix}}}$$
+
+**M-step** — update the proportions from the expected allele counts:
+
+$$\alpha_k^{\text{new}} = \frac{1}{2J} \sum_{j=1}^{J} \left[ g_j \cdot r_{jk}^{\text{ref}} + (2 - g_j) \cdot r_{jk}^{\text{alt}} \right]$$
+
+where $g_j \in \{0, 1, 2\}$ is the genotype dose and $J$ is the number of SNPs.
+
+Iteration continues until $\max_k |\alpha_k^{\text{new}} - \alpha_k| < \text{tol}$ or `max_iter` is reached.
+
+**Classification:** The predicted ancestry is $k^* = \arg\max_k \; \alpha_k$.
+
+**Properties:**
+- **Fast:** Each iteration is a few numpy matrix–vector multiplies with no scipy overhead. Typically converges in 50–200 iterations.
+- **Monotonic:** The likelihood is guaranteed to increase (or stay the same) at every step.
+- **No restarts needed:** Initialises at uniform proportions; convergence to the global optimum is typical for this problem.
+- Provides the same full vector of ancestry proportions as `admixture_mle`.
+
 ### Admixture MLE
 
-Admixture MLE estimates the proportion of ancestry from each reference population, modelling the individual as a mixture.
+Admixture MLE estimates the proportion of ancestry from each reference population using numerical optimisation. It uses the same mixture model as Admixture EM but solves it with L-BFGS-B via `scipy.optimize.minimize`.
 
 **Model:** Let $\boldsymbol{\alpha} = (\alpha_1, \dots, \alpha_K)$ be the admixture proportions with $\alpha_k \ge 0$ and $\sum_k \alpha_k = 1$. The mixed allele frequency at SNP $i$ is:
 
@@ -286,11 +319,7 @@ using the same Hardy-Weinberg formulas as MLC but with the mixed frequency $p_i^
 
 $$\mathrm{NLL}(\boldsymbol{\alpha}) = -\sum_{i=1}^{N} \log P\!\left(g_i \mid p_i^{\text{mix}}(\boldsymbol{\alpha})\right)$$
 
-subject to:
-
-$$\sum_{k=1}^{K} \alpha_k = 1, \qquad \alpha_k \ge 0 \;\; \forall \, k$$
-
-This constrained optimisation is solved with Sequential Least-Squares Programming (SLSQP) from `scipy.optimize.minimize`, using multiple random restarts (default: 20) to mitigate local minima. The initial restart uses uniform proportions; subsequent restarts draw from a symmetric Dirichlet distribution.
+The simplex constraint is enforced via softmax reparametrisation ($\alpha = \text{softmax}(\theta)$), allowing unconstrained L-BFGS-B optimisation with analytical gradient. Multiple random restarts (default: 20) mitigate local minima, with early stopping after 3 consecutive non-improving restarts.
 
 **Classification:** The predicted ancestry is the population with the highest estimated proportion:
 
@@ -299,8 +328,7 @@ $$k^* = \arg\max_k \; \alpha_k$$
 **Properties:**
 - Provides a full vector of ancestry proportions per individual.
 - More appropriate for admixed individuals.
-- Slower than MLC due to iterative optimisation (mitigated by vectorised likelihood computation).
-- Based on the implementation in `FROGAncestryCalc/tools/admixture_estimate.py`.
+- **Significantly slower** than Admixture EM due to scipy overhead and multiple restarts. Use `admixture_em` instead unless you have a specific reason to prefer numerical optimisation.
 
 ---
 
@@ -363,7 +391,7 @@ The frequency arrays follow the order defined in `metadata.populations`.
 }
 ```
 
-Both methods (`mle` and `admixture_mle`) include a `proportions` field. For `mle`, proportions are computed via softmax normalization of the log-likelihoods. For `admixture_mle`, they are the directly estimated admixture fractions.
+All three methods include a `proportions` field. For `mle`, proportions are computed via softmax normalization of the log-likelihoods. For `admixture_em` and `admixture_mle`, they are the directly estimated admixture fractions.
 
 ### Per-individual result files
 
@@ -471,7 +499,9 @@ To force recomputation:
 |------|-----------------|------------|
 | Step 1 (1300 individuals, 23 chromosomes) | 2–4 hours | VCF I/O + bcftools decompression |
 | Step 2 (910 reference individuals, 23 chromosomes) | 1–2 hours | VCF I/O |
-| Step 3 (195 test individuals, 500K SNPs) | 10–30 minutes | 23andMe file reading |
+| Step 3 — mle (195 test individuals, 500K SNPs) | 2–5 minutes | 23andMe file reading |
+| Step 3 — admixture_em (195 test individuals, 500K SNPs) | 5–15 minutes | EM iterations |
+| Step 3 — admixture_mle (195 test individuals, 500K SNPs) | 30–90 minutes | L-BFGS-B optimisation |
 
 ### Memory considerations
 
@@ -506,10 +536,11 @@ When `conversion.filter_by_chip_panel` is `true`, the program automatically down
 
 Yes. Create a text file with one rsID per line and set `conversion.snp_panel` to its path (this overrides `filter_by_chip_panel`). You can also set `statistics.snp_panel` for Step 2. For example, the 55 or 128 AISNPs from FROGAncestryCalc.
 
-### What is the difference between `mle` and `admixture_mle`?
+### What is the difference between `mle`, `admixture_em`, and `admixture_mle`?
 
-- **`mle`** assigns each individual to one population — the one with the highest genotype likelihood. Fast and simple.
-- **`admixture_mle`** estimates the proportion of ancestry from each population. Better for admixed individuals, but slower.
+- **`mle`** assigns each individual to one population — the one with the highest genotype likelihood. Fast and simple, but proportions are not meaningful (essentially 100%/0% with many SNPs).
+- **`admixture_em`** estimates ancestry proportions via the EM algorithm. **Recommended** — fast and produces meaningful proportions for pie charts.
+- **`admixture_mle`** estimates ancestry proportions via L-BFGS-B numerical optimisation. Same model as `admixture_em` but significantly slower due to scipy overhead and multiple restarts.
 
 ### Can I predict at the population level (26 classes)?
 
@@ -564,7 +595,9 @@ snp_ancestry_predictor/
 - 1000 Genomes Project: http://www.internationalgenome.org/
 - bcftools: https://samtools.github.io/bcftools/
 - Hardy-Weinberg principle: Fisher, R.A. (1918)
+- FRAPPE (EM algorithm): Tang, H., Peng, J., Wang, P. & Risch, N.J. (2005). Estimation of individual admixture: analytical and study design considerations. *Genetic Epidemiology*, 28(4), 289–301.
 - Admixture estimation: Alexander, D.H., Novembre, J. & Lange, K. (2009). Fast model-based estimation of ancestry in unrelated individuals. *Genome Research*, 19(9), 1655–1664.
+- Ohana: Cheng, J.Y., Mailund, T. & Nielsen, R. (2017). Fast admixture analysis and population tree estimation for SNP and NGS data. *Bioinformatics*, 33(14), 2148–2155.
 - Ancestry-informative SNPs: Kidd, K.K. et al. (2014). Progress toward an efficient panel of SNPs for ancestry inference. *Forensic Science International: Genetics*, 10, 23–32.
 
 ---

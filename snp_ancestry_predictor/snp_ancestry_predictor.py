@@ -44,6 +44,7 @@ from rich.progress import (
     SpinnerColumn,
     MofNCompleteColumn,
 )
+from rich.rule import Rule
 from rich.table import Table
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -703,16 +704,25 @@ def classify_mle(
     )
 
 
-def _admixture_nll(
-    alphas_raw: np.ndarray,
+def _admixture_nll_softmax(
+    theta: np.ndarray,
     dose_arr: np.ndarray,
     freq_matrix: np.ndarray,
-) -> float:
-    """Negative log-likelihood for the admixture model (vectorised)."""
-    alphas = alphas_raw / alphas_raw.sum()
+    freq_matrix_T: np.ndarray,
+) -> Tuple[float, np.ndarray]:
+    """NLL and gradient for the admixture model with softmax reparametrisation.
+
+    Uses unconstrained parameters *theta* mapped to the simplex via softmax,
+    allowing the use of L-BFGS-B (no equality constraints needed).
+    Returns (nll, grad_theta) so ``jac=True`` can be used.
+    """
     eps = 1e-10
 
-    p_mixed = np.clip(freq_matrix @ alphas, eps, 1.0 - eps)
+    theta_s = theta - theta.max()
+    exp_t = np.exp(theta_s)
+    alpha = exp_t / exp_t.sum()
+
+    p_mixed = np.clip(freq_matrix @ alpha, eps, 1.0 - eps)
 
     log_prob = np.where(
         dose_arr == 2,
@@ -723,7 +733,22 @@ def _admixture_nll(
             2.0 * np.log(1.0 - p_mixed),
         ),
     )
-    return -float(np.sum(log_prob))
+    nll = -float(np.sum(log_prob))
+
+    dlog_dp = np.where(
+        dose_arr == 2,
+        2.0 / p_mixed,
+        np.where(
+            dose_arr == 1,
+            1.0 / p_mixed - 1.0 / (1.0 - p_mixed),
+            -2.0 / (1.0 - p_mixed),
+        ),
+    )
+    grad_alpha = -(freq_matrix_T @ dlog_dp)
+
+    grad_theta = alpha * (grad_alpha - np.dot(grad_alpha, alpha))
+
+    return nll, grad_theta
 
 
 def estimate_admixture(
@@ -733,7 +758,11 @@ def estimate_admixture(
     populations: List[str],
     n_restarts: int = 20,
 ) -> Tuple[Dict[str, float], int]:
-    """Admixture proportion estimation via constrained MLE.
+    """Admixture proportion estimation via L-BFGS-B with softmax reparametrisation.
+
+    Parameters are mapped to the probability simplex via softmax, eliminating
+    the need for equality constraints and enabling the much faster L-BFGS-B
+    optimiser with analytical gradient.
 
     Returns ({pop: proportion}, n_snps_used).
     """
@@ -757,33 +786,117 @@ def estimate_admixture(
 
     dose_arr = np.array(doses_list, dtype=np.int32)
     freq_matrix = np.array(freq_list, dtype=np.float64)
+    freq_matrix_T = np.ascontiguousarray(freq_matrix.T)
 
     best_nll = float("inf")
     best_alpha = np.ones(K) / K
     rng = np.random.RandomState(42)
-
-    constraints = {"type": "eq", "fun": lambda x: x.sum() - 1.0}
-    bounds = [(1e-6, 1.0)] * K
+    no_improve = 0
 
     for i in range(n_restarts):
-        x0 = np.ones(K) / K if i == 0 else rng.dirichlet(np.ones(K))
+        if i == 0:
+            theta0 = np.zeros(K)
+        else:
+            d = rng.dirichlet(np.ones(K))
+            theta0 = np.log(np.clip(d, 1e-10, None))
 
         result = minimize(
-            _admixture_nll,
-            x0,
-            args=(dose_arr, freq_matrix),
-            method="SLSQP",
-            bounds=bounds,
-            constraints=constraints,
-            options={"maxiter": 500, "ftol": 1e-12},
+            _admixture_nll_softmax,
+            theta0,
+            args=(dose_arr, freq_matrix, freq_matrix_T),
+            method="L-BFGS-B",
+            jac=True,
+            options={"maxiter": 200, "ftol": 1e-10},
         )
 
-        if result.fun < best_nll:
+        if result.fun < best_nll - 1e-6:
             best_nll = result.fun
-            best_alpha = result.x / result.x.sum()
+            t = result.x
+            t_s = t - t.max()
+            e = np.exp(t_s)
+            best_alpha = e / e.sum()
+            no_improve = 0
+        else:
+            no_improve += 1
+            if no_improve >= 3:
+                break
 
     return (
         {populations[k]: float(best_alpha[k]) for k in range(K)},
+        len(doses_list),
+    )
+
+
+def estimate_admixture_em(
+    genotypes: Dict[str, str],
+    ref_alleles: Dict[str, str],
+    allele_freqs: Dict[str, List[float]],
+    populations: List[str],
+    max_iter: int = 1000,
+    tol: float = 1e-7,
+) -> Tuple[Dict[str, float], int]:
+    """Admixture proportion estimation via the EM algorithm.
+
+    Uses the classical Expectation-Maximization algorithm from FRAPPE
+    (Tang et al., 2005) to estimate admixture proportions.  Each allele
+    copy is treated as belonging latently to one of K populations; the
+    E-step computes posterior responsibilities and the M-step updates
+    the proportions.
+
+    This is much faster than numerical optimisers (L-BFGS-B, SLSQP)
+    because each iteration is a few pure-numpy matrix–vector multiplies
+    with no scipy overhead, and convergence is monotonic (the likelihood
+    never decreases).
+
+    Returns ({pop: proportion}, n_snps_used).
+    """
+    K = len(populations)
+
+    doses_list: List[int] = []
+    freq_list: List[List[float]] = []
+
+    for rsid, freqs in allele_freqs.items():
+        gt = genotypes.get(rsid)
+        if gt is None:
+            continue
+        d = _genotype_dose(gt, ref_alleles.get(rsid, ""))
+        if d is None:
+            continue
+        doses_list.append(d)
+        freq_list.append(freqs)
+
+    if not doses_list:
+        return {p: 1.0 / K for p in populations}, 0
+
+    dose_arr = np.array(doses_list, dtype=np.float64)
+    freq_matrix = np.array(freq_list, dtype=np.float64)
+    freq_matrix_T = np.ascontiguousarray(freq_matrix.T)
+
+    eps = 1e-10
+    dose_alt = 2.0 - dose_arr
+
+    alpha = np.ones(K, dtype=np.float64) / K
+
+    for _ in range(max_iter):
+        p_mixed = np.clip(freq_matrix @ alpha, eps, 1.0 - eps)
+        q_mixed = 1.0 - p_mixed
+
+        ratio_ref = dose_arr / p_mixed
+        ratio_alt = dose_alt / q_mixed
+
+        c_ref = freq_matrix_T @ ratio_ref
+        c_alt = ratio_alt.sum() - freq_matrix_T @ ratio_alt
+
+        alpha_new = alpha * (c_ref + c_alt)
+        alpha_new /= alpha_new.sum()
+
+        if np.max(np.abs(alpha_new - alpha)) < tol:
+            alpha = alpha_new
+            break
+        alpha = alpha_new
+
+    return (
+        {populations[k]: float(alpha[k]) for k in range(K)},
         len(doses_list),
     )
 
@@ -904,6 +1017,26 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
                     "proportions": props,
                 }
                 predictions.append(entry)
+
+            elif method == "admixture_em":
+                em_cfg = pred_cfg.get("admixture_em", {})
+                em_max_iter = em_cfg.get("max_iter", 1000)
+                em_tol = em_cfg.get("tol", 1e-7)
+                props, n_used = estimate_admixture_em(
+                    genos, ref_alleles, allele_freqs, populations,
+                    max_iter=em_max_iter, tol=em_tol,
+                )
+                pred = max(props, key=props.get)
+                entry = {
+                    "sample_id": sid,
+                    "split": sid_split,
+                    "true": true_label,
+                    "predicted": pred,
+                    "correct": pred == true_label,
+                    "snps_used": n_used,
+                    "proportions": props,
+                }
+                predictions.append(entry)
             else:
                 console.print(f"[red]Unknown method: {method}[/red]")
                 return
@@ -976,7 +1109,8 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
         )
         total = len(preds)
 
-        console.print(f"\n[bold]{label}[/bold]")
+        console.print()
+        console.print(Rule(label, style="bold cyan"))
 
         mt = Table(title="Overall Metrics")
         mt.add_column("Metric")
@@ -1023,7 +1157,7 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
             console.print(f"\n[yellow]No predictions for subset '{subset}'.[/yellow]")
             continue
         acc, wp, wr, wf, cm, conf = _display_metrics(
-            f"Results — {method}, {level}  [{subset}]  ({len(subset_preds)} samples)",
+            f"Results — {method}, {level} — subset: {subset} — {len(subset_preds)} samples",
             subset_preds,
             populations,
             console,
@@ -1041,7 +1175,7 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
     # ── Aggregate results (when more than one subset) ─
     if len(eval_subsets) > 1:
         acc, wp, wr, wf, class_metrics, confusion = _display_metrics(
-            f"Results — {method}, {level}  [ALL: {', '.join(eval_subsets)}]  ({len(predictions)} samples)",
+            f"Results — {method}, {level} — ALL ({', '.join(eval_subsets)}) — {len(predictions)} samples",
             predictions,
             populations,
             console,

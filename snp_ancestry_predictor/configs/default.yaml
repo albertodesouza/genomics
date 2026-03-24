@@ -106,8 +106,9 @@ prediction:
 
   # Estimation method:
   #   "mle"           — Maximum Likelihood Classification (single assignment)
-  #   "admixture_mle" — Admixture proportion estimation (mixture model)
-  method: "mle"
+  #   "admixture_em"  — Admixture proportion estimation via EM (fast, recommended)
+  #   "admixture_mle" — Admixture proportion estimation via L-BFGS-B (slower)
+  method: "admixture_em"
 
   # Which split subsets to evaluate (individuals with known labels).
   evaluation_subsets:
@@ -118,9 +119,16 @@ prediction:
   # Directory where prediction results (JSON) are saved.
   results_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000/ancestry_results"
 
+  # Parameters specific to the admixture_em method.
+  admixture_em:
+    # Maximum number of EM iterations per individual.
+    max_iter: 1000
+    # Convergence tolerance on proportions (max absolute change).
+    tol: 1.0e-7
+
   # Parameters specific to the admixture_mle method.
   admixture_mle:
-    # Number of random restarts for the SLSQP optimiser (more = slower but
+    # Number of random restarts for the L-BFGS-B optimiser (more = slower but
     # more robust against local minima).
     n_restarts: 20
 
