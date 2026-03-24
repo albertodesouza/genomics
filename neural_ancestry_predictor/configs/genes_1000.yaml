@@ -179,7 +179,7 @@ model:
   #   "SVM": Linear SVM (LinearSVC), opcional CalibratedClassifierCV
   #   "RF": Random Forest
   #   "XGBOOST": XGBClassifier (requer: pip install xgboost)
-  type: "XGBOOST"
+  type: "CNN2"
   
   # Camadas ocultas: lista com número de neurônios em cada camada
   # Exemplo: [256, 128, 64] = 3 camadas ocultas
@@ -335,7 +335,7 @@ model:
       # Menor C = mais regularização, maior margem, modelo mais simples
       # Maior C = menos regularização, menor margem, pode overfit
       # Valores típicos: 0.01, 0.1, 1.0, 10.0
-      C: 1.0
+      C: 0.001
       # null ou "balanced" (classes desbalanceadas)
       class_weight: null
       # Máximo de iterações para convergência
@@ -367,7 +367,7 @@ model:
     random_forest:
       n_estimators: 200
       # null = profundidade ilimitada
-      max_depth: null
+      max_depth: 10
       # null = sklearn default; "balanced" para classes desbalanceadas
       class_weight: null
       random_state: 42
@@ -376,7 +376,7 @@ model:
     # Parâmetros para XGBoost (type="XGBOOST")
     xgboost:
       n_estimators: 200
-      max_depth: 6
+      max_depth: 4
       learning_rate: 0.1
       subsample: 0.8
       colsample_bytree: 0.8

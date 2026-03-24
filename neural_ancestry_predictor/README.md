@@ -849,7 +849,25 @@ python3 plot_sklearn_pca_variance.py --config configs/genes_1000.yaml --output r
 
 # Plot confusion matrix PNGs from train/val/test_results.json
 python3 plot_sklearn_confusion_matrices.py --experiment-dirs /path/to/svm_run /path/to/rf_run /path/to/xgboost_run
+
+# Hyperparameter search on cached PCA matrices (validation metrics + plots)
+python3 tune_sklearn_baselines.py --config configs/genes_1000.yaml --output-dir runs/sklearn_tune_001
+python3 tune_sklearn_baselines.py --config configs/genes_1000.yaml --output-dir runs/sklearn_tune_custom \\
+    --grid-json configs/sklearn_tune_grid.example.json --models SVM,RF
+
+# Large grids: reduce chart clutter
+python3 tune_sklearn_baselines.py --config configs/genes_1000.yaml --output-dir runs/sklearn_tune_big \\
+    --top-k-bars 8 --label-max-len 32
 ```
+
+Outputs:
+- `tuning_results.csv` / `tuning_results.json` with per-trial metrics
+- `tuning_best_per_model_val_metrics.png` (best trial per model, selected by validation F1)
+- `tuning_top_trials_val_f1.png` (top-k bars per model; controlled by `--top-k-bars` and `--label-max-len`)
+- `tuning_ranked_val_f1_curves.png` (ranked curves, better for large search spaces)
+- `tuning_train_vs_val_f1.png` (overfitting diagnostic)
+- `tuning_<model>_val_f1_heatmap.png` when exactly two hyperparameters vary for that model
+- optional `tuning_<model>_<param>_vs_val_f1.png` when exactly one numeric hyperparameter varies
 
 ---
 
@@ -1446,6 +1464,7 @@ neural_ancestry_predictor/
 ├── sklearn_pca_cache.py              # Shared StandardScaler+IncrementalPCA disk cache for sklearn baselines
 ├── plot_sklearn_pca_variance.py      # Cumulative explained variance plot (IncrementalPCA)
 ├── plot_sklearn_confusion_matrices.py # Confusion matrix plotting from sklearn result JSONs
+├── tune_sklearn_baselines.py          # Hyperparameter tuning on cached PCA (val metrics + plots)
 ├── annotate_deeplift_windows.py      # DeepLIFT output variant annotation
 ├── validate_pigmentation_hypothesis.py  # Hypothesis validation script
 ├── verify_processed_dataset.py       # Dataset verification tool
@@ -1505,6 +1524,11 @@ For issues or questions:
 - ✨ **NEW: diagnostics utilities**
   - `plot_sklearn_pca_variance.py` for cumulative explained variance
   - `plot_sklearn_confusion_matrices.py` for train/val/test confusion-matrix PNGs
+  - `tune_sklearn_baselines.py` for grid search on cached PCA with validation metric plots
+- ✨ **NEW: large-grid friendly tuning plots**
+  - ranked validation curves (`tuning_ranked_val_f1_curves.png`)
+  - automatic 2-parameter validation heatmaps per model
+  - anti-clutter knobs: `--top-k-bars`, `--label-max-len`
 - 🔧 Matplotlib backend handling improved for headless execution (`TkAgg` fallback to `Agg`)
 
 ### v1.2 (2025-12-23)

@@ -52,9 +52,16 @@ def run_plot(
     max_components: Optional[int],
     show: bool,
 ) -> None:
-    import matplotlib.pyplot as plt
+    import os
 
+    if not show:
+        os.environ.setdefault("MPLBACKEND", "Agg")
     nap = load_neural_ancestry_predictor_for_cli()
+    if not show:
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
+    import matplotlib.pyplot as plt
     console = nap.console
     load_config = nap.load_config
     get_dataset_cache_dir = nap.get_dataset_cache_dir

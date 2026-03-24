@@ -15,6 +15,10 @@ Each file should contain:
 
 from __future__ import annotations
 
+import os
+
+os.environ.setdefault("MPLBACKEND", "Agg")
+
 import argparse
 import json
 import re
@@ -22,6 +26,12 @@ from pathlib import Path
 from typing import List, Optional
 
 import numpy as np
+
+
+def _use_agg_backend() -> None:
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
 
 
 def _infer_labels_from_report(report: str, n_classes: int) -> List[str]:
@@ -47,6 +57,7 @@ def _infer_labels_from_report(report: str, n_classes: int) -> List[str]:
 
 
 def _plot_matrix(cm: np.ndarray, labels: List[str], title: str, output_png: Path) -> None:
+    _use_agg_backend()
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(7, 6), constrained_layout=True)
