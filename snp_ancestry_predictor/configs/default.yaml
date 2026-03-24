@@ -111,6 +111,8 @@ prediction:
 
   # Which split subsets to evaluate (individuals with known labels).
   evaluation_subsets:
+    - "train"
+    - "val"
     - "test"
 
   # Directory where prediction results (JSON) are saved.

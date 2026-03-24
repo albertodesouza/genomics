@@ -830,6 +830,8 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
         pred_cfg.get("results_dir", str(SCRIPT_DIR / "results"))
     )
     results_dir.mkdir(parents=True, exist_ok=True)
+    ind_results_dir = results_dir / "individuals"
+    ind_results_dir.mkdir(parents=True, exist_ok=True)
 
     console.print(f"  Evaluation: {len(eval_ids)} individuals from {eval_subsets}")
     console.print(f"  Method: {method}")
@@ -859,20 +861,30 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
 
             genos = _load_23andme_genotypes(str(fpath), needed_snps)
             true_label = meta[sid][level]
+            sid_split = meta[sid]["split"]
 
             if method == "mle":
                 pred, log_liks, n_used = classify_mle(
                     genos, ref_alleles, allele_freqs, populations
                 )
-                predictions.append(
-                    {
-                        "sample_id": sid,
-                        "true": true_label,
-                        "predicted": pred,
-                        "correct": pred == true_label,
-                        "snps_used": n_used,
-                    }
-                )
+                ll_arr = np.array([log_liks[p] for p in populations])
+                ll_arr -= ll_arr.max()
+                exp_ll = np.exp(ll_arr)
+                probs = exp_ll / exp_ll.sum()
+                props = {
+                    populations[k]: round(float(probs[k]), 6)
+                    for k in range(len(populations))
+                }
+                entry = {
+                    "sample_id": sid,
+                    "split": sid_split,
+                    "true": true_label,
+                    "predicted": pred,
+                    "correct": pred == true_label,
+                    "snps_used": n_used,
+                    "proportions": props,
+                }
+                predictions.append(entry)
 
             elif method == "admixture_mle":
                 n_restarts = (
@@ -882,19 +894,24 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
                     genos, ref_alleles, allele_freqs, populations, n_restarts
                 )
                 pred = max(props, key=props.get)
-                predictions.append(
-                    {
-                        "sample_id": sid,
-                        "true": true_label,
-                        "predicted": pred,
-                        "correct": pred == true_label,
-                        "snps_used": n_used,
-                        "proportions": props,
-                    }
-                )
+                entry = {
+                    "sample_id": sid,
+                    "split": sid_split,
+                    "true": true_label,
+                    "predicted": pred,
+                    "correct": pred == true_label,
+                    "snps_used": n_used,
+                    "proportions": props,
+                }
+                predictions.append(entry)
             else:
                 console.print(f"[red]Unknown method: {method}[/red]")
                 return
+
+            ind_file = ind_results_dir / f"{sid}_{method}_{level}.json"
+            ind_data = {**entry, "method": method, "level": level}
+            with open(ind_file, "w") as fout:
+                json.dump(ind_data, fout, indent=2)
 
             prog.advance(task)
 
@@ -902,84 +919,137 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
         console.print("[yellow]No predictions produced.[/yellow]")
         return
 
-    true_labels = [p["true"] for p in predictions]
-    pred_labels = [p["predicted"] for p in predictions]
-    total = len(predictions)
-    correct = sum(1 for p in predictions if p["correct"])
-    accuracy = correct / total
+    def _compute_metrics(
+        preds: List[dict], populations: List[str],
+    ) -> Tuple[float, float, float, float, Dict[str, dict], Dict[str, Dict[str, int]]]:
+        true_labels = [p["true"] for p in preds]
+        pred_labels = [p["predicted"] for p in preds]
+        total = len(preds)
+        correct = sum(1 for p in preds if p["correct"])
+        accuracy = correct / total
 
-    class_metrics: Dict[str, dict] = {}
-    for pop in populations:
-        tp = sum(1 for t, p in zip(true_labels, pred_labels) if t == pop and p == pop)
-        fp = sum(1 for t, p in zip(true_labels, pred_labels) if t != pop and p == pop)
-        fn = sum(1 for t, p in zip(true_labels, pred_labels) if t == pop and p != pop)
-        prec = tp / (tp + fp) if (tp + fp) else 0.0
-        rec = tp / (tp + fn) if (tp + fn) else 0.0
-        f1 = 2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
-        support = sum(1 for t in true_labels if t == pop)
-        class_metrics[pop] = {
-            "precision": round(prec, 4),
-            "recall": round(rec, 4),
-            "f1": round(f1, 4),
-            "support": support,
+        class_met: Dict[str, dict] = {}
+        for pop in populations:
+            tp = sum(1 for t, p in zip(true_labels, pred_labels) if t == pop and p == pop)
+            fp = sum(1 for t, p in zip(true_labels, pred_labels) if t != pop and p == pop)
+            fn = sum(1 for t, p in zip(true_labels, pred_labels) if t == pop and p != pop)
+            prec = tp / (tp + fp) if (tp + fp) else 0.0
+            rec = tp / (tp + fn) if (tp + fn) else 0.0
+            f1 = 2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
+            support = sum(1 for t in true_labels if t == pop)
+            class_met[pop] = {
+                "precision": round(prec, 4),
+                "recall": round(rec, 4),
+                "f1": round(f1, 4),
+                "support": support,
+            }
+
+        confusion: Dict[str, Dict[str, int]] = {
+            t: {p: 0 for p in populations} for t in populations
+        }
+        for t, p in zip(true_labels, pred_labels):
+            confusion[t][p] += 1
+
+        w_prec = sum(
+            class_met[p]["precision"] * class_met[p]["support"]
+            for p in populations
+        ) / total
+        w_rec = sum(
+            class_met[p]["recall"] * class_met[p]["support"]
+            for p in populations
+        ) / total
+        w_f1 = sum(
+            class_met[p]["f1"] * class_met[p]["support"]
+            for p in populations
+        ) / total
+
+        return accuracy, w_prec, w_rec, w_f1, class_met, confusion
+
+    def _display_metrics(
+        label: str,
+        preds: List[dict],
+        populations: List[str],
+        console: Console,
+    ) -> Tuple[float, float, float, float, Dict[str, dict], Dict[str, Dict[str, int]]]:
+        accuracy, w_prec, w_rec, w_f1, class_met, confusion = _compute_metrics(
+            preds, populations
+        )
+        total = len(preds)
+
+        console.print(f"\n[bold]{label}[/bold]")
+
+        mt = Table(title="Overall Metrics")
+        mt.add_column("Metric")
+        mt.add_column("Value", justify="right")
+        mt.add_row("Accuracy", f"{accuracy:.4f}")
+        mt.add_row("Precision (weighted)", f"{w_prec:.4f}")
+        mt.add_row("Recall (weighted)", f"{w_rec:.4f}")
+        mt.add_row("F1 (weighted)", f"{w_f1:.4f}")
+        mt.add_row("Samples", str(total))
+        console.print(mt)
+
+        ct = Table(title="Per-Class Metrics")
+        ct.add_column("Class")
+        ct.add_column("Precision", justify="right")
+        ct.add_column("Recall", justify="right")
+        ct.add_column("F1", justify="right")
+        ct.add_column("Support", justify="right")
+        for pop in populations:
+            m = class_met[pop]
+            ct.add_row(
+                pop,
+                f"{m['precision']:.4f}",
+                f"{m['recall']:.4f}",
+                f"{m['f1']:.4f}",
+                str(m["support"]),
+            )
+        console.print(ct)
+
+        cmt = Table(title="Confusion Matrix  (rows = true, columns = predicted)")
+        cmt.add_column("True \\ Pred")
+        for p in populations:
+            cmt.add_column(p, justify="right")
+        for t in populations:
+            cmt.add_row(t, *(str(confusion[t][p]) for p in populations))
+        console.print(cmt)
+
+        return accuracy, w_prec, w_rec, w_f1, class_met, confusion
+
+    # ── Per-subset results ───────────────────────────
+    subset_results: Dict[str, dict] = {}
+    for subset in eval_subsets:
+        subset_preds = [p for p in predictions if p["split"] == subset]
+        if not subset_preds:
+            console.print(f"\n[yellow]No predictions for subset '{subset}'.[/yellow]")
+            continue
+        acc, wp, wr, wf, cm, conf = _display_metrics(
+            f"Results — {method}, {level}  [{subset}]  ({len(subset_preds)} samples)",
+            subset_preds,
+            populations,
+            console,
+        )
+        subset_results[subset] = {
+            "accuracy": round(acc, 4),
+            "weighted_precision": round(wp, 4),
+            "weighted_recall": round(wr, 4),
+            "weighted_f1": round(wf, 4),
+            "per_class_metrics": cm,
+            "confusion_matrix": conf,
+            "n_individuals": len(subset_preds),
         }
 
-    confusion: Dict[str, Dict[str, int]] = {
-        t: {p: 0 for p in populations} for t in populations
-    }
-    for t, p in zip(true_labels, pred_labels):
-        confusion[t][p] += 1
-
-    w_prec = sum(
-        class_metrics[p]["precision"] * class_metrics[p]["support"]
-        for p in populations
-    ) / total
-    w_rec = sum(
-        class_metrics[p]["recall"] * class_metrics[p]["support"]
-        for p in populations
-    ) / total
-    w_f1 = sum(
-        class_metrics[p]["f1"] * class_metrics[p]["support"]
-        for p in populations
-    ) / total
-
-    # ── Display ──────────────────────────────────────
-    console.print(f"\n[bold]Results — {method}, {level}[/bold]")
-
-    mt = Table(title="Overall Metrics")
-    mt.add_column("Metric")
-    mt.add_column("Value", justify="right")
-    mt.add_row("Accuracy", f"{accuracy:.4f}")
-    mt.add_row("Precision (weighted)", f"{w_prec:.4f}")
-    mt.add_row("Recall (weighted)", f"{w_rec:.4f}")
-    mt.add_row("F1 (weighted)", f"{w_f1:.4f}")
-    mt.add_row("Samples", str(total))
-    console.print(mt)
-
-    ct = Table(title="Per-Class Metrics")
-    ct.add_column("Class")
-    ct.add_column("Precision", justify="right")
-    ct.add_column("Recall", justify="right")
-    ct.add_column("F1", justify="right")
-    ct.add_column("Support", justify="right")
-    for pop in populations:
-        m = class_metrics[pop]
-        ct.add_row(
-            pop,
-            f"{m['precision']:.4f}",
-            f"{m['recall']:.4f}",
-            f"{m['f1']:.4f}",
-            str(m["support"]),
+    # ── Aggregate results (when more than one subset) ─
+    if len(eval_subsets) > 1:
+        acc, wp, wr, wf, class_metrics, confusion = _display_metrics(
+            f"Results — {method}, {level}  [ALL: {', '.join(eval_subsets)}]  ({len(predictions)} samples)",
+            predictions,
+            populations,
+            console,
         )
-    console.print(ct)
-
-    cmt = Table(title="Confusion Matrix  (rows = true, columns = predicted)")
-    cmt.add_column("True \\ Pred")
-    for p in populations:
-        cmt.add_column(p, justify="right")
-    for t in populations:
-        cmt.add_row(t, *(str(confusion[t][p]) for p in populations))
-    console.print(cmt)
+    else:
+        acc, wp, wr, wf, class_metrics, confusion = _compute_metrics(
+            predictions, populations
+        )
 
     # ── Save ─────────────────────────────────────────
     results_path = results_dir / f"predictions_{method}_{level}.json"
@@ -990,17 +1060,18 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
             "level": level,
             "evaluation_subsets": eval_subsets,
             "n_snps": len(needed_snps),
-            "n_individuals": total,
+            "n_individuals": len(predictions),
             "created_at": datetime.now().isoformat(),
         },
         "metrics": {
-            "accuracy": round(accuracy, 4),
-            "weighted_precision": round(w_prec, 4),
-            "weighted_recall": round(w_rec, 4),
-            "weighted_f1": round(w_f1, 4),
+            "accuracy": round(acc, 4),
+            "weighted_precision": round(wp, 4),
+            "weighted_recall": round(wr, 4),
+            "weighted_f1": round(wf, 4),
         },
         "per_class_metrics": class_metrics,
         "confusion_matrix": confusion,
+        "per_subset_metrics": subset_results,
         "predictions": predictions,
     }
 

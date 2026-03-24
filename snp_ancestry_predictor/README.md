@@ -21,6 +21,8 @@ This module extracts SNP genotypes from multi-sample 1000 Genomes VCF files, con
   - [Maximum Likelihood Classification (MLC)](#maximum-likelihood-classification-mlc)
   - [Admixture MLE](#admixture-mle)
 - [Output Format](#output-format)
+  - [Per-individual result files](#per-individual-result-files)
+- [Plotting Ancestry Pie Charts](#plotting-ancestry-pie-charts)
 - [Idempotency](#idempotency)
 - [Performance and Scalability](#performance-and-scalability)
 - [FAQ](#faq)
@@ -46,6 +48,8 @@ The **SNP Ancestry Predictor** is a three-step pipeline that:
 - Idempotent execution: safely resume after interruption
 - MAF filtering and Fst-based SNP selection for optimal ancestry discrimination
 - Detailed evaluation metrics: accuracy, precision, recall, F1, confusion matrix
+- Per-individual result files with ancestry proportions (JSON)
+- Pie chart visualization via `plot_ancestry_pie.py`
 - Rich console output with progress bars
 
 ---
@@ -350,10 +354,96 @@ The frequency arrays follow the order defined in `metadata.populations`.
     "AFR": {"AFR": 39, "AMR": 1, "EAS": 0, "EUR": 0, "SAS": 0}
   },
   "predictions": [
-    {"sample_id": "HG02577", "true": "AFR", "predicted": "AFR", "correct": true, "snps_used": 498321}
+    {
+      "sample_id": "HG02577", "true": "AFR", "predicted": "AFR",
+      "correct": true, "snps_used": 498321,
+      "proportions": {"AFR": 0.9834, "AMR": 0.0052, "EAS": 0.0011, "EUR": 0.0068, "SAS": 0.0035}
+    }
   ]
 }
 ```
+
+Both methods (`mle` and `admixture_mle`) include a `proportions` field. For `mle`, proportions are computed via softmax normalization of the log-likelihoods. For `admixture_mle`, they are the directly estimated admixture fractions.
+
+### Per-individual result files
+
+In addition to the aggregate predictions file, Step 3 saves a separate JSON file for each individual in the `individuals/` subdirectory of `results_dir`:
+
+```
+<results_dir>/individuals/<sample_id>_<method>_<level>.json
+```
+
+Example:
+
+```json
+{
+  "sample_id": "HG02577",
+  "true": "AFR",
+  "predicted": "AFR",
+  "correct": true,
+  "snps_used": 498321,
+  "proportions": {"AFR": 0.9834, "AMR": 0.0052, "EAS": 0.0011, "EUR": 0.0068, "SAS": 0.0035},
+  "method": "mle",
+  "level": "superpopulation"
+}
+```
+
+These files can be used directly with `plot_ancestry_pie.py` to generate pie chart visualizations (see [Plotting Ancestry Pie Charts](#plotting-ancestry-pie-charts)).
+
+---
+
+## Plotting Ancestry Pie Charts
+
+The `plot_ancestry_pie.py` script generates a pie chart from a per-individual result JSON file produced by Step 3.
+
+### Usage
+
+```bash
+source ../scripts/start_genomics_universal.sh
+python3 plot_ancestry_pie.py <result_json> [-o output.png] [--title "..."]
+```
+
+### Examples
+
+Plot ancestry for a specific individual:
+
+```bash
+python3 plot_ancestry_pie.py \
+    /dados/.../ancestry_results/individuals/HG02577_mle_superpopulation.json
+```
+
+Specify a custom output path and title:
+
+```bash
+python3 plot_ancestry_pie.py \
+    /dados/.../ancestry_results/individuals/HG02577_admixture_mle_superpopulation.json \
+    -o /home/user/HG02577_ancestry.png \
+    --title "HG02577 Admixture Ancestry"
+```
+
+### Command-Line Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `result_json` | *(required)* | Path to the per-individual JSON file |
+| `-o`, `--output` | `<input>.png` | Output PNG file path |
+| `--title` | Auto-generated | Custom chart title |
+| `--min-percent` | `0.5` | Populations below this % are grouped into "Other" |
+| `--dpi` | `150` | Output resolution |
+
+### Colour Scheme
+
+At the superpopulation level, the chart uses the canonical 1000 Genomes Project colours:
+
+| Population | Colour |
+|-----------|--------|
+| AFR | Orange `#E8832A` |
+| AMR | Red `#ED1E24` |
+| EAS | Green `#108C44` |
+| EUR | Blue `#2D59A4` |
+| SAS | Purple `#6F3198` |
+
+At the population level, colours are assigned automatically from the `tab20` palette.
 
 ---
 
@@ -461,6 +551,7 @@ rm /dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000/snp_ancestry_stati
 ```
 snp_ancestry_predictor/
 ├── snp_ancestry_predictor.py      # Main pipeline script
+├── plot_ancestry_pie.py           # Pie chart generator for individual results
 ├── configs/
 │   └── default.yaml               # Default configuration
 └── README.md                      # This documentation
