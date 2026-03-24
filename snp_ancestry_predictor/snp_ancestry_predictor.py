@@ -48,7 +48,13 @@ from rich.table import Table
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR.parent))
-from vcf_to_23andme.vcf_to_23andme import normalize_chrom, generate_header
+from vcf_to_23andme.vcf_to_23andme import (
+    normalize_chrom,
+    generate_header,
+    ensure_chip_panel_available,
+    ensure_dbsnp_available,
+    detect_vcf_chrom_style,
+)
 
 
 DEFAULT_CHROMS = [f"chr{i}" for i in range(1, 23)] + ["chrX"]
@@ -169,6 +175,54 @@ def _gt_to_23andme(gt_str: str, ref: str, alt: str) -> str:
 # ═══════════════════════════════════════════════════════════════
 
 
+def _start_bcftools_query(
+    vcf_path: str,
+    sample_csv: str,
+    inc_expr: str,
+    dbsnp_vcf: Optional[str] = None,
+) -> Tuple[subprocess.Popen, Optional[subprocess.Popen]]:
+    """Start a bcftools query pipeline.
+
+    When *dbsnp_vcf* is given, pipes ``bcftools annotate -c ID`` into the
+    query so that rsIDs are added on-the-fly without creating intermediate
+    files on disk.
+    """
+    fmt = "%CHROM\t%POS\t%ID\t%REF\t%ALT[\t%GT]\n"
+
+    if dbsnp_vcf:
+        ann_cmd = [
+            "bcftools", "annotate",
+            "-a", dbsnp_vcf, "-c", "ID",
+            vcf_path,
+        ]
+        q_cmd = [
+            "bcftools", "query",
+            "-s", sample_csv,
+            "-i", inc_expr,
+            "-f", fmt,
+            "-",
+        ]
+        p_ann = subprocess.Popen(ann_cmd, stdout=subprocess.PIPE)
+        proc = subprocess.Popen(
+            q_cmd, stdin=p_ann.stdout,
+            stdout=subprocess.PIPE, text=True, bufsize=1 << 20,
+        )
+        p_ann.stdout.close()
+        return proc, p_ann
+
+    cmd = [
+        "bcftools", "query",
+        "-s", sample_csv,
+        "-i", inc_expr,
+        "-f", fmt,
+        vcf_path,
+    ]
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, text=True, bufsize=1 << 20,
+    )
+    return proc, None
+
+
 def _process_chromosome_batch(
     vcf_path: str,
     batch_ids: List[str],
@@ -176,20 +230,17 @@ def _process_chromosome_batch(
     fname_tpl: str,
     inc_expr: str,
     panel: Optional[Set[str]],
-) -> int:
-    """Run bcftools query for *batch_ids* on one chromosome and write results."""
+    dbsnp_vcf: Optional[str] = None,
+) -> Dict[str, int]:
+    """Run bcftools query for *batch_ids* on one chromosome and write results.
+
+    Returns per-individual SNP counts for this chromosome.
+    """
     n = len(batch_ids)
     sample_csv = ",".join(batch_ids)
 
-    cmd = [
-        "bcftools", "query",
-        "-s", sample_csv,
-        "-i", inc_expr,
-        "-f", "%CHROM\t%POS\t%ID\t%REF\t%ALT[\t%GT]\n",
-        vcf_path,
-    ]
-    proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, text=True, bufsize=1 << 20
+    proc, p_ann = _start_bcftools_query(
+        vcf_path, sample_csv, inc_expr, dbsnp_vcf,
     )
 
     fhs: Dict[str, "IO"] = {}
@@ -198,7 +249,8 @@ def _process_chromosome_batch(
             ind_dir / sid / fname_tpl.format(sample_id=sid), "a"
         )
 
-    written = 0
+    counts: Dict[str, int] = {sid: 0 for sid in batch_ids}
+
     for line in proc.stdout:
         parts = line.rstrip("\n").split("\t")
         if len(parts) < 5 + n:
@@ -215,13 +267,14 @@ def _process_chromosome_batch(
         for i in range(n):
             geno = _gt_to_23andme(parts[5 + i], ref, alt)
             fhs[batch_ids[i]].write(prefix + geno + "\n")
-
-        written += 1
+            counts[batch_ids[i]] += 1
 
     proc.wait()
+    if p_ann is not None:
+        p_ann.wait()
     for fh in fhs.values():
         fh.close()
-    return written
+    return counts
 
 
 def step1_generate_23andme(config: dict, console: Console) -> None:
@@ -247,10 +300,17 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
         f"  Pending: {len(pending):,} / {len(all_ids):,} individuals"
     )
 
+    fmt_version = conv.get("format_version", "V5")
+
     panel: Optional[Set[str]] = None
     if conv.get("snp_panel"):
         panel = load_snp_panel(conv["snp_panel"])
         console.print(f"  SNP panel: {len(panel):,} SNPs")
+    elif conv.get("filter_by_chip_panel", False):
+        ref_dir = conv.get("ref_dir", str(SCRIPT_DIR / "refs"))
+        panel_path = ensure_chip_panel_available(fmt_version, ref_dir)
+        panel = load_snp_panel(str(panel_path))
+        console.print(f"  Chip panel ({fmt_version}): {len(panel):,} SNPs")
 
     chroms = inp.get("chromosomes", DEFAULT_CHROMS)
     vcf_pat = inp["vcf_pattern"]
@@ -276,7 +336,16 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
         console.print("[yellow]No valid pending samples.[/yellow]")
         return
 
-    fmt_version = conv.get("format_version", "V5")
+    dbsnp_vcf: Optional[str] = None
+    if conv.get("annotate_dbsnp", False):
+        build = conv.get("genome_build", "GRCh38")
+        ref_dir = conv.get("ref_dir", str(SCRIPT_DIR / "refs"))
+        vcf_style = detect_vcf_chrom_style(first_vcf)
+        console.print(f"  Preparing dbSNP ({build}) for rsID annotation...")
+        dbsnp_path = ensure_dbsnp_available(build, Path(ref_dir), vcf_style)
+        dbsnp_vcf = str(dbsnp_path)
+        console.print(f"  dbSNP ready: {dbsnp_path.name}")
+
     header = generate_header("GRCh38", fmt_version)
     for sid in valid:
         out = ind_dir / sid / fname_tpl.format(sample_id=sid)
@@ -287,7 +356,7 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
     skip_rsid = conv.get("skip_no_rsid", True)
     inc_parts = ['TYPE="snp"', "N_ALT=1"]
     if skip_rsid:
-        inc_parts.append('ID!="."')
+        inc_parts.append('ID~"^rs"')
     inc_expr = " && ".join(inc_parts)
 
     batch_size = _ensure_fd_limit(len(valid) + 256, console)
@@ -302,7 +371,7 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
             f"  Processing in {n_batches} batches of up to {batch_size}"
         )
 
-    total_var = 0
+    per_ind_snps: Dict[str, int] = {sid: 0 for sid in valid}
 
     with Progress(
         SpinnerColumn(),
@@ -328,16 +397,43 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
                 )
                 prog.update(task, description=label)
 
-                written = _process_chromosome_batch(
-                    vcf, batch, ind_dir, fname_tpl, inc_expr, panel
+                batch_counts = _process_chromosome_batch(
+                    vcf, batch, ind_dir, fname_tpl, inc_expr, panel,
+                    dbsnp_vcf=dbsnp_vcf,
                 )
-                if bi == 0:
-                    total_var += written
+                for sid, cnt in batch_counts.items():
+                    per_ind_snps[sid] += cnt
                 prog.advance(task)
 
+    counts = list(per_ind_snps.values())
+    min_snps, max_snps, mean_snps = min(counts), max(counts), sum(counts) / len(counts)
+
+    panel_info = ""
+    if panel is not None:
+        hit_rate = mean_snps / len(panel) * 100
+        panel_info = f" (panel coverage: {hit_rate:.1f}% of {len(panel):,})"
+
+    if min_snps == max_snps:
+        console.print(f"  SNPs per individual: {min_snps:,}{panel_info}")
+    else:
+        console.print(
+            f"  SNPs per individual: min={min_snps:,}, max={max_snps:,}, "
+            f"mean={mean_snps:,.0f}{panel_info}"
+        )
+
+    zero_ids = [sid for sid, c in per_ind_snps.items() if c == 0]
+    if zero_ids:
+        console.print(
+            f"[red]Error: {len(zero_ids)} individual(s) have 0 panel SNPs:[/red]"
+        )
+        for sid in zero_ids[:20]:
+            console.print(f"  [red]{sid}[/red]")
+        if len(zero_ids) > 20:
+            console.print(f"  [red]... and {len(zero_ids) - 20} more[/red]")
+        sys.exit(1)
+
     console.print(
-        f"[green]Step 1 done — ~{total_var:,} variants/individual, "
-        f"{len(valid)} files written[/green]"
+        f"[green]Step 1 done — {len(valid)} files written[/green]"
     )
 
 
@@ -393,9 +489,25 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
     min_maf = stat_cfg.get("min_maf", 0.01)
     max_snps = stat_cfg.get("max_snps", None)
 
-    inc_expr = 'TYPE="snp" && N_ALT=1 && ID!="."'
+    inc_expr = 'TYPE="snp" && N_ALT=1 && ID~"^rs"'
     sample_csv = ",".join(ref_ids)
     n_ref = len(ref_ids)
+
+    conv = config.get("conversion", {})
+    dbsnp_vcf: Optional[str] = None
+    if conv.get("annotate_dbsnp", False):
+        build = conv.get("genome_build", "GRCh38")
+        ref_dir = conv.get("ref_dir", str(SCRIPT_DIR / "refs"))
+        first_vcf = next(
+            (find_vcf(vcf_pat, c) for c in chroms if find_vcf(vcf_pat, c)),
+            None,
+        )
+        if first_vcf:
+            vcf_style = detect_vcf_chrom_style(first_vcf)
+            console.print(f"  Preparing dbSNP ({build}) for rsID annotation...")
+            dbsnp_path = ensure_dbsnp_available(build, Path(ref_dir), vcf_style)
+            dbsnp_vcf = str(dbsnp_path)
+            console.print(f"  dbSNP ready: {dbsnp_path.name}")
 
     snp_ref_allele: Dict[str, str] = {}
     snp_chrom_pos: Dict[str, Tuple[str, str]] = {}
@@ -420,15 +532,8 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
 
             prog.update(task, description=f"Step 2 — {chrom}")
 
-            cmd = [
-                "bcftools", "query",
-                "-s", sample_csv,
-                "-i", inc_expr,
-                "-f", "%CHROM\t%POS\t%ID\t%REF\t%ALT[\t%GT]\n",
-                vcf,
-            ]
-            proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, text=True, bufsize=1 << 20
+            proc, p_ann = _start_bcftools_query(
+                vcf, sample_csv, inc_expr, dbsnp_vcf,
             )
 
             for line in proc.stdout:
@@ -461,6 +566,8 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
                 snp_total_count[rsid] = tc
 
             proc.wait()
+            if p_ann is not None:
+                p_ann.wait()
             prog.advance(task)
 
     console.print(f"  Total SNPs collected: {len(snp_ref_count):,}")

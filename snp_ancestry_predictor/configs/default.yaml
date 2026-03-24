@@ -52,8 +52,23 @@ conversion:
   # for cross-individual frequency computation)
   skip_no_rsid: true
 
-  # Optional: restrict output to a predefined set of SNPs (one rsID per line).
-  # Set to null to include all biallelic SNPs with rsIDs.
+  # Annotate VCFs with rsIDs from dbSNP on-the-fly (required when VCFs use
+  # positional IDs like "1:10399:C:A" instead of rsIDs).
+  # The dbSNP VCF is downloaded once and cached in ref_dir.
+  annotate_dbsnp: true
+
+  # Genome build for dbSNP download (must match the VCF coordinate system).
+  genome_build: "GRCh38"
+
+  # Filter output SNPs to the Illumina chip panel matching format_version.
+  # Uses ensure_chip_panel_available() to auto-download the manifest.
+  filter_by_chip_panel: true
+
+  # Directory where downloaded reference files (dbSNP, chip panel) are cached.
+  ref_dir: "/dados/GENOMICS_DATA/top3/refs"
+
+  # Optional: restrict output to a custom set of SNPs (one rsID per line).
+  # Overrides filter_by_chip_panel when set. Set to null to use chip panel.
   snp_panel: null
 
   # Output filename template inside each individual's directory.
@@ -79,9 +94,10 @@ statistics:
   # Recommended: 500000 for a good balance of accuracy and file size.
   max_snps: 500000
 
-  # Optional: restrict statistics to a predefined set of SNPs.
-  # Useful for using the same panel in both Step 1 and Step 2.
-  snp_panel: null
+  # Restrict statistics to a predefined set of SNPs.
+  # Should match the panel used in Step 1 to avoid accumulating millions
+  # of unused SNPs in memory (which can trigger OOM kills).
+  snp_panel: "/dados/GENOMICS_DATA/top3/refs/panel_23andme_V5.txt"
 
 # ── Ancestry Prediction (Step 3) ─────────────────────────────
 prediction:

@@ -127,9 +127,10 @@ pipeline:
 1. Reads `splits_metadata.json` to obtain the list of all sample IDs.
 2. Checks which individuals already have a 23andMe file (idempotency).
 3. Queries sample names from the first VCF to verify membership.
-4. For each chromosome VCF, uses `bcftools query` to extract genotypes for all pending individuals in a single pass.
-5. Filters to biallelic SNPs with rsIDs (configurable); optionally restricts to a custom SNP panel.
+4. When `annotate_dbsnp: true`, downloads the dbSNP common variants VCF (once, cached in `ref_dir`) and pipes each chromosome VCF through `bcftools annotate -c ID` to add rsIDs on-the-fly, without creating intermediate files on disk.
+5. For each chromosome VCF, uses `bcftools query` to extract genotypes for all pending individuals in a single pass. Filters to biallelic SNPs with proper rsIDs (`ID~"^rs"`). Optionally restricts to a chip panel or custom SNP panel file.
 6. Writes one `<sample_id>_23andme.txt` file per individual in their directory.
+7. Reports the number of panel SNPs found per individual and aborts if any individual has zero SNPs.
 
 **Output:** One file per individual at `<individuals_dir>/<sample_id>/<sample_id>_23andme.txt`.
 
@@ -198,8 +199,12 @@ The YAML configuration file has five sections. All paths can be absolute or rela
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `format_version` | string | `"V5"` | 23andMe output format: `"V5"` or `"V3"` |
-| `skip_no_rsid` | bool | `true` | Skip variants without rsID |
-| `snp_panel` | string/null | `null` | Path to SNP panel file (one rsID per line) |
+| `skip_no_rsid` | bool | `true` | Skip variants without rsID (only keep variants with `rs` IDs) |
+| `annotate_dbsnp` | bool | `false` | Annotate VCFs with rsIDs from dbSNP on-the-fly (required when VCFs lack rsIDs) |
+| `genome_build` | string | `"GRCh38"` | Genome build for dbSNP download (`"GRCh37"` or `"GRCh38"`) |
+| `filter_by_chip_panel` | bool | `false` | Auto-download and apply the Illumina chip panel matching `format_version` |
+| `ref_dir` | string | `"refs"` | Directory where downloaded reference files (dbSNP, chip panel) are cached |
+| `snp_panel` | string/null | `null` | Path to custom SNP panel file (one rsID per line); overrides `filter_by_chip_panel` |
 | `output_filename` | string | `"{sample_id}_23andme.txt"` | Filename template for output files |
 
 ### `statistics`
@@ -400,7 +405,8 @@ To force recomputation:
 
 ### Reducing runtime
 
-- Use a **SNP panel** (`conversion.snp_panel` or `statistics.snp_panel`) to restrict to a predefined set of ancestry-informative SNPs.
+- Enable **chip panel filtering** (`conversion.filter_by_chip_panel: true`) to restrict 23andMe files to the ~640K SNPs on the Illumina chip panel, dramatically reducing file size and disk usage.
+- Use a custom **SNP panel** (`conversion.snp_panel` or `statistics.snp_panel`) to further restrict to a specific set of ancestry-informative SNPs.
 - Set `max_snps` to 100,000–500,000 (sufficient for accurate superpopulation classification).
 - Reduce the number of chromosomes in `input.chromosomes` for quick experiments.
 
@@ -412,9 +418,17 @@ To force recomputation:
 
 For superpopulation-level classification (5 classes), as few as 1,000 highly informative SNPs can achieve >95% accuracy. The default `max_snps: 500000` provides excellent accuracy with manageable file sizes.
 
+### Why do I need `annotate_dbsnp`?
+
+Some VCF datasets (e.g., 1000 Genomes NYGC high-coverage) use positional IDs like `1:10399:C:A` instead of standard rsIDs. Since the pipeline filters by rsID (`ID~"^rs"`), these VCFs produce zero matches. When `annotate_dbsnp: true`, each chromosome VCF is piped through `bcftools annotate -a dbsnp.vcf.gz -c ID` to add rsIDs from the NCBI dbSNP common variants database on-the-fly. The dbSNP VCF (~3 GB) is downloaded once, chromosome names are remapped if needed, and the result is cached in `ref_dir`. No intermediate annotated VCF files are created on disk — the annotation is streamed via a pipe.
+
+### What is chip panel filtering?
+
+When `conversion.filter_by_chip_panel` is `true`, the program automatically downloads the Illumina chip manifest matching `format_version` (e.g., Infinium Global Screening Array v1.0 for V5, ~640K rsIDs), extracts the rsIDs, and caches the panel file in `ref_dir`. Only SNPs present in the chip panel are written to the 23andMe files, producing files of ~20 MB per individual instead of hundreds of MB.
+
 ### Can I use a custom set of ancestry-informative SNPs (AISNPs)?
 
-Yes. Create a text file with one rsID per line and set both `conversion.snp_panel` and `statistics.snp_panel` to its path. For example, the 55 or 128 AISNPs from FROGAncestryCalc.
+Yes. Create a text file with one rsID per line and set `conversion.snp_panel` to its path (this overrides `filter_by_chip_panel`). You can also set `statistics.snp_panel` for Step 2. For example, the 55 or 128 AISNPs from FROGAncestryCalc.
 
 ### What is the difference between `mle` and `admixture_mle`?
 
