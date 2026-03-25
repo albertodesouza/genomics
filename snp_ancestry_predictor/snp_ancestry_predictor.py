@@ -901,6 +901,125 @@ def estimate_admixture_em(
     )
 
 
+def predict_single_individual(
+    config: dict, individual_path: str, console: Console,
+) -> None:
+    """Predict ancestry for a single individual from a 23andMe file.
+
+    Loads pre-computed statistics from the YAML-configured path and runs
+    the configured method on the provided file.  No splits_metadata or
+    individuals_dir is required.
+    """
+    stat_cfg = config.get("statistics", {})
+    pred_cfg = config.get("prediction", {})
+
+    output_file = stat_cfg["output_file"]
+    if not os.path.exists(output_file):
+        console.print(
+            "[red]Statistics file not found. Run the full pipeline "
+            "(Steps 1-2) first to compute statistics.[/red]"
+        )
+        return
+
+    ind_path = Path(individual_path)
+    if not ind_path.exists():
+        console.print(f"[red]File not found: {individual_path}[/red]")
+        return
+
+    with open(output_file) as f:
+        stats = json.load(f)
+
+    populations = stats["metadata"]["populations"]
+    ref_alleles: Dict[str, str] = stats["ref_alleles"]
+    allele_freqs: Dict[str, List[float]] = stats["allele_frequencies"]
+    needed_snps = set(allele_freqs.keys())
+
+    method = pred_cfg.get("method", "admixture_em")
+    level = pred_cfg.get("level", "superpopulation")
+    results_dir = Path(
+        pred_cfg.get("results_dir", str(SCRIPT_DIR / "results"))
+    )
+    results_dir.mkdir(parents=True, exist_ok=True)
+    ind_results_dir = results_dir / "individuals"
+    ind_results_dir.mkdir(parents=True, exist_ok=True)
+
+    sample_id = ind_path.stem
+    console.print(
+        f"  Statistics: {len(needed_snps):,} SNPs, "
+        f"{len(populations)} {stats['metadata']['level']} classes"
+    )
+    console.print(f"  File: {individual_path}")
+    console.print(f"  Method: {method}")
+
+    genos = _load_23andme_genotypes(str(ind_path), needed_snps)
+    if not genos:
+        console.print("[red]No matching SNPs found in the file.[/red]")
+        return
+
+    if method == "mle":
+        pred, log_liks, n_used = classify_mle(
+            genos, ref_alleles, allele_freqs, populations
+        )
+        ll_arr = np.array([log_liks[p] for p in populations])
+        ll_arr -= ll_arr.max()
+        exp_ll = np.exp(ll_arr)
+        probs = exp_ll / exp_ll.sum()
+        props = {
+            populations[k]: round(float(probs[k]), 6)
+            for k in range(len(populations))
+        }
+    elif method == "admixture_em":
+        em_cfg = pred_cfg.get("admixture_em", {})
+        props, n_used = estimate_admixture_em(
+            genos, ref_alleles, allele_freqs, populations,
+            max_iter=em_cfg.get("max_iter", 1000),
+            tol=em_cfg.get("tol", 1e-7),
+        )
+        pred = max(props, key=props.get)
+    elif method == "admixture_mle":
+        n_restarts = pred_cfg.get("admixture_mle", {}).get("n_restarts", 20)
+        props, n_used = estimate_admixture(
+            genos, ref_alleles, allele_freqs, populations, n_restarts
+        )
+        pred = max(props, key=props.get)
+    else:
+        console.print(f"[red]Unknown method: {method}[/red]")
+        return
+
+    entry = {
+        "sample_id": sample_id,
+        "predicted": pred,
+        "snps_used": n_used,
+        "proportions": props,
+        "method": method,
+        "level": level,
+    }
+
+    ind_file = ind_results_dir / f"{sample_id}_{method}_{level}.json"
+    with open(ind_file, "w") as fout:
+        json.dump(entry, fout, indent=2)
+
+    console.print(Rule(
+        f"Prediction — {sample_id}", style="bold cyan",
+    ))
+
+    pt = Table(title="Ancestry Proportions")
+    pt.add_column("Population")
+    pt.add_column("Proportion", justify="right")
+    sorted_props = sorted(props.items(), key=lambda x: x[1], reverse=True)
+    for pop, frac in sorted_props:
+        pt.add_row(pop, f"{frac:.6f}")
+    console.print(pt)
+
+    console.print(f"  Predicted ancestry: [bold]{pred}[/bold]")
+    console.print(f"  SNPs used: {n_used:,}")
+    console.print(f"\n[green]Result saved to {ind_file}[/green]")
+    console.print(
+        f"  [dim]Generate a pie chart with:[/dim]  "
+        f"python3 plot_ancestry_pie.py {ind_file}"
+    )
+
+
 def step3_predict_ancestry(config: dict, console: Console) -> None:
     """Predict ancestry for evaluation individuals."""
     inp = config["input"]
@@ -1232,6 +1351,13 @@ def main() -> None:
         required=True,
         help="Path to YAML configuration file",
     )
+    parser.add_argument(
+        "--individual",
+        type=str,
+        default=None,
+        help="Path to a 23andMe file for single-individual prediction. "
+             "Skips Steps 1-2 and uses pre-computed statistics.",
+    )
     args = parser.parse_args()
 
     config = load_config(Path(args.config))
@@ -1245,6 +1371,13 @@ def main() -> None:
             border_style="blue",
         )
     )
+
+    if args.individual:
+        console.print(
+            "\n[bold blue]══════ Single-Individual Prediction ══════[/bold blue]"
+        )
+        predict_single_individual(config, args.individual, console)
+        return
 
     require_bcftools(console)
 

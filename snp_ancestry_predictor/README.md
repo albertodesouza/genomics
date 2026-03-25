@@ -119,6 +119,31 @@ pipeline:
     predict_ancestry: true     # run only prediction
 ```
 
+### 4. Predict ancestry for a single individual
+
+Once the statistics have been computed (Step 2), you can predict ancestry for any individual by passing their 23andMe file directly:
+
+```bash
+python3 snp_ancestry_predictor.py \
+    --config configs/default.yaml \
+    --individual /path/to/sample_23andme.txt
+```
+
+This mode:
+- Skips Steps 1, 2, and the batch Step 3 entirely
+- Loads pre-computed statistics from the path configured in `statistics.output_file`
+- Runs the configured method (`mle`, `admixture_em`, or `admixture_mle`) on the provided file
+- Displays a table of ancestry proportions and the predicted population
+- Saves the result as a JSON file in `results_dir/individuals/`
+- The individual does not need to be present in `splits_metadata.json`
+
+You can then generate a pie chart from the saved result:
+
+```bash
+python3 plot_ancestry_pie.py \
+    /dados/.../ancestry_results/individuals/sample_admixture_em_superpopulation.json
+```
+
 ---
 
 ## Pipeline Steps
