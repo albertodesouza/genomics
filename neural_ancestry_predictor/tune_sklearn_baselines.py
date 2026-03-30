@@ -211,7 +211,7 @@ def _run_trials(
             results.append(row)
             nap.console.print(
                 f"[cyan]trial {trial_id}[/cyan] {model} {_short_label(model, svm_u, rf_u, xgb_u)} "
-                f"| val_f1={m_va['f1']:.4f} val_acc={m_va['accuracy']:.4f} ({fit_s:.2f}s)"
+                f"| val_acc={m_va['accuracy']:.4f} val_f1={m_va['f1']:.4f} ({fit_s:.2f}s)"
             )
 
     return results, pca_dir
@@ -270,7 +270,7 @@ def _plot_validation_summary(results: List[Dict[str, Any]], out_dir: Path) -> No
     best_per_model: Dict[str, Dict[str, Any]] = {}
     for m in models:
         rows = [r for r in results if r["model"] == m]
-        best = max(rows, key=lambda x: x["val_f1"])
+        best = max(rows, key=lambda x: x["val_accuracy"])
         best_per_model[m] = best
 
     fig, axes = plt.subplots(2, 2, figsize=(10, 8), constrained_layout=True)
@@ -285,7 +285,7 @@ def _plot_validation_summary(results: List[Dict[str, Any]], out_dir: Path) -> No
         ax.set_ylabel("Score")
         for i, v in enumerate(vals):
             ax.text(i, v + 0.02, f"{v:.3f}", ha="center", fontsize=9)
-    fig.suptitle("Best trial per model (by validation F1)", fontsize=12)
+    fig.suptitle("Best trial per model (by validation accuracy)", fontsize=12)
     fig.savefig(out_dir / "tuning_best_per_model_val_metrics.png", dpi=160)
     plt.close(fig)
 
@@ -309,26 +309,26 @@ def _plot_top_trials_per_model(
         axes = [axes]
     for ax, model in zip(axes, models):
         rows = [r for r in results if r["model"] == model]
-        rows = sorted(rows, key=lambda x: -x["val_f1"])[:top_k]
+        rows = sorted(rows, key=lambda x: -x["val_accuracy"])[:top_k]
         if not rows:
             continue
         labels = [r["label"][:label_max_len] for r in rows]
-        vals = [r["val_f1"] for r in rows]
+        vals = [r["val_accuracy"] for r in rows]
         y_pos = np.arange(len(labels))
         ax.barh(y_pos, vals, color="steelblue")
         ax.set_yticks(y_pos)
         ax.set_yticklabels(labels, fontsize=7)
         ax.invert_yaxis()
-        ax.set_xlabel("Validation F1 (weighted)")
+        ax.set_xlabel("Validation accuracy")
         ax.set_xlim(0.0, 1.02)
-        ax.set_title(f"{model}: top {len(rows)} trials by val F1")
+        ax.set_title(f"{model}: top {len(rows)} trials by validation accuracy")
         for i, v in enumerate(vals):
             ax.text(v + 0.008, i, f"{v:.3f}", va="center", fontsize=7)
-    fig.savefig(out_dir / "tuning_top_trials_val_f1.png", dpi=160)
+    fig.savefig(out_dir / "tuning_top_trials_val_accuracy.png", dpi=160)
     plt.close(fig)
 
 
-def _plot_ranked_val_f1_curves(results: List[Dict[str, Any]], out_dir: Path) -> None:
+def _plot_ranked_val_accuracy_curves(results: List[Dict[str, Any]], out_dir: Path) -> None:
     _use_agg_backend()
     import matplotlib.pyplot as plt
 
@@ -338,21 +338,21 @@ def _plot_ranked_val_f1_curves(results: List[Dict[str, Any]], out_dir: Path) -> 
     fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
     for i, model in enumerate(models):
         rows = [r for r in results if r["model"] == model]
-        vals = sorted((r["val_f1"] for r in rows), reverse=True)
+        vals = sorted((r["val_accuracy"] for r in rows), reverse=True)
         ranks = np.arange(1, len(vals) + 1)
         ax.plot(ranks, vals, "o-", markersize=3, linewidth=1.2, label=f"{model} (n={len(vals)})", c=f"C{i}")
     ax.set_xlabel("Trial rank (1 = best)")
-    ax.set_ylabel("Validation F1 (weighted)")
-    ax.set_title("Ranked validation F1 curves (less cluttered)")
+    ax.set_ylabel("Validation accuracy")
+    ax.set_title("Ranked validation accuracy curves (less cluttered)")
     ax.set_ylim(0.0, 1.02)
     ax.grid(True, alpha=0.3)
     ax.legend()
-    fig.savefig(out_dir / "tuning_ranked_val_f1_curves.png", dpi=160)
+    fig.savefig(out_dir / "tuning_ranked_val_accuracy_curves.png", dpi=160)
     plt.close(fig)
 
 
 def _plot_pair_heatmaps_if_two_params(results: List[Dict[str, Any]], out_dir: Path) -> None:
-    """When exactly 2 params vary for a model, create a validation-F1 heatmap."""
+    """When exactly 2 params vary for a model, create a validation-accuracy heatmap."""
     _use_agg_backend()
     import matplotlib.pyplot as plt
 
@@ -377,28 +377,28 @@ def _plot_pair_heatmaps_if_two_params(results: List[Dict[str, Any]], out_dir: Pa
         for r in rows:
             xi = x_idx[str(r["params"][p0])]
             yi = y_idx[str(r["params"][p1])]
-            grid[yi, xi] = max(grid[yi, xi], float(r["val_f1"])) if not np.isnan(grid[yi, xi]) else float(r["val_f1"])
+            grid[yi, xi] = max(grid[yi, xi], float(r["val_accuracy"])) if not np.isnan(grid[yi, xi]) else float(r["val_accuracy"])
 
         fig, ax = plt.subplots(figsize=(7, 5), constrained_layout=True)
         im = ax.imshow(grid, cmap="viridis", vmin=np.nanmin(grid), vmax=np.nanmax(grid))
-        fig.colorbar(im, ax=ax, label="Validation F1")
+        fig.colorbar(im, ax=ax, label="Validation accuracy")
         ax.set_xticks(np.arange(len(xvals)))
         ax.set_yticks(np.arange(len(yvals)))
         ax.set_xticklabels(xvals, rotation=45, ha="right")
         ax.set_yticklabels(yvals)
         ax.set_xlabel(p0)
         ax.set_ylabel(p1)
-        ax.set_title(f"{model}: val F1 heatmap")
+        ax.set_title(f"{model}: validation accuracy heatmap")
         for yi in range(len(yvals)):
             for xi in range(len(xvals)):
                 if np.isnan(grid[yi, xi]):
                     continue
                 ax.text(xi, yi, f"{grid[yi, xi]:.3f}", ha="center", va="center", color="white", fontsize=7)
-        fig.savefig(out_dir / f"tuning_{model.lower()}_val_f1_heatmap.png", dpi=160)
+        fig.savefig(out_dir / f"tuning_{model.lower()}_val_accuracy_heatmap.png", dpi=160)
         plt.close(fig)
 
 
-def _plot_train_vs_val_f1(results: List[Dict[str, Any]], out_dir: Path) -> None:
+def _plot_train_vs_val_accuracy(results: List[Dict[str, Any]], out_dir: Path) -> None:
     _use_agg_backend()
     import matplotlib.pyplot as plt
 
@@ -409,8 +409,8 @@ def _plot_train_vs_val_f1(results: List[Dict[str, Any]], out_dir: Path) -> None:
     for i, m in enumerate(models):
         pts = [r for r in results if r["model"] == m]
         ax.scatter(
-            [p["train_f1"] for p in pts],
-            [p["val_f1"] for p in pts],
+            [p["train_accuracy"] for p in pts],
+            [p["val_accuracy"] for p in pts],
             label=m,
             alpha=0.75,
             s=36,
@@ -418,19 +418,19 @@ def _plot_train_vs_val_f1(results: List[Dict[str, Any]], out_dir: Path) -> None:
         )
     lims = [0.0, 1.05]
     ax.plot(lims, lims, "k--", alpha=0.35, label="y = x")
-    ax.set_xlabel("Train F1 (weighted)")
-    ax.set_ylabel("Validation F1 (weighted)")
-    ax.set_title("Train vs validation F1 (all trials)")
+    ax.set_xlabel("Train accuracy")
+    ax.set_ylabel("Validation accuracy")
+    ax.set_title("Train vs validation accuracy (all trials)")
     ax.legend()
     ax.set_xlim(lims)
     ax.set_ylim(lims)
     ax.grid(True, alpha=0.3)
-    fig.savefig(out_dir / "tuning_train_vs_val_f1.png", dpi=160)
+    fig.savefig(out_dir / "tuning_train_vs_val_accuracy.png", dpi=160)
     plt.close(fig)
 
 
 def _plot_single_param_sweeps(results: List[Dict[str, Any]], out_dir: Path) -> None:
-    """If exactly one numeric param varies (others fixed), draw a line plot vs validation F1."""
+    """If exactly one numeric param varies (others fixed), draw a line plot vs validation accuracy."""
     _use_agg_backend()
     import matplotlib.pyplot as plt
 
@@ -457,16 +457,16 @@ def _plot_single_param_sweeps(results: List[Dict[str, Any]], out_dir: Path) -> N
             continue
         rows_s = sorted(rows, key=lambda r: float(r["params"][pname]))
         x = [float(r["params"][pname]) for r in rows_s]
-        y = [r["val_f1"] for r in rows_s]
+        y = [r["val_accuracy"] for r in rows_s]
         fig, ax = plt.subplots(figsize=(7, 4), constrained_layout=True)
         ax.plot(x, y, "o-", color="C0")
         ax.set_xlabel(pname)
-        ax.set_ylabel("Validation F1 (weighted)")
-        ax.set_title(f"{model}: val F1 vs {pname}")
+        ax.set_ylabel("Validation accuracy")
+        ax.set_title(f"{model}: validation accuracy vs {pname}")
         ax.grid(True, alpha=0.3)
         ax.set_ylim(0.0, 1.02)
         safe = pname.replace("/", "_")
-        fig.savefig(out_dir / f"tuning_{model.lower()}_{safe}_vs_val_f1.png", dpi=160)
+        fig.savefig(out_dir / f"tuning_{model.lower()}_{safe}_vs_val_accuracy.png", dpi=160)
         plt.close(fig)
 
 
@@ -555,17 +555,17 @@ def main() -> None:
             top_k=args.top_k_bars,
             label_max_len=args.label_max_len,
         )
-        _plot_ranked_val_f1_curves(results, out_dir)
+        _plot_ranked_val_accuracy_curves(results, out_dir)
         _plot_pair_heatmaps_if_two_params(results, out_dir)
-        _plot_train_vs_val_f1(results, out_dir)
+        _plot_train_vs_val_accuracy(results, out_dir)
         _plot_single_param_sweeps(results, out_dir)
         nap.console.print(f"[green]Figuras guardadas em {out_dir.resolve()}[/green]")
 
     if results:
-        best = max(results, key=lambda r: r["val_f1"])
+        best = max(results, key=lambda r: r["val_accuracy"])
         nap.console.print(
-            f"[green]Melhor trial (val F1): #{best['trial_id']} {best['model']} {best['label']} "
-            f"val_f1={best['val_f1']:.4f} val_acc={best['val_accuracy']:.4f}[/green]"
+            f"[green]Melhor trial (validation accuracy): #{best['trial_id']} {best['model']} {best['label']} "
+            f"val_acc={best['val_accuracy']:.4f} val_f1={best['val_f1']:.4f}[/green]"
         )
     nap.console.print("[green]Concluído.[/green]")
 

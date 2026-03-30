@@ -862,12 +862,12 @@ python3 tune_sklearn_baselines.py --config configs/genes_1000.yaml --output-dir 
 
 Outputs:
 - `tuning_results.csv` / `tuning_results.json` with per-trial metrics
-- `tuning_best_per_model_val_metrics.png` (best trial per model, selected by validation F1)
-- `tuning_top_trials_val_f1.png` (top-k bars per model; controlled by `--top-k-bars` and `--label-max-len`)
-- `tuning_ranked_val_f1_curves.png` (ranked curves, better for large search spaces)
-- `tuning_train_vs_val_f1.png` (overfitting diagnostic)
-- `tuning_<model>_val_f1_heatmap.png` when exactly two hyperparameters vary for that model
-- optional `tuning_<model>_<param>_vs_val_f1.png` when exactly one numeric hyperparameter varies
+- `tuning_best_per_model_val_metrics.png` (best trial per model, selected by validation accuracy)
+- `tuning_top_trials_val_accuracy.png` (top-k bars per model; controlled by `--top-k-bars` and `--label-max-len`)
+- `tuning_ranked_val_accuracy_curves.png` (ranked validation-accuracy curves, better for large search spaces)
+- `tuning_train_vs_val_accuracy.png` (overfitting diagnostic based on train vs validation accuracy)
+- `tuning_<model>_val_accuracy_heatmap.png` when exactly two hyperparameters vary for that model
+- optional `tuning_<model>_<param>_vs_val_accuracy.png` when exactly one numeric hyperparameter varies
 
 ---
 
@@ -1526,9 +1526,10 @@ For issues or questions:
   - `plot_sklearn_confusion_matrices.py` for train/val/test confusion-matrix PNGs
   - `tune_sklearn_baselines.py` for grid search on cached PCA with validation metric plots
 - ✨ **NEW: large-grid friendly tuning plots**
-  - ranked validation curves (`tuning_ranked_val_f1_curves.png`)
-  - automatic 2-parameter validation heatmaps per model
+  - ranked validation-accuracy curves (`tuning_ranked_val_accuracy_curves.png`)
+  - automatic 2-parameter validation-accuracy heatmaps per model
   - anti-clutter knobs: `--top-k-bars`, `--label-max-len`
+- 🔧 Updated sklearn hyperparameter tuning to select/report best trials by overall validation accuracy instead of validation F1
 - 🔧 Matplotlib backend handling improved for headless execution (`TkAgg` fallback to `Agg`)
 
 ### v1.2 (2025-12-23)
