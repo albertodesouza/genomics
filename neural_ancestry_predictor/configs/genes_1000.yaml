@@ -179,7 +179,7 @@ model:
   #   "SVM": Linear SVM (LinearSVC), opcional CalibratedClassifierCV
   #   "RF": Random Forest
   #   "XGBOOST": XGBClassifier (requer: pip install xgboost)
-  type: "CNN2"
+  type: "RF"
   
   # Camadas ocultas: lista com número de neurônios em cada camada
   # Exemplo: [256, 128, 64] = 3 camadas ocultas
@@ -365,7 +365,7 @@ model:
     
     # Parâmetros para Random Forest (type="RF")
     random_forest:
-      n_estimators: 200
+      n_estimators: 400
       # null = profundidade ilimitada
       max_depth: 10
       # null = sklearn default; "balanced" para classes desbalanceadas

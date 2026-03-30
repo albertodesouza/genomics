@@ -4,7 +4,7 @@
     "calibrate_probabilities": [false, true]
   },
   "RF": {
-    "n_estimators": [100, 200],
+    "n_estimators": [100, 200, 400],
     "max_depth": [null, 5, 10, 15]
   },
   "XGBOOST": {

@@ -6457,6 +6457,36 @@ def build_sklearn_classifier(
     raise ValueError(f"Tipo sklearn baseline não suportado: {model_type}")
 
 
+def _print_svm_convergence(clf: Any, max_iter: int) -> None:
+    """Imprime se o LinearSVC convergiu ou atingiu o limite de iterações."""
+    # Desempacotar CalibratedClassifierCV se necessário
+    base = clf
+    if hasattr(clf, 'calibrated_classifiers_'):
+        # Após fit: pegar o estimador base do primeiro fold
+        try:
+            base = clf.calibrated_classifiers_[0].estimator
+        except (AttributeError, IndexError):
+            pass
+    elif hasattr(clf, 'estimator'):
+        base = clf.estimator
+
+    if not hasattr(base, 'n_iter_'):
+        console.print("[yellow]  ⚠ SVM: informação de convergência não disponível[/yellow]")
+        return
+
+    n_iter = int(np.max(base.n_iter_))  # n_iter_ pode ser array por classe (OvO/OvR)
+    if n_iter < max_iter:
+        console.print(
+            f"[green]  ✓ SVM convergiu em {n_iter} iterações "
+            f"(limite: {max_iter})[/green]"
+        )
+    else:
+        console.print(
+            f"[bold red]  ✗ SVM NÃO convergiu! Atingiu o limite de {max_iter} iterações. "
+            f"Aumente max_iter ou reduza C.[/bold red]"
+        )
+
+
 def sklearn_metrics_dict(
     y_true: np.ndarray,
     y_pred: np.ndarray,
@@ -6547,6 +6577,8 @@ def train_sklearn_baseline(
             config, model_type, random_seed, n_train_samples=len(y_train)
         )
         clf.fit(X_train, y_train)
+        if model_type == 'SVM':
+            _print_svm_convergence(clf, int(sk.get('svm', {}).get('max_iter', 20000)))
 
         artifact = {
             'classifier': clf,
@@ -6616,6 +6648,8 @@ def train_sklearn_baseline(
         config, model_type, random_seed, n_train_samples=len(y_train)
     )
     clf.fit(X_train, y_train)
+    if model_type == 'SVM':
+        _print_svm_convergence(clf, int(sk.get('svm', {}).get('max_iter', 20000)))
 
     artifact = {
         'scaler': scaler,
