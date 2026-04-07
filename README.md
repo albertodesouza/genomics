@@ -314,12 +314,9 @@ Com o Miniforge3 já instalado e o shell recarregado:
 conda activate
 ./scripts/install_genomics_env.sh
 
-# VEP: escolha um instalador
-# Opção padrão e resiliente:
-source scripts/vep_install_smart.sh
-# Alternativas:
-# source scripts/vep_install_latest.sh
-# source scripts/vep_install_fixed.sh
+# VEP (Ensembl Variant Effect Predictor) — clona do GitHub e baixa o cache
+source scripts/vep_install.sh
+# Para escolher outra branch:  source scripts/vep_install.sh release/114
 ```
 
 O script `install_genomics_env.sh` cria o ambiente Conda **genomics** (Python 3.10) e instala os seguintes pacotes essenciais via `mamba`:
@@ -329,12 +326,22 @@ mamba install -y -c conda-forge -c bioconda --channel-priority flexible \
   bcftools samtools htslib pyyaml rich tqdm humanfriendly psutil \
   sra-tools fastqc multiqc cutadapt \
   bwa bwa-mem2 minimap2 picard gatk4 bedtools \
-  gffread ensembl-vep \
+  gffread \
   hisat2 stringtie gffcompare wget \
   mosdepth seqtk pigz \
-  perl-dbi perl-app-cpanminus \
+  perl-dbi perl-app-cpanminus perl-archive-zip perl-json perl-try-tiny \
   admixture plink plink2
 ```
+
+Em seguida, `vep_install.sh` instala o VEP diretamente do [repositório GitHub do Ensembl](https://github.com/Ensembl/ensembl-vep) (branch `release/115` por padrão), executa o `INSTALL.pl` de forma não-interativa, e baixa o cache para `$HOME/vep_cache`. Variáveis de ambiente opcionais permitem customizar caminhos e versões:
+
+| Variável | Default | Descrição |
+|----------|---------|-----------|
+| `VEP_BRANCH` | `release/115` | Branch ou tag do repositório |
+| `VEP_SPECIES` | `homo_sapiens` | Espécie para o cache |
+| `VEP_ASSEMBLY` | `GRCh38` | Assembly do genoma |
+| `VEP_CACHE_DIR` | `$HOME/vep_cache` | Diretório do cache |
+| `VEP_DIR` | `$HOME/ensembl-vep` | Diretório de instalação do VEP |
 
 | Categoria | Pacotes |
 |-----------|---------|

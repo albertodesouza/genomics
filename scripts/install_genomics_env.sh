@@ -23,10 +23,11 @@ mamba install -y -c conda-forge -c bioconda --channel-priority flexible \
   bcftools samtools htslib pyyaml rich tqdm humanfriendly psutil \
   sra-tools fastqc multiqc cutadapt \
   bwa bwa-mem2 minimap2 samtools picard gatk4 bedtools \
-  gffread ensembl-vep bcftools \
+  gffread bcftools \
   hisat2 stringtie gffcompare wget \
   mosdepth seqtk pigz \
   perl-dbi perl-app-cpanminus \
+  perl-archive-zip perl-json perl-try-tiny \
   admixture plink plink2
 
 # Instalar módulo Perl DBI atualizado via cpanminus para evitar erro de versão
