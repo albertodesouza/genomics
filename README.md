@@ -8,6 +8,7 @@ _A technical-scientific guide to `genomes_analyzer.py`_
 - [What's new](#whats-new)
 - [Genomes Analyzer Pipeline](#genomes-analyzer-pipeline)
 - [How to Use the Genomes Analyzer](#how-to-use-the-genomes-analyzer)
+  - [Prerequisites — Miniforge3](#prerequisites--miniforge3)
   - [Uninstallation](#uninstallation-if-desired)
   - [Installation](#installation)
   - [Starting the environment](#starting-the-environment)
@@ -268,13 +269,37 @@ If RNA-seq samples are defined in the YAML, a lightweight expression pipeline (H
 
 ## How to Use the Genomes Analyzer
 
+### Prerequisites — Miniforge3
+
+O pipeline requer [Miniforge3](https://github.com/conda-forge/miniforge) (conda + mamba com canal conda-forge por padrão). Se a sua máquina ainda não tem o Miniforge3 instalado (por exemplo, se usa miniconda3), execute o instalador universal incluído no repositório:
+
+```bash
+# Se houver miniconda3 instalado, remova-o primeiro (opcional)
+# rm -rf ~/miniconda3
+# Edite ~/.bashrc e remova o bloco ">>> conda initialize >>>" do miniconda3
+
+# Instalar Miniforge3 (detecta arquitetura automaticamente)
+bash scripts/install_conda_universal.sh
+
+# Recarregar o shell para ativar o conda
+source ~/.bashrc
+
+# Verificar
+conda --version
+mamba --version
+```
+
+Após a instalação, a variável `CONDA_BASE` deve apontar para `~/miniforge3`:
+
+```bash
+export CONDA_BASE="${CONDA_BASE:-$(conda info --base)}"
+echo "$CONDA_BASE"   # esperado: /home/<usuario>/miniforge3
+```
+
 ### Uninstallation (if desired)
 
 ```bash
 CONDA_BASE="${CONDA_BASE:-$(conda info --base)}"
-if ! command -v mamba >/dev/null 2>&1; then
-  conda install -n base -c conda-forge -y mamba
-fi
 
 conda activate
 conda env remove --name genomics
@@ -283,14 +308,12 @@ conda deactivate
 
 ### Installation
 
-```bash
-CONDA_BASE="${CONDA_BASE:-$(conda info --base)}"
-if ! command -v mamba >/dev/null 2>&1; then
-  conda install -n base -c conda-forge -y mamba
-fi
+Com o Miniforge3 já instalado e o shell recarregado:
 
+```bash
 conda activate
 ./scripts/install_genomics_env.sh
+
 # VEP: escolha um instalador
 # Opção padrão e resiliente:
 source scripts/vep_install_smart.sh
