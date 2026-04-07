@@ -707,6 +707,13 @@ debug:
       # gamma > 1.0: valores pequenos ficam mais coloridos (efeito oposto)
       # Valores recomendados: 0.3 a 0.7 para destacar apenas os picos de attribution
       colormap_gamma: 0.65
+    
+    # Arquivo BED com posições genômicas a destacar com círculos laranja
+    # Se especificado, círculos laranja são desenhados nas posições correspondentes
+    # nos gráficos de interpretabilidade (input e DeepLIFT/Grad-CAM).
+    # Formato BED: chrom  chromStart  chromEnd  name  gene
+    # Se null ou não especificado, nenhum destaque adicional é desenhado.
+    highlight_positions_bed: "/dados/GENOMICS_DATA/top3/refs/panel_23andme_V5_genes_1000_w32768_positions.bed"
 
 # ───────────────────────────────────────────────────────────────────
 # J) MODE

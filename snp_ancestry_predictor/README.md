@@ -24,6 +24,7 @@ This module extracts SNP genotypes from multi-sample 1000 Genomes VCF files, con
 - [Output Format](#output-format)
   - [Per-individual result files](#per-individual-result-files)
 - [Plotting Ancestry Pie Charts](#plotting-ancestry-pie-charts)
+- [Computing Gene-Window SNP Panels](#computing-gene-window-snp-panels)
 - [Idempotency](#idempotency)
 - [Performance and Scalability](#performance-and-scalability)
 - [FAQ](#faq)
@@ -131,10 +132,10 @@ python3 snp_ancestry_predictor.py \
 
 This mode:
 - Skips Steps 1, 2, and the batch Step 3 entirely
-- Loads pre-computed statistics from the path configured in `statistics.output_file`
+- Loads pre-computed statistics from `statistics.output_dir` (the filename is auto-generated from the active parameters)
 - Runs the configured method (`mle`, `admixture_em`, or `admixture_mle`) on the provided file
 - Displays a table of ancestry proportions and the predicted population
-- Saves the result as a JSON file in `results_dir/individuals/`
+- Saves the result as a JSON file in the current working directory
 - The individual does not need to be present in `splits_metadata.json`
 
 You can then generate a pie chart from the saved result:
@@ -239,7 +240,7 @@ The YAML configuration file has five sections. All paths can be absolute or rela
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `output_file` | string | — | Path for the statistics JSON output |
+| `output_dir` | string | — | Directory for statistics JSON files. The filename is auto-generated from `reference_subsets`, `level`, `min_maf`, `max_snps`, and `snp_panel`, so different configurations produce distinct files that are reused or recomputed automatically. |
 | `reference_subsets` | list | `["train"]` | Split subsets to use as reference |
 | `min_maf` | float | `0.01` | Minimum minor allele frequency |
 | `max_snps` | int/null | `500000` | Maximum SNPs (top by Fst); null = keep all |
@@ -250,6 +251,7 @@ The YAML configuration file has five sections. All paths can be absolute or rela
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `level` | string | `"superpopulation"` | `"superpopulation"` (5 classes) or `"population"` (26 classes) |
+| `haplotype_mode` | string | `"H1+H2"` | `"H1+H2"` (diploid, both haplotypes), `"H1"` (first haplotype only), or `"H2"` (second haplotype only). Affects Steps 2 and 3. Use `"H1"` to match `neural_ancestry_predictor`'s default for a fair comparison. |
 | `method` | string | `"admixture_em"` | `"mle"`, `"admixture_em"`, or `"admixture_mle"` |
 | `evaluation_subsets` | list | `["test"]` | Split subsets to evaluate |
 | `results_dir` | string | `"results"` | Directory for prediction output |
@@ -500,6 +502,64 @@ At the population level, colours are assigned automatically from the `tab20` pal
 
 ---
 
+## Computing Gene-Window SNP Panels
+
+The `compute_snp_panel.py` script generates a **subset** of an existing SNP panel (e.g. the 23andMe V5 panel) by retaining only SNPs whose genomic positions fall within the central windows of genes specified in a `neural_ancestry_predictor` configuration.
+
+This is useful for restricting the ancestry predictor to the same genomic regions used by the neural model, enabling a direct comparison of both approaches on the same data.
+
+### Usage
+
+```bash
+python3 compute_snp_panel.py --config configs/compute_snp_panel.yaml
+```
+
+### How it works
+
+1. Reads the `neural_ancestry_predictor` config to obtain the gene list and `window_center_size`
+2. Loads per-gene genomic coordinates from `individual_metadata.json` in the dataset
+3. Computes the central window of `window_center_size` bp for each gene
+4. Maps rsIDs from the input panel to genomic positions using an existing 23andMe file
+5. Filters the panel to SNPs within gene windows and prints per-gene counts
+
+### Configuration
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `neural_config` | string | Path to the `neural_ancestry_predictor` YAML config (defines `genes_to_use` and `window_center_size`). Relative paths are resolved from the config file's directory. |
+| `dataset_dir` | string | Dataset directory containing `individuals/` with `individual_metadata.json` files (for gene coordinates) |
+| `individuals_dir` | string | Directory with per-individual 23andMe files from Step 1 (defaults to `dataset_dir/individuals`) |
+| `input_panel` | string | Path to the input SNP panel to filter (one rsID per line) |
+| `output_panel` | string | Output path for the filtered SNP panel |
+
+### Example output
+
+```
+Neural config: ../../neural_ancestry_predictor/configs/genes_1000.yaml
+  Genes: 11
+  Window center size: 32,768 bp
+
+Gene windows (32,768 bp center):
+  DDB1        chr11:61,298,900-61,331,667
+  EDAR        chr2:108,929,778-108,962,545
+  ...
+
+SNPs per gene:
+  Gene        Chrom   Window                         SNPs
+  ----------  ------  ---------------------------  ------
+  DDB1        chr11    61,298,900-  61,331,667         42
+  EDAR        chr2    108,929,778- 108,962,545         38
+  ...
+                                        TOTAL         350
+
+Output panel saved: /dados/.../panel_23andme_V5_genes_1000_w32768.txt
+  350 SNPs from 11 genes
+```
+
+After generating the panel, point `statistics.snp_panel` in the main `default.yaml` to the output file. Step 1 does **not** need to be re-run because the new panel is a subset of the V5 panel already used in Step 1.
+
+---
+
 ## Idempotency
 
 Each step is designed to be safely re-run without recomputing completed work:
@@ -567,6 +627,10 @@ Yes. Create a text file with one rsID per line and set `conversion.snp_panel` to
 - **`admixture_em`** estimates ancestry proportions via the EM algorithm. **Recommended** — fast and produces meaningful proportions for pie charts.
 - **`admixture_mle`** estimates ancestry proportions via L-BFGS-B numerical optimisation. Same model as `admixture_em` but significantly slower due to scipy overhead and multiple restarts.
 
+### How do I compare results with `neural_ancestry_predictor`?
+
+Set `prediction.haplotype_mode: "H1"` so that the SNP predictor uses only the first haplotype, matching the default `haplotype_mode: "H1"` in the neural config. You can also use `compute_snp_panel.py` to restrict the SNP panel to the same gene windows used by the neural model.
+
 ### Can I predict at the population level (26 classes)?
 
 Yes. Set `prediction.level: "population"` in the YAML. Note that population-level prediction is harder due to smaller reference group sizes and closer genetic distances between some populations.
@@ -608,8 +672,10 @@ rm /dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000/snp_ancestry_stati
 snp_ancestry_predictor/
 ├── snp_ancestry_predictor.py      # Main pipeline script
 ├── plot_ancestry_pie.py           # Pie chart generator for individual results
+├── compute_snp_panel.py           # Gene-window SNP panel generator
 ├── configs/
-│   └── default.yaml               # Default configuration
+│   ├── default.yaml               # Default configuration
+│   └── compute_snp_panel.yaml     # Configuration for compute_snp_panel.py
 └── README.md                      # This documentation
 ```
 

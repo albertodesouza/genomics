@@ -3226,6 +3226,8 @@ class Tester:
         self.min_distance_bp = interp_config.get('deeplift', {}).get('min_distance_bp', 50)
         self.show_top_regions_xlabel = interp_config.get('deeplift', {}).get('show_top_regions_xlabel', True)
         self.gradcam_target_class = interp_config.get('gradcam', {}).get('target_class', 'predicted')
+        self.highlight_positions_bed = interp_config.get('highlight_positions_bed', None)
+        self._highlight_positions_cache = None
         
         # Inicializar objetos de interpretabilidade
         self.gradcam = None
@@ -3295,6 +3297,65 @@ class Tester:
         console.print(f"  Logits:    {logits_str}")
         console.print(f"  Softmax:   {softmax_str}")
         console.print(f"[bold cyan]{'='*80}[/bold cyan]")
+    
+    def _load_highlight_positions(
+        self,
+        gene_names: List[str],
+        total_cols: int,
+        gene_window_metadata: Dict
+    ) -> List[Tuple[str, int]]:
+        """
+        Carrega posições de destaque de um arquivo BED e converte para
+        coordenadas de plotagem (gene_name, col_idx).
+        
+        Retorna lista de (gene_name, col_idx) para cada posição dentro
+        de uma janela gênica válida.
+        """
+        if self._highlight_positions_cache is not None:
+            return self._highlight_positions_cache
+        
+        if not self.highlight_positions_bed:
+            self._highlight_positions_cache = []
+            return self._highlight_positions_cache
+        
+        bed_path = Path(self.highlight_positions_bed)
+        if not bed_path.exists():
+            console.print(f"[yellow]⚠ Arquivo BED de highlight não encontrado: {bed_path}[/yellow]")
+            self._highlight_positions_cache = []
+            return self._highlight_positions_cache
+        
+        positions = []
+        with open(bed_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                fields = line.split('\t')
+                if len(fields) < 5:
+                    continue
+                chrom = fields[0]
+                genomic_pos = int(fields[1])
+                gene_name_bed = fields[4]
+                
+                if gene_name_bed not in gene_names:
+                    continue
+                if gene_name_bed not in gene_window_metadata:
+                    continue
+                
+                meta = gene_window_metadata[gene_name_bed]
+                start_pos = meta.get('start', 0)
+                window_size = meta.get('window_size', 0)
+                if window_size <= 0:
+                    continue
+                
+                col_idx = int(((genomic_pos - start_pos) / window_size) * total_cols)
+                if 0 <= col_idx < total_cols:
+                    positions.append((gene_name_bed, col_idx))
+        
+        self._highlight_positions_cache = positions
+        if positions:
+            console.print(f"[green]✓ {len(positions)} posições de highlight carregadas de {bed_path.name}[/green]")
+        return positions
     
     def _get_genomic_coord(
         self,
@@ -4159,6 +4220,35 @@ class Tester:
                             ellipse_in = Ellipse((x_pos, y_pos), circle_width, circle_height, 
                                             fill=False, edgecolor='lime', linewidth=2.5)
                             ax1.add_patch(ellipse_in)
+                
+                # Draw orange circles at BED highlight positions
+                if self.highlight_positions_bed:
+                    highlight_positions = self._load_highlight_positions(
+                        gene_names, total_cols, gene_window_metadata)
+                    
+                    if highlight_positions:
+                        from matplotlib.patches import Ellipse as EllipseHL
+                        hl_num_genes = len(gene_names)
+                        hl_height_per_gene = viz_height / hl_num_genes
+                        hl_aspect_ratio = (viz_width / viz_height) / 3.5
+                        hl_circle_height = hl_height_per_gene
+                        hl_circle_width = hl_circle_height * hl_aspect_ratio
+                        
+                        for hl_gene_name, hl_col_idx in highlight_positions:
+                            if hl_gene_name in gene_names:
+                                hl_gene_idx = gene_names.index(hl_gene_name)
+                                hl_x_pos = (hl_col_idx / total_cols) * viz_width
+                                hl_y_pos = (hl_gene_idx + 0.5) * hl_height_per_gene
+                                
+                                hl_ellipse_dl = EllipseHL(
+                                    (hl_x_pos, hl_y_pos), hl_circle_width, hl_circle_height,
+                                    fill=False, edgecolor='orange', linewidth=2.5)
+                                ax_dl.add_patch(hl_ellipse_dl)
+                                
+                                hl_ellipse_in = EllipseHL(
+                                    (hl_x_pos, hl_y_pos), hl_circle_width, hl_circle_height,
+                                    fill=False, edgecolor='orange', linewidth=2.5)
+                                ax1.add_patch(hl_ellipse_in)
                 
                 # Optional: include top regions in X-axis label
                 if self.show_top_regions_xlabel and top_5_regions:

@@ -8,6 +8,11 @@ _A technical-scientific guide to `genomes_analyzer.py`_
 - [What's new](#whats-new)
 - [Genomes Analyzer Pipeline](#genomes-analyzer-pipeline)
 - [How to Use the Genomes Analyzer](#how-to-use-the-genomes-analyzer)
+  - [Uninstallation](#uninstallation-if-desired)
+  - [Installation](#installation)
+  - [Starting the environment](#starting-the-environment)
+  - [Running the pipeline](#running-the-pipeline)
+  - [YAML Configuration](#yaml-configuration-updated)
 - [Background execution & monitoring](#background-execution--monitoring)
 - [Conclusion](#conclusion)
 - [Appendix 1 — Command Line Tools & Typical Usage](#appendix-1--command-line-tools--typical-usage)
@@ -266,7 +271,7 @@ If RNA-seq samples are defined in the YAML, a lightweight expression pipeline (H
 ### Uninstallation (if desired)
 
 ```bash
-CONDA_BASE="/home/lume2/miniforge3"
+CONDA_BASE="${CONDA_BASE:-$(conda info --base)}"
 if ! command -v mamba >/dev/null 2>&1; then
   conda install -n base -c conda-forge -y mamba
 fi
@@ -279,7 +284,7 @@ conda deactivate
 ### Installation
 
 ```bash
-CONDA_BASE="/home/lume2/miniforge3"
+CONDA_BASE="${CONDA_BASE:-$(conda info --base)}"
 if ! command -v mamba >/dev/null 2>&1; then
   conda install -n base -c conda-forge -y mamba
 fi
@@ -293,6 +298,34 @@ source scripts/vep_install_smart.sh
 # source scripts/vep_install_latest.sh
 # source scripts/vep_install_fixed.sh
 ```
+
+O script `install_genomics_env.sh` cria o ambiente Conda **genomics** (Python 3.10) e instala os seguintes pacotes essenciais via `mamba`:
+
+```bash
+mamba install -y -c conda-forge -c bioconda --channel-priority flexible \
+  bcftools samtools htslib pyyaml rich tqdm humanfriendly psutil \
+  sra-tools fastqc multiqc cutadapt \
+  bwa bwa-mem2 minimap2 picard gatk4 bedtools \
+  gffread ensembl-vep \
+  hisat2 stringtie gffcompare wget \
+  mosdepth seqtk pigz \
+  perl-dbi perl-app-cpanminus \
+  admixture plink plink2
+```
+
+| Categoria | Pacotes |
+|-----------|---------|
+| **Alinhamento** | `bwa`, `bwa-mem2`, `minimap2`, `hisat2` |
+| **Processamento BAM/CRAM** | `samtools`, `htslib`, `picard`, `bedtools`, `mosdepth` |
+| **Chamada de variantes** | `bcftools`, `gatk4` |
+| **Controle de qualidade** | `fastqc`, `multiqc`, `cutadapt` |
+| **Anotação** | `ensembl-vep`, `gffread` |
+| **Ancestralidade** | `admixture`, `plink`, `plink2` |
+| **RNA-seq** | `hisat2`, `stringtie`, `gffcompare` |
+| **Download de dados** | `sra-tools`, `wget` |
+| **Utilitários Python** | `pyyaml`, `rich`, `tqdm`, `humanfriendly`, `psutil` |
+| **Compressão e sequências** | `seqtk`, `pigz` |
+| **Perl (VEP)** | `perl-dbi`, `perl-app-cpanminus` |
 
 ### Starting the environment
 

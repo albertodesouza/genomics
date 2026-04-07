@@ -77,8 +77,12 @@ conversion:
 
 # ── Statistics Computation (Step 2) ──────────────────────────
 statistics:
-  # Path where per-population allele frequency statistics are saved (JSON).
-  output_file: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000/snp_ancestry_statistics.json"
+  # Directory where per-population allele frequency statistics are saved.
+  # The filename is generated automatically from the parameters that affect
+  # the statistics (reference_subsets, level, min_maf, max_snps, snp_panel),
+  # so different configurations produce different files and are reused or
+  # recomputed accordingly.
+  output_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000"
 
   # Which split subsets to use as the reference panel.
   # Options: any combination of "train", "val", "test".
@@ -87,7 +91,7 @@ statistics:
 
   # Minimum minor allele frequency (MAF) — SNPs below this threshold are
   # discarded as uninformative for ancestry discrimination.
-  min_maf: 0.01
+  min_maf: 0.001
 
   # Maximum number of SNPs to retain, selected by highest Fst.
   # Set to null to keep all SNPs that pass the MAF filter.
@@ -97,18 +101,27 @@ statistics:
   # Restrict statistics to a predefined set of SNPs.
   # Should match the panel used in Step 1 to avoid accumulating millions
   # of unused SNPs in memory (which can trigger OOM kills).
-  snp_panel: "/dados/GENOMICS_DATA/top3/refs/panel_23andme_V5.txt"
+  # snp_panel: "/dados/GENOMICS_DATA/top3/refs/panel_23andme_V5.txt"
+  snp_panel: "/dados/GENOMICS_DATA/top3/refs/panel_23andme_V5_genes_1000_w32768.txt"
 
 # ── Ancestry Prediction (Step 3) ─────────────────────────────
 prediction:
   # Ancestry level: "superpopulation" (5 classes) or "population" (26 classes)
   level: "superpopulation"
 
+  # Haplotype mode for Steps 2 and 3.
+  #   "H1+H2" — use both haplotypes (diploid, default)
+  #   "H1"    — use only the first haplotype
+  #   "H2"    — use only the second haplotype
+  # Using "H1" matches the default of neural_ancestry_predictor, enabling
+  # a fair comparison between the two approaches.
+  haplotype_mode: "H1"
+
   # Estimation method:
   #   "mle"           — Maximum Likelihood Classification (single assignment)
   #   "admixture_em"  — Admixture proportion estimation via EM (fast, recommended)
   #   "admixture_mle" — Admixture proportion estimation via L-BFGS-B (slower)
-  method: "admixture_em"
+  method: "mle"
 
   # Which split subsets to evaluate (individuals with known labels).
   evaluation_subsets:

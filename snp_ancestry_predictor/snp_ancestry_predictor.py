@@ -443,16 +443,58 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
 # ═══════════════════════════════════════════════════════════════
 
 
+def _build_statistics_path(config: dict) -> str:
+    """Build the statistics filename from the parameters that affect it.
+
+    The generated name encodes reference_subsets, level, min_maf, max_snps,
+    snp_panel, and haplotype_mode so that different configurations produce
+    distinct files.
+    """
+    stat_cfg = config.get("statistics", {})
+    pred_cfg = config.get("prediction", {})
+
+    output_dir = stat_cfg.get(
+        "output_dir",
+        stat_cfg.get("output_file", str(SCRIPT_DIR / "results")),
+    )
+    if output_dir.endswith(".json"):
+        output_dir = os.path.dirname(output_dir)
+
+    ref_subsets = sorted(stat_cfg.get("reference_subsets", ["train"]))
+    level = pred_cfg.get("level", "superpopulation")
+    min_maf = stat_cfg.get("min_maf", 0.01)
+    max_snps = stat_cfg.get("max_snps", None)
+    haplotype_mode = pred_cfg.get("haplotype_mode", "H1+H2")
+
+    panel_tag = "nopanel"
+    snp_panel = stat_cfg.get("snp_panel")
+    if snp_panel:
+        panel_tag = Path(snp_panel).stem
+
+    parts = [
+        "snp_ancestry_statistics",
+        "+".join(ref_subsets),
+        level,
+        f"maf{min_maf}",
+        f"max{max_snps}" if max_snps else "maxall",
+        panel_tag,
+    ]
+    if haplotype_mode != "H1+H2":
+        parts.append(haplotype_mode)
+    filename = "_".join(parts) + ".json"
+    return os.path.join(output_dir, filename)
+
+
 def step2_compute_statistics(config: dict, console: Console) -> None:
     """Compute per-population allele frequencies from 23andMe files."""
     inp = config["input"]
     stat_cfg = config.get("statistics", {})
     pred_cfg = config.get("prediction", {})
 
-    output_file = stat_cfg["output_file"]
+    output_file = _build_statistics_path(config)
     if os.path.exists(output_file):
         console.print(f"[green]Statistics file already exists: {output_file}[/green]")
-        console.print("  Delete the file to recompute.")
+        console.print("  Reusing. Delete the file to force recomputation.")
         return
 
     splits = load_splits(inp["splits_metadata"])
@@ -487,6 +529,9 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
 
     min_maf = stat_cfg.get("min_maf", 0.01)
     max_snps = stat_cfg.get("max_snps", None)
+    haplotype_mode = pred_cfg.get("haplotype_mode", "H1+H2")
+
+    console.print(f"  Haplotype mode: {haplotype_mode}")
 
     ind_dir = Path(inp["individuals_dir"])
     fname_tpl = config.get("conversion", {}).get(
@@ -542,9 +587,19 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
                         snp_count[rsid] = [0] * K
                         snp_total[rsid] = [0] * K
 
-                    dose = sum(1 for c in geno if c == tracked_allele[rsid])
-                    snp_count[rsid][pidx] += dose
-                    snp_total[rsid][pidx] += 2
+                    ref = tracked_allele[rsid]
+                    if haplotype_mode == "H1":
+                        dose = 1 if geno[0] == ref else 0
+                        snp_count[rsid][pidx] += dose
+                        snp_total[rsid][pidx] += 1
+                    elif haplotype_mode == "H2":
+                        dose = 1 if geno[1] == ref else 0
+                        snp_count[rsid][pidx] += dose
+                        snp_total[rsid][pidx] += 1
+                    else:
+                        dose = sum(1 for c in geno if c == ref)
+                        snp_count[rsid][pidx] += dose
+                        snp_total[rsid][pidx] += 2
 
             prog.advance(task)
 
@@ -644,10 +699,22 @@ def _load_23andme_genotypes(filepath: str, needed: Set[str]) -> Dict[str, str]:
     return genos
 
 
-def _genotype_dose(genotype: str, ref_allele: str) -> Optional[int]:
-    """Count of *ref_allele* copies in a two-letter genotype string."""
+def _genotype_dose(
+    genotype: str, ref_allele: str, haplotype_mode: str = "H1+H2",
+) -> Optional[int]:
+    """Count of *ref_allele* copies in a genotype string.
+
+    *haplotype_mode* selects which alleles to consider:
+      "H1"    — only genotype[0]  (dose 0 or 1)
+      "H2"    — only genotype[1]  (dose 0 or 1)
+      "H1+H2" — both alleles      (dose 0, 1, or 2)
+    """
     if genotype == "--" or len(genotype) != 2:
         return None
+    if haplotype_mode == "H1":
+        return 1 if genotype[0] == ref_allele else 0
+    if haplotype_mode == "H2":
+        return 1 if genotype[1] == ref_allele else 0
     return sum(1 for c in genotype if c == ref_allele)
 
 
@@ -656,6 +723,7 @@ def classify_mle(
     ref_alleles: Dict[str, str],
     allele_freqs: Dict[str, List[float]],
     populations: List[str],
+    haplotype_mode: str = "H1+H2",
 ) -> Tuple[str, Dict[str, float], int]:
     """Maximum Likelihood Classification.
 
@@ -672,7 +740,7 @@ def classify_mle(
         gt = genotypes.get(rsid)
         if gt is None:
             continue
-        d = _genotype_dose(gt, ref_alleles.get(rsid, ""))
+        d = _genotype_dose(gt, ref_alleles.get(rsid, ""), haplotype_mode)
         if d is None:
             continue
         valid_rsids.append(rsid)
@@ -688,11 +756,16 @@ def classify_mle(
     log_p = np.log(freq_arr)
     log_1p = np.log(1.0 - freq_arr)
 
-    log_prob = np.where(
-        dose_arr[:, None] == 2,
-        2.0 * log_p,
-        np.where(dose_arr[:, None] == 1, np.log(2.0) + log_p + log_1p, 2.0 * log_1p),
-    )
+    if haplotype_mode in ("H1", "H2"):
+        log_prob = np.where(
+            dose_arr[:, None] == 1, log_p, log_1p,
+        )
+    else:
+        log_prob = np.where(
+            dose_arr[:, None] == 2,
+            2.0 * log_p,
+            np.where(dose_arr[:, None] == 1, np.log(2.0) + log_p + log_1p, 2.0 * log_1p),
+        )
 
     log_liks = log_prob.sum(axis=0)
     best = int(np.argmax(log_liks))
@@ -709,11 +782,13 @@ def _admixture_nll_softmax(
     dose_arr: np.ndarray,
     freq_matrix: np.ndarray,
     freq_matrix_T: np.ndarray,
+    ploidy: int = 2,
 ) -> Tuple[float, np.ndarray]:
     """NLL and gradient for the admixture model with softmax reparametrisation.
 
     Uses unconstrained parameters *theta* mapped to the simplex via softmax,
     allowing the use of L-BFGS-B (no equality constraints needed).
+    *ploidy* is 1 for haploid (single-haplotype) or 2 for diploid.
     Returns (nll, grad_theta) so ``jac=True`` can be used.
     """
     eps = 1e-10
@@ -724,28 +799,31 @@ def _admixture_nll_softmax(
 
     p_mixed = np.clip(freq_matrix @ alpha, eps, 1.0 - eps)
 
-    log_prob = np.where(
-        dose_arr == 2,
-        2.0 * np.log(p_mixed),
-        np.where(
-            dose_arr == 1,
-            np.log(2.0) + np.log(p_mixed) + np.log(1.0 - p_mixed),
-            2.0 * np.log(1.0 - p_mixed),
-        ),
-    )
+    if ploidy == 1:
+        log_prob = dose_arr * np.log(p_mixed) + (1.0 - dose_arr) * np.log(1.0 - p_mixed)
+        dlog_dp = dose_arr / p_mixed - (1.0 - dose_arr) / (1.0 - p_mixed)
+    else:
+        log_prob = np.where(
+            dose_arr == 2,
+            2.0 * np.log(p_mixed),
+            np.where(
+                dose_arr == 1,
+                np.log(2.0) + np.log(p_mixed) + np.log(1.0 - p_mixed),
+                2.0 * np.log(1.0 - p_mixed),
+            ),
+        )
+        dlog_dp = np.where(
+            dose_arr == 2,
+            2.0 / p_mixed,
+            np.where(
+                dose_arr == 1,
+                1.0 / p_mixed - 1.0 / (1.0 - p_mixed),
+                -2.0 / (1.0 - p_mixed),
+            ),
+        )
+
     nll = -float(np.sum(log_prob))
-
-    dlog_dp = np.where(
-        dose_arr == 2,
-        2.0 / p_mixed,
-        np.where(
-            dose_arr == 1,
-            1.0 / p_mixed - 1.0 / (1.0 - p_mixed),
-            -2.0 / (1.0 - p_mixed),
-        ),
-    )
     grad_alpha = -(freq_matrix_T @ dlog_dp)
-
     grad_theta = alpha * (grad_alpha - np.dot(grad_alpha, alpha))
 
     return nll, grad_theta
@@ -757,6 +835,7 @@ def estimate_admixture(
     allele_freqs: Dict[str, List[float]],
     populations: List[str],
     n_restarts: int = 20,
+    haplotype_mode: str = "H1+H2",
 ) -> Tuple[Dict[str, float], int]:
     """Admixture proportion estimation via L-BFGS-B with softmax reparametrisation.
 
@@ -767,6 +846,7 @@ def estimate_admixture(
     Returns ({pop: proportion}, n_snps_used).
     """
     K = len(populations)
+    ploidy = 1 if haplotype_mode in ("H1", "H2") else 2
 
     doses_list: List[int] = []
     freq_list: List[List[float]] = []
@@ -775,7 +855,7 @@ def estimate_admixture(
         gt = genotypes.get(rsid)
         if gt is None:
             continue
-        d = _genotype_dose(gt, ref_alleles.get(rsid, ""))
+        d = _genotype_dose(gt, ref_alleles.get(rsid, ""), haplotype_mode)
         if d is None:
             continue
         doses_list.append(d)
@@ -803,7 +883,7 @@ def estimate_admixture(
         result = minimize(
             _admixture_nll_softmax,
             theta0,
-            args=(dose_arr, freq_matrix, freq_matrix_T),
+            args=(dose_arr, freq_matrix, freq_matrix_T, ploidy),
             method="L-BFGS-B",
             jac=True,
             options={"maxiter": 200, "ftol": 1e-10},
@@ -834,6 +914,7 @@ def estimate_admixture_em(
     populations: List[str],
     max_iter: int = 1000,
     tol: float = 1e-7,
+    haplotype_mode: str = "H1+H2",
 ) -> Tuple[Dict[str, float], int]:
     """Admixture proportion estimation via the EM algorithm.
 
@@ -851,6 +932,7 @@ def estimate_admixture_em(
     Returns ({pop: proportion}, n_snps_used).
     """
     K = len(populations)
+    ploidy = 1 if haplotype_mode in ("H1", "H2") else 2
 
     doses_list: List[int] = []
     freq_list: List[List[float]] = []
@@ -859,7 +941,7 @@ def estimate_admixture_em(
         gt = genotypes.get(rsid)
         if gt is None:
             continue
-        d = _genotype_dose(gt, ref_alleles.get(rsid, ""))
+        d = _genotype_dose(gt, ref_alleles.get(rsid, ""), haplotype_mode)
         if d is None:
             continue
         doses_list.append(d)
@@ -873,7 +955,7 @@ def estimate_admixture_em(
     freq_matrix_T = np.ascontiguousarray(freq_matrix.T)
 
     eps = 1e-10
-    dose_alt = 2.0 - dose_arr
+    dose_alt = float(ploidy) - dose_arr
 
     alpha = np.ones(K, dtype=np.float64) / K
 
@@ -913,11 +995,11 @@ def predict_single_individual(
     stat_cfg = config.get("statistics", {})
     pred_cfg = config.get("prediction", {})
 
-    output_file = stat_cfg["output_file"]
+    output_file = _build_statistics_path(config)
     if not os.path.exists(output_file):
         console.print(
-            "[red]Statistics file not found. Run the full pipeline "
-            "(Steps 1-2) first to compute statistics.[/red]"
+            f"[red]Statistics file not found: {output_file}[/red]\n"
+            "  Run the full pipeline (Steps 1-2) first to compute statistics."
         )
         return
 
@@ -936,20 +1018,16 @@ def predict_single_individual(
 
     method = pred_cfg.get("method", "admixture_em")
     level = pred_cfg.get("level", "superpopulation")
-    results_dir = Path(
-        pred_cfg.get("results_dir", str(SCRIPT_DIR / "results"))
-    )
-    results_dir.mkdir(parents=True, exist_ok=True)
-    ind_results_dir = results_dir / "individuals"
-    ind_results_dir.mkdir(parents=True, exist_ok=True)
 
     sample_id = ind_path.stem
     console.print(
         f"  Statistics: {len(needed_snps):,} SNPs, "
         f"{len(populations)} {stats['metadata']['level']} classes"
     )
+    haplotype_mode = pred_cfg.get("haplotype_mode", "H1+H2")
     console.print(f"  File: {individual_path}")
     console.print(f"  Method: {method}")
+    console.print(f"  Haplotype mode: {haplotype_mode}")
 
     genos = _load_23andme_genotypes(str(ind_path), needed_snps)
     if not genos:
@@ -958,7 +1036,7 @@ def predict_single_individual(
 
     if method == "mle":
         pred, log_liks, n_used = classify_mle(
-            genos, ref_alleles, allele_freqs, populations
+            genos, ref_alleles, allele_freqs, populations, haplotype_mode,
         )
         ll_arr = np.array([log_liks[p] for p in populations])
         ll_arr -= ll_arr.max()
@@ -974,12 +1052,14 @@ def predict_single_individual(
             genos, ref_alleles, allele_freqs, populations,
             max_iter=em_cfg.get("max_iter", 1000),
             tol=em_cfg.get("tol", 1e-7),
+            haplotype_mode=haplotype_mode,
         )
         pred = max(props, key=props.get)
     elif method == "admixture_mle":
         n_restarts = pred_cfg.get("admixture_mle", {}).get("n_restarts", 20)
         props, n_used = estimate_admixture(
-            genos, ref_alleles, allele_freqs, populations, n_restarts
+            genos, ref_alleles, allele_freqs, populations, n_restarts,
+            haplotype_mode=haplotype_mode,
         )
         pred = max(props, key=props.get)
     else:
@@ -995,7 +1075,7 @@ def predict_single_individual(
         "level": level,
     }
 
-    ind_file = ind_results_dir / f"{sample_id}_{method}_{level}.json"
+    ind_file = Path(f"{sample_id}_{method}_{level}.json")
     with open(ind_file, "w") as fout:
         json.dump(entry, fout, indent=2)
 
@@ -1026,10 +1106,11 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
     stat_cfg = config.get("statistics", {})
     pred_cfg = config.get("prediction", {})
 
-    output_file = stat_cfg["output_file"]
+    output_file = _build_statistics_path(config)
     if not os.path.exists(output_file):
         console.print(
-            "[red]Statistics file not found. Run Step 2 first.[/red]"
+            f"[red]Statistics file not found: {output_file}[/red]\n"
+            "  Run Step 2 first."
         )
         return
 
@@ -1065,8 +1146,10 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
     ind_results_dir = results_dir / "individuals"
     ind_results_dir.mkdir(parents=True, exist_ok=True)
 
+    haplotype_mode = pred_cfg.get("haplotype_mode", "H1+H2")
     console.print(f"  Evaluation: {len(eval_ids)} individuals from {eval_subsets}")
     console.print(f"  Method: {method}")
+    console.print(f"  Haplotype mode: {haplotype_mode}")
 
     predictions: List[dict] = []
 
@@ -1097,7 +1180,8 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
 
             if method == "mle":
                 pred, log_liks, n_used = classify_mle(
-                    genos, ref_alleles, allele_freqs, populations
+                    genos, ref_alleles, allele_freqs, populations,
+                    haplotype_mode,
                 )
                 ll_arr = np.array([log_liks[p] for p in populations])
                 ll_arr -= ll_arr.max()
@@ -1123,7 +1207,8 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
                     pred_cfg.get("admixture_mle", {}).get("n_restarts", 20)
                 )
                 props, n_used = estimate_admixture(
-                    genos, ref_alleles, allele_freqs, populations, n_restarts
+                    genos, ref_alleles, allele_freqs, populations, n_restarts,
+                    haplotype_mode=haplotype_mode,
                 )
                 pred = max(props, key=props.get)
                 entry = {
@@ -1144,6 +1229,7 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
                 props, n_used = estimate_admixture_em(
                     genos, ref_alleles, allele_freqs, populations,
                     max_iter=em_max_iter, tol=em_tol,
+                    haplotype_mode=haplotype_mode,
                 )
                 pred = max(props, key=props.get)
                 entry = {
