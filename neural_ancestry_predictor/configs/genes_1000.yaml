@@ -169,12 +169,17 @@ output:
 # Configurações da arquitetura da rede neural
 
 model:
-  # Tipo de rede neural
-  # Opções:
+  # Tipo de modelo
+  # Opções - Redes neurais:
   #   "NN": Rede neural totalmente conectada (fully connected)
   #   "CNN": Rede neural convolucional (convolutional)
   #   "CNN2": Rede neural convolucional multi-layer com global pooling
-  type: "CNN2"
+  # Opções - Baselines sklearn (StandardScaler + IncrementalPCA no treino; não usam
+  #   hidden_layers/activation/dropout da rede nem otimizador PyTorch):
+  #   "SVM": Linear SVM (LinearSVC), opcional CalibratedClassifierCV
+  #   "RF": Random Forest
+  #   "XGBOOST": XGBClassifier (requer: pip install xgboost)
+  type: "RF"
   
   # Camadas ocultas: lista com número de neurônios em cada camada
   # Exemplo: [256, 128, 64] = 3 camadas ocultas
@@ -305,6 +310,81 @@ model:
     # NOTA: Ambos são determinísticos. AdaptiveAvgPool2d NÃO é usado porque
     #       não tem implementação determinística no backward pass em CUDA.
     global_pool_type: "max"
+  
+  # Parâmetros específicos para modelos sklearn (ignorados se type é NN/CNN/CNN2)
+  # Estes modelos achatam a entrada 2D para 1D e usam classificadores clássicos
+  sklearn:
+    # Redução de dimensionalidade com PCA antes do classificador
+    # null = sem PCA (usa todas as features diretamente)
+    # 100-500 = número de componentes principais a manter
+    # Recomendado: 200-500 para dados com ~2M features
+    # PCA reduz ruído e acelera treinamento significativamente
+    # Com D muito grande, o script limita k automaticamente (LAPACK int32: matrizes ~ (2k+1)×D)
+    pca_components: 300
+    # true = StandardScaler+IncrementalPCA e vetores reduzidos em disco (processed_cache_dir/pca_cache/),
+    #        reutilizável entre experimentos (RF, SVM, XGBoost com mesmo dataset e pca_components)
+    use_pca_cache: true
+    # true = escolhe k efetivo como maior divisor de n_train que não exceda o k já limitado (LAPACK etc.),
+    #        evitando repetir linhas no último partial_fit do IncrementalPCA (k pode ficar < pca_components).
+    #        Rebuild do pca_cache se mudar este flag (metadata pca_align_n_train).
+    pca_align_n_train: false
+    
+    # Parâmetros para Linear SVM (type="SVM")
+    svm:
+      # Parâmetro de regularização (inverso da força)
+      # Menor C = mais regularização, maior margem, modelo mais simples
+      # Maior C = menos regularização, menor margem, pode overfit
+      # Valores típicos: 0.01, 0.1, 1.0, 10.0
+      C: 0.001
+      # null ou "balanced" (classes desbalanceadas)
+      class_weight: null
+      # Máximo de iterações para convergência
+      max_iter: 20000
+      # Calibrar probabilidades (permite predict_proba via CalibratedClassifierCV)
+      # true = envelopa o SVM com calibração Platt (mais lento, mas dá probabilidades)
+      # false = apenas predict (sem probabilidades)
+      calibrate_probabilities: true
+      # Folds para calibração de probabilidades (só se calibrate_probabilities=true)
+      calibration_cv: 3
+    
+    # Parâmetros para Logistic Regression (type="LR")
+    logistic_regression:
+      # Parâmetro de regularização (inverso da força)
+      C: 1.0
+      # Tipo de regularização
+      # "l1" = Lasso (produz coeficientes esparsos, feature selection implícita)
+      # "l2" = Ridge (distribui pesos, mais estável)
+      # "elasticnet" = Combinação de L1 e L2 (requer solver='saga')
+      penalty: "l2"
+      # Solver para otimização
+      # "saga" = Suporta L1/L2/elasticnet, bom para datasets grandes
+      # "lbfgs" = Bom para L2, mais rápido para datasets menores
+      solver: "saga"
+      # Máximo de iterações
+      max_iter: 5000
+    
+    # Parâmetros para Random Forest (type="RF")
+    random_forest:
+      n_estimators: 400
+      # null = profundidade ilimitada
+      max_depth: 10
+      # null = sklearn default; "balanced" para classes desbalanceadas
+      class_weight: null
+      random_state: 42
+      n_jobs: -1
+    
+    # Parâmetros para XGBoost (type="XGBOOST")
+    xgboost:
+      n_estimators: 200
+      max_depth: 4
+      learning_rate: 0.1
+      subsample: 0.8
+      colsample_bytree: 0.8
+      tree_method: "hist"
+      random_state: 42
+      n_jobs: -1
+      # Multiclasse: mlogloss; binário: logloss (ajuste conforme o alvo)
+      eval_metric: "mlogloss"
 
 # ───────────────────────────────────────────────────────────────────
 # D) DATA LOADING
@@ -566,6 +646,9 @@ debug:
   # false = treino normal sem visualização
   # IMPORTANTE: Quando true, força batch_size=1 automaticamente
   enable_visualization: false
+  
+  # true = força reconstrução do cache PCA em disco (baselines sklearn com use_pca_cache)
+  force_pca_cache_rebuild: false
   
   # Número máximo de amostras a visualizar por época
   # null = visualiza todas as amostras da época

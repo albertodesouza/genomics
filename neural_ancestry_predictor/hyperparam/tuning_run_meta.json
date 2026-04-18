@@ -1,0 +1,10 @@
+{
+  "config": "/home/hercules/genomics/neural_ancestry_predictor/configs/genes_1000.yaml",
+  "pca_cache_dir": "/mnt/external8tb/dados_alberto/GENOMICS_DATA/top3/non_longevous_results_runs_genes_1000/pca_cache/rna_seq_H1_32768_ds1_log_shuf_split0.7-0.15-0.15_seed13_pca300",
+  "models": [
+    "SVM",
+    "RF",
+    "XGBOOST"
+  ],
+  "n_trials": 46
+}
