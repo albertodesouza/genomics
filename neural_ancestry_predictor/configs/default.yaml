@@ -97,6 +97,12 @@ dataset_input:
   processed_cache_dir: /dados/GENOMICS_DATA/top3/non_longevous_results_runs
 
 # ───────────────────────────────────────────────────────────────────
+# Data split settings are defined later in the file.
+# Family-aware behavior:
+#   family_split_mode: "family_aware" keeps related samples in the same split
+#   family_split_mode: "ignore" falls back to per-sample splitting
+
+# ───────────────────────────────────────────────────────────────────
 # B) OUTPUT PARAMETERS
 # ───────────────────────────────────────────────────────────────────
 # Configurações do target de predição
@@ -333,6 +339,11 @@ data_split:
   # Use o mesmo seed para ter sempre a mesma divisão e inicialização de pesos
   # null = aleatório (resultados não reprodutíveis)
   random_seed: 3
+
+  # Controle de famílias/trios no split
+  # - "family_aware": mantém membros da mesma família no mesmo split
+  # - "ignore": faz split por indivíduo, sem considerar família
+  family_split_mode: "family_aware"
   
   # Determinismo estrito para reprodutibilidade perfeita
   # true = Determinismo ESTRITO - 100% reprodutível entre execuções
@@ -468,4 +479,3 @@ test_dataset: "test"
 #    - H1+H2: Mais informação (diferenças entre haplótipos), dobra dimensão
 #
 # ═══════════════════════════════════════════════════════════════════
-

@@ -84,6 +84,25 @@ fi
 echo "🔧 Ativando ambiente genomics..."
 conda activate genomics
 
+# Evita misturar bibliotecas CUDA do sistema com as bibliotecas empacotadas
+# pelo PyTorch dentro do ambiente conda. Isso quebra a inicialização CUDA em
+# alguns setups quando /usr/local/cuda/lib64 entra no LD_LIBRARY_PATH.
+if [ -n "$LD_LIBRARY_PATH" ]; then
+    CLEAN_LD_LIBRARY_PATH=$(python3 - <<'PY'
+import os
+
+parts = os.environ.get("LD_LIBRARY_PATH", "").split(":")
+filtered = [
+    p for p in parts
+    if p and not p.startswith("/usr/local/cuda")
+]
+print(":".join(filtered))
+PY
+)
+    export LD_LIBRARY_PATH="$CLEAN_LD_LIBRARY_PATH"
+fi
+unset CUDA_LIBS
+
 # Verifica se ativação funcionou
 if [ "$CONDA_DEFAULT_ENV" = "genomics" ]; then
     echo "✅ Ambiente genomics ativo!"

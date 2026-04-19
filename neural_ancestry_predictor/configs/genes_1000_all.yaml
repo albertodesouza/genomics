@@ -468,6 +468,11 @@ data_split:
   # Use o mesmo seed para ter sempre a mesma divisão e inicialização de pesos
   # null = aleatório (resultados não reprodutíveis)
   random_seed: 13
+
+  # Controle de famílias/trios no split
+  # - "family_aware": mantém membros da mesma família no mesmo split
+  # - "ignore": faz split por indivíduo, sem considerar família
+  family_split_mode: "family_aware"
   
   # Estratégia de balanceamento dos dados
   # - "stratified": Balanceamento estratificado sequencial
@@ -678,4 +683,3 @@ test_dataset: "test"
 #    - H1+H2: Mais informação (diferenças entre haplótipos), dobra dimensão
 #
 # ═══════════════════════════════════════════════════════════════════
-

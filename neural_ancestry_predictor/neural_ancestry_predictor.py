@@ -592,6 +592,10 @@ class ProcessedGenomicDataset(Dataset):
         self.downsample_factor = config['dataset_input']['downsample_factor']
         self.prediction_target = config['output']['prediction_target']
         self.normalization_method = config['dataset_input'].get('normalization_method', 'zscore')
+        self.derived_targets = config.get('output', {}).get('derived_targets', {})
+        self._derived_target_config = self.derived_targets.get(self.prediction_target, {})
+        self.valid_sample_indices = list(range(len(self.base_dataset)))
+        self._valid_sample_index_set = set(self.valid_sample_indices)
         
         # Mapeamentos para targets
         self.target_to_idx = {}
@@ -779,6 +783,17 @@ class ProcessedGenomicDataset(Dataset):
     def _create_target_mappings(self):
         """Cria mapeamentos entre targets e índices."""
         
+        known_classes = self.config.get('output', {}).get('known_classes')
+        if known_classes is not None and len(known_classes) > 0:
+            console.print(f"\n[cyan]Usando classes conhecidas do config...[/cyan]")
+            sorted_targets = list(known_classes)
+            self.target_to_idx = {target: idx for idx, target in enumerate(sorted_targets)}
+            self.idx_to_target = {idx: target for target, idx in self.target_to_idx.items()}
+            self._discover_valid_sample_indices()
+            console.print(f"[green]✓ Mapeamento de targets criado: {len(self.target_to_idx)} classes[/green]")
+            console.print(f"[cyan]Classes: {sorted_targets}[/cyan]")
+            return
+
         # Prioridade 1: Tentar carregar dos metadados do dataset (rápido - sem I/O de dados)
         dataset_metadata = getattr(self.base_dataset, 'dataset_metadata', None)
         
@@ -818,6 +833,14 @@ class ProcessedGenomicDataset(Dataset):
                             p.get('population') for p in pedigree.values() 
                             if p.get('population')
                         ))
+            elif self.prediction_target in self.derived_targets:
+                pedigree = dataset_metadata.get('individuals_pedigree', {})
+                if pedigree:
+                    classes_from_metadata = sorted({
+                        target for target in
+                        (self._get_target_value(pedigree_data) for pedigree_data in pedigree.values())
+                        if target is not None
+                    })
         
         if classes_from_metadata:
             console.print(f"\n[cyan]Carregando classes dos metadados do dataset...[/cyan]")
@@ -825,22 +848,7 @@ class ProcessedGenomicDataset(Dataset):
             
             self.target_to_idx = {target: idx for idx, target in enumerate(sorted_targets)}
             self.idx_to_target = {idx: target for target, idx in self.target_to_idx.items()}
-            
-            console.print(f"[green]✓ Mapeamento de targets criado: {len(self.target_to_idx)} classes[/green]")
-            console.print(f"[cyan]Classes: {sorted_targets}[/cyan]")
-            return
-        
-        # Prioridade 2: Verificar se há classes conhecidas no config
-        known_classes = self.config.get('output', {}).get('known_classes')
-        
-        if known_classes is not None and len(known_classes) > 0:
-            # Usar classes pré-definidas (fallback)
-            console.print(f"\n[cyan]Usando classes conhecidas do config (fallback)...[/cyan]")
-            console.print(f"[yellow]⚠ Recomendado: Remova 'known_classes' do YAML para usar metadados do dataset[/yellow]")
-            sorted_targets = sorted(known_classes)
-            
-            self.target_to_idx = {target: idx for idx, target in enumerate(sorted_targets)}
-            self.idx_to_target = {idx: target for target, idx in self.target_to_idx.items()}
+            self._discover_valid_sample_indices()
             
             console.print(f"[green]✓ Mapeamento de targets criado: {len(self.target_to_idx)} classes[/green]")
             console.print(f"[cyan]Classes: {sorted_targets}[/cyan]")
@@ -878,9 +886,30 @@ class ProcessedGenomicDataset(Dataset):
         
         self.target_to_idx = {target: idx for idx, target in enumerate(sorted_targets)}
         self.idx_to_target = {idx: target for target, idx in self.target_to_idx.items()}
+        self._discover_valid_sample_indices()
         
         console.print(f"[green]✓ Mapeamento de targets criado: {len(self.target_to_idx)} classes[/green]")
         console.print(f"[cyan]Classes: {sorted_targets}[/cyan]")
+
+    def _discover_valid_sample_indices(self):
+        """Descobre quais amostras possuem target válido."""
+        if self.prediction_target == 'frog_likelihood':
+            self.valid_sample_indices = list(range(len(self.base_dataset)))
+            self._valid_sample_index_set = set(self.valid_sample_indices)
+            return
+
+        valid_indices = []
+        for idx in range(len(self.base_dataset)):
+            try:
+                _, output_data = self.base_dataset[idx]
+                target = self._get_target_value(output_data)
+                if target in self.target_to_idx:
+                    valid_indices.append(idx)
+            except Exception:
+                pass
+
+        self.valid_sample_indices = valid_indices
+        self._valid_sample_index_set = set(valid_indices)
     
     def _get_target_value(self, output_data: Dict) -> Optional[str]:
         """
@@ -896,10 +925,34 @@ class ProcessedGenomicDataset(Dataset):
             return output_data.get('superpopulation')
         elif self.prediction_target == 'population':
             return output_data.get('population')
+        elif self.prediction_target in self.derived_targets:
+            return self._get_derived_target_value(output_data)
         elif self.prediction_target == 'frog_likelihood':
             return None  # Regressão, não há classes
         else:
             raise ValueError(f"prediction_target inválido: {self.prediction_target}")
+
+    def _get_derived_target_value(self, output_data: Dict) -> Optional[str]:
+        """Extrai target derivado a partir de outro campo categórico."""
+        source_field = self._derived_target_config.get('source_field')
+        class_map = self._derived_target_config.get('class_map', {})
+        exclude_unmapped = self._derived_target_config.get('exclude_unmapped', False)
+
+        if not source_field:
+            raise ValueError(f"derived_targets.{self.prediction_target}.source_field não configurado")
+
+        source_value = output_data.get(source_field)
+        if source_value is None:
+            return None
+
+        for class_name, source_values in class_map.items():
+            if source_value in source_values:
+                return class_name
+
+        if exclude_unmapped:
+            return None
+
+        return source_value
     
     def _process_windows(self, windows: Dict) -> np.ndarray:
         """
@@ -1045,7 +1098,7 @@ class ProcessedGenomicDataset(Dataset):
         return array[::self.downsample_factor]
     
     def __len__(self) -> int:
-        return len(self.base_dataset)
+        return len(self.valid_sample_indices)
     
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -1055,7 +1108,11 @@ class ProcessedGenomicDataset(Dataset):
             Tupla (features_tensor, target_tensor)
             features_tensor tem shape [num_rows, effective_size] (2D)
         """
-        input_data, output_data = self.base_dataset[idx]
+        if idx < 0 or idx >= len(self.valid_sample_indices):
+            raise IndexError(f"Índice fora do range para dataset processado: {idx}")
+
+        base_idx = self.valid_sample_indices[idx]
+        input_data, output_data = self.base_dataset[base_idx]
         
         # Processar janelas (retorna matriz 2D)
         features = self._process_windows(input_data['windows'])
@@ -2676,7 +2733,7 @@ class Trainer:
         predicted_idx = output_probs.argmax()
         
         # Get class names (if available)
-        class_names = ['AFR', 'AMR', 'EAS', 'EUR', 'SAS']  # For superpopulation
+        class_names = self.dataset.get_class_names()
         if target_idx < len(class_names):
             target_name = class_names[target_idx]
             predicted_name = class_names[predicted_idx]
@@ -3335,7 +3392,7 @@ class Tester:
         softmax_str = "[" + ", ".join(f"{v:7.3f}" for v in softmax_probs) + "]"
         
         # Obter nomes das classes
-        class_names = self.config['output'].get('known_classes') or ["AFR", "AMR", "EAS", "EUR", "SAS"]
+        class_names = self.dataset.get_class_names()
         target_name = class_names[target_idx] if target_idx < len(class_names) else str(target_idx)
         predicted_idx = softmax_probs.argmax()
         predicted_name = class_names[predicted_idx] if predicted_idx < len(class_names) else str(predicted_idx)
@@ -4959,17 +5016,27 @@ def save_processed_dataset(
     
     def get_individual_metadata(idx: int) -> Dict:
         """Obtém metadados completos de um indivíduo pelo índice."""
-        if idx >= len(individuals):
+        if idx < 0 or idx >= len(processed_dataset.valid_sample_indices):
             return {"sample_id": f"sample_{idx}", "superpopulation": "UNK", "population": "UNK", "sex": 0}
-        
-        sample_id = individuals[idx]
+
+        base_idx = processed_dataset.valid_sample_indices[idx]
+        if base_idx >= len(individuals):
+            return {"sample_id": f"sample_{base_idx}", "superpopulation": "UNK", "population": "UNK", "sex": 0}
+
+        sample_id = individuals[base_idx]
         pedigree = individuals_pedigree.get(sample_id, {})
+        _, output_data = processed_dataset.base_dataset[base_idx]
         return {
             "sample_id": sample_id,
             "superpopulation": pedigree.get("superpopulation", "UNK"),
             "population": pedigree.get("population", "UNK"),
-            "sex": pedigree.get("sex", 0)
+            "sex": pedigree.get("sex", 0),
+            "target": processed_dataset._get_target_value(output_data)
         }
+
+    def get_class_label(idx: int) -> str:
+        meta = get_individual_metadata(idx)
+        return meta.get('target') or 'UNK'
     
     def stratified_interleave(indices: List[int], seed: int) -> Tuple[List[int], List[int], Dict[str, int]]:
         """
@@ -4980,14 +5047,13 @@ def save_processed_dataset(
             - Lista de índices descartados (excesso de classes majoritárias)
             - Dicionário com contagem por classe
         """
-        # Agrupar índices por classe (superpopulation)
+        # Agrupar índices por classe do target atual
         indices_by_class = {}
         for idx in indices:
-            meta = get_individual_metadata(idx)
-            superpop = meta['superpopulation']
-            if superpop not in indices_by_class:
-                indices_by_class[superpop] = []
-            indices_by_class[superpop].append(idx)
+            class_name = get_class_label(idx)
+            if class_name not in indices_by_class:
+                indices_by_class[class_name] = []
+            indices_by_class[class_name].append(idx)
         
         # Embaralhar cada classe com seed fixa para reprodutibilidade
         rng = random.Random(seed)
@@ -5029,9 +5095,8 @@ def save_processed_dataset(
         # Contar classes para info
         class_counts = {}
         for idx in indices:
-            meta = get_individual_metadata(idx)
-            superpop = meta['superpopulation']
-            class_counts[superpop] = class_counts.get(superpop, 0) + 1
+            class_name = get_class_label(idx)
+            class_counts[class_name] = class_counts.get(class_name, 0) + 1
         
         # Embaralhar com seed fixa para reprodutibilidade
         rng = random.Random(seed)
@@ -5338,10 +5403,14 @@ def save_processed_dataset(
                 'window_center_size': config['dataset_input']['window_center_size'],
                 'downsample_factor': config['dataset_input']['downsample_factor'],
                 'normalization_method': config['dataset_input'].get('normalization_method', 'zscore'),
+                'family_split_mode': config['data_split'].get('family_split_mode', 'family_aware'),
                 'balancing_strategy': balancing_strategy,
+                'prediction_target': config['output']['prediction_target'],
+                'derived_target_config': config.get('output', {}).get('derived_targets', {}).get(config['output']['prediction_target']),
                 'input_shape': '2D',
             },
             'balancing_info': balancing_info,
+            'family_split_info': config['data_split'].get('_family_split_info', {}),
             'splits': splits_info,
             'total_samples': total_samples,
             'num_classes': processed_dataset.get_num_classes(),
@@ -5831,6 +5900,28 @@ def load_processed_dataset(
             pop_dist = dataset_metadata.get('population_distribution', {})
             if pop_dist:
                 classes_from_metadata = list(pop_dist.keys())
+        elif prediction_target in config.get('output', {}).get('derived_targets', {}):
+            derived_cfg = config['output']['derived_targets'][prediction_target]
+            source_field = derived_cfg.get('source_field')
+            class_map = derived_cfg.get('class_map', {})
+            exclude_unmapped = derived_cfg.get('exclude_unmapped', False)
+            pedigree = dataset_metadata.get('individuals_pedigree', {})
+            classes = set()
+            for p in pedigree.values():
+                source_value = p.get(source_field)
+                if source_value is None:
+                    continue
+                matched = None
+                for class_name, source_values in class_map.items():
+                    if source_value in source_values:
+                        matched = class_name
+                        break
+                if matched is not None:
+                    classes.add(matched)
+                elif not exclude_unmapped:
+                    classes.add(source_value)
+            if classes:
+                classes_from_metadata = list(classes)
         
         if classes_from_metadata:
             # Criar mapeamentos (ordenados alfabeticamente para consistência)
@@ -5995,13 +6086,22 @@ def load_processed_dataset(
     if config['data_split']['random_seed'] is not None:
         generator = torch.Generator()
         generator.manual_seed(config['data_split']['random_seed'])
+
+    model_type = config['model'].get('type', 'NN').upper()
+    use_sklearn_baseline = model_type in SKLEARN_BASELINE_TYPES
+    pin_memory = not use_sklearn_baseline
+    if use_sklearn_baseline:
+        train_workers = 0
+        val_test_workers = 0
+        persistent_workers = False
+        console.print("  • [yellow]Sklearn baseline detectado: desabilitando pin_memory e workers paralelos[/yellow]")
     
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
         num_workers=train_workers,
-        pin_memory=True,
+        pin_memory=pin_memory,
         collate_fn=collate_fn,
         persistent_workers=persistent_workers if train_workers > 0 else False,
         generator=generator,
@@ -6013,7 +6113,7 @@ def load_processed_dataset(
         batch_size=batch_size,
         shuffle=False,
         num_workers=val_test_workers,
-        pin_memory=True,
+        pin_memory=pin_memory,
         collate_fn=collate_fn,
         persistent_workers=persistent_workers if val_test_workers > 0 else False,
         worker_init_fn=worker_init_fn if val_test_workers > 0 else None
@@ -6024,7 +6124,7 @@ def load_processed_dataset(
         batch_size=batch_size,
         shuffle=False,
         num_workers=val_test_workers,
-        pin_memory=True,
+        pin_memory=pin_memory,
         collate_fn=collate_fn,
         persistent_workers=persistent_workers if val_test_workers > 0 else False,
         worker_init_fn=worker_init_fn if val_test_workers > 0 else None
@@ -6056,6 +6156,133 @@ def save_config(config: Dict, output_path: Path):
     """Salva configuração em JSON."""
     with open(output_path, 'w') as f:
         json.dump(config, f, indent=2)
+
+
+def _extract_family_links(pedigree: Dict) -> List[str]:
+    """Extrai possíveis ligações familiares a partir do pedigree."""
+    related = []
+    for key, value in pedigree.items():
+        key_lower = str(key).lower()
+        if not any(token in key_lower for token in ['father', 'mother', 'parent', 'child', 'sibling', 'family']):
+            continue
+        if value in [None, '', '0']:
+            continue
+        if isinstance(value, (list, tuple, set)):
+            related.extend(str(v) for v in value if v not in [None, '', '0'])
+        else:
+            related.append(str(value))
+    return related
+
+
+def build_family_aware_sample_groups(base_dataset: GenomicLongevityDataset, config: Dict) -> Tuple[List[List[int]], Dict[str, Any]]:
+    """Constrói grupos de amostras que devem permanecer no mesmo split."""
+    split_cfg = config.get('data_split', {})
+    family_mode = split_cfg.get('family_split_mode', 'family_aware')
+
+    dataset_metadata = getattr(base_dataset, 'dataset_metadata', {}) or {}
+    individuals = dataset_metadata.get('individuals', [])
+    pedigree_map = dataset_metadata.get('individuals_pedigree', {})
+
+    if not individuals:
+        groups = [[idx] for idx in range(len(base_dataset))]
+        return groups, {
+            'family_split_mode': family_mode,
+            'num_groups': len(groups),
+            'num_family_groups': 0,
+            'num_singletons': len(groups),
+            'grouping_source': 'individual',
+        }
+
+    sample_to_idx = {sample_id: idx for idx, sample_id in enumerate(individuals)}
+
+    family_ids: Dict[str, str] = {}
+    individuals_dir = Path(base_dataset.dataset_dir) / 'individuals'
+    for sample_id in individuals:
+        metadata_file = individuals_dir / sample_id / 'individual_metadata.json'
+        if not metadata_file.exists():
+            continue
+        try:
+            with open(metadata_file, 'r') as f:
+                individual_metadata = json.load(f)
+            family_id = individual_metadata.get('family_id')
+            if family_id not in [None, '', '0']:
+                family_ids[sample_id] = str(family_id)
+        except Exception:
+            continue
+
+    if family_ids:
+        groups_by_family_id: Dict[str, List[int]] = {}
+        for sample_id, idx in sample_to_idx.items():
+            family_id = family_ids.get(sample_id, sample_id)
+            groups_by_family_id.setdefault(family_id, []).append(idx)
+
+        if family_mode != 'ignore':
+            groups = list(groups_by_family_id.values())
+            return groups, {
+                'family_split_mode': family_mode,
+                'grouping_source': 'family_id',
+                'num_groups': len(groups),
+                'num_family_groups': sum(1 for group in groups if len(group) > 1),
+                'num_singletons': sum(1 for group in groups if len(group) == 1),
+            }
+
+    if family_mode == 'ignore':
+        groups = [[idx] for idx in range(len(individuals))]
+        return groups, {
+            'family_split_mode': family_mode,
+            'grouping_source': 'individual',
+            'num_groups': len(groups),
+            'num_family_groups': 0,
+            'num_singletons': len(groups),
+        }
+
+    parent = {sample_id: sample_id for sample_id in individuals}
+
+    def find(sample_id: str) -> str:
+        while parent[sample_id] != sample_id:
+            parent[sample_id] = parent[parent[sample_id]]
+            sample_id = parent[sample_id]
+        return sample_id
+
+    def union(left: str, right: str):
+        if left not in parent or right not in parent:
+            return
+        root_left = find(left)
+        root_right = find(right)
+        if root_left != root_right:
+            parent[root_right] = root_left
+
+    for sample_id, pedigree in pedigree_map.items():
+        if sample_id not in parent:
+            continue
+        for related_id in _extract_family_links(pedigree):
+            if related_id in parent:
+                union(sample_id, related_id)
+
+    groups_by_root: Dict[str, List[int]] = {}
+    for sample_id, idx in sample_to_idx.items():
+        root = find(sample_id)
+        groups_by_root.setdefault(root, []).append(idx)
+
+    groups = list(groups_by_root.values())
+    return groups, {
+        'family_split_mode': family_mode,
+        'grouping_source': 'pedigree',
+        'num_groups': len(groups),
+        'num_family_groups': sum(1 for group in groups if len(group) > 1),
+        'num_singletons': sum(1 for group in groups if len(group) == 1),
+    }
+
+
+def build_valid_sample_index_map(base_dataset: GenomicLongevityDataset, config: Dict) -> List[int]:
+    """Retorna os índices do dataset base válidos para o target configurado."""
+    probe_dataset = ProcessedGenomicDataset(
+        base_dataset=base_dataset,
+        config=config,
+        normalization_params={'mean': 0.0, 'std': 1.0},
+        compute_normalization=False,
+    )
+    return list(probe_dataset.valid_sample_indices)
 
 
 def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, DataLoader, DataLoader]:
@@ -6132,19 +6359,36 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
         load_sequences=False,
         cache_sequences=False
     )
+
+    valid_base_indices = build_valid_sample_index_map(base_dataset, config)
+    valid_base_index_set = set(valid_base_indices)
+    processed_idx_by_base_idx = {base_idx: processed_idx for processed_idx, base_idx in enumerate(valid_base_indices)}
+    console.print(f"[cyan]Amostras válidas para {config['output']['prediction_target']}: {len(valid_base_indices)} / {len(base_dataset)}[/cyan]")
     
     # ==================================================================================
     # PASSO 1: FAZER SPLIT ANTES DA NORMALIZAÇÃO (prevenir data leakage)
     # ==================================================================================
     console.print("\n[bold cyan]📊 Dividindo Dataset (Train/Val/Test)[/bold cyan]")
     
-    total_size = len(base_dataset)
-    train_size = int(config['data_split']['train_split'] * total_size)
-    val_size = int(config['data_split']['val_split'] * total_size)
-    test_size = total_size - train_size - val_size
-    
-    # Criar índices
-    indices = list(range(total_size))
+    all_sample_groups, family_split_info = build_family_aware_sample_groups(base_dataset, config)
+    sample_groups = []
+    for group in all_sample_groups:
+        filtered_group = [base_idx for base_idx in group if base_idx in valid_base_index_set]
+        if filtered_group:
+            sample_groups.append(filtered_group)
+
+    total_size = sum(len(group) for group in sample_groups)
+    total_groups = len(sample_groups)
+
+    if total_groups == 0:
+        raise ValueError(f"Nenhuma amostra válida encontrada para target {config['output']['prediction_target']}")
+
+    train_group_count = int(config['data_split']['train_split'] * total_groups)
+    val_group_count = int(config['data_split']['val_split'] * total_groups)
+    test_group_count = total_groups - train_group_count - val_group_count
+
+    # Criar índices de grupos
+    indices = list(range(total_groups))
     random_seed = config['data_split']['random_seed']
     
     # random_seed == -1 significa NÃO embaralhar (modo debug)
@@ -6153,16 +6397,31 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
     if random_seed is not None and random_seed != -1:
         np.random.seed(random_seed)
         np.random.shuffle(indices)
-        console.print(f"[cyan]  • Dados embaralhados com seed {random_seed}[/cyan]")
+        console.print(f"[cyan]  • Grupos familiares embaralhados com seed {random_seed}[/cyan]")
     elif random_seed == -1:
-        console.print(f"[yellow]  • MODO DEBUG: Dados NÃO embaralhados (random_seed=-1)[/yellow]")
+        console.print(f"[yellow]  • MODO DEBUG: Grupos familiares NÃO embaralhados (random_seed=-1)[/yellow]")
     else:
         np.random.shuffle(indices)
-        console.print(f"[yellow]  • Dados embaralhados aleatoriamente (sem seed)[/yellow]")
-    
-    train_indices = indices[:train_size]
-    val_indices = indices[train_size:train_size + val_size]
-    test_indices = indices[train_size + val_size:]
+        console.print(f"[yellow]  • Grupos familiares embaralhados aleatoriamente (sem seed)[/yellow]")
+
+    train_group_indices = indices[:train_group_count]
+    val_group_indices = indices[train_group_count:train_group_count + val_group_count]
+    test_group_indices = indices[train_group_count + val_group_count:]
+
+    train_base_indices = [idx for group_idx in train_group_indices for idx in sample_groups[group_idx]]
+    val_base_indices = [idx for group_idx in val_group_indices for idx in sample_groups[group_idx]]
+    test_base_indices = [idx for group_idx in test_group_indices for idx in sample_groups[group_idx]]
+
+    train_indices = [processed_idx_by_base_idx[idx] for idx in train_base_indices]
+    val_indices = [processed_idx_by_base_idx[idx] for idx in val_base_indices]
+    test_indices = [processed_idx_by_base_idx[idx] for idx in test_base_indices]
+
+    config['data_split']['_family_split_info'] = family_split_info
+    console.print(f"[cyan]  • Modo de split familiar: {family_split_info['family_split_mode']}[/cyan]")
+    console.print(f"[cyan]  • Fonte dos grupos familiares: {family_split_info.get('grouping_source', 'unknown')}[/cyan]")
+    console.print(f"[cyan]  • Grupos válidos: {len(sample_groups)} (famílias={sum(1 for group in sample_groups if len(group) > 1)}, singletons={sum(1 for group in sample_groups if len(group) == 1)})[/cyan]")
+    if test_group_count < 0:
+        raise ValueError("Configuração inválida de train/val/test para número de grupos familiares")
     
     console.print(f"[green]  • Treino: {len(train_indices)} amostras ({len(train_indices)/total_size*100:.1f}%)[/green]")
     console.print(f"[green]  • Validação: {len(val_indices)} amostras ({len(val_indices)/total_size*100:.1f}%)[/green]")
@@ -6232,7 +6491,7 @@ def prepare_data(config: Dict, experiment_dir: Path) -> Tuple[Any, DataLoader, D
         console.print(f"[yellow]   ⚠ Dados de teste NÃO serão usados (prevenir data leakage)[/yellow]")
         
         # Criar subset train+val
-        train_val_indices = train_indices + val_indices
+        train_val_indices = train_base_indices + val_base_indices
         train_val_subset = Subset(base_dataset, train_val_indices)
         
         console.print(f"[cyan]   • Usando {len(train_val_subset)} amostras para normalização[/cyan]")
@@ -6663,6 +6922,16 @@ def train_sklearn_baseline(
         y_train = np.load(pca_dir / 'y_train.npy')
 
         console.print("[cyan]Passo classificador: fit em matrizes do cache PCA...[/cyan]")
+        valid_mask = y_train >= 0
+        if not np.all(valid_mask):
+            console.print(f"[yellow]⚠ Removendo {int((~valid_mask).sum())} labels inválidos do treino PCA[/yellow]")
+            X_train = X_train[valid_mask]
+            y_train = y_train[valid_mask]
+        if len(np.unique(y_train)) < 2:
+            raise ValueError(
+                f"Treino inválido após filtrar labels: classes presentes={np.unique(y_train).tolist()}. "
+                "Isso indica cache/split incorreto ou apenas uma classe no treino."
+            )
         clf = build_sklearn_classifier(
             config, model_type, random_seed, n_train_samples=len(y_train)
         )
@@ -6734,6 +7003,16 @@ def train_sklearn_baseline(
         rich_console=console,
         progress_desc="Sklearn baseline: PCA transform treino (3/4)",
     )
+    valid_mask = y_train >= 0
+    if not np.all(valid_mask):
+        console.print(f"[yellow]⚠ Removendo {int((~valid_mask).sum())} labels inválidos do treino[/yellow]")
+        X_train = X_train[valid_mask]
+        y_train = y_train[valid_mask]
+    if len(np.unique(y_train)) < 2:
+        raise ValueError(
+            f"Treino inválido após filtrar labels: classes presentes={np.unique(y_train).tolist()}. "
+            "Isso indica split incorreto ou apenas uma classe no treino."
+        )
     clf = build_sklearn_classifier(
         config, model_type, random_seed, n_train_samples=len(y_train)
     )
@@ -7320,6 +7599,9 @@ def main():
             f"Tipo de modelo não suportado: {model_type}. "
             "Use 'NN', 'CNN', 'CNN2', 'SVM', 'RF' ou 'XGBOOST'."
         )
+
+    if model is not None:
+        console.print(f"[green]Modelo alocado em: {next(model.parameters()).device}[/green]")
     
     # Inicializar W&B
     wandb_run = None
@@ -7339,6 +7621,8 @@ def main():
             )
             console.print("[green]✓ Weights & Biases inicializado[/green]")
             console.print(f"  • Run name: {run_name}")
+            if getattr(wandb_run, 'url', None):
+                console.print(f"  • URL: {wandb_run.url}")
         except ImportError:
             console.print("[yellow]⚠ Weights & Biases não disponível. Instale com: pip install wandb[/yellow]")
         except Exception as e:
@@ -7537,4 +7821,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
