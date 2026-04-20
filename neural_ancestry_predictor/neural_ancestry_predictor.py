@@ -898,15 +898,69 @@ class ProcessedGenomicDataset(Dataset):
             self._valid_sample_index_set = set(self.valid_sample_indices)
             return
 
+        dataset_metadata = getattr(self.base_dataset, 'dataset_metadata', None)
+        if dataset_metadata is None:
+            dataset_dir = Path(self.config['dataset_input']['dataset_dir'])
+            metadata_file = dataset_dir / 'dataset_metadata.json'
+            if metadata_file.exists():
+                with open(metadata_file, 'r') as f:
+                    dataset_metadata = json.load(f)
+
+        individuals = []
+        pedigree = {}
+        if dataset_metadata:
+            individuals = dataset_metadata.get('individuals', [])
+            pedigree = dataset_metadata.get('individuals_pedigree', {})
+
+        if individuals and pedigree:
+            valid_indices = []
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TimeElapsedColumn(),
+                console=console
+            ) as progress:
+                task = progress.add_task(
+                    f"Filtrando amostras válidas para {self.prediction_target} (metadata)...",
+                    total=len(individuals)
+                )
+
+                for idx, sample_id in enumerate(individuals):
+                    sample_metadata = pedigree.get(sample_id, {})
+                    target = self._get_target_value(sample_metadata)
+                    if target in self.target_to_idx:
+                        valid_indices.append(idx)
+                    progress.update(task, advance=1)
+
+            self.valid_sample_indices = valid_indices
+            self._valid_sample_index_set = set(valid_indices)
+            return
+
         valid_indices = []
-        for idx in range(len(self.base_dataset)):
-            try:
-                _, output_data = self.base_dataset[idx]
-                target = self._get_target_value(output_data)
-                if target in self.target_to_idx:
-                    valid_indices.append(idx)
-            except Exception:
-                pass
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeElapsedColumn(),
+            console=console
+        ) as progress:
+            task = progress.add_task(
+                f"Filtrando amostras válidas para {self.prediction_target}...",
+                total=len(self.base_dataset)
+            )
+
+            for idx in range(len(self.base_dataset)):
+                try:
+                    _, output_data = self.base_dataset[idx]
+                    target = self._get_target_value(output_data)
+                    if target in self.target_to_idx:
+                        valid_indices.append(idx)
+                except Exception:
+                    pass
+                progress.update(task, advance=1)
 
         self.valid_sample_indices = valid_indices
         self._valid_sample_index_set = set(valid_indices)
