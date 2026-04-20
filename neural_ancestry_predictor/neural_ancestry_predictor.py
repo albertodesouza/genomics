@@ -2698,7 +2698,13 @@ class Trainer:
             'train_accuracy': [],
             'val_loss': [],
             'val_accuracy': [],
-            'epoch': []
+            'epoch': [],
+            'train_data_time': [],
+            'train_compute_time': [],
+            'train_data_fraction': [],
+            'val_data_time': [],
+            'val_compute_time': [],
+            'val_data_fraction': [],
         }
         
         self.best_val_loss = float('inf')
@@ -2880,7 +2886,7 @@ class Trainer:
         # Disconnect callback
         fig.canvas.mpl_disconnect(cid)
     
-    def train_epoch(self, epoch: int) -> float:
+    def train_epoch(self, epoch: int) -> Tuple[float, Dict[str, float]]:
         """
         Treina por uma época.
         
@@ -2890,6 +2896,8 @@ class Trainer:
         self.model.train()
         total_loss = 0.0
         total_samples = 0
+        total_data_time = 0.0
+        total_compute_time = 0.0
         
         # Debug: salvar detalhes na época 50
         debug_epoch_50 = (epoch + 1 == 50)
@@ -2907,13 +2915,18 @@ class Trainer:
                 f"[cyan]Época {epoch + 1} - Treino",
                 total=len(self.train_loader)
             )
-            
+
+            data_wait_start = time.perf_counter()
             for batch_idx, (features, targets, indices) in enumerate(self.train_loader):
+                data_ready_time = time.perf_counter()
+                total_data_time += data_ready_time - data_wait_start
+
                 # Verificar limite de amostras para visualização
                 if self.enable_visualization and self.max_samples_per_epoch is not None:
                     if batch_idx >= self.max_samples_per_epoch:
                         break
-                
+
+                compute_start = time.perf_counter()
                 features = features.to(self.device, non_blocking=True)
                 targets = targets.to(self.device, non_blocking=True)
                 
@@ -2966,10 +2979,18 @@ class Trainer:
                         'epoch': epoch,
                         'batch': batch_idx
                     })
-                
+
+                total_compute_time += time.perf_counter() - compute_start
+                data_wait_start = time.perf_counter()
                 progress.update(task, advance=1)
         
         avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
+        total_train_time = total_data_time + total_compute_time
+        timing_metrics = {
+            'data_time': total_data_time,
+            'compute_time': total_compute_time,
+            'data_fraction': (total_data_time / total_train_time) if total_train_time > 0 else 0.0,
+        }
         
         # Salvar debug na época 50
         if debug_epoch_50:
@@ -2996,7 +3017,7 @@ class Trainer:
                     f.write(f"  Loss:    {data['loss']:.6f}\n\n")
             console.print(f"[yellow]Debug: Training loss detalhada salva em train_loss.txt[/yellow]")
         
-        return avg_loss
+        return avg_loss, timing_metrics
     
     def evaluate_train_accuracy(self) -> float:
         """
@@ -3027,7 +3048,7 @@ class Trainer:
         accuracy = correct / total if total > 0 else 0.0
         return accuracy
     
-    def validate(self, epoch: int) -> Tuple[float, float]:
+    def validate(self, epoch: int) -> Tuple[float, float, Dict[str, float]]:
         """
         Valida o modelo.
         
@@ -3039,13 +3060,19 @@ class Trainer:
         total_samples = 0
         all_predictions = []
         all_targets = []
+        total_data_time = 0.0
+        total_compute_time = 0.0
         
         # Debug: salvar detalhes na época 50
         debug_epoch_50 = (epoch + 1 == 50)
         debug_data = []
         
         with torch.no_grad():
+            data_wait_start = time.perf_counter()
             for features, targets, indices in self.val_loader:
+                data_ready_time = time.perf_counter()
+                total_data_time += data_ready_time - data_wait_start
+                compute_start = time.perf_counter()
                 features = features.to(self.device, non_blocking=True)
                 targets = targets.to(self.device, non_blocking=True)
                 
@@ -3078,6 +3105,8 @@ class Trainer:
                     predictions = torch.argmax(outputs, dim=1)
                     all_predictions.extend(predictions.cpu().numpy())
                     all_targets.extend(targets.cpu().numpy())
+                total_compute_time += time.perf_counter() - compute_start
+                data_wait_start = time.perf_counter()
         
         avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
         
@@ -3101,8 +3130,15 @@ class Trainer:
             accuracy = accuracy_score(all_targets, all_predictions)
         else:
             accuracy = 0.0
-        
-        return avg_loss, accuracy
+
+        total_val_time = total_data_time + total_compute_time
+        timing_metrics = {
+            'data_time': total_data_time,
+            'compute_time': total_compute_time,
+            'data_fraction': (total_data_time / total_val_time) if total_val_time > 0 else 0.0,
+        }
+
+        return avg_loss, accuracy, timing_metrics
     
     def train(self) -> Dict:
         """
@@ -3139,10 +3175,15 @@ class Trainer:
                 # Treinar
                 process = psutil.Process(os.getpid())
                 train_start = time.time()
-                train_loss = self.train_epoch(epoch)
+                train_loss, train_timing = self.train_epoch(epoch)
                 train_duration = time.time() - train_start
                 rss_mb = process.memory_info().rss / 1024 / 1024
                 console.print(f"[dim cyan]Tempo treino: {train_duration:.2f}s | RSS: {rss_mb:.1f} MB[/dim cyan]")
+                console.print(
+                    f"[dim cyan]  Train timing: data={train_timing['data_time']:.2f}s | "
+                    f"compute={train_timing['compute_time']:.2f}s | "
+                    f"data%={train_timing['data_fraction'] * 100:.1f}%[/dim cyan]"
+                )
                 
                 # Validar
                 if (epoch + 1) % val_frequency == 0:
@@ -3158,10 +3199,15 @@ class Trainer:
                     #     self.train_loader.dataset.unload_data()
                     
                     val_start = time.time()
-                    val_loss, val_accuracy = self.validate(epoch)
+                    val_loss, val_accuracy, val_timing = self.validate(epoch)
                     val_duration = time.time() - val_start
                     rss_mb = process.memory_info().rss / 1024 / 1024
                     console.print(f"[dim cyan]Tempo validação: {val_duration:.2f}s | RSS: {rss_mb:.1f} MB[/dim cyan]")
+                    console.print(
+                        f"[dim cyan]  Val timing: data={val_timing['data_time']:.2f}s | "
+                        f"compute={val_timing['compute_time']:.2f}s | "
+                        f"data%={val_timing['data_fraction'] * 100:.1f}%[/dim cyan]"
+                    )
                     
                     # Liberar memória dos datasets
                     # if hasattr(self.val_loader.dataset, 'unload_data'):
@@ -3185,6 +3231,12 @@ class Trainer:
                     self.history['train_accuracy'].append(train_accuracy)
                     self.history['val_loss'].append(val_loss)
                     self.history['val_accuracy'].append(val_accuracy)
+                    self.history['train_data_time'].append(train_timing['data_time'])
+                    self.history['train_compute_time'].append(train_timing['compute_time'])
+                    self.history['train_data_fraction'].append(train_timing['data_fraction'])
+                    self.history['val_data_time'].append(val_timing['data_time'])
+                    self.history['val_compute_time'].append(val_timing['compute_time'])
+                    self.history['val_data_fraction'].append(val_timing['data_fraction'])
                     self.history['epoch'].append(epoch + 1)
                     
                     # Log no W&B
@@ -3195,7 +3247,13 @@ class Trainer:
                             'train_accuracy': train_accuracy,
                             'val_loss': val_loss,
                             'val_accuracy': val_accuracy,
-                            'learning_rate': current_lr
+                            'learning_rate': current_lr,
+                            'train/data_time': train_timing['data_time'],
+                            'train/compute_time': train_timing['compute_time'],
+                            'train/data_fraction': train_timing['data_fraction'],
+                            'val/data_time': val_timing['data_time'],
+                            'val/compute_time': val_timing['compute_time'],
+                            'val/data_fraction': val_timing['data_fraction'],
                         }
                         self.wandb_run.log(log_dict)
                     
@@ -4823,8 +4881,11 @@ def validate_cache(cache_dir: Path, config: Dict) -> bool:
             'window_center_size': config['dataset_input']['window_center_size'],
             'downsample_factor': config['dataset_input']['downsample_factor'],
             'normalization_method': config['dataset_input'].get('normalization_method', 'zscore'),
+            'family_split_mode': config['data_split'].get('family_split_mode', 'family_aware'),
             'balancing_strategy': config['data_split'].get('balancing_strategy', 'stratified'),
             'dataset_dir': config['dataset_input']['dataset_dir'],
+            'prediction_target': config['output']['prediction_target'],
+            'derived_target_config': config.get('output', {}).get('derived_targets', {}).get(config['output']['prediction_target']),
             'input_shape': '2D',
         }
         
