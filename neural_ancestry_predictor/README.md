@@ -20,6 +20,7 @@ This module implements a YAML-configurable neural network that predicts ancestry
 - [Testing and Evaluation](#testing-and-evaluation)
 - [Model Interpretability](#model-interpretability)
 - [Variant Annotation](#variant-annotation-deeplift-post-processing)
+- [Pigmentation Classification](#pigmentation-classification)
 - [Hypothesis Validation](#hypothesis-validation)
 - [Weights & Biases](#weights--biases)
 - [Hyperparameter Tuning](#hyperparameter-tuning)
@@ -217,7 +218,31 @@ output:
 |--------|------|---------|------------|
 | `superpopulation` | Classification | 5 (AFR, AMR, EAS, EUR, SAS) | Easy ⭐ |
 | `population` | Classification | 26 | Medium ⭐⭐ |
+| `pigmentation` | Classification | 2 (`strong pigmentation`, `weak pigmentation`) | Medium ⭐⭐ |
 | `frog_likelihood` | Regression | 150 values | Hard ⭐⭐⭐ |
+
+### Derived Targets
+
+The predictor also supports **derived classification targets** built from existing metadata fields.
+
+Example: binary pigmentation from `population`.
+
+```yaml
+output:
+  prediction_target: "pigmentation"
+  known_classes:
+    - "strong pigmentation"
+    - "weak pigmentation"
+  derived_targets:
+    pigmentation:
+      source_field: "population"
+      exclude_unmapped: true
+      class_map:
+        strong pigmentation: ["YRI", "ESN", "LWK", "MSL", "GWD"]
+        weak pigmentation: ["FIN", "CEU", "GBR"]
+```
+
+With `exclude_unmapped: true`, all populations not listed above are excluded before split and normalization.
 
 #### C) Model Architecture
 
@@ -1138,6 +1163,287 @@ python3 annotate_deeplift_windows.py \
 ### Full Documentation
 
 📚 **[docs/ANNOTATE_DEEPLIFT_WINDOWS.md](docs/ANNOTATE_DEEPLIFT_WINDOWS.md)**
+
+---
+
+## Pigmentation Classification
+
+### Overview
+
+The project includes a binary pigmentation classification setup integrated into the normal training pipeline.
+
+- `weak pigmentation`: `FIN`, `CEU`, `GBR`
+- `strong pigmentation`: `YRI`, `ESN`, `LWK`, `MSL`, `GWD`
+
+This task is configured in:
+
+- `configs/pigmentation_binary.yaml`
+
+The current configuration uses:
+
+- dataset: `/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all`
+- target: `output.prediction_target: "pigmentation"`
+- family-aware split: `data_split.family_split_mode: "family_aware"`
+- exclusion of unmapped populations via `derived_targets.pigmentation.exclude_unmapped: true`
+
+### Minimal YAML Example
+
+```yaml
+dataset_input:
+  dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all"
+  alphagenome_outputs:
+    - "rna_seq"
+  haplotype_mode: "H1"
+  window_center_size: 32768
+  downsample_factor: 1
+  genes_to_use:
+    - "MC1R"
+    - "TYRP1"
+    - "TYR"
+    - "SLC45A2"
+    - "DDB1"
+    - "EDAR"
+    - "MFSD12"
+    - "OCA2"
+    - "HERC2"
+    - "SLC24A5"
+    - "TCHH"
+  normalization_method: "log"
+  normalization_value: 0.0
+  processed_cache_dir: /dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes_1000_all
+
+output:
+  prediction_target: "pigmentation"
+  known_classes:
+    - "strong pigmentation"
+    - "weak pigmentation"
+  derived_targets:
+    pigmentation:
+      source_field: "population"
+      exclude_unmapped: true
+      class_map:
+        strong pigmentation: ["YRI", "ESN", "LWK", "MSL", "GWD"]
+        weak pigmentation: ["FIN", "CEU", "GBR"]
+
+data_split:
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  random_seed: 13
+  family_split_mode: "family_aware"
+  balancing_strategy: "shuffle"
+```
+
+### Run Training
+
+```bash
+python3 neural_ancestry_predictor.py --config configs/pigmentation_binary.yaml
+```
+
+### Notes
+
+- The pigmentation target is metadata-derived from `population`, not read from a separate label file.
+- Filtering of valid pigmentation samples happens before split and normalization.
+- Family-aware splitting keeps family members in the same split when `family_split_mode: "family_aware"` is enabled.
+- If you change `genes_to_use`, use a separate `processed_cache_dir` to avoid reusing the wrong processed dataset.
+
+### Single-Gene Screening
+
+To compare which genes are most predictive for the pigmentation task, use:
+
+- `run_single_gene_screen.py`
+- `configs/pigmentation_binary_single_gene_screen.yaml`
+
+This script:
+
+- runs one pigmentation experiment per gene
+- maps each gene to the dataset that actually contains its AlphaGenome tracks
+- writes `results.csv` after every completed gene
+- appends `results.jsonl` incrementally for resume-friendly logging
+- keeps per-gene logs and temp configs
+- skips genes already marked `completed` only when valid test metrics are already present
+- automatically reruns rows marked `completed` but still missing `test_accuracy`
+- can recover metrics from existing `test_results.json` or `test_final_results.json`
+
+Expected inputs:
+
+- a base pigmentation config such as `configs/pigmentation_binary_single_gene_screen.yaml`
+- one or more dataset directories containing different gene sets
+
+Recommended base config:
+
+- `configs/pigmentation_binary_single_gene_screen.yaml`
+
+This config:
+
+- uses `/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000` as the default curated-gene dataset
+- trains for `150` epochs
+- documents that random-gene datasets are supplied separately through repeated `--dataset` arguments
+
+Example:
+
+```bash
+python3 run_single_gene_screen.py \
+  --base-config configs/pigmentation_binary_single_gene_screen.yaml \
+  --dataset /dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000 \
+  --dataset /dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_random \
+  --dataset /dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_random_11_1 \
+  --dataset /dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_random_11_2 \
+  --output-root /dados/GENOMICS_DATA/top3/pigmentation_single_gene_screen
+```
+
+The current workflow expects these dataset sources:
+
+- `/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000`
+- `/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_random`
+- `/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_random_11_1`
+- `/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_random_11_2`
+
+The random datasets contain different 11-gene sets, and the script automatically maps each requested gene to the correct dataset.
+
+Optional gene restriction:
+
+```bash
+python3 run_single_gene_screen.py \
+  --base-config configs/pigmentation_binary_single_gene_screen.yaml \
+  --dataset /dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000 \
+  --dataset /dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_random \
+  --dataset /dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_random_11_1 \
+  --dataset /dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_random_11_2 \
+  --genes-file my_gene_list.txt \
+  --output-root /dados/GENOMICS_DATA/top3/pigmentation_single_gene_screen_subset
+```
+
+### Resume and Recovery
+
+If the process stops, rerun the same command. The script will:
+
+- preserve completed results in `results.csv`
+- recover test metrics from existing run outputs when possible
+- rerun only genes that are incomplete or still missing final test metrics
+
+Relevant files under `--output-root`:
+
+- `results.csv`: main summary table used for ranking and plots
+- `results.jsonl`: append-only history of per-gene outcomes
+- `manifests/gene_manifest.json`: gene-to-dataset mapping used in the current run
+- `logs/<gene>.log`: raw console log for each gene
+- `temp_configs/<gene>.yaml`: generated config used for the run
+
+### Storage Behavior
+
+Single-gene screening writes separate processed caches and experiment outputs under:
+
+- `--output-root/runs/<dataset_name>/<gene>/`
+
+To reduce disk usage, the screening script generates configs that:
+
+- disable periodic checkpoints
+- disable best-checkpoint saves during training
+- keep only the final checkpoint so automatic test evaluation can still run
+
+If disk space becomes a problem and you only need the summaries, you can remove the run directories while preserving resume metadata:
+
+```bash
+rm -rf /dados/GENOMICS_DATA/top3/pigmentation_single_gene_screen/runs
+```
+
+This keeps:
+
+- `results.csv`
+- `results.jsonl`
+- `logs/`
+- `temp_configs/`
+- `manifests/`
+
+and lets the script skip already-completed genes in later resumes.
+
+### Rerunning Missing Test Metrics
+
+Some completed runs may initially write final test outputs as:
+
+- `test_final_results.json`
+
+The screening script now supports both:
+
+- `test_results.json`
+- `test_final_results.json`
+
+and will recover those metrics into `results.csv` on the next run.
+
+If you want to rerun only a subset of genes, create a text file with one gene per line and use:
+
+```bash
+python3 run_single_gene_screen.py \
+  --base-config configs/pigmentation_binary_single_gene_screen.yaml \
+  --dataset /dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000 \
+  --dataset /dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_random \
+  --dataset /dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_random_11_1 \
+  --dataset /dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_random_11_2 \
+  --genes-file missing_test_metrics.txt \
+  --output-root /dados/GENOMICS_DATA/top3/pigmentation_single_gene_screen
+```
+
+Use `--force` only if you explicitly want to rerun rows already marked completed with valid test metrics.
+
+Artifacts written under `--output-root`:
+
+- `manifests/gene_manifest.json`
+- `temp_configs/<gene>.yaml`
+- `logs/<gene>.log`
+- `results.csv`
+- `results.jsonl`
+
+Each gene also gets its own processed-cache / experiment root under:
+
+- `--output-root/runs/<dataset_name>/<gene>/`
+
+This makes the workflow resumable and avoids cache collisions between genes.
+
+### Plotting Screening Results
+
+Use `plot_single_gene_screen_results.py` to create bar plots from `results.csv`.
+
+Features:
+
+- curated 11 genes appear first on the x-axis
+- curated genes and random genes are each sorted by the metric being plotted
+- every gene is labeled on the x-axis
+
+Example: test accuracy
+
+```bash
+python3 plot_single_gene_screen_results.py \
+  --results-csv /dados/GENOMICS_DATA/top3/pigmentation_single_gene_screen/results.csv \
+  --metric test_accuracy \
+  --output /dados/GENOMICS_DATA/top3/pigmentation_single_gene_screen/test_accuracy_barplot.png
+```
+
+Example: test macro F1
+
+```bash
+python3 plot_single_gene_screen_results.py \
+  --results-csv /dados/GENOMICS_DATA/top3/pigmentation_single_gene_screen/results.csv \
+  --metric test_macro_f1 \
+  --output /dados/GENOMICS_DATA/top3/pigmentation_single_gene_screen/test_macro_f1_barplot.png
+```
+
+Example: best validation accuracy
+
+```bash
+python3 plot_single_gene_screen_results.py \
+  --results-csv /dados/GENOMICS_DATA/top3/pigmentation_single_gene_screen/results.csv \
+  --metric best_val_accuracy \
+  --output /dados/GENOMICS_DATA/top3/pigmentation_single_gene_screen/best_val_accuracy_barplot.png
+```
+
+Available metrics:
+
+- `test_accuracy`
+- `test_f1`
+- `test_macro_f1`
+- `val_accuracy`
+- `best_val_accuracy`
 
 ---
 

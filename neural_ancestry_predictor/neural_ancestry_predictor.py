@@ -5220,7 +5220,9 @@ def save_processed_dataset(
         
         return shuffled, class_counts
     
-    # Combinar todos os índices
+    # Combinar todos os índices apenas para metadados/contagens.
+    # Os splits já foram calculados em prepare_data() e precisam ser preservados aqui,
+    # especialmente quando o modo family_aware mantém famílias no mesmo split.
     all_indices = list(train_indices) + list(val_indices) + list(test_indices)
     console.print(f"  📊 Total de amostras: {len(all_indices)}")
     
@@ -5269,24 +5271,23 @@ def save_processed_dataset(
         console.print(f"  • Test: {len(new_test_indices)} amostras ({test_groups} grupos)")
         
     else:  # shuffle
-        # Randomização simples (preserva todos os dados)
-        shuffled_indices, class_counts = simple_shuffle(all_indices, random_seed)
+        # Para shuffle, os splits já foram definidos anteriormente e devem ser mantidos.
+        # Aqui registramos apenas a distribuição de classes para metadados do cache.
+        class_counts = {}
+        for idx in all_indices:
+            class_name = get_class_label(idx)
+            class_counts[class_name] = class_counts.get(class_name, 0) + 1
         discarded_indices = []  # Nenhum dado descartado
+        new_train_indices = list(train_indices)
+        new_val_indices = list(val_indices)
+        new_test_indices = list(test_indices)
         
         console.print(f"\n  [bold]Randomização Simples (shuffle):[/bold]")
         console.print(f"  • Classes encontradas: {len(class_counts)}")
         for class_name, count in sorted(class_counts.items()):
             console.print(f"    - {class_name}: {count}")
-        console.print(f"  • Total de amostras: {len(shuffled_indices)} [green](nenhuma descartada)[/green]")
-        
-        # Calcular splits simples
-        total_samples = len(shuffled_indices)
-        train_end = int(total_samples * train_split)
-        val_end = train_end + int(total_samples * val_split)
-        
-        new_train_indices = shuffled_indices[:train_end]
-        new_val_indices = shuffled_indices[train_end:val_end]
-        new_test_indices = shuffled_indices[val_end:]
+        console.print(f"  • Total de amostras: {len(all_indices)} [green](nenhuma descartada)[/green]")
+        console.print(f"  • Splits preservados da etapa anterior (family-aware quando aplicável)")
         
         console.print(f"\n  [bold]Splits:[/bold]")
         console.print(f"  • Train: {len(new_train_indices)} amostras")

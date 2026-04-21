@@ -30,6 +30,29 @@ The `validate_pigmentation_hypothesis.py` validates the hypothesis that:
 
 > *"Using AlphaGenome output processed by `neural_ancestry_predictor.py` and `annotate_deeplift_windows.py`, it is possible to identify what in the DNA of Africans causes them to have greater skin pigmentation."*
 
+The binary pigmentation training target used upstream is currently configured as:
+
+- `strong pigmentation`: `YRI`, `ESN`, `LWK`, `MSL`, `GWD`
+- `weak pigmentation`: `FIN`, `CEU`, `GBR`
+
+This task is configured in `configs/pigmentation_binary.yaml` through `output.prediction_target: "pigmentation"` plus `output.derived_targets.pigmentation`.
+
+For the resumable single-gene screening workflow, the recommended base config is:
+
+- `configs/pigmentation_binary_single_gene_screen.yaml`
+
+This screening pipeline uses `/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000` as the curated-gene base dataset and adds the random-gene datasets through repeated `--dataset` arguments.
+
+For resumable per-gene benchmarking before DeepLIFT/hypothesis validation, see:
+
+- `README.md` → `Pigmentation Classification` → `Single-Gene Screening`
+- `run_single_gene_screen.py`
+
+The screening workflow also supports recovery of final test metrics from either:
+
+- `test_results.json`
+- `test_final_results.json`
+
 ### Three-Level Validation
 
 ```
