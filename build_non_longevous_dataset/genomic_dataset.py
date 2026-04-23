@@ -240,6 +240,26 @@ class GenomicLongevityDataset(Dataset):
                 continue
         
         return predictions
+
+    def _load_prediction_metadata(self, predictions_dir: Path) -> Dict[str, List[Dict]]:
+        """Load per-output track metadata from sibling *_metadata.json files."""
+        if not predictions_dir.exists():
+            return {}
+
+        prediction_metadata = {}
+        metadata_files = list(predictions_dir.glob("*_metadata.json"))
+
+        for metadata_file in metadata_files:
+            output_type = metadata_file.name.removesuffix("_metadata.json")
+            try:
+                with open(metadata_file, 'r') as f:
+                    metadata = json.load(f)
+                prediction_metadata[output_type] = metadata.get('metadata', [])
+            except Exception as e:
+                warnings.warn(f"Erro ao carregar metadata {metadata_file}: {e}")
+                continue
+
+        return prediction_metadata
     
     def _load_window_data(
         self,
@@ -288,6 +308,8 @@ class GenomicLongevityDataset(Dataset):
             
             window_data['predictions_h1'] = self._load_predictions(predictions_h1_dir)
             window_data['predictions_h2'] = self._load_predictions(predictions_h2_dir)
+            window_data['prediction_metadata_h1'] = self._load_prediction_metadata(predictions_h1_dir)
+            window_data['prediction_metadata_h2'] = self._load_prediction_metadata(predictions_h2_dir)
         
         return window_data
     
@@ -559,4 +581,3 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
         sys.exit(1)
-

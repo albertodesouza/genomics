@@ -1,0 +1,82 @@
+dataset_input:
+  hf_dataset_path: "/dados/GENOMICS_DATA/hf/genomics_master"
+  alphagenome_outputs:
+    - "rna_seq"
+  haplotype_mode: "H1"
+  window_center_size: 32768
+  downsample_factor: 1
+  genes_to_use:
+    - "MC1R"
+    - "TYRP1"
+    - "TYR"
+    - "SLC45A2"
+    - "DDB1"
+    - "EDAR"
+    - "MFSD12"
+    - "OCA2"
+    - "HERC2"
+    - "SLC24A5"
+    - "TCHH"
+  normalization_method: "log"
+  processed_cache_dir: "/dados/GENOMICS_DATA/hf/cache"
+  loading_strategy: "default"
+
+output:
+  prediction_target: "pigmentation"
+  known_classes:
+    - "strong pigmentation"
+    - "weak pigmentation"
+  derived_targets:
+    pigmentation:
+      source_field: "population"
+      exclude_unmapped: true
+      class_map:
+        strong pigmentation: ["YRI", "ESN", "LWK", "MSL", "GWD"]
+        weak pigmentation: ["FIN", "CEU", "GBR"]
+
+model:
+  type: "CNN2"
+  hidden_layers: [128, 64]
+  dropout_rate: 0.3
+  activation: "relu"
+  cnn: {}
+  cnn2:
+    num_filters_stage1: 16
+    num_filters_stage2: 32
+    num_filters_stage3: 64
+    kernel_stage1: [6, 32]
+    stride_stage1: [6, 16]
+    kernel_stages23: [1, 5]
+    stride_stages23: [1, 2]
+    padding_stages23: [0, 2]
+    fc_hidden_size: 128
+    global_pool_type: "max"
+  sklearn:
+    pca_components: 100
+
+training:
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  batch_size: 64
+  num_epochs: 30
+
+checkpointing:
+  save_frequency: 10
+  save_best: true
+  save_best_loss: true
+  load_checkpoint: null
+
+wandb:
+  use_wandb: false
+  project_name: null
+  run_name: null
+  log_frequency: 100
+
+data_split:
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  random_seed: 13
+  family_split_mode: "family_aware"
+
+mode: "train"

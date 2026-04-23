@@ -1,0 +1,64 @@
+dataset_input:
+  hf_dataset_path: "/dados/GENOMICS_DATA/hf/genomics_master"
+  alphagenome_outputs:
+    - "rna_seq"
+  haplotype_mode: "H1"
+  window_center_size: 32768
+  downsample_factor: 1
+  genes_to_use:
+    - "MC1R"
+    - "TYRP1"
+    - "TYR"
+    - "SLC45A2"
+    - "DDB1"
+    - "EDAR"
+    - "MFSD12"
+    - "OCA2"
+    - "HERC2"
+    - "SLC24A5"
+    - "TCHH"
+  normalization_method: "zscore"
+  processed_cache_dir: "/dados/GENOMICS_DATA/hf/cache"
+  loading_strategy: "default"
+
+output:
+  prediction_target: "frog_likelihood"
+  known_classes: []
+  derived_targets: {}
+
+model:
+  type: "MLP"
+  hidden_layers: [256, 128]
+  dropout_rate: 0.2
+  activation: "relu"
+  cnn: {}
+  cnn2: {}
+  sklearn:
+    pca_components: 100
+
+training:
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  batch_size: 32
+  num_epochs: 20
+
+checkpointing:
+  save_frequency: 5
+  save_best: false
+  save_best_loss: true
+  load_checkpoint: null
+
+wandb:
+  use_wandb: false
+  project_name: null
+  run_name: null
+  log_frequency: 100
+
+data_split:
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  random_seed: 13
+  family_split_mode: "family_aware"
+
+mode: "train"
