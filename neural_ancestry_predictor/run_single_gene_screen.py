@@ -49,6 +49,21 @@ def discover_genes_from_dataset(dataset_dir: Path) -> List[str]:
     return genes
 
 
+def discover_ontologies_from_dataset(dataset_dir: Path) -> List[str]:
+    metadata_path = dataset_dir / "dataset_metadata.json"
+    metadata = load_json(metadata_path)
+    ontology_details = metadata.get("ontology_details", {})
+    if ontology_details:
+        return sorted(ontology_details.keys())
+
+    ontologies = metadata.get("ontologies", [])
+    cleaned = sorted({ontology.strip() for ontology in ontologies if ontology and ontology.strip()})
+    if cleaned:
+        return cleaned
+
+    raise ValueError(f"No ontologies found in {metadata_path}")
+
+
 def build_gene_dataset_map(dataset_dirs: List[Path]) -> Dict[str, Path]:
     gene_to_dataset: Dict[str, Path] = {}
     for dataset_dir in dataset_dirs:
@@ -61,6 +76,18 @@ def build_gene_dataset_map(dataset_dirs: List[Path]) -> Dict[str, Path]:
                 )
             gene_to_dataset[gene] = dataset_dir
     return gene_to_dataset
+
+
+def build_shared_ontology_list(dataset_dirs: List[Path]) -> List[str]:
+    ontology_sets = [set(discover_ontologies_from_dataset(dataset_dir)) for dataset_dir in dataset_dirs]
+    if not ontology_sets:
+        raise ValueError("No datasets provided")
+
+    shared = set.intersection(*ontology_sets)
+    if not shared:
+        raise ValueError("Provided datasets do not share any ontology CURIEs")
+
+    return sorted(shared)
 
 
 def load_gene_list(path: Path) -> List[str]:
@@ -159,21 +186,34 @@ def sanitize_name(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in value)
 
 
+def result_key(gene: str, ontology: str) -> str:
+    return f"{gene}::{ontology}"
+
+
 def build_temp_config(
     base_config: Dict,
     dataset_dir: Path,
     gene: str,
+    ontology: Optional[str],
+    tracks_per_gene: Optional[int],
     output_root: Path,
     run_name_prefix: str,
 ) -> Dict:
     config = deepcopy(base_config)
     gene_slug = sanitize_name(gene)
+    ontology_slug = sanitize_name(ontology or "all_ontologies")
     dataset_slug = sanitize_name(dataset_dir.name)
-    run_slug = f"{run_name_prefix}_{gene_slug}"
+    run_slug = f"{run_name_prefix}_{gene_slug}_{ontology_slug}"
 
     config["dataset_input"]["dataset_dir"] = str(dataset_dir)
     config["dataset_input"]["genes_to_use"] = [gene]
-    config["dataset_input"]["processed_cache_dir"] = str(output_root / "runs" / dataset_slug / gene_slug)
+    if ontology is None:
+        config["dataset_input"].pop("ontology_terms", None)
+    else:
+        config["dataset_input"]["ontology_terms"] = [ontology]
+    config["dataset_input"]["processed_cache_dir"] = str(
+        output_root / "runs" / ontology_slug / dataset_slug / gene_slug
+    )
 
     config.setdefault("wandb", {})
     config["wandb"]["run_name"] = run_slug
@@ -184,6 +224,31 @@ def build_temp_config(
     # but avoid accumulating best/periodic checkpoints across dozens of genes.
     config["checkpointing"]["save_during_training"] = False
     config["checkpointing"]["save_frequency"] = 10_000_000
+
+    if tracks_per_gene is not None:
+        cnn_config = config.get("model", {}).get("cnn")
+        if cnn_config:
+            kernel_size = list(cnn_config.get("kernel_size", []))
+            if len(kernel_size) == 2 and kernel_size[0] > tracks_per_gene:
+                kernel_size[0] = tracks_per_gene
+                cnn_config["kernel_size"] = kernel_size
+
+            stride = cnn_config.get("stride")
+            if isinstance(stride, list) and len(stride) == 2 and stride[0] > tracks_per_gene:
+                stride[0] = tracks_per_gene
+                cnn_config["stride"] = stride
+
+        cnn2_config = config.get("model", {}).setdefault("cnn2", {})
+        kernel_stage1 = list(cnn2_config.get("kernel_stage1", [6, 32]))
+        if len(kernel_stage1) == 2 and kernel_stage1[0] > tracks_per_gene:
+            kernel_stage1[0] = tracks_per_gene
+            cnn2_config["kernel_stage1"] = kernel_stage1
+
+        stride_stage1 = list(cnn2_config.get("stride_stage1", [6, 32]))
+        if len(stride_stage1) == 2 and stride_stage1[0] > tracks_per_gene:
+            stride_stage1[0] = tracks_per_gene
+            cnn2_config["stride_stage1"] = stride_stage1
+
     return config
 
 
@@ -229,13 +294,15 @@ def load_existing_results(results_csv: Path) -> Dict[str, Dict]:
     with open(results_csv, "r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            existing[row["gene"]] = row
+            ontology = row.get("ontology") or "unknown"
+            existing[result_key(row["gene"], ontology)] = row
     return existing
 
 
 def write_results_csv(results_csv: Path, rows: List[Dict]) -> None:
     fieldnames = [
         "gene",
+        "ontology",
         "group",
         "dataset_dir",
         "status",
@@ -267,6 +334,11 @@ def main() -> None:
     parser.add_argument("--genes-file", help="Optional newline-delimited gene list")
     parser.add_argument("--output-root", required=True, help="Directory for manifests, temp configs, logs, and runs")
     parser.add_argument("--run-name-prefix", default="pigment_single", help="Prefix for W&B run names")
+    parser.add_argument(
+        "--split-by-ontology",
+        action="store_true",
+        help="Run each gene once per ontology CURIE instead of using all ontologies together",
+    )
     parser.add_argument("--force", action="store_true", help="Rerun genes even if they already completed")
     args = parser.parse_args()
 
@@ -296,16 +368,26 @@ def main() -> None:
         raise ValueError(f"Genes not found in provided datasets: {', '.join(missing)}")
 
     curated_genes = set(base_config.get("dataset_input", {}).get("genes_to_use", []))
+    ontologies: List[Optional[str]]
+    if args.split_by_ontology:
+        ontologies = build_shared_ontology_list(dataset_dirs)
+        if not ontologies:
+            raise ValueError("Could not determine ontology CURIEs from dataset metadata")
+    else:
+        ontologies = [None]
+
     manifest_rows = []
-    for gene in requested_genes:
-        dataset_dir = gene_to_dataset[gene]
-        manifest_rows.append(
-            {
-                "gene": gene,
-                "dataset_dir": str(dataset_dir),
-                "group": "curated11" if gene in curated_genes else "random",
-            }
-        )
+    for ontology in ontologies:
+        for gene in requested_genes:
+            dataset_dir = gene_to_dataset[gene]
+            manifest_rows.append(
+                {
+                    "gene": gene,
+                    "ontology": ontology or "all_ontologies",
+                    "dataset_dir": str(dataset_dir),
+                    "group": "curated11" if gene in curated_genes else "random",
+                }
+            )
 
     manifest_path = manifests_dir / "gene_manifest.json"
     with open(manifest_path, "w", encoding="utf-8") as f:
@@ -315,10 +397,12 @@ def main() -> None:
     results_jsonl = output_root / "results.jsonl"
     existing = load_existing_results(results_csv)
     all_rows = list(existing.values())
-    row_by_gene = {row["gene"]: row for row in all_rows}
+    row_by_key = {
+        result_key(row["gene"], row.get("ontology") or "unknown"): row for row in all_rows
+    }
 
     recovered_any = False
-    for gene, row in list(row_by_gene.items()):
+    for key, row in list(row_by_key.items()):
         if row.get("status") != "completed":
             continue
         if row.get("test_accuracy") not in ("", None):
@@ -332,33 +416,44 @@ def main() -> None:
         recovered_any = True
 
     if recovered_any:
-        all_rows = [row_by_gene[key] for key in sorted(row_by_gene)]
+        all_rows = [row_by_key[key] for key in sorted(row_by_key)]
         write_results_csv(results_csv, all_rows)
 
     for entry in manifest_rows:
         gene = entry["gene"]
+        ontology = entry["ontology"]
         dataset_dir = Path(entry["dataset_dir"])
         group = entry["group"]
+        key = result_key(gene, ontology)
 
         if not args.force:
-            previous = row_by_gene.get(gene)
+            previous = row_by_key.get(key)
             if previous and not row_needs_rerun(previous):
-                print(f"[skip] {gene}: already completed")
+                print(f"[skip] {gene} / {ontology}: already completed")
                 continue
 
         started_at = datetime.utcnow().isoformat()
-        temp_config = build_temp_config(base_config, dataset_dir, gene, output_root, args.run_name_prefix)
-        temp_config_path = temp_configs_dir / f"{sanitize_name(gene)}.yaml"
-        log_path = logs_dir / f"{sanitize_name(gene)}.log"
+        temp_config = build_temp_config(
+            base_config,
+            dataset_dir,
+            gene,
+            ontology,
+            2 if ontology is not None else None,
+            output_root,
+            args.run_name_prefix,
+        )
+        temp_config_path = temp_configs_dir / f"{sanitize_name(ontology)}__{sanitize_name(gene)}.yaml"
+        log_path = logs_dir / f"{sanitize_name(ontology)}__{sanitize_name(gene)}.log"
         write_yaml(temp_config_path, temp_config)
 
-        print(f"[run] {gene} ({group}) -> {dataset_dir.name}")
+        print(f"[run] {gene} / {ontology} ({group}) -> {dataset_dir.name}")
         print(f"      log: {log_path}")
         returncode, experiment_dir = run_gene(script_path, temp_config_path, log_path)
         finished_at = datetime.utcnow().isoformat()
 
         row = {
             "gene": gene,
+            "ontology": ontology,
             "group": group,
             "dataset_dir": str(dataset_dir),
             "status": "failed" if returncode != 0 else "completed",
@@ -382,15 +477,18 @@ def main() -> None:
             metrics = read_metrics(experiment_dir)
             row.update({key: metrics.get(key, "") for key in metrics})
 
-        row_by_gene[gene] = row
-        all_rows = [row_by_gene[key] for key in sorted(row_by_gene)]
+        row_by_key[key] = row
+        all_rows = [row_by_key[key] for key in sorted(row_by_key)]
         write_results_csv(results_csv, all_rows)
         append_jsonl(results_jsonl, row)
 
         if returncode != 0:
-            print(f"[fail] {gene}: see {log_path}")
+            print(f"[fail] {gene} / {ontology}: see {log_path}")
         else:
-            print(f"[done] {gene}: test_acc={row['test_accuracy']} macro_f1={row['test_macro_f1']}")
+            print(
+                f"[done] {gene} / {ontology}: "
+                f"test_acc={row['test_accuracy']} macro_f1={row['test_macro_f1']}"
+            )
 
     print(f"Manifest: {manifest_path}")
     print(f"Results CSV: {results_csv}")

@@ -587,6 +587,7 @@ class ProcessedGenomicDataset(Dataset):
         
         # Parâmetros de processamento
         self.alphagenome_outputs = config['dataset_input']['alphagenome_outputs']
+        self.ontology_terms = config['dataset_input'].get('ontology_terms', None)
         self.haplotype_mode = config['dataset_input']['haplotype_mode']
         self.window_center_size = config['dataset_input']['window_center_size']
         self.downsample_factor = config['dataset_input']['downsample_factor']
@@ -612,6 +613,26 @@ class ProcessedGenomicDataset(Dataset):
         
         # Criar mapeamentos de targets
         self._create_target_mappings()
+
+    def _filter_track_indices_by_ontology(self, output_type: str, track_metadata: List[Dict]) -> List[int]:
+        """Return column indices matching the requested ontology CURIEs."""
+        if not self.ontology_terms:
+            return list(range(len(track_metadata)))
+
+        requested = set(self.ontology_terms)
+        indices = [
+            idx for idx, metadata in enumerate(track_metadata)
+            if metadata.get('ontology_curie') in requested
+        ]
+
+        if not indices:
+            available = sorted({metadata.get('ontology_curie', '') for metadata in track_metadata if metadata.get('ontology_curie')})
+            raise ValueError(
+                f"Nenhuma track encontrada para ontology_terms={sorted(requested)} em {output_type}. "
+                f"Disponiveis: {available}"
+            )
+
+        return indices
     
     def _compute_normalization_params(self) -> Dict:
         """
@@ -1026,7 +1047,10 @@ class ProcessedGenomicDataset(Dataset):
         for window_name, window_data in windows.items():
             # Processar cada haplótipo
             if self.haplotype_mode in ['H1', 'H1+H2']:
-                h1_rows = self._process_haplotype(window_data.get('predictions_h1', {}))
+                h1_rows = self._process_haplotype(
+                    window_data.get('predictions_h1', {}),
+                    window_data.get('prediction_metadata_h1', {}),
+                )
                 if h1_rows is not None:
                     # h1_rows pode ser 1D (um output) ou 2D (múltiplos outputs)
                     if h1_rows.ndim == 1:
@@ -1035,7 +1059,10 @@ class ProcessedGenomicDataset(Dataset):
                         processed_rows.append(h1_rows)
             
             if self.haplotype_mode in ['H2', 'H1+H2']:
-                h2_rows = self._process_haplotype(window_data.get('predictions_h2', {}))
+                h2_rows = self._process_haplotype(
+                    window_data.get('predictions_h2', {}),
+                    window_data.get('prediction_metadata_h2', {}),
+                )
                 if h2_rows is not None:
                     if h2_rows.ndim == 1:
                         processed_rows.append(h2_rows.reshape(1, -1))
@@ -1051,7 +1078,7 @@ class ProcessedGenomicDataset(Dataset):
         
         return result
     
-    def _process_haplotype(self, predictions: Dict) -> Optional[np.ndarray]:
+    def _process_haplotype(self, predictions: Dict, prediction_metadata: Optional[Dict[str, List[Dict]]] = None) -> Optional[np.ndarray]:
         """
         Processa predições de um haplótipo.
         
@@ -1075,13 +1102,19 @@ class ProcessedGenomicDataset(Dataset):
         for output_type in self.alphagenome_outputs:
             if output_type in predictions:
                 array = predictions[output_type]
+                track_metadata = None
+                if prediction_metadata is not None:
+                    track_metadata = prediction_metadata.get(output_type)
                 
                 # Verificar se é 2D com múltiplas colunas (tracks)
                 if array.ndim == 2 and array.shape[1] > 1:
                     # Array 2D: cada coluna é uma track separada
                     num_tracks = array.shape[1]
+                    selected_track_indices = list(range(num_tracks))
+                    if track_metadata is not None:
+                        selected_track_indices = self._filter_track_indices_by_ontology(output_type, track_metadata)
                     
-                    for track_idx in range(num_tracks):
+                    for track_idx in selected_track_indices:
                         # Extrair coluna (track específica)
                         track_array = array[:, track_idx]
                         
@@ -1328,13 +1361,17 @@ class NNAncestryPredictor(nn.Module):
         
         # Determinar quais linhas usar (genes específicos)
         genes_to_use = config['dataset_input'].get('genes_to_use', None)
-        tracks_per_gene = 6  # rna_seq tem 6 tracks
-        
+
         # Ordem dos genes no dataset (carregada do cache metadata)
         # Fallback para ordem padrão se não disponível
         GENE_ORDER = config['dataset_input'].get('gene_order', 
             ["MC1R", "TYRP1", "TYR", "SLC45A2", "DDB1", 
              "EDAR", "MFSD12", "OCA2", "HERC2", "SLC24A5", "TCHH"])
+        if len(GENE_ORDER) == 0 or input_shape[0] % len(GENE_ORDER) != 0:
+            raise ValueError(
+                f"Input shape incompatível com gene_order: {input_shape[0]} linhas para {len(GENE_ORDER)} genes"
+            )
+        tracks_per_gene = input_shape[0] // len(GENE_ORDER)
         
         if genes_to_use:
             # Validar genes
@@ -1346,7 +1383,7 @@ class NNAncestryPredictor(nn.Module):
             gene_indices = [i for i, gene in enumerate(GENE_ORDER) if gene in genes_to_use]
             self.genes_selected = [GENE_ORDER[i] for i in gene_indices]
             
-            # Calcular linhas a extrair (cada gene = 6 linhas consecutivas)
+            # Calcular linhas a extrair com base no número real de tracks por gene.
             self.rows_to_use = []
             for gene_idx in gene_indices:
                 start_row = gene_idx * tracks_per_gene
@@ -1527,13 +1564,17 @@ class CNNAncestryPredictor(nn.Module):
         
         # Determinar quais linhas usar (genes específicos)
         genes_to_use = config['dataset_input'].get('genes_to_use', None)
-        tracks_per_gene = 6  # rna_seq tem 6 tracks
-        
+
         # Ordem dos genes no dataset (carregada do cache metadata)
         # Fallback para ordem padrão se não disponível
         GENE_ORDER = config['dataset_input'].get('gene_order', 
             ["MC1R", "TYRP1", "TYR", "SLC45A2", "DDB1", 
              "EDAR", "MFSD12", "OCA2", "HERC2", "SLC24A5", "TCHH"])
+        if len(GENE_ORDER) == 0 or input_shape[0] % len(GENE_ORDER) != 0:
+            raise ValueError(
+                f"Input shape incompatível com gene_order: {input_shape[0]} linhas para {len(GENE_ORDER)} genes"
+            )
+        tracks_per_gene = input_shape[0] // len(GENE_ORDER)
         
         if genes_to_use:
             # Validar genes
@@ -1545,7 +1586,7 @@ class CNNAncestryPredictor(nn.Module):
             gene_indices = [i for i, gene in enumerate(GENE_ORDER) if gene in genes_to_use]
             self.genes_selected = [GENE_ORDER[i] for i in gene_indices]
             
-            # Calcular linhas a extrair (cada gene = 6 linhas consecutivas)
+            # Calcular linhas a extrair com base no número real de tracks por gene.
             self.rows_to_use = []
             for gene_idx in gene_indices:
                 start_row = gene_idx * tracks_per_gene
@@ -1818,13 +1859,17 @@ class CNN2AncestryPredictor(nn.Module):
         
         # Determinar quais linhas usar (genes específicos)
         genes_to_use = config['dataset_input'].get('genes_to_use', None)
-        tracks_per_gene = 6  # rna_seq tem 6 tracks
-        
+
         # Ordem dos genes no dataset (carregada do cache metadata)
         # Fallback para ordem padrão se não disponível
         GENE_ORDER = config['dataset_input'].get('gene_order', 
             ["MC1R", "TYRP1", "TYR", "SLC45A2", "DDB1", 
              "EDAR", "MFSD12", "OCA2", "HERC2", "SLC24A5", "TCHH"])
+        if len(GENE_ORDER) == 0 or input_shape[0] % len(GENE_ORDER) != 0:
+            raise ValueError(
+                f"Input shape incompatível com gene_order: {input_shape[0]} linhas para {len(GENE_ORDER)} genes"
+            )
+        tracks_per_gene = input_shape[0] // len(GENE_ORDER)
         
         if genes_to_use:
             # Validar genes
@@ -1836,7 +1881,7 @@ class CNN2AncestryPredictor(nn.Module):
             gene_indices = [i for i, gene in enumerate(GENE_ORDER) if gene in genes_to_use]
             self.genes_selected = [GENE_ORDER[i] for i in gene_indices]
             
-            # Calcular linhas a extrair (cada gene = 6 linhas consecutivas)
+            # Calcular linhas a extrair com base no número real de tracks por gene.
             self.rows_to_use = []
             for gene_idx in gene_indices:
                 start_row = gene_idx * tracks_per_gene
@@ -1883,6 +1928,17 @@ class CNN2AncestryPredictor(nn.Module):
         # Stage 3
         conv3_h = (conv2_h + 2*padding_s23[0] - kernel_s23[0]) // stride_s23[0] + 1
         conv3_w = (conv2_w + 2*padding_s23[1] - kernel_s23[1]) // stride_s23[1] + 1
+
+        if min(conv1_h, conv1_w, conv2_h, conv2_w, conv3_h, conv3_w) <= 0:
+            raise ValueError(
+                "CNN2 produziu dimensão inválida. "
+                f"input=({num_rows}, {effective_size}), "
+                f"stage1=({conv1_h}, {conv1_w}), "
+                f"stage2=({conv2_h}, {conv2_w}), "
+                f"stage3=({conv3_h}, {conv3_w}), "
+                f"kernel_s1={kernel_s1}, stride_s1={stride_s1}, "
+                f"kernel_s23={kernel_s23}, stride_s23={stride_s23}, padding_s23={padding_s23}"
+            )
         
         # Bloco de features convolucionais
         self.features = nn.Sequential(
@@ -1912,7 +1968,7 @@ class CNN2AncestryPredictor(nn.Module):
         self.pool_type = pool_type
         
         # Dimensão após flatten
-        flattened_size = num_filters_s3 * conv1_h * 1
+        flattened_size = num_filters_s3 * conv3_h
         
         # Classificador
         self.classifier = nn.Sequential(
@@ -1937,7 +1993,7 @@ class CNN2AncestryPredictor(nn.Module):
         console.print(f"    → Output: {num_filters_s2} x {conv2_h} x {conv2_w}")
         console.print(f"  • Stage 3: {num_filters_s3} filters, kernel={kernel_s23}, stride={stride_s23}, padding={padding_s23}")
         console.print(f"    → Output: {num_filters_s3} x {conv3_h} x {conv3_w}")
-        console.print(f"  • Global Pool ({pool_type}): kernel=(1, {conv3_w}) → {num_filters_s3} x {conv1_h} x 1")
+        console.print(f"  • Global Pool ({pool_type}): kernel=(1, {conv3_w}) → {num_filters_s3} x {conv3_h} x 1")
         console.print(f"  • Flatten size: {flattened_size}")
         console.print(f"  • FC: {flattened_size} → {fc_hidden_size} → {num_classes}")
         console.print(f"  • Dropout: {dropout_rate}")

@@ -58,7 +58,8 @@ def plot_metric(rows: List[Dict[str, str]], metric: str, output_path: Path) -> N
     fig, ax = plt.subplots(figsize=(width, 7))
     bars = ax.bar(range(len(genes)), values, color=colors, edgecolor="black", linewidth=0.5)
 
-    ax.set_title(f"Single-Gene Pigmentation Results: {metric}")
+    ontology = ordered_rows[0].get("ontology", "unknown") if ordered_rows else "unknown"
+    ax.set_title(f"Single-Gene Pigmentation Results: {ontology} / {metric}")
     ax.set_ylabel(metric)
     ax.set_xlabel("Gene")
     ax.set_xticks(range(len(genes)))
@@ -99,8 +100,20 @@ def plot_metric(rows: List[Dict[str, str]], metric: str, output_path: Path) -> N
     plt.close(fig)
 
 
+def sanitize_name(value: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in value)
+
+
+def group_rows_by_ontology(rows: List[Dict[str, str]]) -> Dict[str, List[Dict[str, str]]]:
+    grouped: Dict[str, List[Dict[str, str]]] = {}
+    for row in rows:
+        ontology = row.get("ontology") or "unknown"
+        grouped.setdefault(ontology, []).append(row)
+    return grouped
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Plot single-gene pigmentation screening results")
+    parser = argparse.ArgumentParser(description="Plot single-gene pigmentation screening results per ontology")
     parser.add_argument("--results-csv", required=True, help="Path to results.csv")
     parser.add_argument(
         "--metric",
@@ -108,7 +121,11 @@ def main() -> None:
         choices=["test_accuracy", "test_f1", "test_macro_f1", "val_accuracy", "best_val_accuracy"],
         help="Metric to plot",
     )
-    parser.add_argument("--output", required=True, help="Output image path")
+    parser.add_argument(
+        "--output",
+        required=True,
+        help="Output image path or directory. If multiple ontologies are present, one file is created per ontology.",
+    )
     args = parser.parse_args()
 
     rows = load_rows(Path(args.results_csv))
@@ -116,8 +133,19 @@ def main() -> None:
     if not completed_rows:
         raise ValueError(f"No completed rows with metric {args.metric} found in {args.results_csv}")
 
-    plot_metric(completed_rows, args.metric, Path(args.output))
-    print(f"Saved plot to: {args.output}")
+    grouped_rows = group_rows_by_ontology(completed_rows)
+    output_path = Path(args.output)
+
+    if len(grouped_rows) == 1:
+        plot_metric(completed_rows, args.metric, output_path)
+        print(f"Saved plot to: {output_path}")
+        return
+
+    output_path.mkdir(parents=True, exist_ok=True)
+    for ontology, ontology_rows in sorted(grouped_rows.items()):
+        ontology_output = output_path / f"{sanitize_name(ontology)}_{args.metric}.png"
+        plot_metric(ontology_rows, args.metric, ontology_output)
+        print(f"Saved plot to: {ontology_output}")
 
 
 if __name__ == "__main__":
