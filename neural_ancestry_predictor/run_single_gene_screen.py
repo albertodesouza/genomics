@@ -339,6 +339,11 @@ def main() -> None:
         action="store_true",
         help="Run each gene once per ontology CURIE instead of using all ontologies together",
     )
+    parser.add_argument(
+        "--ontology",
+        action="append",
+        help="Restrict ontology-split runs to one or more ontology CURIEs; repeatable",
+    )
     parser.add_argument("--force", action="store_true", help="Rerun genes even if they already completed")
     args = parser.parse_args()
 
@@ -373,7 +378,18 @@ def main() -> None:
         ontologies = build_shared_ontology_list(dataset_dirs)
         if not ontologies:
             raise ValueError("Could not determine ontology CURIEs from dataset metadata")
+        if args.ontology:
+            requested_ontologies = args.ontology
+            missing_ontologies = [ontology for ontology in requested_ontologies if ontology not in ontologies]
+            if missing_ontologies:
+                raise ValueError(
+                    "Requested ontologies not shared by all provided datasets: "
+                    + ", ".join(missing_ontologies)
+                )
+            ontologies = requested_ontologies
     else:
+        if args.ontology:
+            raise ValueError("--ontology requires --split-by-ontology")
         ontologies = [None]
 
     manifest_rows = []
