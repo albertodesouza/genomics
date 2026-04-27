@@ -16,6 +16,7 @@ This module extracts SNP genotypes from multi-sample 1000 Genomes VCF files, con
   - [Step 1 — Generate 23andMe Files](#step-1--generate-23andme-files)
   - [Step 2 — Compute Statistics](#step-2--compute-statistics)
   - [Step 3 — Predict Ancestry](#step-3--predict-ancestry)
+  - [Step 4 — Binary Association](#step-4--binary-association)
 - [Configuration Reference](#configuration-reference)
 - [Ancestry Estimation Methods](#ancestry-estimation-methods)
   - [Maximum Likelihood Classification (MLC)](#maximum-likelihood-classification-mlc)
@@ -40,6 +41,7 @@ The **SNP Ancestry Predictor** is a three-step pipeline that:
 1. **Extracts SNP genotypes** from multi-sample 1000 Genomes VCF files and writes per-individual files in the widely-used 23andMe raw data format.
 2. **Computes reference allele frequency statistics** from a configurable subset of individuals (train, validation, and/or test splits).
 3. **Predicts ancestry** for evaluation individuals using Maximum Likelihood Classification (single population assignment), Admixture EM (fast mixture proportion estimation), or Admixture MLE (numerical optimisation-based mixture estimation).
+4. **Runs binary SNP association analyses** for traits defined from population groups, exporting JSON/TSV summary statistics and a Manhattan plot.
 
 ### Key Features
 
@@ -48,6 +50,8 @@ The **SNP Ancestry Predictor** is a three-step pipeline that:
 - Supports both superpopulation (5 classes: AFR, AMR, EAS, EUR, SAS) and population (26 classes) prediction levels
 - Three estimation methods: Maximum Likelihood Classification, Admixture EM (fast), and Admixture MLE
 - Idempotent execution: safely resume after interruption
+- Validates family-aware splits by checking that samples sharing the same `family_id`
+  in `individual_metadata.json` stay inside a single train/val/test subset
 - MAF filtering and Fst-based SNP selection for optimal ancestry discrimination
 - Detailed evaluation metrics: accuracy, precision, recall, F1, confusion matrix
 - Per-individual result files with ancestry proportions (JSON)
@@ -68,6 +72,10 @@ The **SNP Ancestry Predictor** is a three-step pipeline that:
 - Multi-sample VCF files from the 1000 Genomes Project (per-chromosome, phased)
 - A `splits_metadata.json` file defining train/val/test splits (produced by `neural_ancestry_predictor`)
 - An individuals directory with per-sample subdirectories (produced by `build_non_longevous_dataset`)
+
+When those split files come from the neural pipeline with `family_split_mode: "family_aware"`,
+this module now verifies the invariant before processing: any samples sharing the same
+`family_id` in `individual_metadata.json` must remain in the same subset.
 
 ---
 
@@ -207,6 +215,26 @@ where $\bar{p}_i$ is the mean allele frequency across populations and $\mathrm{V
 5. Prints results to the console and saves them as JSON.
 
 **Output:** A JSON file at `<results_dir>/predictions_<method>_<level>.json` containing metrics and per-individual predictions.
+
+### Step 4 — Binary Association
+
+**Purpose:** Run per-SNP case-control association for a binary phenotype such as pigmentation.
+
+**How it works:**
+
+1. Reads `splits_metadata.json` and maps populations into positive and negative phenotype classes.
+2. Loads the per-individual 23andMe files for the selected subsets.
+3. Aggregates allele counts separately for cases and controls, respecting the configured haplotype mode.
+4. Applies a minimum MAF filter.
+5. Runs a 2x2 chi-square test per SNP using allele counts.
+6. Exports ranked results as JSON and TSV and generates a Manhattan plot PNG.
+
+**Output:**
+- `<output_dir>/association_<...>.json`
+- `<output_dir>/association_<...>.tsv`
+- `<output_dir>/association_<...>.png`
+
+This step is intended as a lightweight statistical baseline for the binary pigmentation setting already used in `neural_ancestry_predictor`.
 
 ---
 

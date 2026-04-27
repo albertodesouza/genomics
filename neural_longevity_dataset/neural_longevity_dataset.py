@@ -84,6 +84,9 @@ import json
 import pickle
 import random
 import re
+import threading
+import socket
+import time
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional, Any, Sequence, Set
 from dataclasses import dataclass, field
@@ -95,6 +98,7 @@ import tempfile
 import shutil
 from urllib.parse import quote, unquote
 import shlex
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import pandas as pd
@@ -845,6 +849,9 @@ class LongevityDatasetBuilder:
     def _download_file(self, url: str, destination: Path) -> bool:
         """Baixa arquivo exibindo progresso detalhado (idempotente)."""
         destination.parent.mkdir(parents=True, exist_ok=True)
+        temp_destination = destination.with_name(destination.name + '.part')
+        timeout_seconds = 60
+        max_attempts = 3
 
         if destination.exists() and destination.stat().st_size > 0:
             console.print(
@@ -852,6 +859,12 @@ class LongevityDatasetBuilder:
                 f"{destination.name} ({destination.stat().st_size / (1024**2):.1f} MB)"
             )
             return True
+
+        if temp_destination.exists():
+            console.print(
+                f"[yellow]⚠ Removendo arquivo parcial anterior:[/yellow] {temp_destination.name}"
+            )
+            temp_destination.unlink(missing_ok=True)
 
         console.print(
             f"[cyan]⇣ Baixando {destination.name}[/cyan]\n"
@@ -866,52 +879,81 @@ class LongevityDatasetBuilder:
                 "[yellow]⚠ urllib indisponível, tentando wget clássico (sem progresso)[/yellow]"
             )
             try:
-                sp.run(['wget', '-O', str(destination), url], check=True)
+                sp.run(['wget', '-O', str(temp_destination), url], check=True)
+                temp_destination.replace(destination)
                 return True
             except Exception as wget_exc:
                 console.print(f"[yellow]⚠ Falha ao baixar {url}: {wget_exc}[/yellow]")
-                if destination.exists():
-                    destination.unlink(missing_ok=True)
+                if temp_destination.exists():
+                    temp_destination.unlink(missing_ok=True)
                 return False
 
-        try:
-            response = urlopen(url)
-            total = int(response.headers.get('Content-Length', 0)) or None
-        except Exception as exc:
-            console.print(f"[yellow]⚠ Falha ao iniciar download de {url}: {exc}[/yellow]")
-            return False
-
         chunk_size = 1024 * 1024  # 1 MiB
+        last_error: Optional[Exception] = None
 
-        try:
-            with response, open(destination, 'wb') as fh, Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                DownloadColumn(),
-                TransferSpeedColumn(),
-                TimeRemainingColumn(),
-                console=console,
-            ) as progress:
-                task_description = f"Baixando {destination.name}"
-                task = progress.add_task(task_description, total=total)
+        for attempt in range(1, max_attempts + 1):
+            response = None
+            if temp_destination.exists():
+                temp_destination.unlink(missing_ok=True)
 
-                while True:
-                    chunk = response.read(chunk_size)
-                    if not chunk:
-                        break
-                    fh.write(chunk)
-                    progress.update(task, advance=len(chunk))
+            try:
+                response = urlopen(url, timeout=timeout_seconds)
+                total = int(response.headers.get('Content-Length', 0)) or None
 
-            # Rich Progress garante flush na conclusão; informar tamanho final
-            size_mb = destination.stat().st_size / (1024 ** 2)
-            console.print(f"[green]✓ Download concluído:[/green] {destination.name} ({size_mb:.1f} MB)")
-            return True
-        except Exception as exc:
-            console.print(f"[yellow]⚠ Falha ao baixar {url}: {exc}[/yellow]")
-            if destination.exists():
-                destination.unlink(missing_ok=True)
-            return False
+                with response, open(temp_destination, 'wb') as fh, Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    DownloadColumn(),
+                    TransferSpeedColumn(),
+                    TimeRemainingColumn(),
+                    console=console,
+                ) as progress:
+                    task_description = f"Baixando {destination.name} (tentativa {attempt}/{max_attempts})"
+                    task = progress.add_task(task_description, total=total)
+                    last_progress_at = time.monotonic()
+
+                    while True:
+                        chunk = response.read(chunk_size)
+                        if not chunk:
+                            break
+                        fh.write(chunk)
+                        progress.update(task, advance=len(chunk))
+                        last_progress_at = time.monotonic()
+
+                        if time.monotonic() - last_progress_at > timeout_seconds:
+                            raise TimeoutError(
+                                f"download stalled for more than {timeout_seconds} seconds"
+                            )
+
+                temp_destination.replace(destination)
+
+                size_mb = destination.stat().st_size / (1024 ** 2)
+                console.print(f"[green]✓ Download concluído:[/green] {destination.name} ({size_mb:.1f} MB)")
+                return True
+            except (TimeoutError, socket.timeout, OSError, EOFError) as exc:
+                last_error = exc
+                console.print(
+                    f"[yellow]⚠ Falha ao baixar {url} na tentativa {attempt}/{max_attempts}: {exc}[/yellow]"
+                )
+                if temp_destination.exists():
+                    temp_destination.unlink(missing_ok=True)
+                if attempt < max_attempts:
+                    wait_seconds = min(5 * attempt, 15)
+                    console.print(
+                        f"[cyan]Tentando novamente em {wait_seconds}s...[/cyan]"
+                    )
+                    time.sleep(wait_seconds)
+            except Exception as exc:
+                last_error = exc
+                console.print(f"[yellow]⚠ Falha ao baixar {url}: {exc}[/yellow]")
+                if temp_destination.exists():
+                    temp_destination.unlink(missing_ok=True)
+                break
+
+        if last_error is not None:
+            console.print(f"[yellow]⚠ Download abortado após {max_attempts} tentativas: {url}[/yellow]")
+        return False
 
     def _ensure_reference_indices(self, fasta_path: Path):
         """Garante que índices do FASTA existam."""
@@ -1756,6 +1798,7 @@ class LongevityDatasetBuilder:
         base_url = vcf_config['base_url']
         filename_pattern = vcf_config['filename_pattern']
         chromosomes = vcf_config['chromosomes']
+        max_workers = max(1, int(vcf_config.get('max_parallel_downloads', 2)))
         
         console.print("\n" + "="*70)
         console.print("[bold yellow]MODO VCF MULTI-SAMPLE (CROMOSSOMOS COMPLETOS)[/bold yellow]")
@@ -1767,6 +1810,7 @@ class LongevityDatasetBuilder:
         console.print(f"  • URL base: [blue]{base_url}[/blue]")
         console.print(f"  • Total de amostras no VCF: [bold]3,202 indivíduos[/bold]")
         console.print(f"  • Cromossomos a baixar: {len(chromosomes)}\n")
+        console.print(f"  • Downloads paralelos: [bold]{max_workers}[/bold]\n")
         
         console.print("[bold cyan]Formato dos Arquivos:[/bold cyan]")
         console.print("  • Tipo: VCF 4.2 multi-sample (todas as amostras por cromossomo)")
@@ -1797,10 +1841,11 @@ class LongevityDatasetBuilder:
         
         vcf_dir = self.output_dir / "vcf_chromosomes"
         vcf_dir.mkdir(parents=True, exist_ok=True)
-        
-        downloaded_chroms = []
-        
-        for i, chrom in enumerate(chromosomes, 1):
+
+        status_lock = threading.Lock()
+        downloaded_chroms: List[str] = []
+
+        def download_chromosome(chrom: str, index: int) -> Tuple[str, bool]:
             # Tratamento especial para chrX que tem .v2 no nome
             if chrom == 'chrX':
                 filename = filename_pattern.replace('.vcf.gz', '.v2.vcf.gz').format(chrom=chrom)
@@ -1812,47 +1857,68 @@ class LongevityDatasetBuilder:
             index_path = vcf_path.with_suffix(vcf_path.suffix + '.tbi')
             
             size_est = avg_size_gb.get(chrom, 3.0)
-            
-            console.print(f"[bold cyan]┌─ Cromossomo {i}/{len(chromosomes)}: {chrom}[/bold cyan]")
-            console.print(f"[cyan]│[/cyan]")
-            console.print(f"[cyan]│[/cyan] [bold]Arquivo:[/bold] {filename}")
-            console.print(f"[cyan]│[/cyan] [bold]URL:[/bold]")
-            console.print(f"[cyan]│[/cyan]   [blue]{vcf_url}[/blue]")
-            console.print(f"[cyan]│[/cyan] [bold]Tamanho estimado:[/bold] ~{size_est:.1f} GB")
-            console.print(f"[cyan]│[/cyan] [bold]Destino:[/bold]")
-            console.print(f"[cyan]│[/cyan]   {vcf_path}")
-            console.print(f"[cyan]└{'─'*68}[/cyan]\n")
-            
+
+            with status_lock:
+                console.print(f"[bold cyan]┌─ Cromossomo {index}/{len(chromosomes)}: {chrom}[/bold cyan]")
+                console.print(f"[cyan]│[/cyan]")
+                console.print(f"[cyan]│[/cyan] [bold]Arquivo:[/bold] {filename}")
+                console.print(f"[cyan]│[/cyan] [bold]URL:[/bold]")
+                console.print(f"[cyan]│[/cyan]   [blue]{vcf_url}[/blue]")
+                console.print(f"[cyan]│[/cyan] [bold]Tamanho estimado:[/bold] ~{size_est:.1f} GB")
+                console.print(f"[cyan]│[/cyan] [bold]Destino:[/bold]")
+                console.print(f"[cyan]│[/cyan]   {vcf_path}")
+                console.print(f"[cyan]└{'─'*68}[/cyan]\n")
+
             # Verificar se já existe
             if vcf_path.exists() and index_path.exists():
                 actual_size = vcf_path.stat().st_size / (1024**3)
-                console.print(f"[green]• Reutilizando download existente: {chrom} ({actual_size:.2f} GB)[/green]\n")
-                downloaded_chroms.append(chrom)
-                continue
-            
+                with status_lock:
+                    console.print(f"[green]• Reutilizando download existente: {chrom} ({actual_size:.2f} GB)[/green]\n")
+                return chrom, True
+
             # Baixar VCF
-            console.print(f"[yellow]⏳ Baixando {chrom}...[/yellow]")
+            with status_lock:
+                console.print(f"[yellow]⏳ Baixando {chrom}...[/yellow]")
             vcf_ok = self._download_file(vcf_url, vcf_path)
-            
+
             if vcf_ok:
                 # Baixar índice
                 index_url = vcf_url + '.tbi'
                 index_ok = self._download_file(index_url, index_path)
-                
+
                 if index_ok:
-                    console.print(f"[green]✓ Download completo: {chrom}[/green]\n")
-                    downloaded_chroms.append(chrom)
+                    with status_lock:
+                        console.print(f"[green]✓ Download completo: {chrom}[/green]\n")
+                    return chrom, True
                 else:
-                    console.print(f"[yellow]⚠ Índice não disponível para {chrom}, criando localmente...[/yellow]")
+                    with status_lock:
+                        console.print(f"[yellow]⚠ Índice não disponível para {chrom}, criando localmente...[/yellow]")
                     try:
                         sp.run(['tabix', '-p', 'vcf', str(vcf_path)], check=True)
-                        console.print(f"[green]✓ Índice criado localmente para {chrom}[/green]\n")
-                        downloaded_chroms.append(chrom)
+                        with status_lock:
+                            console.print(f"[green]✓ Índice criado localmente para {chrom}[/green]\n")
+                        return chrom, True
                     except Exception as e:
-                        console.print(f"[red]✗ Falha ao criar índice para {chrom}: {e}[/red]\n")
+                        with status_lock:
+                            console.print(f"[red]✗ Falha ao criar índice para {chrom}: {e}[/red]\n")
             else:
-                console.print(f"[red]✗ Falha no download de {chrom}[/red]\n")
-        
+                with status_lock:
+                    console.print(f"[red]✗ Falha no download de {chrom}[/red]\n")
+
+            return chrom, False
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(download_chromosome, chrom, i): chrom
+                for i, chrom in enumerate(chromosomes, 1)
+            }
+            for future in as_completed(futures):
+                chrom, ok = future.result()
+                if ok:
+                    downloaded_chroms.append(chrom)
+
+        downloaded_chroms.sort(key=lambda chrom: chromosomes.index(chrom))
+
         # Salvar estado
         self.state['downloaded_chromosomes'] = downloaded_chroms
         self.state['vcf_chromosome_dir'] = str(vcf_dir)
@@ -3210,4 +3276,3 @@ if __name__ == '__main__':
         import traceback
         console.print(f"[dim]{traceback.format_exc()}[/dim]")
         sys.exit(1)
-

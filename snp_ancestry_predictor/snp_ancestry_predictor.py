@@ -28,11 +28,13 @@ import sys
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
+import matplotlib.pyplot as plt
 import numpy as np
 import yaml
 from scipy.optimize import minimize
+from scipy.stats import chi2_contingency
 
 from rich.console import Console
 from rich.panel import Panel
@@ -84,6 +86,87 @@ def load_splits(path: str) -> dict:
         return json.load(f)
 
 
+def _load_individual_pedigree(individuals_dir: Path, sample_ids: Set[str]) -> Dict[str, Dict[str, Any]]:
+    """Load per-sample metadata when available."""
+    pedigree: Dict[str, Dict[str, Any]] = {}
+    for sample_id in sample_ids:
+        metadata_path = individuals_dir / sample_id / "individual_metadata.json"
+        if not metadata_path.exists():
+            continue
+        try:
+            with open(metadata_path, "r") as f:
+                pedigree[sample_id] = json.load(f)
+        except Exception:
+            continue
+    return pedigree
+
+
+def validate_family_aware_splits(splits: dict, individuals_dir: Path, console: Console) -> None:
+    """Ensure family groups stay inside a single split.
+
+    The neural pipeline already emits family-aware splits. This SNP baseline
+    consumes those splits and should fail fast if a provided split file breaks
+    the same invariant.
+    """
+    split_to_ids: Dict[str, List[str]] = {
+        split_name: [entry["sample_id"] for entry in splits.get(split_name, [])]
+        for split_name in ("train", "val", "test")
+    }
+    sample_to_split = {
+        sample_id: split_name
+        for split_name, sample_ids in split_to_ids.items()
+        for sample_id in sample_ids
+    }
+    if not sample_to_split:
+        return
+
+    pedigree = _load_individual_pedigree(individuals_dir, set(sample_to_split))
+    if not pedigree:
+        console.print("[cyan]Family-aware split check: no individual_metadata.json files found; skipping.[/cyan]")
+        return
+
+    groups_by_family_id: Dict[str, List[str]] = {}
+    for sample_id in sample_to_split:
+        metadata = pedigree.get(sample_id, {})
+        family_id = metadata.get("family_id")
+        if family_id in [None, "", "0"]:
+            family_key = sample_id
+        else:
+            family_key = str(family_id)
+        groups_by_family_id.setdefault(family_key, []).append(sample_id)
+
+    groups = list(groups_by_family_id.values())
+    family_groups = sum(1 for group in groups if len(group) > 1)
+    console.print(
+        f"[cyan]Family-aware split check: source=family_id, groups={len(groups)}, family_groups={family_groups}[/cyan]"
+    )
+
+    conflicts: List[Tuple[List[str], Set[str]]] = []
+    for group in groups:
+        group_splits = {sample_to_split[sample_id] for sample_id in group if sample_id in sample_to_split}
+        if len(group_splits) > 1:
+            conflicts.append((sorted(group), group_splits))
+
+    if conflicts:
+        console.print(
+            f"[red]Error: found {len(conflicts)} family group(s) split across train/val/test.[/red]"
+        )
+        for group, group_splits in conflicts[:10]:
+            console.print(f"  [red]{', '.join(group)} -> {', '.join(sorted(group_splits))}[/red]")
+        if len(conflicts) > 10:
+            console.print(f"  [red]... and {len(conflicts) - 10} more[/red]")
+        sys.exit(1)
+
+
+def maybe_validate_family_aware_splits(config: dict, splits: dict, console: Console) -> None:
+    """Optionally validate family-aware split invariants."""
+    inp = config.get("input", {})
+    if not inp.get("validate_family_aware_splits", True):
+        console.print("[yellow]Family-aware split check disabled by config.[/yellow]")
+        return
+    validate_family_aware_splits(splits, Path(inp["individuals_dir"]), console)
+
+
 def sample_metadata(splits: dict) -> Dict[str, dict]:
     """Build {sample_id: {superpopulation, population, sex, split}} from splits."""
     meta: Dict[str, dict] = {}
@@ -95,6 +178,33 @@ def sample_metadata(splits: dict) -> Dict[str, dict]:
                 "sex": entry.get("sex", 0),
                 "split": split_name,
             }
+    return meta
+
+
+def build_binary_phenotype_labels(
+    splits: dict,
+    positive_populations: Set[str],
+    negative_populations: Set[str],
+) -> Dict[str, Dict[str, Any]]:
+    """Build binary phenotype labels from population membership."""
+    meta: Dict[str, Dict[str, Any]] = {}
+    for split_name in ("train", "val", "test"):
+        for entry in splits.get(split_name, []):
+            population = entry["population"]
+            if population in positive_populations:
+                meta[entry["sample_id"]] = {
+                    "label": 1,
+                    "label_name": "positive",
+                    "population": population,
+                    "split": split_name,
+                }
+            elif population in negative_populations:
+                meta[entry["sample_id"]] = {
+                    "label": 0,
+                    "label_name": "negative",
+                    "population": population,
+                    "split": split_name,
+                }
     return meta
 
 
@@ -284,6 +394,7 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
     conv = config.get("conversion", {})
 
     splits = load_splits(inp["splits_metadata"])
+    maybe_validate_family_aware_splits(config, splits, console)
     meta = sample_metadata(splits)
     all_ids = list(meta.keys())
     ind_dir = Path(inp["individuals_dir"])
@@ -498,6 +609,7 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
         return
 
     splits = load_splits(inp["splits_metadata"])
+    maybe_validate_family_aware_splits(config, splits, console)
     meta = sample_metadata(splits)
 
     ref_subsets = stat_cfg.get("reference_subsets", ["train"])
@@ -1128,6 +1240,7 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
     )
 
     splits = load_splits(inp["splits_metadata"])
+    maybe_validate_family_aware_splits(config, splits, console)
     meta = sample_metadata(splits)
     eval_subsets = pred_cfg.get("evaluation_subsets", ["test"])
     eval_ids = [sid for sid, m in meta.items() if m["split"] in eval_subsets]
@@ -1422,6 +1535,313 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
     )
 
 
+# ============================================================================
+# Step 4 — Binary phenotype association
+# ============================================================================
+
+
+def _build_association_prefix(config: dict) -> str:
+    """Build output prefix for binary association artifacts."""
+    assoc_cfg = config.get("association", {})
+    output_dir = assoc_cfg.get("output_dir", str(SCRIPT_DIR / "results" / "association"))
+    phenotype_name = assoc_cfg.get("phenotype_name", "binary_trait")
+    haplotype_mode = assoc_cfg.get(
+        "haplotype_mode",
+        config.get("prediction", {}).get("haplotype_mode", "H1+H2"),
+    )
+    subsets = sorted(assoc_cfg.get("subsets", ["train", "val", "test"]))
+    test_name = assoc_cfg.get("test", "chi_square")
+    min_maf = assoc_cfg.get("min_maf", 0.01)
+    max_snps = assoc_cfg.get("max_snps", None)
+    panel_tag = "nopanel"
+    snp_panel = assoc_cfg.get("snp_panel") or config.get("statistics", {}).get("snp_panel")
+    if snp_panel:
+        panel_tag = Path(snp_panel).stem
+    parts = [
+        phenotype_name,
+        "+".join(subsets),
+        haplotype_mode,
+        test_name,
+        f"maf{min_maf}",
+        f"max{max_snps}" if max_snps else "maxall",
+        panel_tag,
+    ]
+    return os.path.join(output_dir, "association_" + "_".join(parts))
+
+
+def _compute_binary_maf(ref_count: int, total_count: int) -> float:
+    """Compute minor allele frequency from aggregate allele counts."""
+    if total_count <= 0:
+        return 0.0
+    freq = ref_count / total_count
+    return min(freq, 1.0 - freq)
+
+
+def _make_manhattan_plot(results: List[Dict[str, Any]], output_png: str, title: str) -> None:
+    """Write a simple Manhattan plot from per-SNP association results."""
+    chrom_order = {f"chr{i}": i for i in range(1, 23)}
+    chrom_order.update({str(i): i for i in range(1, 23)})
+    chrom_order.update({"chrX": 23, "X": 23})
+
+    rows = []
+    for row in results:
+        chrom = str(row.get("chrom", ""))
+        pos = row.get("pos")
+        p_value = row.get("p_value")
+        if chrom not in chrom_order or pos is None or p_value is None or p_value <= 0:
+            continue
+        rows.append((chrom_order[chrom], int(pos), -math.log10(max(p_value, 1e-300))))
+
+    if not rows:
+        return
+
+    rows.sort()
+    chrom_to_points: Dict[int, List[Tuple[int, float]]] = defaultdict(list)
+    for chrom_num, pos, score in rows:
+        chrom_to_points[chrom_num].append((pos, score))
+
+    xs: List[int] = []
+    ys: List[float] = []
+    colors: List[str] = []
+    tick_positions: List[float] = []
+    tick_labels: List[str] = []
+    offset = 0
+    palette = ["#1f77b4", "#ff7f0e"]
+
+    for chrom_num in sorted(chrom_to_points):
+        chrom_points = sorted(chrom_to_points[chrom_num])
+        start_x = offset
+        max_pos = chrom_points[-1][0]
+        for pos, score in chrom_points:
+            xs.append(offset + pos)
+            ys.append(score)
+            colors.append(palette[chrom_num % 2])
+        end_x = offset + max_pos
+        tick_positions.append((start_x + end_x) / 2)
+        tick_labels.append("X" if chrom_num == 23 else str(chrom_num))
+        offset = end_x + 1_000_000
+
+    plt.figure(figsize=(14, 6))
+    plt.scatter(xs, ys, c=colors, s=8, linewidths=0, alpha=0.85)
+    plt.axhline(-math.log10(5e-8), color="red", linestyle="--", linewidth=1)
+    plt.xlabel("Chromosome")
+    plt.ylabel("-log10(p)")
+    plt.title(title)
+    plt.xticks(tick_positions, tick_labels)
+    plt.tight_layout()
+    plt.savefig(output_png, dpi=180)
+    plt.close()
+
+
+def step4_binary_association(config: dict, console: Console) -> None:
+    """Run case-control SNP association for a binary phenotype."""
+    inp = config["input"]
+    assoc_cfg = config.get("association", {})
+    if not assoc_cfg.get("enabled", False):
+        return
+
+    splits = load_splits(inp["splits_metadata"])
+    maybe_validate_family_aware_splits(config, splits, console)
+
+    positive_populations = set(assoc_cfg.get("positive_populations", []))
+    negative_populations = set(assoc_cfg.get("negative_populations", []))
+    if not positive_populations or not negative_populations:
+        console.print("[red]Association step requires positive_populations and negative_populations.[/red]")
+        sys.exit(1)
+
+    labels = build_binary_phenotype_labels(
+        splits,
+        positive_populations,
+        negative_populations,
+    )
+    subsets = set(assoc_cfg.get("subsets", ["train", "val", "test"]))
+    sample_ids = sorted(
+        sample_id
+        for sample_id, info in labels.items()
+        if info["split"] in subsets
+    )
+    if not sample_ids:
+        console.print("[red]No labeled individuals found for binary association.[/red]")
+        sys.exit(1)
+
+    haplotype_mode = assoc_cfg.get(
+        "haplotype_mode",
+        config.get("prediction", {}).get("haplotype_mode", "H1+H2"),
+    )
+    ind_dir = Path(inp["individuals_dir"])
+    fname_tpl = config.get("conversion", {}).get("output_filename", "{sample_id}_23andme.txt")
+    snp_panel_path = assoc_cfg.get("snp_panel") or config.get("statistics", {}).get("snp_panel")
+    snp_panel = load_snp_panel(snp_panel_path) if snp_panel_path else None
+    min_maf = assoc_cfg.get("min_maf", 0.01)
+    max_snps = assoc_cfg.get("max_snps", None)
+
+    phenotype_name = assoc_cfg.get("phenotype_name", "binary_trait")
+    positive_label = assoc_cfg.get("positive_label", "positive")
+    negative_label = assoc_cfg.get("negative_label", "negative")
+
+    console.print(f"  Binary phenotype: {phenotype_name}")
+    console.print(f"  Positive populations: {sorted(positive_populations)}")
+    console.print(f"  Negative populations: {sorted(negative_populations)}")
+    console.print(f"  Subsets: {sorted(subsets)} ({len(sample_ids)} individuals)")
+    console.print(f"  Haplotype mode: {haplotype_mode}")
+
+    case_n = sum(1 for sid in sample_ids if labels[sid]["label"] == 1)
+    ctrl_n = sum(1 for sid in sample_ids if labels[sid]["label"] == 0)
+    console.print(f"  Cases/controls: {case_n} / {ctrl_n}")
+
+    tracked_allele: Dict[str, str] = {}
+    snp_chrom_pos: Dict[str, Tuple[str, str]] = {}
+    case_ref_count: Dict[str, int] = defaultdict(int)
+    case_total_count: Dict[str, int] = defaultdict(int)
+    ctrl_ref_count: Dict[str, int] = defaultdict(int)
+    ctrl_total_count: Dict[str, int] = defaultdict(int)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    ) as prog:
+        task = prog.add_task("Step 4 — reading 23andMe files", total=len(sample_ids))
+        for sid in sample_ids:
+            prog.update(task, description=f"Step 4 — {sid}")
+            fpath = ind_dir / sid / fname_tpl.format(sample_id=sid)
+            if not fpath.exists():
+                prog.advance(task)
+                continue
+
+            label = labels[sid]["label"]
+            ploidy = 1 if haplotype_mode in ("H1", "H2") else 2
+            with open(fpath) as f:
+                for line in f:
+                    if line.startswith("#"):
+                        continue
+                    parts = line.rstrip("\n").split("\t")
+                    if len(parts) < 4:
+                        continue
+                    rsid = parts[0]
+                    geno = parts[3]
+                    if geno == "--" or len(geno) != 2:
+                        continue
+                    if snp_panel is not None and rsid not in snp_panel:
+                        continue
+
+                    if rsid not in tracked_allele:
+                        tracked_allele[rsid] = geno[0]
+                        snp_chrom_pos[rsid] = (parts[1], parts[2])
+
+                    dose = _genotype_dose(geno, tracked_allele[rsid], haplotype_mode)
+                    if dose is None:
+                        continue
+
+                    if label == 1:
+                        case_ref_count[rsid] += dose
+                        case_total_count[rsid] += ploidy
+                    else:
+                        ctrl_ref_count[rsid] += dose
+                        ctrl_total_count[rsid] += ploidy
+            prog.advance(task)
+
+    results: List[Dict[str, Any]] = []
+    for rsid, ref_allele in tracked_allele.items():
+        case_total = case_total_count.get(rsid, 0)
+        ctrl_total = ctrl_total_count.get(rsid, 0)
+        total_count = case_total + ctrl_total
+        if case_total == 0 or ctrl_total == 0 or total_count == 0:
+            continue
+
+        total_ref = case_ref_count.get(rsid, 0) + ctrl_ref_count.get(rsid, 0)
+        maf = _compute_binary_maf(total_ref, total_count)
+        if maf < min_maf:
+            continue
+
+        case_ref = case_ref_count.get(rsid, 0)
+        ctrl_ref = ctrl_ref_count.get(rsid, 0)
+        case_alt = case_total - case_ref
+        ctrl_alt = ctrl_total - ctrl_ref
+        table = np.array([[case_ref, case_alt], [ctrl_ref, ctrl_alt]], dtype=np.int64)
+        try:
+            chi2, p_value, _, _ = chi2_contingency(table, correction=False)
+        except ValueError:
+            continue
+
+        case_freq = case_ref / case_total
+        ctrl_freq = ctrl_ref / ctrl_total
+        odds_ratio = None
+        if case_ref > 0 and ctrl_ref > 0 and case_alt > 0 and ctrl_alt > 0:
+            odds_ratio = (case_ref * ctrl_alt) / (case_alt * ctrl_ref)
+
+        chrom, pos = snp_chrom_pos[rsid]
+        results.append({
+            "rsid": rsid,
+            "chrom": chrom,
+            "pos": int(pos),
+            "ref_allele": ref_allele,
+            "case_ref_count": int(case_ref),
+            "case_total_count": int(case_total),
+            "ctrl_ref_count": int(ctrl_ref),
+            "ctrl_total_count": int(ctrl_total),
+            "case_ref_freq": round(case_freq, 6),
+            "ctrl_ref_freq": round(ctrl_freq, 6),
+            "maf": round(maf, 6),
+            "chi2": float(chi2),
+            "p_value": float(p_value),
+            "minus_log10_p": float(-math.log10(max(p_value, 1e-300))),
+            "odds_ratio_ref": None if odds_ratio is None else float(odds_ratio),
+        })
+
+    results.sort(key=lambda row: row["p_value"])
+    if max_snps:
+        results = results[:max_snps]
+
+    prefix = _build_association_prefix(config)
+    output_dir = Path(prefix).parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = prefix + ".json"
+    tsv_path = prefix + ".tsv"
+    png_path = prefix + ".png"
+
+    output = {
+        "metadata": {
+            "phenotype_name": phenotype_name,
+            "positive_label": positive_label,
+            "negative_label": negative_label,
+            "positive_populations": sorted(positive_populations),
+            "negative_populations": sorted(negative_populations),
+            "subsets": sorted(subsets),
+            "haplotype_mode": haplotype_mode,
+            "n_individuals": len(sample_ids),
+            "n_cases": case_n,
+            "n_controls": ctrl_n,
+            "n_snps": len(results),
+            "min_maf": min_maf,
+            "max_snps": max_snps,
+            "created_at": datetime.now().isoformat(),
+        },
+        "results": results,
+    }
+    with open(json_path, "w") as f:
+        json.dump(output, f, indent=2)
+
+    with open(tsv_path, "w") as f:
+        headers = [
+            "rsid", "chrom", "pos", "ref_allele", "case_ref_count", "case_total_count",
+            "ctrl_ref_count", "ctrl_total_count", "case_ref_freq", "ctrl_ref_freq", "maf",
+            "chi2", "p_value", "minus_log10_p", "odds_ratio_ref",
+        ]
+        f.write("\t".join(headers) + "\n")
+        for row in results:
+            f.write("\t".join(str(row[h]) for h in headers) + "\n")
+
+    _make_manhattan_plot(results, png_path, f"{phenotype_name} association")
+
+    console.print(f"[green]Step 4 done — {len(results):,} SNPs saved to {json_path}[/green]")
+    console.print(f"  TSV: {tsv_path}")
+    console.print(f"  Manhattan plot: {png_path}")
+
+
 # ═══════════════════════════════════════════════════════════════
 # Main
 # ═══════════════════════════════════════════════════════════════
@@ -1486,6 +1906,12 @@ def main() -> None:
             "\n[bold blue]══════ Step 3: Predict Ancestry ══════[/bold blue]"
         )
         step3_predict_ancestry(config, console)
+
+    if steps.get("binary_association", False):
+        console.print(
+            "\n[bold blue]══════ Step 4: Binary Association ══════[/bold blue]"
+        )
+        step4_binary_association(config, console)
 
     console.print("\n[bold green]All steps completed.[/bold green]")
 
