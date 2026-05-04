@@ -25,12 +25,15 @@ console = Console()
 def _resolve_gene_rows(config: PipelineConfig, input_shape: Tuple[int, int]) -> Tuple[List[str], List[int]]:
     """Determina quais linhas (tracks) usar com base nos genes configurados."""
     if config.dataset_input.tensor_layout == "haplotype_channels":
-        genes_to_use = config.dataset_input.genes_to_use or []
-        if len(genes_to_use) != 1:
-            raise ValueError("tensor_layout='haplotype_channels' requer exatamente um gene em genes_to_use")
-        if input_shape[0] != 8:
-            raise ValueError(f"tensor_layout='haplotype_channels' espera 8 linhas derivadas de (2,4,L), recebeu {input_shape[0]}")
-        return list(genes_to_use), list(range(input_shape[0]))
+        genes_to_use = list(config.dataset_input.genes_to_use or [])
+        if not genes_to_use:
+            raise ValueError("tensor_layout='haplotype_channels' requer ao menos um gene em genes_to_use")
+        expected_rows = 8 * len(genes_to_use)
+        if input_shape[0] != expected_rows:
+            raise ValueError(
+                f"tensor_layout='haplotype_channels' espera {expected_rows} linhas derivadas de {len(genes_to_use)} gene(s), recebeu {input_shape[0]}"
+            )
+        return genes_to_use, list(range(input_shape[0]))
 
     GENE_ORDER = config.dataset_input.gene_order or [
         "MC1R", "TYRP1", "TYR", "SLC45A2", "DDB1", "EDAR", "MFSD12", "OCA2", "HERC2", "SLC24A5", "TCHH"

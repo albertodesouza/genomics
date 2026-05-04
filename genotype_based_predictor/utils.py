@@ -56,25 +56,40 @@ def set_random_seeds(seed: int, strict_determinism: bool = True) -> None:
         torch.cuda.manual_seed_all(seed)
         torch.cuda.empty_cache()
 
+    deterministic_algorithms_enabled = False
+
     if strict_determinism:
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
         try:
             torch.use_deterministic_algorithms(True)
+            deterministic_algorithms_enabled = True
         except AttributeError:
             torch.set_deterministic(True)
+            deterministic_algorithms_enabled = True
+        except Exception as e:
+            console.print(
+                "[yellow]Nao foi possivel ativar torch.use_deterministic_algorithms(True). "
+                f"Continuando com determinismo parcial. Detalhe: {e}[/yellow]"
+            )
 
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
-        console.print(
-            f"[green]🎲 Seed configurada: {seed} "
-            f"(determinismo ESTRITO — 100% reprodutível)[/green]"
-        )
-        console.print(
-            "[yellow]   ⚠ Treinamento pode ser 10-30% mais lento "
-            "devido ao determinismo estrito[/yellow]"
-        )
+        if deterministic_algorithms_enabled:
+            console.print(
+                f"[green]🎲 Seed configurada: {seed} "
+                f"(determinismo ESTRITO — 100% reprodutível)[/green]"
+            )
+            console.print(
+                "[yellow]   ⚠ Treinamento pode ser 10-30% mais lento "
+                "devido ao determinismo estrito[/yellow]"
+            )
+        else:
+            console.print(
+                f"[green]🎲 Seed configurada: {seed} "
+                f"(determinismo PARCIAL — ~99% reprodutível)[/green]"
+            )
     else:
         torch.backends.cudnn.deterministic = False
         torch.backends.cudnn.benchmark = True
@@ -86,6 +101,8 @@ def set_random_seeds(seed: int, strict_determinism: bool = True) -> None:
                 torch.set_deterministic(False)
             except AttributeError:
                 pass
+        except Exception:
+            pass
 
         console.print(
             f"[green]🎲 Seed configurada: {seed} "

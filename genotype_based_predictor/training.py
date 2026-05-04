@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from rich.console import Console
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from torch.utils.data import DataLoader
 
 from genotype_based_predictor.config import PipelineConfig
@@ -23,11 +24,11 @@ def _make_optimizer(model: nn.Module, config: PipelineConfig) -> optim.Optimizer
     lr = config.training.learning_rate
     wd = config.training.weight_decay
     if t == "adam":
-        return optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
+        return optim.Adam(model.parameters(), lr=lr, weight_decay=wd, foreach=False)
     elif t == "adamw":
-        return optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
+        return optim.AdamW(model.parameters(), lr=lr, weight_decay=wd, foreach=False)
     elif t == "sgd":
-        return optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=wd)
+        return optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=wd, foreach=False)
     raise ValueError(f"Otimizador não suportado: {t}")
 
 
@@ -137,36 +138,61 @@ class Trainer:
     def _run_epoch(self, loader: DataLoader, train: bool) -> Dict[str, float]:
         self.model.train(train)
         total_loss = total_correct = total_samples = 0
+        phase = "train" if train else "val"
 
-        with torch.set_grad_enabled(train):
-            for batch in loader:
-                if len(batch) == 3:
-                    features, targets, _idx = batch
-                else:
-                    features, targets = batch
-                features = features.to(self.device, non_blocking=True)
-                targets = targets.to(self.device, non_blocking=True)
+        with Progress(
+            SpinnerColumn(),
+            TextColumn(f"[{phase}]"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            TextColumn("loss={task.fields[loss]:.4f}"),
+            TextColumn("acc={task.fields[acc]:.4f}"),
+            TextColumn("samples={task.fields[samples]}"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=False,
+        ) as progress:
+            task = progress.add_task(
+                f"{phase}",
+                total=len(loader),
+                loss=0.0,
+                acc=0.0,
+                samples=0,
+            )
 
-                outputs = self.model(features)
+            with torch.set_grad_enabled(train):
+                for batch in loader:
+                    if len(batch) == 3:
+                        features, targets, _idx = batch
+                    else:
+                        features, targets = batch
+                    features = features.to(self.device, non_blocking=True)
+                    targets = targets.to(self.device, non_blocking=True)
 
-                if self.is_classification:
-                    valid = targets >= 0
-                    if valid.sum() == 0:
-                        continue
-                    loss = self.criterion(outputs[valid], targets[valid])
-                    preds = outputs[valid].argmax(dim=1)
-                    total_correct += (preds == targets[valid]).sum().item()
-                    total_samples += valid.sum().item()
-                else:
-                    loss = self.criterion(outputs, targets.float())
-                    total_samples += features.size(0)
+                    outputs = self.model(features)
 
-                if train:
-                    self.optimizer.zero_grad()
-                    loss.backward()
-                    self.optimizer.step()
+                    if self.is_classification:
+                        valid = targets >= 0
+                        if valid.sum() == 0:
+                            progress.advance(task)
+                            continue
+                        loss = self.criterion(outputs[valid], targets[valid])
+                        preds = outputs[valid].argmax(dim=1)
+                        total_correct += (preds == targets[valid]).sum().item()
+                        total_samples += valid.sum().item()
+                    else:
+                        loss = self.criterion(outputs, targets.float())
+                        total_samples += features.size(0)
 
-                total_loss += loss.item() * features.size(0)
+                    if train:
+                        self.optimizer.zero_grad()
+                        loss.backward()
+                        self.optimizer.step()
+
+                    total_loss += loss.item() * features.size(0)
+                    avg_loss = total_loss / max(total_samples, 1)
+                    accuracy = total_correct / max(total_samples, 1) if self.is_classification else 0.0
+                    progress.update(task, advance=1, loss=avg_loss, acc=accuracy, samples=total_samples)
 
         avg_loss = total_loss / max(total_samples, 1)
         accuracy = total_correct / max(total_samples, 1) if self.is_classification else 0.0

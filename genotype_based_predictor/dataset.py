@@ -4,6 +4,7 @@ dataset.py — ProcessedGenomicDataset e CachedProcessedDataset.
 """
 
 import json
+import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -423,43 +424,57 @@ class ProcessedGenomicDataset(Dataset):
             raise ValueError(f"Nenhuma track para {sorted(requested)} em {output_type}. Disponíveis: {available}")
         return indices
 
-    def _process_windows(self, windows: Dict) -> np.ndarray:
+    def _process_windows(self, windows: Dict, sample_id: Optional[str] = None) -> np.ndarray:
         if self.config.dataset_input.tensor_layout != "haplotype_channels":
             raise ValueError("O pipeline atual requer tensor_layout='haplotype_channels'")
-        return self._process_windows_haplotype_channels(windows)
+        return self._process_windows_haplotype_channels(windows, sample_id=sample_id)
 
-    def _process_windows_haplotype_channels(self, windows: Dict) -> np.ndarray:
+    def _process_windows_haplotype_channels(self, windows: Dict, sample_id: Optional[str] = None) -> np.ndarray:
         if self.haplotype_mode != "H1+H2":
             raise ValueError("tensor_layout='haplotype_channels' requer haplotype_mode='H1+H2'")
-        if len(self.genes_to_use) != 1:
-            raise ValueError("tensor_layout='haplotype_channels' atualmente requer exatamente um gene em genes_to_use")
-
-        gene_name = next(iter(self.genes_to_use))
-        window_data = windows.get(gene_name)
-        if window_data is None:
+        gene_names = list(self.config.dataset_input.genes_to_use or windows.keys())
+        if not gene_names:
             return np.array([]).reshape(2, 4, 0)
 
-        sample_id = self._infer_sample_id_from_window(window_data)
-        if sample_id is None:
-            raise ValueError("Nao foi possivel inferir sample_id para tensor_layout='haplotype_channels'")
+        h1_rows = []
+        h2_rows = []
 
-        h1 = self._process_window_haplotype_channels(
-            sample_id,
-            gene_name,
-            "H1",
-            window_data.get("predictions_h1", {}),
-            window_data.get("prediction_metadata_h1"),
-        )
-        h2 = self._process_window_haplotype_channels(
-            sample_id,
-            gene_name,
-            "H2",
-            window_data.get("predictions_h2", {}),
-            window_data.get("prediction_metadata_h2"),
-        )
-        if h1 is None or h2 is None:
+        for gene_name in gene_names:
+            window_data = windows.get(gene_name)
+            if window_data is None:
+                continue
+
+            window_sample_id = sample_id or self._infer_sample_id_from_window(window_data)
+            if window_sample_id is None:
+                raise ValueError("Nao foi possivel inferir sample_id para tensor_layout='haplotype_channels'")
+
+            h1 = self._process_window_haplotype_channels(
+                window_sample_id,
+                gene_name,
+                "H1",
+                window_data.get("predictions_h1", {}),
+                window_data.get("prediction_metadata_h1"),
+            )
+            h2 = self._process_window_haplotype_channels(
+                window_sample_id,
+                gene_name,
+                "H2",
+                window_data.get("predictions_h2", {}),
+                window_data.get("prediction_metadata_h2"),
+            )
+            if h1 is None or h2 is None:
+                continue
+
+            h1_rows.append(h1)
+            h2_rows.append(h2)
+
+        if not h1_rows or not h2_rows:
             return np.array([]).reshape(2, 4, 0)
-        return np.stack([h1, h2], axis=0)
+
+        return np.stack([
+            np.concatenate(h1_rows, axis=0),
+            np.concatenate(h2_rows, axis=0),
+        ], axis=0)
 
     def _infer_sample_id_from_window(self, window_data: Dict) -> Optional[str]:
         window_meta = window_data.get("window_metadata") or {}
@@ -478,9 +493,11 @@ class ProcessedGenomicDataset(Dataset):
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         base_idx = self.valid_sample_indices[idx]
         input_data, output_data = self.base_dataset[base_idx]
-        if not self._infer_sample_id_from_input(input_data) and base_idx < len(self.individuals):
-            self._inject_sample_id_into_windows(input_data, self.individuals[base_idx])
-        features = self._process_windows(input_data["windows"])
+        sample_id = self._infer_sample_id_from_input(input_data)
+        if sample_id is None and base_idx < len(self.individuals):
+            sample_id = self.individuals[base_idx]
+            self._inject_sample_id_into_windows(input_data, sample_id)
+        features = self._process_windows(input_data["windows"], sample_id=sample_id)
         features_tensor = torch.FloatTensor(features)
 
         method = self.normalization_params.get("method", "zscore")
@@ -549,7 +566,12 @@ class ProcessedGenomicDataset(Dataset):
         return [self.idx_to_target[i] for i in range(len(self.idx_to_target))]
 
     def get_input_shape(self) -> Tuple[int, int]:
-        for idx in range(min(5, len(self))):
+        if self.config.dataset_input.tensor_layout == "haplotype_channels":
+            effective = self.window_center_size // max(self.downsample_factor, 1)
+            num_genes = len(self.config.dataset_input.genes_to_use or []) or 1
+            return (8 * num_genes, effective)
+
+        for idx in range(min(64, len(self))):
             try:
                 f, _ = self[idx]
                 s = f.shape
@@ -559,7 +581,8 @@ class ProcessedGenomicDataset(Dataset):
             except Exception:
                 continue
         effective = self.window_center_size // max(self.downsample_factor, 1)
-        return (8, effective)
+        num_genes = len(self.config.dataset_input.genes_to_use or []) or 1
+        return (8 * num_genes, effective)
 
     def get_input_size(self) -> int:
         r, c = self.get_input_shape()
@@ -608,22 +631,32 @@ class CachedProcessedDataset(Dataset):
         self.split_name = (split_name or self._infer_split_name()).lower()
         self._length_hint = length_hint
         self._sample_metadata = self._load_sample_metadata()
+        self._shard_index = self._load_shard_index()
 
         self.loading_strategy = config.data_loading.loading_strategy
         self.cache_size = config.data_loading.cache_size
 
         console.print(f"[cyan]Preparando {data_file.name}...[/cyan]")
-        if self.loading_strategy == "preload":
+        if self.loading_strategy == "preload" and self._shard_index is None:
             self.data = torch.load(data_file)
             self._length = len(self.data)
             self._data_loaded = True
             console.print(f"[green]✓ {self._length} samples (preload)[/green]")
+        elif self.loading_strategy == "preload" and self._shard_index is not None:
+            self._length = self._determine_length()
+            self._data_loaded = False
+            self.data = None
+            self._cache = {}
+            self._cache_order = []
+            self._loaded_shard_path = None
+            console.print(f"[green]✓ {self._length} samples (sharded preload-lazy)[/green]")
         elif self.loading_strategy == "lazy":
             self._length = self._determine_length()
             self._data_loaded = False
             self.data = None
             self._cache: Dict[int, Tuple] = {}
             self._cache_order: List[int] = []
+            self._loaded_shard_path = None
             console.print(f"[green]✓ {self._length} samples (lazy)[/green]")
         else:
             raise ValueError(f"loading_strategy inválida: {self.loading_strategy}")
@@ -668,6 +701,14 @@ class CachedProcessedDataset(Dataset):
             return None
         return None
 
+    def _load_shard_index(self) -> Optional[Dict]:
+        shard_index_file = self.data_file.parent / "shards_index.json"
+        if not shard_index_file.exists():
+            return None
+        with open(shard_index_file) as f:
+            index = json.load(f)
+        return index.get(self.split_name)
+
     def get_sample_id(self, idx: int) -> str:
         if self._sample_metadata and idx < len(self._sample_metadata):
             return self._sample_metadata[idx].get("sample_id", f"#{idx + 1}")
@@ -683,15 +724,21 @@ class CachedProcessedDataset(Dataset):
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, int]:
         if self.loading_strategy == "preload":
-            features, target = self.data[idx]
+            if self._shard_index is None:
+                features, target = self.data[idx]
+            else:
+                features, target = self._get_item_from_shards(idx)
         else:
             if idx in self._cache:
                 features, target = self._cache[idx]
             else:
-                if not self._data_loaded or self.data is None:
-                    self.data = torch.load(self.data_file)
-                    self._data_loaded = True
-                features, target = self.data[idx]
+                if self._shard_index is None:
+                    if not self._data_loaded or self.data is None:
+                        self.data = torch.load(self.data_file)
+                        self._data_loaded = True
+                    features, target = self.data[idx]
+                else:
+                    features, target = self._get_item_from_shards(idx)
                 if self.cache_size > 0:
                     if len(self._cache) >= self.cache_size:
                         oldest = self._cache_order.pop(0)
@@ -723,6 +770,7 @@ class CachedProcessedDataset(Dataset):
             del self.data
             self.data = None
             self._data_loaded = False
+            self._loaded_shard_path = None
             gc.collect()
 
     def get_num_classes(self) -> int:
@@ -732,13 +780,43 @@ class CachedProcessedDataset(Dataset):
         return [self.idx_to_target[i] for i in range(len(self.idx_to_target))]
 
     def get_input_shape(self) -> Tuple[int, int]:
+        if self._shard_index is not None and self._length > 0:
+            features, _target, _idx = self[0]
+            s = features.shape
+            if len(s) == 3:
+                return (s[0] * s[1], s[2])
+            if len(s) == 2:
+                return (s[0], s[1])
+            return (1, s[0])
+
         if self.loading_strategy == "lazy" and not self._data_loaded:
             self.data = torch.load(self.data_file)
             self._data_loaded = True
         if self.data and len(self.data) > 0:
             s = self.data[0][0].shape
-            return (s[0], s[1]) if len(s) == 2 else (1, s[0])
+            if len(s) == 3:
+                return (s[0] * s[1], s[2])
+            if len(s) == 2:
+                return (s[0], s[1])
+            return (1, s[0])
         return (0, 0)
+
+    def _get_item_from_shards(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        if self._shard_index is None:
+            raise RuntimeError("Shard index ausente")
+
+        shard_size = self._shard_index["shard_size"]
+        shard_id = idx // shard_size
+        item_offset = idx % shard_size
+        shard_name = self._shard_index["shards"][shard_id]
+        shard_path = self.data_file.parent / shard_name
+
+        if self._loaded_shard_path != shard_path or self.data is None:
+            self.data = torch.load(shard_path)
+            self._data_loaded = True
+            self._loaded_shard_path = shard_path
+
+        return self.data[item_offset]
 
     def get_input_size(self) -> int:
         r, c = self.get_input_shape()

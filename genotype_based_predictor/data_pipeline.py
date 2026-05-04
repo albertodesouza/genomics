@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional, Tuple
 import numpy as np
 import torch
 from rich.console import Console
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from torch.utils.data import DataLoader, Subset
 
 from genotype_based_predictor.config import PipelineConfig, get_dataset_cache_dir, generate_dataset_name
@@ -24,6 +25,7 @@ from genotype_based_predictor.data_splitting import (
 from genotype_based_predictor.utils import worker_init_fn
 
 console = Console()
+SHARD_SIZE = 32
 
 
 def _load_external_normalization_params(config: PipelineConfig) -> Optional[Dict]:
@@ -114,7 +116,7 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
 
     required_files = ["metadata.json", "normalization_params.json", "split_index.json", "view_definition.json"]
     if config.dataset_input.cache_processed_tensors:
-        required_files.extend(["train_data.pt", "val_data.pt", "test_data.pt"])
+        required_files.append("shards_index.json")
     for f in required_files:
         if not (cache_dir / f).exists():
             console.print(f"[yellow]Cache incompleto: falta {f}[/yellow]")
@@ -274,6 +276,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
         cache_tensors = config.dataset_input.cache_processed_tensors
         splits_meta = {"format_version": 2}
         split_index = {"format_version": 3}
+        shards_index = {}
         total_samples = 0
 
         for split_name, indices, filename in [
@@ -281,28 +284,55 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
             ("val", val_indices, "val_data.pt"),
             ("test", test_indices, "test_data.pt"),
         ]:
-            data = [] if cache_tensors else None
             split_sample_meta = []
+            shard_names = []
+            shard_data = [] if cache_tensors else None
 
-            for idx in indices:
-                try:
-                    base_idx = processed_dataset.valid_sample_indices[idx]
-                    sid = individuals[base_idx] if base_idx < len(individuals) else f"sample_{base_idx}"
-                    ped = pedigree.get(sid, {})
-                    split_sample_meta.append({
-                        "sample_id": sid,
-                        "superpopulation": ped.get("superpopulation", "UNK"),
-                        "population": ped.get("population", "UNK"),
-                        "sex": ped.get("sex", 0),
-                    })
-                    if cache_tensors:
-                        features, target = processed_dataset[idx]
-                        data.append((features, target))
-                except Exception as e:
-                    console.print(f"[yellow]Erro ao processar idx={idx}: {e}[/yellow]")
+            with Progress(
+                SpinnerColumn(),
+                TextColumn(f"[{split_name}]"),
+                BarColumn(),
+                TextColumn("{task.completed}/{task.total}"),
+                TimeElapsedColumn(),
+                console=console,
+                transient=False,
+            ) as progress:
+                task = progress.add_task(split_name, total=len(indices))
+
+                for idx in indices:
+                    try:
+                        base_idx = processed_dataset.valid_sample_indices[idx]
+                        sid = individuals[base_idx] if base_idx < len(individuals) else f"sample_{base_idx}"
+                        ped = pedigree.get(sid, {})
+                        split_sample_meta.append({
+                            "sample_id": sid,
+                            "superpopulation": ped.get("superpopulation", "UNK"),
+                            "population": ped.get("population", "UNK"),
+                            "sex": ped.get("sex", 0),
+                        })
+                        if cache_tensors:
+                            features, target = processed_dataset[idx]
+                            shard_data.append((features, target))
+                            if len(shard_data) >= SHARD_SIZE:
+                                shard_name = f"{split_name}_data_shard_{len(shard_names):05d}.pt"
+                                torch.save(shard_data, temp_dir / shard_name)
+                                shard_names.append(shard_name)
+                                shard_data = []
+                    except Exception as e:
+                        console.print(f"[yellow]Erro ao processar idx={idx}: {e}[/yellow]")
+                    finally:
+                        progress.advance(task)
 
             if cache_tensors:
-                torch.save(data, temp_dir / filename)
+                if shard_data:
+                    shard_name = f"{split_name}_data_shard_{len(shard_names):05d}.pt"
+                    torch.save(shard_data, temp_dir / shard_name)
+                    shard_names.append(shard_name)
+                shards_index[split_name] = {
+                    "shard_size": SHARD_SIZE,
+                    "num_samples": len(split_sample_meta),
+                    "shards": shard_names,
+                }
             splits_meta[split_name] = split_sample_meta
             split_index[split_name] = [item["sample_id"] for item in split_sample_meta]
             total_samples += len(split_sample_meta)
@@ -316,6 +346,9 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                 json.dump(splits_meta, f, indent=2)
         with open(temp_dir / "split_index.json", "w") as f:
             json.dump(split_index, f, indent=2)
+        if cache_tensors:
+            with open(temp_dir / "shards_index.json", "w") as f:
+                json.dump(shards_index, f, indent=2)
 
         # Calcular normalization_params
         norm_params = processed_dataset.normalization_params

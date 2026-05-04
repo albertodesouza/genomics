@@ -108,7 +108,14 @@ class DynamicIndelAligner:
         end_1based = int(window_meta["end"]) + 1
         ref_length = end_1based - start_1based + 1
 
-        for sample_id in sorted(self.selected_sample_ids):
+        selected_ids = self.selected_sample_ids
+        if not selected_ids:
+            meta_path = self.dataset_dir / "dataset_metadata.json"
+            with open(meta_path) as f:
+                dataset_meta = json.load(f)
+            selected_ids = set(dataset_meta.get("individuals", []))
+
+        for sample_id in sorted(selected_ids):
             variants = _query_sample_variants(vcf_path, sample_id, region)
             hap_entries: Dict[str, Dict[str, object]] = {}
             for haplotype, gt_index in (("H1", 0), ("H2", 1)):
