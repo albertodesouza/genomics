@@ -641,6 +641,11 @@ class ProcessedGenomicDataset(Dataset):
         Cada track é normalizada independentemente para evitar que tracks com
         valores altos dominem o treinamento.
         
+        Usa estatísticas online (streaming) para evitar acumular todos os dados
+        em memória.  Para log/minmax apenas o máximo por track é mantido; para
+        zscore usa-se o algoritmo de Welford (count, mean, M2 por track).
+        Custo de memória: O(num_tracks) em vez de O(num_tracks × N × W).
+        
         Returns:
             Dict com parâmetros de normalização por track
         """
@@ -651,19 +656,26 @@ class ProcessedGenomicDataset(Dataset):
             console.print(f"[yellow]⚠ AVISO: normalization_value não é suportado para normalização per-track[/yellow]")
             console.print(f"[yellow]  Ignorando e computando parâmetros por track...[/yellow]")
         
-        # Coletar valores por track
-        track_values = None  # Será inicializado no primeiro sample
         num_processed = 0
         num_errors = 0
         
         total_samples = len(self.base_dataset)
-        console.print(f"[cyan]Iniciando computação de normalização POR TRACK...[/cyan]")
+        console.print(f"[cyan]Iniciando computação de normalização POR TRACK (streaming)...[/cyan]")
         console.print(f"[cyan]  • Amostras: {total_samples}[/cyan]")
         console.print(f"[cyan]  • Método: {self.normalization_method}[/cyan]")
         console.print(f"[cyan]  • Outputs: {', '.join(self.alphagenome_outputs)}[/cyan]")
         console.print(f"[cyan]  • Haplótipo: {self.haplotype_mode}[/cyan]")
         console.print(f"[cyan]  • Window center: {self.window_center_size} bases[/cyan]")
         
+        # ─── Online / streaming accumulators — O(num_tracks) memory ───
+        # log / minmax_keep_zero: apenas o máximo não-zero por track
+        track_max   = None   # np.ndarray [num_tracks]
+        # zscore: algoritmo de Welford (count, mean, M2 por track)
+        track_count = None   # np.ndarray [num_tracks]
+        track_mean  = None   # np.ndarray [num_tracks]
+        track_M2    = None   # np.ndarray [num_tracks]
+        num_tracks  = None
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -672,7 +684,7 @@ class ProcessedGenomicDataset(Dataset):
             console=console
         ) as progress:
             task = progress.add_task(
-                "Coletando valores por track...",
+                "Calculando estatísticas por track (streaming)...",
                 total=len(self.base_dataset)
             )
             
@@ -688,15 +700,37 @@ class ProcessedGenomicDataset(Dataset):
                     processed_array = self._process_windows(input_data['windows'])
                     
                     if len(processed_array) > 0:
-                        # Inicializar track_values no primeiro sample válido
-                        if track_values is None:
+                        # Inicializar acumuladores no primeiro sample válido
+                        if num_tracks is None:
                             num_tracks = processed_array.shape[0]
-                            track_values = [[] for _ in range(num_tracks)]
                             console.print(f"[cyan]  • Total de tracks detectadas: {num_tracks}[/cyan]")
+                            if self.normalization_method == 'zscore':
+                                track_count = np.zeros(num_tracks, dtype=np.float64)
+                                track_mean  = np.zeros(num_tracks, dtype=np.float64)
+                                track_M2    = np.zeros(num_tracks, dtype=np.float64)
+                            else:
+                                track_max = np.zeros(num_tracks, dtype=np.float64)
                         
-                        # Adicionar valores de cada track
-                        for track_idx in range(processed_array.shape[0]):
-                            track_values[track_idx].append(processed_array[track_idx])
+                        # Actualizar acumuladores por track (sem guardar dados brutos)
+                        for track_idx in range(num_tracks):
+                            row = processed_array[track_idx].astype(np.float64)
+                            
+                            if self.normalization_method == 'zscore':
+                                # Welford online (parallel batch update)
+                                n          = row.size
+                                batch_mean = row.mean()
+                                batch_var  = row.var()
+                                old_count  = track_count[track_idx]
+                                new_count  = old_count + n
+                                delta      = batch_mean - track_mean[track_idx]
+                                track_mean[track_idx]  += delta * n / new_count
+                                track_M2[track_idx]    += batch_var * n + delta * delta * old_count * n / new_count
+                                track_count[track_idx]  = new_count
+                            else:
+                                # log / minmax_keep_zero: apenas o máximo não-zero
+                                nonzero = row[row > 0]
+                                if len(nonzero) > 0:
+                                    track_max[track_idx] = max(track_max[track_idx], float(nonzero.max()))
                         
                         num_processed += 1
                     else:
@@ -708,7 +742,7 @@ class ProcessedGenomicDataset(Dataset):
                     console.print(f"[yellow]  ⚠ Erro ao processar amostra {idx}: {e}[/yellow]")
                 progress.update(task, advance=1)
         
-        if track_values is None or len(track_values) == 0:
+        if num_tracks is None:
             console.print(f"[red]ERRO: Nenhuma amostra válida para normalização![/red]")
             console.print(f"[red]  • Amostras processadas: {num_processed}[/red]")
             console.print(f"[red]  • Amostras com erro: {num_errors}[/red]")
@@ -720,44 +754,35 @@ class ProcessedGenomicDataset(Dataset):
                 'std': 1.0
             }
         
-        num_tracks = len(track_values)
         console.print(f"\n[cyan]Computando parâmetros para {num_tracks} tracks...[/cyan]")
         
-        # Concatenar valores de cada track e computar parâmetros
+        # Converter acumuladores em parâmetros por track
         track_params = []
         
         for track_idx in range(num_tracks):
-            # Concatenar valores desta track de todas as amostras
-            track_array = np.concatenate(track_values[track_idx])
-            
             if self.normalization_method == 'zscore':
-                mean = float(np.mean(track_array))
-                std = float(np.std(track_array))
+                mean = float(track_mean[track_idx])
+                variance = float(track_M2[track_idx] / track_count[track_idx]) if track_count[track_idx] > 0 else 0.0
+                std = float(np.sqrt(variance))
                 if std < 1e-8:
                     std = 1.0
                 track_params.append({'mean': mean, 'std': std})
                 
             elif self.normalization_method == 'minmax_keep_zero':
-                nonzero_values = track_array[track_array > 0]
-                if len(nonzero_values) > 0:
-                    xmax = float(nonzero_values.max())
-                else:
-                    xmax = 1.0
+                xmax = float(track_max[track_idx]) if track_max[track_idx] > 0 else 1.0
                 track_params.append({'max': xmax})
                 
             elif self.normalization_method == 'log':
-                nonzero_values = track_array[track_array > 0]
-                if len(nonzero_values) > 0:
-                    xmax = float(nonzero_values.max())
-                    log_max = float(np.log1p(xmax))
-                else:
-                    log_max = 1.0
+                xmax = float(track_max[track_idx]) if track_max[track_idx] > 0 else 0.0
+                log_max = float(np.log1p(xmax)) if xmax > 0 else 1.0
                 track_params.append({'log_max': log_max})
                 
             else:
                 # Fallback para zscore
-                mean = float(np.mean(track_array))
-                std = float(np.std(track_array))
+                mean = float(track_mean[track_idx]) if track_mean is not None else 0.0
+                variance = (float(track_M2[track_idx] / track_count[track_idx])
+                            if track_count is not None and track_count[track_idx] > 0 else 0.0)
+                std = float(np.sqrt(variance))
                 if std < 1e-8:
                     std = 1.0
                 track_params.append({'mean': mean, 'std': std})
@@ -800,7 +825,7 @@ class ProcessedGenomicDataset(Dataset):
                     console.print(f"  • Track {i}: log1p(max)={track_params[i]['log_max']:.6f}")
         
         return params
-    
+
     def _create_target_mappings(self):
         """Cria mapeamentos entre targets e índices."""
         
@@ -5380,6 +5405,8 @@ def save_processed_dataset(
     try:
         # Processar dados de treino
         console.print(f"\n  📦 Processando dados de treino...")
+        train_dir = temp_cache_dir / 'train'
+        train_dir.mkdir(exist_ok=True)
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -5388,7 +5415,7 @@ def save_processed_dataset(
             console=console
         ) as progress:
             task = progress.add_task("Train", total=len(new_train_indices))
-            for idx in new_train_indices:
+            for i, idx in enumerate(new_train_indices):
                 features, target = processed_dataset[idx]
                 
                 # Aplicar tainting se habilitado
@@ -5406,12 +5433,15 @@ def save_processed_dataset(
                         taint_vertical_step=taint_vertical_step
                     )
                 
-                train_data.append((features, target))
+                # Save each sample to disk individually to save memory
+                torch.save((features, target), train_dir / f"{i}.pt")
                 train_metadata.append(get_individual_metadata(idx))
                 progress.update(task, advance=1)
         
         # Processar dados de validação
         console.print(f"  📦 Processando dados de validação...")
+        val_dir = temp_cache_dir / 'val'
+        val_dir.mkdir(exist_ok=True)
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -5420,7 +5450,7 @@ def save_processed_dataset(
             console=console
         ) as progress:
             task = progress.add_task("Val", total=len(new_val_indices))
-            for idx in new_val_indices:
+            for i, idx in enumerate(new_val_indices):
                 features, target = processed_dataset[idx]
                 
                 if taint_at_save and config['output']['prediction_target'] != 'frog_likelihood':
@@ -5437,12 +5467,14 @@ def save_processed_dataset(
                         taint_vertical_step=taint_vertical_step
                     )
                 
-                val_data.append((features, target))
+                torch.save((features, target), val_dir / f"{i}.pt")
                 val_metadata.append(get_individual_metadata(idx))
                 progress.update(task, advance=1)
         
         # Processar dados de teste
         console.print(f"  📦 Processando dados de teste...")
+        test_dir = temp_cache_dir / 'test'
+        test_dir.mkdir(exist_ok=True)
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -5451,7 +5483,7 @@ def save_processed_dataset(
             console=console
         ) as progress:
             task = progress.add_task("Test", total=len(new_test_indices))
-            for idx in new_test_indices:
+            for i, idx in enumerate(new_test_indices):
                 features, target = processed_dataset[idx]
                 
                 if taint_at_save and config['output']['prediction_target'] != 'frog_likelihood':
@@ -5468,19 +5500,16 @@ def save_processed_dataset(
                         taint_vertical_step=taint_vertical_step
                     )
                 
-                test_data.append((features, target))
+                torch.save((features, target), test_dir / f"{i}.pt")
                 test_metadata.append(get_individual_metadata(idx))
                 progress.update(task, advance=1)
         
-        # Salvar dados no diretório temporário
-        console.print(f"\n  💾 Salvando train_data.pt ({len(train_data)} amostras)...")
-        torch.save(train_data, temp_cache_dir / 'train_data.pt')
-        
-        console.print(f"  💾 Salvando val_data.pt ({len(val_data)} amostras)...")
-        torch.save(val_data, temp_cache_dir / 'val_data.pt')
-        
-        console.print(f"  💾 Salvando test_data.pt ({len(test_data)} amostras)...")
-        torch.save(test_data, temp_cache_dir / 'test_data.pt')
+        # Dados foram salvos como chunks individuais para poupar memória.
+        # Criamos arquivos placeholder apenas para manter compatibilidade com verificadores antigos
+        console.print(f"\n  💾 Criando referências de compatibilidade (.pt)...")
+        with open(temp_cache_dir / 'train_data.pt', 'w') as f: f.write("chunked_format")
+        with open(temp_cache_dir / 'val_data.pt', 'w') as f: f.write("chunked_format")
+        with open(temp_cache_dir / 'test_data.pt', 'w') as f: f.write("chunked_format")
         
         # Preparar metadados dos samples descartados
         discarded_metadata = [get_individual_metadata(idx) for idx in discarded_indices]
@@ -5672,8 +5701,17 @@ class CachedProcessedDataset(Dataset):
         
         if self.loading_strategy == 'preload':
             # Modo tradicional: carrega tudo na RAM
-            self.data = torch.load(data_file)
-            self._length = len(self.data)
+            self._length = self._determine_length_without_loading()
+            split_dir = self.data_file.parent / self.split_name
+            
+            if split_dir.exists() and split_dir.is_dir():
+                self.data = []
+                for i in range(self._length):
+                    self.data.append(torch.load(split_dir / f"{i}.pt", weights_only=False))
+            else:
+                self.data = torch.load(data_file)
+                self._length = len(self.data)
+                
             self._data_loaded = True
             console.print(f"[green]✓ {self._length} samples carregados (preload)[/green]")
         
@@ -5894,22 +5932,26 @@ class CachedProcessedDataset(Dataset):
             if idx in self._cache:
                 features, target = self._cache[idx]
             else:
-                # Cache miss: carregar arquivo se necessário
-                if not self._data_loaded or self.data is None:
-                    self.data = torch.load(self.data_file)
-                    self._data_loaded = True
+                # Cache miss: carregar arquivo
+                split_dir = self.data_file.parent / self.split_name
+                if split_dir.exists() and split_dir.is_dir():
+                    # Formato chunked (novo): carrega sample individual
+                    features, target = torch.load(split_dir / f"{idx}.pt", weights_only=False)
+                else:
+                    # Formato legado (antigo): carrega arquivo inteiro se necessário
+                    if not self._data_loaded or self.data is None:
+                        self.data = torch.load(self.data_file, weights_only=False)
+                        self._data_loaded = True
+                    features, target = self.data[idx]
                 
-                features, target = self.data[idx]
-                
-                # Adicionar ao cache LRU (guardar referências, não clones)
+                # Adicionar ao cache LRU
                 if self.cache_size > 0:
                     if len(self._cache) >= self.cache_size:
                         # Remover item mais antigo (LRU)
                         oldest_idx = self._cache_order.pop(0)
                         del self._cache[oldest_idx]
                     
-                    # Não clonar - apenas guardar referência ao tensor em self.data
-                    # Isso não duplica memória, apenas cria ponteiros
+                    # Guardar no cache LRU
                     self._cache[idx] = (features, target)
                     self._cache_order.append(idx)
         
@@ -5969,17 +6011,25 @@ class CachedProcessedDataset(Dataset):
         Returns:
             Tupla (num_rows, effective_size) para dados 2D
         """
-        # Garantir que dados estejam carregados
-        if self.loading_strategy == 'lazy' and not self._data_loaded:
-            self.data = torch.load(self.data_file)
-            self._data_loaded = True
+        features_shape = None
         
-        if len(self.data) > 0:
-            features_shape = self.data[0][0].shape
+        split_dir = self.data_file.parent / self.split_name
+        if split_dir.exists() and split_dir.is_dir():
+            if self._determine_length_without_loading() > 0:
+                features, _ = torch.load(split_dir / "0.pt", weights_only=False)
+                features_shape = features.shape
+        else:
+            # Format legado
+            if self.loading_strategy == 'lazy' and not self._data_loaded:
+                self.data = torch.load(self.data_file, weights_only=False)
+                self._data_loaded = True
+            if len(self.data) > 0:
+                features_shape = self.data[0][0].shape
+
+        if features_shape is not None:
             if len(features_shape) == 2:
                 return tuple(features_shape)
             else:
-                # Fallback para dados 1D antigos (retrocompatibilidade)
                 return (1, features_shape[0])
         return (0, 0)
     

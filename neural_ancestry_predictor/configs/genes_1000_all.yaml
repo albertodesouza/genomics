@@ -32,7 +32,7 @@ dataset_input:
   # - "H1": Usa apenas haplótipo 1
   # - "H2": Usa apenas haplótipo 2
   # - "H1+H2": Concatena ambos os haplótipos (dobra tamanho de entrada)
-  haplotype_mode: "H1"
+  haplotype_mode: "H1+H2"
   
   # Tamanho do trecho central (em bases) a extrair de cada janela
   # Cada janela tem ~1M bases. Este parâmetro seleciona o trecho central.

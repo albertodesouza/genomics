@@ -4,7 +4,7 @@ dataset_input:
   dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all"
   alphagenome_outputs:
     - "rna_seq"
-  haplotype_mode: "H1"
+  haplotype_mode: "H1+H2"
   window_center_size: 32768
   downsample_factor: 1
   genes_to_use:
