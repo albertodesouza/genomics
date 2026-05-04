@@ -1633,6 +1633,30 @@ def _make_manhattan_plot(results: List[Dict[str, Any]], output_png: str, title: 
     plt.close()
 
 
+def _make_qq_plot(results: List[Dict[str, Any]], output_png: str, title: str) -> None:
+    """Write a QQ plot of -log10(p) values."""
+    p_values = [r.get("p_value") for r in results if r.get("p_value") is not None and r.get("p_value") > 0]
+    if not p_values:
+        return
+
+    n = len(p_values)
+    observed = sorted([-math.log10(max(p, 1e-300)) for p in p_values])
+    expected = sorted([-math.log10(max(i / n, 1e-300)) for i in range(1, n + 1)])
+
+    plt.figure(figsize=(6, 6))
+    plt.scatter(expected, observed, c="black", s=8, alpha=0.7)
+    
+    max_val = max(max(expected), max(observed))
+    plt.plot([0, max_val], [0, max_val], color="red", linestyle="--")
+    
+    plt.xlabel("Expected -log10(p)")
+    plt.ylabel("Observed -log10(p)")
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(output_png, dpi=180)
+    plt.close()
+
+
 def step4_binary_association(config: dict, console: Console) -> None:
     """Run case-control SNP association for a binary phenotype."""
     inp = config["input"]
@@ -1834,12 +1858,14 @@ def step4_binary_association(config: dict, console: Console) -> None:
         f.write("\t".join(headers) + "\n")
         for row in results:
             f.write("\t".join(str(row[h]) for h in headers) + "\n")
-
+    qq_png_path = prefix + ".qq.png"
     _make_manhattan_plot(results, png_path, f"{phenotype_name} association")
+    _make_qq_plot(results, qq_png_path, f"{phenotype_name} QQ plot")
 
     console.print(f"[green]Step 4 done — {len(results):,} SNPs saved to {json_path}[/green]")
     console.print(f"  TSV: {tsv_path}")
     console.print(f"  Manhattan plot: {png_path}")
+    console.print(f"  QQ plot: {qq_png_path}")
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -1,0 +1,55 @@
+# Binary pigmentation association analysis.
+# Uses the existing splits from non_longevous_results_runs_genes_1000_all.
+# This config does not depend on the temporary family_stratified cache.
+
+input:
+  splits_metadata: "/dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes_1000_all/datasets/rna_seq_H1_32768_ds1_log_shuf_split0.7-0.15-0.15_seed13/splits_metadata.json"
+  individuals_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all/individuals"
+  vcf_pattern: "/dados/GENOMICS_DATA/top3/longevity_dataset/vcf_chromosomes/1kGP_high_coverage_Illumina.{chrom}.filtered.SNV_INDEL_SV_phased_panel.vcf.gz"
+  validate_family_aware_splits: false
+
+conversion:
+  output_filename: "{sample_id}_v5_23andme.txt"
+  skip_no_rsid: true
+  filter_by_chip_panel: true
+  format_version: "V5"
+  annotate_dbsnp: true
+  genome_build: "GRCh38"
+
+statistics:
+  snp_panel: null
+
+prediction:
+  haplotype_mode: "H1"
+
+association:
+  enabled: true
+  phenotype_name: "pigmentation_binary"
+  positive_label: "strong_pigmentation"
+  negative_label: "weak_pigmentation"
+  positive_populations:
+    - "YRI"
+    - "ESN"
+    - "LWK"
+    - "MSL"
+    - "GWD"
+  negative_populations:
+    - "FIN"
+    - "CEU"
+    - "GBR"
+  subsets:
+    - "train"
+    - "val"
+    - "test"
+  haplotype_mode: "H1"
+  test: "chi_square"
+  min_maf: 0.001
+  max_snps: null
+  output_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all/pigmentation_association_23andme"
+
+pipeline:
+  steps:
+    generate_23andme: true
+    compute_statistics: false
+    predict_ancestry: false
+    binary_association: true

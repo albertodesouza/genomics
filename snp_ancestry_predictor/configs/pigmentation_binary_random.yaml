@@ -5,11 +5,11 @@
 input:
   splits_metadata: "/dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes_1000_all/datasets/rna_seq_H1_32768_ds1_log_shuf_split0.7-0.15-0.15_seed13/splits_metadata.json"
   individuals_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all/individuals"
-  vcf_pattern: "/dados/GENOMICS_DATA/top3/longevity_dataset/vcf_chromosomes/1kGP_high_coverage_Illumina.{chrom}.filtered.SNV_INDEL_SV_phased_panel.vcf.gz"
+  vcf_pattern: "/dados/GENOMICS_DATA/top3/longevity_dataset/vcf_subsampled/{chrom}.vcf.gz"
   validate_family_aware_splits: false
 
 conversion:
-  output_filename: "{sample_id}_23andme.txt"
+  output_filename: "{sample_id}_random_23andme.txt"
   skip_no_rsid: false
 
 statistics:
@@ -41,7 +41,7 @@ association:
   test: "chi_square"
   min_maf: 0.001
   max_snps: null
-  output_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all/pigmentation_association"
+  output_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all/pigmentation_association_random"
 
 pipeline:
   steps:
