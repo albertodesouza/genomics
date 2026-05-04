@@ -70,6 +70,7 @@ class ProcessedGenomicDataset(Dataset):
         self.window_center_size = di.window_center_size
         self.downsample_factor = di.downsample_factor
         self.normalization_method = di.normalization_method
+        self.normalization_value = di.normalization_value
         self.selected_track_index = di.selected_track_index
         self.genes_to_use = set(di.genes_to_use or [])
         self.indel_neutral_value = di.indel_neutral_value
@@ -125,6 +126,24 @@ class ProcessedGenomicDataset(Dataset):
     # ------------------------------------------------------------------
 
     def _compute_normalization_params(self) -> Dict:
+        if self.normalization_method in {"log", "minmax_keep_zero"} and self.normalization_value not in (0, 0.0, None):
+            num_genes = len(self.config.dataset_input.genes_to_use or []) or 1
+            num_tracks = 8 * num_genes
+            if self.normalization_method == "log":
+                track_params = [{"log_max": float(self.normalization_value)} for _ in range(num_tracks)]
+            else:
+                track_params = [{"max": float(self.normalization_value)} for _ in range(num_tracks)]
+
+            console.print(
+                f"[green]✓ Normalização rápida: usando normalization_value={self.normalization_value} para {num_tracks} tracks[/green]"
+            )
+            return {
+                "method": self.normalization_method,
+                "per_track": True,
+                "num_tracks": len(track_params),
+                "track_params": track_params,
+            }
+
         track_max: Optional[np.ndarray] = None
         track_count: Optional[np.ndarray] = None
         track_mean: Optional[np.ndarray] = None

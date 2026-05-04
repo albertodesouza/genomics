@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections import OrderedDict
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -56,18 +57,34 @@ def _allele_sequence(ref: str, alt: str, token: str) -> str:
     return str(ref)
 
 
-def _query_sample_variants(vcf_path: str, sample_id: str, region: str) -> List[Dict[str, object]]:
+def _query_gene_variants(vcf_path: str, sample_ids: List[str], region: str) -> List[Dict[str, object]]:
+    if not sample_ids:
+        return []
+
     fmt = "%POS\t%REF\t%ALT[\t%GT]\n"
-    cmd = ["bcftools", "query", "-s", sample_id, "-r", region, "-f", fmt, vcf_path]
+    cmd = [
+        "bcftools",
+        "query",
+        "-s",
+        ",".join(sample_ids),
+        "-r",
+        region,
+        "-f",
+        fmt,
+        vcf_path,
+    ]
     proc = subprocess.run(cmd, check=True, capture_output=True, text=True)
     rows: List[Dict[str, object]] = []
     for line in proc.stdout.splitlines():
-        pos, ref, alt, gt = line.split("\t")
+        fields = line.split("\t")
+        if len(fields) < 3:
+            continue
+        pos, ref, alt = fields[:3]
         rows.append({
             "pos_1based": int(pos),
             "ref": ref,
             "alt": alt,
-            "gt": gt,
+            "gts": fields[3:],
         })
     return rows
 
@@ -79,6 +96,8 @@ class DynamicIndelAligner:
         self.dataset_dir = Path(dataset_dir)
         self.selected_sample_ids = set(selected_sample_ids or [])
         self._gene_cache: Dict[str, Dict[str, object]] = {}
+        self._sample_entry_cache: Dict[str, OrderedDict[Tuple[str, str], Dict[str, object]]] = {}
+        self._sample_cache_limit = 32
 
     def _load_window_metadata(self, gene_name: str) -> Dict[str, object]:
         meta_path = self.dataset_dir / "references" / "windows" / gene_name / "window_metadata.json"
@@ -101,22 +120,35 @@ class DynamicIndelAligner:
         if not vcf_path:
             raise KeyError(f"raw_variant_source.vcf_path ausente para {gene_name}")
 
-        region = self._build_region(window_meta)
-        sample_entries: Dict[str, Dict[str, object]] = {}
-        insertion_after_ref_index: Dict[int, int] = {}
         start_1based = int(window_meta["start"]) + 1
         end_1based = int(window_meta["end"]) + 1
         ref_length = end_1based - start_1based + 1
 
-        selected_ids = self.selected_sample_ids
-        if not selected_ids:
-            meta_path = self.dataset_dir / "dataset_metadata.json"
-            with open(meta_path) as f:
-                dataset_meta = json.load(f)
-            selected_ids = set(dataset_meta.get("individuals", []))
+        payload = {
+            "vcf_path": vcf_path,
+            "region": self._build_region(window_meta),
+            "start_1based": start_1based,
+            "ref_length": ref_length,
+            "expanded_length": ref_length,
+        }
+        self._gene_cache[gene_name] = payload
+        self._sample_entry_cache[gene_name] = OrderedDict()
+        return payload
 
-        for sample_id in sorted(selected_ids):
-            variants = _query_sample_variants(vcf_path, sample_id, region)
+    def _build_sample_entries_for_gene(self, gene_name: str, sample_ids: List[str]) -> None:
+        gene_payload = self._load_gene_mapping(gene_name)
+        cache = self._sample_entry_cache[gene_name]
+        missing_sample_ids = [sample_id for sample_id in sample_ids if sample_id not in cache]
+        if not missing_sample_ids:
+            return
+
+        variants = _query_gene_variants(gene_payload["vcf_path"], missing_sample_ids, gene_payload["region"])
+        insertion_after_ref_index: Dict[int, int] = {}
+        start_1based = int(gene_payload["start_1based"])
+        ref_length = int(gene_payload["ref_length"])
+        sample_entries: Dict[str, Dict[str, Dict[str, object]]] = {}
+
+        for sample_idx, sample_id in enumerate(missing_sample_ids):
             hap_entries: Dict[str, Dict[str, object]] = {}
             for haplotype, gt_index in (("H1", 0), ("H2", 1)):
                 deletion_positions = set()
@@ -124,7 +156,10 @@ class DynamicIndelAligner:
                 for row in variants:
                     if _classify_length_behavior(str(row["ref"]), str(row["alt"])) != "length_change":
                         continue
-                    gt_left, gt_right = _parse_gt(str(row["gt"]))
+                    row_gts = row.get("gts", [])
+                    if sample_idx >= len(row_gts):
+                        continue
+                    gt_left, gt_right = _parse_gt(str(row_gts[sample_idx]))
                     token = gt_left if gt_index == 0 else gt_right
                     ref = str(row["ref"])
                     allele = _allele_sequence(ref, str(row["alt"]), token)
@@ -161,8 +196,8 @@ class DynamicIndelAligner:
                 insertion_slots_by_ref[ref_idx] = list(range(expanded_cursor, expanded_cursor + ins_slots))
                 expanded_cursor += ins_slots
 
-        expanded_length = expanded_cursor
-        samples_payload: Dict[str, Dict[str, object]] = {}
+        gene_payload["expanded_length"] = expanded_cursor
+
         for sample_id, hap_entries in sample_entries.items():
             per_hap: Dict[str, object] = {}
             for haplotype, hap_state in hap_entries.items():
@@ -195,21 +230,18 @@ class DynamicIndelAligner:
                     "insertion_indices": insertion_slots,
                     "deletion_indices": sorted(expanded_index_map[idx] for idx in deletion_positions),
                 }
-            samples_payload[sample_id] = per_hap
 
-        payload = {
-            "expanded_length": expanded_length,
-            "samples": samples_payload,
-        }
-        self._gene_cache[gene_name] = payload
-        return payload
+            cache[sample_id] = per_hap
+            cache.move_to_end(sample_id)
+            while len(cache) > self._sample_cache_limit:
+                cache.popitem(last=False)
 
     def get_expanded_length(self, gene_name: str) -> int:
         return int(self._load_gene_mapping(gene_name)["expanded_length"])
 
     def get_haplotype_entry(self, gene_name: str, sample_id: str, haplotype: str) -> Optional[Dict[str, object]]:
-        gene_payload = self._load_gene_mapping(gene_name)
-        sample_entry = gene_payload.get("samples", {}).get(sample_id)
+        self._build_sample_entries_for_gene(gene_name, [sample_id])
+        sample_entry = self._sample_entry_cache[gene_name].get(sample_id)
         if sample_entry is None:
             return None
         return sample_entry.get(haplotype)
