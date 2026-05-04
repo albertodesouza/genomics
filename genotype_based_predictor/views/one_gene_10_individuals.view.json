@@ -1,0 +1,18 @@
+{
+  "name": "one_gene_10_individuals",
+  "description": "View logica minima com 1 gene e 10 individuos.",
+  "dataset_dir": "/dados/GENOMICS_DATA/v1/1kG_high_coverage",
+  "alphagenome_outputs": [
+    "rna_seq"
+  ],
+  "haplotype_mode": "H1+H2",
+  "window_center_size": 32768,
+  "downsample_factor": 1,
+  "genes_to_use": [
+    "MC1R"
+  ],
+  "sample_ids_path": "/home/breno/I2CA/genomics/genotype_based_predictor/views/one_gene_10_individuals.sample_ids.txt",
+  "superpopulations_to_use": null,
+  "populations_to_use": null,
+  "normalization_method": "log"
+}

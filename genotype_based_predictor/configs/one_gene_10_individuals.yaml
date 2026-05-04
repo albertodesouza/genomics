@@ -1,0 +1,83 @@
+dataset_input:
+  view_path: "/home/breno/I2CA/genomics/genotype_based_predictor/views/one_gene_10_individuals.view.json"
+  processed_cache_dir: "/dados/GENOMICS_DATA/v1/1kG_high_coverage_runs"
+  cache_processed_tensors: false
+  tensor_layout: "haplotype_channels"
+  selected_track_index: 0
+  indel_include_valid_mask: true
+
+output:
+  prediction_target: "superpopulation"
+  known_classes: null
+
+model:
+  type: "CNN2"
+  hidden_layers: [64, 32]
+  activation: "relu"
+  dropout_rate: 0.3
+  cnn2:
+    num_filters_stage1: 4
+    kernel_stage1: [1, 16]
+    num_filters_stage2: 8
+    kernel_stage2: 5
+    num_filters_stage3: 16
+    kernel_stage3: 3
+    global_pool_type: "avg"
+    fc_hidden_size: 64
+
+training:
+  optimizer: "adam"
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  loss_function: "cross_entropy"
+  batch_size: 1
+  num_epochs: 1
+  validation_frequency: 1
+  lr_scheduler:
+    enabled: true
+    type: "cosine_warm_restarts"
+    mode: "min"
+    factor: 0.5
+    patience: 10
+    min_lr: 0.0000001
+    step_size: 10
+    T_max: 30
+    eta_min: 0.0000001
+    T_0: 10
+    T_mult: 1
+
+data_split:
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  random_seed: 13
+  family_split_mode: "family_aware"
+  balancing_strategy: "shuffle"
+  strict_determinism: true
+
+wandb:
+  use_wandb: false
+  project_name: "genotype-based-predictor-one-gene-10-individuals"
+  run_name: null
+  log_frequency: 10
+
+checkpointing:
+  checkpoint_dir: "models"
+  save_frequency: 10
+  save_during_training: true
+  load_checkpoint: null
+
+debug:
+  enable_visualization: false
+  force_pca_cache_rebuild: false
+  max_samples_per_epoch: null
+  taint_at_cache_save: false
+  taint_at_runtime: false
+  visualization: {}
+
+data_loading:
+  loading_strategy: "lazy"
+  cache_size: 16
+
+mode: "train"
+test_dataset: "test"

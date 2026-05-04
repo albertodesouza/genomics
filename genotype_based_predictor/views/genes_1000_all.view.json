@@ -1,0 +1,25 @@
+{
+  "name": "genes_1000_all",
+  "description": "View base com os 11 genes principais no dataset canonico.",
+  "dataset_dir": "/dados/GENOMICS_DATA/v1/1kG_high_coverage",
+  "alphagenome_outputs": [
+    "rna_seq"
+  ],
+  "haplotype_mode": "H1+H2",
+  "window_center_size": 32768,
+  "downsample_factor": 1,
+  "genes_to_use": [
+    "MC1R",
+    "TYRP1",
+    "TYR",
+    "SLC45A2",
+    "DDB1",
+    "EDAR",
+    "MFSD12",
+    "OCA2",
+    "HERC2",
+    "SLC24A5",
+    "TCHH"
+  ],
+  "normalization_method": "log"
+}
