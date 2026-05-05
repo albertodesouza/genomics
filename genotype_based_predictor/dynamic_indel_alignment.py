@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from collections import OrderedDict
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -57,9 +58,9 @@ def _allele_sequence(ref: str, alt: str, token: str) -> str:
     return str(ref)
 
 
-def _query_gene_variants(vcf_path: str, sample_ids: List[str], region: str) -> List[Dict[str, object]]:
+def _stream_gene_variants(vcf_path: str, sample_ids: List[str], region: str):
     if not sample_ids:
-        return []
+        return
 
     fmt = "%POS\t%REF\t%ALT[\t%GT]\n"
     cmd = [
@@ -73,20 +74,30 @@ def _query_gene_variants(vcf_path: str, sample_ids: List[str], region: str) -> L
         fmt,
         vcf_path,
     ]
-    proc = subprocess.run(cmd, check=True, capture_output=True, text=True)
-    rows: List[Dict[str, object]] = []
-    for line in proc.stdout.splitlines():
-        fields = line.split("\t")
-        if len(fields) < 3:
-            continue
-        pos, ref, alt = fields[:3]
-        rows.append({
-            "pos_1based": int(pos),
-            "ref": ref,
-            "alt": alt,
-            "gts": fields[3:],
-        })
-    return rows
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    assert proc.stdout is not None
+    try:
+        for line in proc.stdout:
+            fields = line.rstrip("\n").split("\t")
+            if len(fields) < 3:
+                continue
+            pos, ref, alt = fields[:3]
+            yield {
+                "pos_1based": int(pos),
+                "ref": ref,
+                "alt": alt,
+                "gts": fields[3:],
+            }
+    finally:
+        if proc.stdout is not None:
+            proc.stdout.close()
+        returncode = proc.wait()
+        if returncode != 0:
+            stderr = proc.stderr.read() if proc.stderr is not None else ""
+            raise subprocess.CalledProcessError(returncode, cmd, stderr=stderr)
+        if proc.stderr is not None:
+            proc.stderr.close()
 
 
 class DynamicIndelAligner:
@@ -97,7 +108,14 @@ class DynamicIndelAligner:
         self.selected_sample_ids = set(selected_sample_ids or [])
         self._gene_cache: Dict[str, Dict[str, object]] = {}
         self._sample_entry_cache: Dict[str, OrderedDict[Tuple[str, str], Dict[str, object]]] = {}
-        self._sample_cache_limit = 32
+        self._sample_cache_limit = 8
+        self._sample_prefetch_size = 8
+        self.profile_stats = {
+            "bcftools_query_s": 0.0,
+            "entry_build_s": 0.0,
+            "query_calls": 0,
+            "entry_build_calls": 0,
+        }
 
     def _load_window_metadata(self, gene_name: str) -> Dict[str, object]:
         meta_path = self.dataset_dir / "references" / "windows" / gene_name / "window_metadata.json"
@@ -142,7 +160,16 @@ class DynamicIndelAligner:
         if not missing_sample_ids:
             return
 
-        variants = _query_gene_variants(gene_payload["vcf_path"], missing_sample_ids, gene_payload["region"])
+        selected_ids = sorted(self.selected_sample_ids) if self.selected_sample_ids else missing_sample_ids
+        first_missing = missing_sample_ids[0]
+        if first_missing in selected_ids:
+            start_idx = selected_ids.index(first_missing)
+            prefetch_ids = [sid for sid in selected_ids[start_idx:start_idx + self._sample_prefetch_size] if sid not in cache]
+        else:
+            prefetch_ids = missing_sample_ids[:self._sample_prefetch_size]
+        missing_sample_ids = prefetch_ids
+
+        t0 = time.perf_counter()
         insertion_after_ref_index: Dict[int, int] = {}
         start_1based = int(gene_payload["start_1based"])
         ref_length = int(gene_payload["ref_length"])
@@ -153,37 +180,44 @@ class DynamicIndelAligner:
             for haplotype, gt_index in (("H1", 0), ("H2", 1)):
                 deletion_positions = set()
                 insertion_specs: List[Tuple[int, int]] = []
-                for row in variants:
-                    if _classify_length_behavior(str(row["ref"]), str(row["alt"])) != "length_change":
-                        continue
-                    row_gts = row.get("gts", [])
-                    if sample_idx >= len(row_gts):
-                        continue
-                    gt_left, gt_right = _parse_gt(str(row_gts[sample_idx]))
-                    token = gt_left if gt_index == 0 else gt_right
-                    ref = str(row["ref"])
-                    allele = _allele_sequence(ref, str(row["alt"]), token)
-                    pos0 = int(row["pos_1based"]) - start_1based
-                    if pos0 < 0 or pos0 >= ref_length:
-                        continue
-                    if len(allele) == len(ref):
-                        continue
-                    if len(allele) < len(ref):
-                        for offset in range(1, len(ref)):
-                            ref_idx = pos0 + offset
-                            if 0 <= ref_idx < ref_length:
-                                deletion_positions.add(ref_idx)
-                    else:
-                        ins_len = len(allele) - len(ref)
-                        if ins_len > 0:
-                            insertion_specs.append((pos0, ins_len))
-                            insertion_after_ref_index[pos0] = max(insertion_after_ref_index.get(pos0, 0), ins_len)
-
                 hap_entries[haplotype] = {
                     "deletion_positions": deletion_positions,
                     "insertion_specs": insertion_specs,
                 }
             sample_entries[sample_id] = hap_entries
+
+        query_t0 = time.perf_counter()
+        for row in _stream_gene_variants(gene_payload["vcf_path"], missing_sample_ids, gene_payload["region"]):
+            if _classify_length_behavior(str(row["ref"]), str(row["alt"])) != "length_change":
+                continue
+            row_gts = row.get("gts", [])
+            ref = str(row["ref"])
+            pos0 = int(row["pos_1based"]) - start_1based
+            if pos0 < 0 or pos0 >= ref_length:
+                continue
+
+            for sample_idx, sample_id in enumerate(missing_sample_ids):
+                if sample_idx >= len(row_gts):
+                    continue
+                gt_left, gt_right = _parse_gt(str(row_gts[sample_idx]))
+                for haplotype, token in (("H1", gt_left), ("H2", gt_right)):
+                    allele = _allele_sequence(ref, str(row["alt"]), token)
+                    if len(allele) == len(ref):
+                        continue
+                    hap_state = sample_entries[sample_id][haplotype]
+                    if len(allele) < len(ref):
+                        for offset in range(1, len(ref)):
+                            ref_idx = pos0 + offset
+                            if 0 <= ref_idx < ref_length:
+                                hap_state["deletion_positions"].add(ref_idx)
+                    else:
+                        ins_len = len(allele) - len(ref)
+                        if ins_len > 0:
+                            hap_state["insertion_specs"].append((pos0, ins_len))
+                            insertion_after_ref_index[pos0] = max(insertion_after_ref_index.get(pos0, 0), ins_len)
+
+        self.profile_stats["bcftools_query_s"] += time.perf_counter() - query_t0
+        self.profile_stats["query_calls"] += 1
 
         expanded_index_map: Dict[int, int] = {}
         insertion_slots_by_ref: Dict[int, List[int]] = {}
@@ -235,6 +269,9 @@ class DynamicIndelAligner:
             cache.move_to_end(sample_id)
             while len(cache) > self._sample_cache_limit:
                 cache.popitem(last=False)
+
+        self.profile_stats["entry_build_s"] += time.perf_counter() - t0
+        self.profile_stats["entry_build_calls"] += 1
 
     def get_expanded_length(self, gene_name: str) -> int:
         return int(self._load_gene_mapping(gene_name)["expanded_length"])

@@ -438,7 +438,10 @@ def load_config(config_path: Path) -> PipelineConfig:
             view_payload = json.load(f)
 
         merged_dataset_input = dict(view_payload)
-        merged_dataset_input.update(dataset_input)
+        for key, value in dataset_input.items():
+            if key == "view_path":
+                continue
+            merged_dataset_input[key] = value
         merged_dataset_input.pop("name", None)
         merged_dataset_input.pop("description", None)
         merged_dataset_input.pop("prediction_target", None)

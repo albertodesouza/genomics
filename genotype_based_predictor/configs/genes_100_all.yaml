@@ -1,11 +1,10 @@
 dataset_input:
-  view_path: "/home/breno/I2CA/genomics/genotype_based_predictor/views/genes_1000_all.view.json"
+  view_path: "/home/breno/I2CA/genomics/genotype_based_predictor/views/genes_100_all.view.json"
   processed_cache_dir: "/dados/GENOMICS_DATA/v1/1kG_high_coverage_runs"
   cache_processed_tensors: true
   tensor_layout: "haplotype_channels"
   selected_track_index: 0
   indel_include_valid_mask: true
-  normalization_value: 4.34
 
 output:
   prediction_target: "superpopulation"
@@ -31,8 +30,8 @@ training:
   learning_rate: 0.001
   weight_decay: 0.0001
   loss_function: "cross_entropy"
-  batch_size: 1
-  num_epochs: 1
+  batch_size: 8
+  num_epochs: 50
   validation_frequency: 3
   lr_scheduler:
     enabled: true
@@ -58,7 +57,7 @@ data_split:
 
 wandb:
   use_wandb: false
-  project_name: "genotype-based-predictor-genes-1000-all"
+  project_name: "genotype-based-predictor-genes-100-all"
   run_name: null
   log_frequency: 100
 

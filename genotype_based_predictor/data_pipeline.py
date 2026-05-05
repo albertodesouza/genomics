@@ -5,6 +5,8 @@ data_pipeline.py — Orquestra cache, DataLoaders e prepare_data().
 import json
 import os
 import shutil
+import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -25,7 +27,37 @@ from genotype_based_predictor.data_splitting import (
 from genotype_based_predictor.utils import worker_init_fn
 
 console = Console()
-SHARD_SIZE = 32
+SHARD_SIZE = 8
+MAX_CACHE_BUILD_WORKERS = 1
+
+
+def _materialize_cache_chunk(
+    config_dict: Dict[str, Any],
+    split_indices: list[int],
+    normalization_params: Dict[str, Any],
+    shard_path: str,
+):
+    from genotype_based_predictor.config import PipelineConfig
+    from genotype_based_predictor.dataset import ProcessedGenomicDataset
+
+    config = PipelineConfig.model_validate(config_dict)
+    runtime_dataset_dir = _resolve_runtime_dataset_dir(config)
+    base_dataset = _load_base_dataset(runtime_dataset_dir)
+    processed_dataset = ProcessedGenomicDataset(
+        base_dataset,
+        config,
+        normalization_params=normalization_params,
+        compute_normalization=False,
+    )
+
+    items = processed_dataset.get_items_bulk(split_indices)
+    torch.save(items, shard_path)
+    return {
+        "shard_path": shard_path,
+        "num_items": len(items),
+        "profile_stats": processed_dataset.profile_stats,
+        "aligner_profile_stats": processed_dataset.dynamic_indel_aligner.profile_stats,
+    }
 
 
 def _load_external_normalization_params(config: PipelineConfig) -> Optional[Dict]:
@@ -286,7 +318,6 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
         ]:
             split_sample_meta = []
             shard_names = []
-            shard_data = [] if cache_tensors else None
 
             with Progress(
                 SpinnerColumn(),
@@ -298,40 +329,88 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                 transient=False,
             ) as progress:
                 task = progress.add_task(split_name, total=len(indices))
+                split_t0 = time.perf_counter()
+                config_dict = config.model_dump(mode="python")
 
-                for idx in indices:
-                    try:
-                        base_idx = processed_dataset.valid_sample_indices[idx]
-                        sid = individuals[base_idx] if base_idx < len(individuals) else f"sample_{base_idx}"
-                        ped = pedigree.get(sid, {})
-                        split_sample_meta.append({
-                            "sample_id": sid,
-                            "superpopulation": ped.get("superpopulation", "UNK"),
-                            "population": ped.get("population", "UNK"),
-                            "sex": ped.get("sex", 0),
-                        })
-                        if cache_tensors:
-                            features, target = processed_dataset[idx]
-                            shard_data.append((features, target))
-                            if len(shard_data) >= SHARD_SIZE:
-                                shard_name = f"{split_name}_data_shard_{len(shard_names):05d}.pt"
-                                torch.save(shard_data, temp_dir / shard_name)
-                                shard_names.append(shard_name)
-                                shard_data = []
-                    except Exception as e:
-                        console.print(f"[yellow]Erro ao processar idx={idx}: {e}[/yellow]")
-                    finally:
-                        progress.advance(task)
+                batches = [indices[i:i + SHARD_SIZE] for i in range(0, len(indices), SHARD_SIZE)]
+                ds_profile_totals = {"base_fetch_s": 0.0, "window_process_s": 0.0, "normalization_s": 0.0, "getitem_calls": 0}
+                align_profile_totals = {"bcftools_query_s": 0.0, "entry_build_s": 0.0, "query_calls": 0, "entry_build_calls": 0}
+
+                if cache_tensors:
+                    with ProcessPoolExecutor(max_workers=MAX_CACHE_BUILD_WORKERS) as executor:
+                        future_to_batch = {
+                            executor.submit(
+                                _materialize_cache_chunk,
+                                config_dict,
+                                batch_indices,
+                                processed_dataset.normalization_params,
+                                str(temp_dir / f"{split_name}_data_shard_{batch_id:05d}.pt"),
+                            ): (batch_id, batch_indices)
+                            for batch_id, batch_indices in enumerate(batches)
+                        }
+
+                        batch_results: Dict[int, Any] = {}
+                        completed_samples = 0
+                        for future in as_completed(future_to_batch):
+                            batch_id, batch_indices = future_to_batch[future]
+                            try:
+                                result = future.result()
+                                batch_results[batch_id] = result
+                                completed_samples += len(batch_indices)
+                                progress.advance(task, advance=len(batch_indices))
+                                for key in ds_profile_totals:
+                                    ds_profile_totals[key] += result["profile_stats"].get(key, 0)
+                                for key in align_profile_totals:
+                                    align_profile_totals[key] += result["aligner_profile_stats"].get(key, 0)
+                                if batch_id == 0 or len(batch_results) % 4 == 0:
+                                    elapsed = time.perf_counter() - split_t0
+                                    console.print(
+                                        f"[cyan][profile {split_name} {completed_samples}/{len(indices)}][/cyan] "
+                                        f"elapsed={elapsed:.1f}s | "
+                                        f"base_fetch={ds_profile_totals['base_fetch_s']:.1f}s | "
+                                        f"window_process={ds_profile_totals['window_process_s']:.1f}s | "
+                                        f"normalize={ds_profile_totals['normalization_s']:.1f}s | "
+                                        f"bcftools={align_profile_totals['bcftools_query_s']:.1f}s/{align_profile_totals['query_calls']} | "
+                                        f"entry_build={align_profile_totals['entry_build_s']:.1f}s/{align_profile_totals['entry_build_calls']}"
+                                    )
+                            except Exception as e:
+                                console.print(f"[yellow]Erro ao processar batch_id={batch_id}: {e}[/yellow]")
+
+                        for batch_id, batch_indices in enumerate(batches):
+                            result = batch_results.get(batch_id)
+                            if result is None:
+                                continue
+                            shard_names.append(Path(result["shard_path"]).name)
+
+                            for idx in batch_indices:
+                                base_idx = processed_dataset.valid_sample_indices[idx]
+                                sid = individuals[base_idx] if base_idx < len(individuals) else f"sample_{base_idx}"
+                                ped = pedigree.get(sid, {})
+                                split_sample_meta.append({
+                                    "sample_id": sid,
+                                    "superpopulation": ped.get("superpopulation", "UNK"),
+                                    "population": ped.get("population", "UNK"),
+                                    "sex": ped.get("sex", 0),
+                                })
+                else:
+                    for batch_id, batch_indices in enumerate(batches):
+                        for idx in batch_indices:
+                            base_idx = processed_dataset.valid_sample_indices[idx]
+                            sid = individuals[base_idx] if base_idx < len(individuals) else f"sample_{base_idx}"
+                            ped = pedigree.get(sid, {})
+                            split_sample_meta.append({
+                                "sample_id": sid,
+                                "superpopulation": ped.get("superpopulation", "UNK"),
+                                "population": ped.get("population", "UNK"),
+                                "sex": ped.get("sex", 0),
+                            })
+                            progress.advance(task)
 
             if cache_tensors:
-                if shard_data:
-                    shard_name = f"{split_name}_data_shard_{len(shard_names):05d}.pt"
-                    torch.save(shard_data, temp_dir / shard_name)
-                    shard_names.append(shard_name)
                 shards_index[split_name] = {
                     "shard_size": SHARD_SIZE,
                     "num_samples": len(split_sample_meta),
-                    "shards": shard_names,
+                    "shards": sorted(shard_names),
                 }
             splits_meta[split_name] = split_sample_meta
             split_index[split_name] = [item["sample_id"] for item in split_sample_meta]
@@ -369,7 +448,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
             "class_names": class_names,
             "dataset_dir": str(dataset_dir.resolve()),
             "gene_order": gene_order,
-            "tracks_per_gene": 6,
+            "tracks_per_gene": 2 * (len(config.dataset_input.ontology_terms or []) or 1) + 6,
             "gene_window_metadata": gene_window_metadata,
             "processing_params": {
                 "alphagenome_outputs": config.dataset_input.alphagenome_outputs,

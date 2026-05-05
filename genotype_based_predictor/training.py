@@ -298,4 +298,6 @@ class Trainer:
             f"best_val_acc={self.best_val_accuracy:.4f} | "
             f"best_val_loss={self.best_val_loss:.4f}[/bold green]"
         )
+        self.history["interrupted"] = interrupt_state.interrupted
+        self.history["last_epoch"] = epoch
         return self.history

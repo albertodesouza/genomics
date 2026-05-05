@@ -5,6 +5,8 @@ dataset.py — ProcessedGenomicDataset e CachedProcessedDataset.
 
 import json
 import math
+import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -86,6 +88,16 @@ class ProcessedGenomicDataset(Dataset):
             Path(di.dataset_dir),
             selected_sample_ids=self.selected_sample_ids,
         )
+        self._base_item_cache: OrderedDict[int, Tuple[Any, Any]] = OrderedDict()
+        self._base_item_cache_limit = 4
+        self._processed_item_cache: OrderedDict[int, Tuple[torch.Tensor, torch.Tensor]] = OrderedDict()
+        self._processed_item_cache_limit = 8
+        self.profile_stats = {
+            "base_fetch_s": 0.0,
+            "window_process_s": 0.0,
+            "normalization_s": 0.0,
+            "getitem_calls": 0,
+        }
 
         self.valid_sample_indices: List[int] = list(range(len(self.base_dataset)))
         self._valid_sample_index_set = set(self.valid_sample_indices)
@@ -128,7 +140,8 @@ class ProcessedGenomicDataset(Dataset):
     def _compute_normalization_params(self) -> Dict:
         if self.normalization_method in {"log", "minmax_keep_zero"} and self.normalization_value not in (0, 0.0, None):
             num_genes = len(self.config.dataset_input.genes_to_use or []) or 1
-            num_tracks = 8 * num_genes
+            num_ontologies = len(self.ontology_terms) if self.ontology_terms else 1
+            num_tracks = (2 * num_ontologies + 6) * num_genes
             if self.normalization_method == "log":
                 track_params = [{"log_max": float(self.normalization_value)} for _ in range(num_tracks)]
             else:
@@ -386,7 +399,7 @@ class ProcessedGenomicDataset(Dataset):
         haplotype: str,
         predictions: Dict,
         prediction_metadata: Optional[Dict] = None,
-    ) -> Optional[np.ndarray]:
+    ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
         if len(self.alphagenome_outputs) != 1:
             raise ValueError("tensor_layout='haplotype_channels' atualmente requer exatamente um alphagenome_output")
 
@@ -396,20 +409,6 @@ class ProcessedGenomicDataset(Dataset):
 
         array = predictions[output_type]
         track_meta = prediction_metadata.get(output_type) if prediction_metadata else None
-        if array.ndim == 2:
-            if track_meta:
-                indices = self._filter_track_indices(output_type, track_meta)
-                if len(indices) != 1:
-                    raise ValueError("tensor_layout='haplotype_channels' requer exatamente uma track apos filtragem")
-                track_index = indices[0]
-            else:
-                track_index = self.selected_track_index
-            if not (0 <= track_index < array.shape[1]):
-                raise ValueError(f"selected_track_index={track_index} fora do limite para {output_type} com shape={array.shape}")
-            row = np.asarray(array[:, track_index], dtype=np.float32)
-        else:
-            row = np.asarray(array.flatten() if array.ndim > 1 else array, dtype=np.float32)
-
         if self.downsample_factor != 1:
             raise ValueError("tensor_layout='haplotype_channels' nao suporta downsample_factor diferente de 1")
         if self.window_center_size <= 0:
@@ -419,19 +418,48 @@ class ProcessedGenomicDataset(Dataset):
             return None
 
         expanded_length = self.dynamic_indel_aligner.get_expanded_length(window_name)
-        aligned = build_aligned_haplotype_tensor(
-            row=row,
-            entry=entry,
-            expanded_length=expanded_length,
-            neutral_value=self.indel_neutral_value,
-            include_valid_mask=True,
-        )
+        signal_rows = []
+        shared_masks = None
+        if array.ndim == 2:
+            if track_meta:
+                track_indices = self._filter_track_indices(output_type, track_meta)
+            else:
+                track_indices = [self.selected_track_index]
+            for track_index in track_indices:
+                if not (0 <= track_index < array.shape[1]):
+                    raise ValueError(f"selected_track_index={track_index} fora do limite para {output_type} com shape={array.shape}")
+                row = np.asarray(array[:, track_index], dtype=np.float32)
+                aligned = build_aligned_haplotype_tensor(
+                    row=row,
+                    entry=entry,
+                    expanded_length=expanded_length,
+                    neutral_value=self.indel_neutral_value,
+                    include_valid_mask=True,
+                )
+                signal_rows.append(aligned[0:1, :])
+                if shared_masks is None:
+                    shared_masks = aligned[1:, :]
+        else:
+            row = np.asarray(array.flatten() if array.ndim > 1 else array, dtype=np.float32)
+            aligned = build_aligned_haplotype_tensor(
+                row=row,
+                entry=entry,
+                expanded_length=expanded_length,
+                neutral_value=self.indel_neutral_value,
+                include_valid_mask=True,
+            )
+            signal_rows.append(aligned[0:1, :])
+            shared_masks = aligned[1:, :]
 
-        center = aligned.shape[1] // 2
+        if not signal_rows or shared_masks is None:
+            return None
+
+        signals = np.concatenate(signal_rows, axis=0)
+        center = signals.shape[1] // 2
         half = self.window_center_size // 2
         start = max(0, center - half)
-        end = min(aligned.shape[1], start + self.window_center_size)
-        return aligned[:, start:end]
+        end = min(signals.shape[1], start + self.window_center_size)
+        return signals[:, start:end], shared_masks[:, start:end]
 
     def _filter_track_indices(self, output_type: str, track_metadata: List[Dict]) -> List[int]:
         if not self.ontology_terms:
@@ -484,8 +512,10 @@ class ProcessedGenomicDataset(Dataset):
             if h1 is None or h2 is None:
                 continue
 
-            h1_rows.append(h1)
-            h2_rows.append(h2)
+            h1_signals, h1_masks = h1
+            h2_signals, h2_masks = h2
+            h1_rows.append(np.concatenate([h1_signals, h1_masks], axis=0))
+            h2_rows.append(np.concatenate([h2_signals, h2_masks], axis=0))
 
         if not h1_rows or not h2_rows:
             return np.array([]).reshape(2, 4, 0)
@@ -509,22 +539,28 @@ class ProcessedGenomicDataset(Dataset):
     def __len__(self) -> int:
         return len(self.valid_sample_indices)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        base_idx = self.valid_sample_indices[idx]
-        input_data, output_data = self.base_dataset[base_idx]
-        sample_id = self._infer_sample_id_from_input(input_data)
-        if sample_id is None and base_idx < len(self.individuals):
-            sample_id = self.individuals[base_idx]
-            self._inject_sample_id_into_windows(input_data, sample_id)
-        features = self._process_windows(input_data["windows"], sample_id=sample_id)
-        features_tensor = torch.FloatTensor(features)
+    def _load_base_item(self, base_idx: int) -> Tuple[Any, Any]:
+        base_cached = self._base_item_cache.get(base_idx)
+        if base_cached is not None:
+            self._base_item_cache.move_to_end(base_idx)
+            return base_cached
 
+        t0 = time.perf_counter()
+        input_data, output_data = self.base_dataset[base_idx]
+        self.profile_stats["base_fetch_s"] += time.perf_counter() - t0
+        self._base_item_cache[base_idx] = (input_data, output_data)
+        while len(self._base_item_cache) > self._base_item_cache_limit:
+            self._base_item_cache.popitem(last=False)
+        return input_data, output_data
+
+    def _normalize_features_tensor(self, features_tensor: torch.Tensor) -> torch.Tensor:
         method = self.normalization_params.get("method", "zscore")
         per_track = self.normalization_params.get("per_track", False)
 
         if features_tensor.ndim != 3:
             raise ValueError(f"Esperado tensor 3D (2,4,L), recebido shape={tuple(features_tensor.shape)}")
         if per_track:
+            t0 = time.perf_counter()
             flat = features_tensor.view(-1, features_tensor.shape[-1])
             track_params = self.normalization_params["track_params"]
             rows = []
@@ -539,31 +575,83 @@ class ProcessedGenomicDataset(Dataset):
                     row = log_normalize(row, p["log_max"])
                 rows.append(row)
             features_tensor = torch.cat(rows, dim=0).view_as(features_tensor)
-        else:
-            features_tensor = apply_normalization(features_tensor, self.normalization_params)
+            self.profile_stats["normalization_s"] += time.perf_counter() - t0
+            return features_tensor
 
+        t0 = time.perf_counter()
+        features_tensor = apply_normalization(features_tensor, self.normalization_params)
+        self.profile_stats["normalization_s"] += time.perf_counter() - t0
+        return features_tensor
+
+    def _build_target_tensor(self, output_data: Dict, features_tensor: torch.Tensor) -> torch.Tensor:
         if self.prediction_target == "frog_likelihood":
-            target_tensor = torch.FloatTensor(output_data.get("frog_likelihood", np.zeros(150)))
-        else:
-            target_value = self._get_target_value(output_data)
-            if target_value in self.target_to_idx:
-                target_idx = self.target_to_idx[target_value]
-                target_tensor = torch.tensor(target_idx, dtype=torch.long)
-                if self.config.debug.taint_at_runtime:
-                    d = self.config.debug
-                    features_tensor = taint_sample(
-                        features_tensor, target_idx, len(self.target_to_idx),
-                        taint_type=d.taint_type,
-                        taint_value=d.taint_value,
-                        taint_horizontal_size=d.taint_horizontal_size,
-                        taint_vertical_size=d.taint_vertical_size,
-                        taint_horizontal_step=d.taint_horizontal_step,
-                        taint_vertical_step=d.taint_vertical_step,
-                    )
-            else:
-                target_tensor = torch.tensor(-1, dtype=torch.long)
+            return torch.FloatTensor(output_data.get("frog_likelihood", np.zeros(150)))
+
+        target_value = self._get_target_value(output_data)
+        if target_value in self.target_to_idx:
+            target_idx = self.target_to_idx[target_value]
+            target_tensor = torch.tensor(target_idx, dtype=torch.long)
+            if self.config.debug.taint_at_runtime:
+                d = self.config.debug
+                features_tensor = taint_sample(
+                    features_tensor, target_idx, len(self.target_to_idx),
+                    taint_type=d.taint_type,
+                    taint_value=d.taint_value,
+                    taint_horizontal_size=d.taint_horizontal_size,
+                    taint_vertical_size=d.taint_vertical_size,
+                    taint_horizontal_step=d.taint_horizontal_step,
+                    taint_vertical_step=d.taint_vertical_step,
+                )
+            return target_tensor
+
+        return torch.tensor(-1, dtype=torch.long)
+
+    def _process_single_index(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        base_idx = self.valid_sample_indices[idx]
+        input_data, output_data = self._load_base_item(base_idx)
+
+        sample_id = self._infer_sample_id_from_input(input_data)
+        if sample_id is None and base_idx < len(self.individuals):
+            sample_id = self.individuals[base_idx]
+            self._inject_sample_id_into_windows(input_data, sample_id)
+
+        t0 = time.perf_counter()
+        features = self._process_windows(input_data["windows"], sample_id=sample_id)
+        self.profile_stats["window_process_s"] += time.perf_counter() - t0
+        features_tensor = self._normalize_features_tensor(torch.FloatTensor(features))
+        target_tensor = self._build_target_tensor(output_data, features_tensor)
+        self.profile_stats["getitem_calls"] += 1
+        return features_tensor, target_tensor
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        cached = self._processed_item_cache.get(idx)
+        if cached is not None:
+            self._processed_item_cache.move_to_end(idx)
+            return cached
+
+        features_tensor, target_tensor = self._process_single_index(idx)
+
+        self._processed_item_cache[idx] = (features_tensor, target_tensor)
+        while len(self._processed_item_cache) > self._processed_item_cache_limit:
+            self._processed_item_cache.popitem(last=False)
 
         return features_tensor, target_tensor
+
+    def get_items_bulk(self, indices: List[int]) -> List[Tuple[torch.Tensor, torch.Tensor]]:
+        items: List[Tuple[torch.Tensor, torch.Tensor]] = []
+        for idx in indices:
+            cached = self._processed_item_cache.get(idx)
+            if cached is not None:
+                self._processed_item_cache.move_to_end(idx)
+                items.append(cached)
+                continue
+
+            item = self._process_single_index(idx)
+            self._processed_item_cache[idx] = item
+            while len(self._processed_item_cache) > self._processed_item_cache_limit:
+                self._processed_item_cache.popitem(last=False)
+            items.append(item)
+        return items
 
     def _infer_sample_id_from_input(self, input_data: Dict) -> Optional[str]:
         windows = input_data.get("windows", {})
@@ -588,7 +676,8 @@ class ProcessedGenomicDataset(Dataset):
         if self.config.dataset_input.tensor_layout == "haplotype_channels":
             effective = self.window_center_size // max(self.downsample_factor, 1)
             num_genes = len(self.config.dataset_input.genes_to_use or []) or 1
-            return (8 * num_genes, effective)
+            num_ontologies = len(self.ontology_terms) if self.ontology_terms else 1
+            return ((2 * num_ontologies + 6) * num_genes, effective)
 
         for idx in range(min(64, len(self))):
             try:
@@ -601,7 +690,8 @@ class ProcessedGenomicDataset(Dataset):
                 continue
         effective = self.window_center_size // max(self.downsample_factor, 1)
         num_genes = len(self.config.dataset_input.genes_to_use or []) or 1
-        return (8 * num_genes, effective)
+        num_ontologies = len(self.ontology_terms) if self.ontology_terms else 1
+        return ((2 * num_ontologies + 6) * num_genes, effective)
 
     def get_input_size(self) -> int:
         r, c = self.get_input_shape()
