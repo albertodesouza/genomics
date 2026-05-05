@@ -57,7 +57,6 @@ def main() -> None:
     config_path = Path(args.config_path).resolve()
     config = load_config(config_path)
     interrupt_state.interrupted = False
-    _install_signal_handlers()
 
     if config.data_split.random_seed is not None and config.data_split.random_seed != -1:
         set_random_seeds(config.data_split.random_seed, config.data_split.strict_determinism)
@@ -67,6 +66,7 @@ def main() -> None:
 
     experiment_dir = setup_experiment_dir(config, str(config_path))
     full_ds, train_loader, val_loader, test_loader = prepare_data(config, experiment_dir)
+    _install_signal_handlers()
 
     model = _build_model(config, full_ds).to(device)
     trainer = Trainer(

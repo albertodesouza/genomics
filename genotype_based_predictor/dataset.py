@@ -82,6 +82,7 @@ class ProcessedGenomicDataset(Dataset):
         self.derived_targets = out.derived_targets
         self._derived_target_config = self.derived_targets.get(self.prediction_target)
         self.dataset_metadata = getattr(self.base_dataset, "dataset_metadata", {}) or {}
+        self.dataset_dir = Path(di.dataset_dir)
         self.individuals = self.dataset_metadata.get("individuals", [])
         self.selected_sample_ids = self._resolve_selected_sample_ids()
         self.dynamic_indel_aligner = DynamicIndelAligner(
@@ -409,6 +410,8 @@ class ProcessedGenomicDataset(Dataset):
 
         array = predictions[output_type]
         track_meta = prediction_metadata.get(output_type) if prediction_metadata else None
+        if track_meta is None and array.ndim == 2:
+            track_meta = self._load_prediction_track_metadata(sample_id, window_name, haplotype, output_type)
         if self.downsample_factor != 1:
             raise ValueError("tensor_layout='haplotype_channels' nao suporta downsample_factor diferente de 1")
         if self.window_center_size <= 0:
@@ -465,11 +468,40 @@ class ProcessedGenomicDataset(Dataset):
         if not self.ontology_terms:
             return list(range(len(track_metadata)))
         requested = set(self.ontology_terms)
-        indices = [i for i, m in enumerate(track_metadata) if m.get("ontology_curie") in requested]
+        indices = [
+            i for i, m in enumerate(track_metadata)
+            if m.get("ontology_curie") in requested and m.get("strand", "+") == "+"
+        ]
         if not indices:
             available = sorted({m.get("ontology_curie", "") for m in track_metadata})
             raise ValueError(f"Nenhuma track para {sorted(requested)} em {output_type}. Disponíveis: {available}")
         return indices
+
+    def _load_prediction_track_metadata(
+        self,
+        sample_id: str,
+        window_name: str,
+        haplotype: str,
+        output_type: str,
+    ) -> Optional[List[Dict]]:
+        metadata_path = (
+            self.dataset_dir
+            / "individuals"
+            / sample_id
+            / "windows"
+            / window_name
+            / f"predictions_{haplotype}"
+            / f"{output_type}_metadata.json"
+        )
+        if not metadata_path.exists():
+            return None
+        try:
+            with open(metadata_path) as f:
+                payload = json.load(f)
+        except Exception:
+            return None
+        metadata = payload.get("metadata")
+        return metadata if isinstance(metadata, list) else None
 
     def _process_windows(self, windows: Dict, sample_id: Optional[str] = None) -> np.ndarray:
         if self.config.dataset_input.tensor_layout != "haplotype_channels":

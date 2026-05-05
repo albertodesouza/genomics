@@ -496,6 +496,7 @@ def generate_dataset_name(config: PipelineConfig) -> str:
     te = config.data_split.test_split
     seed = config.data_split.random_seed
     bal = "strat" if config.data_split.balancing_strategy == "stratified" else "shuf"
+    ont_count = len(config.dataset_input.ontology_terms or []) or 1
     di = config.dataset_input
     view_payload = {
         "dataset_dir": str(Path(di.dataset_dir).resolve()),
@@ -505,11 +506,13 @@ def generate_dataset_name(config: PipelineConfig) -> str:
         "populations_to_use": di.populations_to_use,
         "genes_to_use": di.genes_to_use,
         "alphagenome_outputs": di.alphagenome_outputs,
+        "ontology_terms": di.ontology_terms,
         "haplotype_mode": di.haplotype_mode,
         "tensor_layout": di.tensor_layout,
         "window_center_size": di.window_center_size,
         "downsample_factor": di.downsample_factor,
         "normalization_method": di.normalization_method,
+        "selected_track_index": di.selected_track_index,
         "indel_include_valid_mask": di.indel_include_valid_mask,
         "prediction_target": config.output.prediction_target,
         "train_split": tr,
@@ -520,7 +523,7 @@ def generate_dataset_name(config: PipelineConfig) -> str:
         "family_split_mode": config.data_split.family_split_mode,
     }
     view_hash = hashlib.sha1(json.dumps(view_payload, sort_keys=True).encode("utf-8")).hexdigest()[:12]
-    return f"{outputs}_{hap}_{wcs}_ds{ds}_{norm}_{bal}_view{view_hash}"
+    return f"{outputs}_{hap}_{wcs}_ds{ds}_{norm}_{bal}_ont{ont_count}_view{view_hash}"
 
 
 def get_dataset_cache_dir(config: PipelineConfig) -> Path:

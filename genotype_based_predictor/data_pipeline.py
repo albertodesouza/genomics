@@ -83,6 +83,7 @@ def _build_view_definition(config: PipelineConfig) -> Dict[str, Any]:
         "populations_to_use": di.populations_to_use,
         "genes_to_use": di.genes_to_use,
         "alphagenome_outputs": di.alphagenome_outputs,
+        "ontology_terms": di.ontology_terms,
         "haplotype_mode": di.haplotype_mode,
         "window_center_size": di.window_center_size,
         "downsample_factor": di.downsample_factor,
