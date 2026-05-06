@@ -1319,6 +1319,11 @@ class ProcessedGenomicDataset(Dataset):
         """Retorna número de classes."""
         return len(self.target_to_idx)
     
+    def get_class_names(self) -> List[str]:
+        """Lista de nomes de classe na ordem do índice (0 .. num_classes-1)."""
+        n = self.get_num_classes()
+        return [self.idx_to_target[i] for i in range(n)]
+    
     def get_input_shape(self) -> Tuple[int, int]:
         """
         Calcula shape da entrada da rede.
@@ -2946,7 +2951,7 @@ class Trainer:
             plt.imshow(img_normalized, cmap='gray', aspect='auto', interpolation='nearest')
             plt.xlabel('Genomic Position (rescaled)', fontsize=20)
             plt.title(f'Epoch {epoch + 1} | Sample {sample_id} ({target_name}) | Input 2D ({img_data.shape[0]}x{img_data.shape[1]} → {viz_height}x{viz_width})', 
-                     fontsize=24, fontweight='bold')
+                     fontsize=18, fontweight='bold')
             cbar = plt.colorbar()
             cbar.set_label('Normalized Value', fontsize=19)
             cbar.ax.tick_params(labelsize=17)
@@ -2979,7 +2984,7 @@ class Trainer:
             plt.xlabel('Feature Index', fontsize=20)
             plt.ylabel('Feature Value', fontsize=20)
             plt.title(f'Epoch {epoch + 1} | Sample {sample_id} | Input Features (n={len(features_np)})', 
-                     fontsize=24, fontweight='bold')
+                     fontsize=18, fontweight='bold')
             plt.grid(True, alpha=0.3)
             
         # Plot output probabilities
@@ -2991,7 +2996,7 @@ class Trainer:
         
         plt.xlabel('Class', fontsize=20)
         plt.ylabel('Probability', fontsize=20)
-        plt.title('Network Output Probabilities', fontsize=24, fontweight='bold')
+        plt.title('Network Output Probabilities', fontsize=18, fontweight='bold')
         plt.xticks(range(len(output_probs)), 
                   class_names[:len(output_probs)] if len(output_probs) <= len(class_names) 
                   else [str(i) for i in range(len(output_probs))])
@@ -3869,7 +3874,7 @@ class Tester:
         ax.set_xlabel('Genomic Position (bp)', fontsize=20)
         ax.set_ylabel('DeepLIFT Attribution', fontsize=20)
         ax.set_title(f'DeepLIFT Track Profile: Top 5 Most Active Genes{title_suffix}', 
-                    fontsize=24, fontweight='bold')
+                    fontsize=18, fontweight='bold')
         
         # Grid and legend
         ax.grid(True, alpha=0.3)
@@ -3908,8 +3913,12 @@ class Tester:
         output_probs = torch.softmax(outputs, dim=1).cpu().detach().numpy()[0]
         predicted_idx = output_probs.argmax()
         
-        # Get class names (if available)
-        class_names = ['AFR', 'AMR', 'EAS', 'EUR', 'SAS']  # For superpopulation
+        # Get class names from dataset mapping (supports superpopulation, population, derived_targets, etc.)
+        if hasattr(self.dataset, 'idx_to_target') and getattr(self.dataset, 'idx_to_target', None):
+            _nc = self.dataset.get_num_classes()
+            class_names = [self.dataset.idx_to_target[i] for i in range(_nc)]
+        else:
+            class_names = ['AFR', 'AMR', 'EAS', 'EUR', 'SAS']  # fallback legado
         
         # ─────────────────────────────────────────────────────────────────
         # Idempotency check: skip if output already exists
@@ -3933,9 +3942,10 @@ class Tester:
             if is_deeplift and self.deeplift_target_class != 'predicted':
                 # Class mean mode - check if class mean file exists
                 target_class_name = self.deeplift_target_class
+                target_class_file = str(target_class_name).replace(' ', '_')
                 # We need to know the number of samples, but we can check for any file matching the pattern
                 import glob
-                pattern = str(output_dir / f"class_mean_{target_class_name}_*samples_{interp_suffix}_{method_suffix}.png")
+                pattern = str(output_dir / f"class_mean_{target_class_file}_*samples_{interp_suffix}_{method_suffix}.png")
                 existing_files = glob.glob(pattern)
                 if existing_files:
                     console.print(f"[dim]⏭ Skipping visualization (already exists): {existing_files[0]}[/dim]")
@@ -3993,6 +4003,9 @@ class Tester:
         gradcam_target_class_idx = None
         gradcam_target_class_name = None
         deeplift_target_class_name = None
+        deeplift_class_mean_mode = False
+        deeplift_class_mean_input = None
+        deeplift_class_mean_num_samples = 0
         
         if self.interpretability_enabled:
             if self.gradcam is not None:
@@ -4015,11 +4028,6 @@ class Tester:
                     gradcam_map, _ = self.gradcam.generate(features.clone(), target_class=gradcam_target_class_idx)
                 except Exception as e:
                     console.print(f"[yellow]⚠ Erro ao gerar Grad-CAM: {e}[/yellow]")
-            
-            # Variáveis para modo de média de classe
-            deeplift_class_mean_mode = False
-            deeplift_class_mean_input = None
-            deeplift_class_mean_num_samples = 0
             
             if self.deeplift is not None:
                 try:
@@ -4054,6 +4062,11 @@ class Tester:
                         deeplift_class_mean_mode = True
                 except Exception as e:
                     console.print(f"[yellow]⚠ Erro ao gerar DeepLIFT: {e}[/yellow]")
+        
+        # Nome de classe seguro para nomes de arquivo (evita espaços, ex.: "strong pigmentation")
+        deeplift_target_class_file_slug = (
+            deeplift_target_class_name.replace(' ', '_') if deeplift_target_class_name else ''
+        )
         
         # Determine layout based on interpretability
         has_gradcam = gradcam_map is not None
@@ -4135,7 +4148,7 @@ class Tester:
             plt.imshow(img_normalized, cmap='gray', aspect='auto', interpolation='nearest')
             
             plt.xlabel('Gene Position', fontsize=20)
-            plt.title(input_title, fontsize=24, fontweight='bold')
+            plt.title(input_title, fontsize=18, fontweight='bold')
             cbar = plt.colorbar()
             cbar.set_label('Normalized Value', fontsize=19)
             cbar.ax.tick_params(labelsize=17)
@@ -4176,7 +4189,7 @@ class Tester:
             plt.xlabel('Feature Index', fontsize=20)
             plt.ylabel('Feature Value', fontsize=20)
             plt.title(f'{clean_dataset_name} | Sample {sample_id} | Input Features (n={len(features_np)})', 
-                     fontsize=24, fontweight='bold')
+                     fontsize=18, fontweight='bold')
             plt.grid(True, alpha=0.3)
         
         # ─────────────────────────────────────────────────────────────────
@@ -4218,7 +4231,7 @@ class Tester:
                 cbar_gc.ax.tick_params(labelsize=17)
                 # Show which class is being visualized and individual's superpopulation
                 gc_class_label = gradcam_target_class_name if gradcam_target_class_name else predicted_name
-                plt.title(f'Grad-CAM: Important Regions for Class {gc_class_label} (Individual: {target_name})', fontsize=24, fontweight='bold')
+                plt.title(f'Grad-CAM: Important Regions for Class {gc_class_label} (Individual: {target_name})', fontsize=18, fontweight='bold')
                 
                 # Compute gene importance first (needed for xlabel)
                 gene_importance = []
@@ -4339,9 +4352,9 @@ class Tester:
                 # Título: diferente para modo de média de classe
                 dl_class_label = deeplift_target_class_name if deeplift_target_class_name else predicted_name
                 if deeplift_class_mean_mode:
-                    plt.title(f'DeepLIFT: Mean Attribution for Class {dl_class_label} ({deeplift_class_mean_num_samples} samples)', fontsize=24, fontweight='bold')
+                    plt.title(f'DeepLIFT: Mean Attribution for Class {dl_class_label} ({deeplift_class_mean_num_samples} samples)', fontsize=18, fontweight='bold')
                 else:
-                    plt.title(f'DeepLIFT: Feature Attribution for Class {dl_class_label} (Individual: {target_name})', fontsize=24, fontweight='bold')
+                    plt.title(f'DeepLIFT: Feature Attribution for Class {dl_class_label} (Individual: {target_name})', fontsize=18, fontweight='bold')
                 
                 # Compute top N most active regions using configured mode
                 is_global_mode = self.top_regions_mode == 'global'
@@ -4396,7 +4409,7 @@ class Tester:
                         fasta_length = self.deeplift_fasta_length
                         interp_suffix = f"{self.top_regions_mode}_top{top_n}_{fasta_length}bp_dist{self.min_distance_bp}bp_base_{self.deeplift_baseline}"
                         if deeplift_class_mean_mode:
-                            txt_filename = f"top_regions_class_mean_{deeplift_target_class_name}_{deeplift_class_mean_num_samples}samples_{interp_suffix}_deeplift.txt"
+                            txt_filename = f"top_regions_class_mean_{deeplift_target_class_file_slug}_{deeplift_class_mean_num_samples}samples_{interp_suffix}_deeplift.txt"
                         else:
                             correct_str = "correct" if predicted_idx == target_idx else "wrong"
                             txt_filename = f"top_regions_{sample_id}_{predicted_name}_{correct_str}_{interp_suffix}_deeplift.txt"
@@ -4609,7 +4622,7 @@ class Tester:
             
             plt.xlabel('Class', fontsize=20)
             plt.ylabel('Probability', fontsize=20)
-            plt.title('Network Output Probabilities', fontsize=24, fontweight='bold')
+            plt.title('Network Output Probabilities', fontsize=18, fontweight='bold')
             plt.xticks(range(len(output_probs)), 
                       class_names[:len(output_probs)] if len(output_probs) <= len(class_names) 
                       else [str(i) for i in range(len(output_probs))])
@@ -4659,9 +4672,9 @@ class Tester:
             # Nome diferente para modo de média de classe
             if deeplift_class_mean_mode:
                 if interp_suffix:
-                    filename = f"class_mean_{deeplift_target_class_name}_{deeplift_class_mean_num_samples}samples_{interp_suffix}_{method_suffix}.png"
+                    filename = f"class_mean_{deeplift_target_class_file_slug}_{deeplift_class_mean_num_samples}samples_{interp_suffix}_{method_suffix}.png"
                 else:
-                    filename = f"class_mean_{deeplift_target_class_name}_{deeplift_class_mean_num_samples}samples_{method_suffix}.png"
+                    filename = f"class_mean_{deeplift_target_class_file_slug}_{deeplift_class_mean_num_samples}samples_{method_suffix}.png"
             else:
                 correct_str = "correct" if predicted_idx == target_idx else "wrong"
                 if interp_suffix:
@@ -6003,6 +6016,11 @@ class CachedProcessedDataset(Dataset):
     
     def get_num_classes(self) -> int:
         return len(self.target_to_idx)
+    
+    def get_class_names(self) -> List[str]:
+        """Lista de nomes de classe na ordem do índice (0 .. num_classes-1)."""
+        n = self.get_num_classes()
+        return [self.idx_to_target[i] for i in range(n)]
     
     def get_input_shape(self) -> Tuple[int, int]:
         """
