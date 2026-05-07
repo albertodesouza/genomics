@@ -168,17 +168,85 @@ def maybe_validate_family_aware_splits(config: dict, splits: dict, console: Cons
 
 
 def sample_metadata(splits: dict) -> Dict[str, dict]:
-    """Build {sample_id: {superpopulation, population, sex, split}} from splits."""
+    """Build {sample_id: metadata}, preserving split entry fields."""
     meta: Dict[str, dict] = {}
     for split_name in ("train", "val", "test"):
         for entry in splits.get(split_name, []):
-            meta[entry["sample_id"]] = {
-                "superpopulation": entry["superpopulation"],
-                "population": entry["population"],
-                "sex": entry.get("sex", 0),
-                "split": split_name,
-            }
+            item = dict(entry)
+            item["split"] = split_name
+            meta[entry["sample_id"]] = item
     return meta
+
+
+def _safe_tag(value: str) -> str:
+    """Make a compact filesystem-safe tag for config-derived names."""
+    return "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in value).strip("_") or "target"
+
+
+def get_prediction_target(config: dict) -> str:
+    """Return the configured classification target, with prediction.level as legacy fallback."""
+    return config.get("output", {}).get(
+        "prediction_target",
+        config.get("prediction", {}).get("level", "superpopulation"),
+    )
+
+
+def get_known_classes(config: dict) -> Optional[List[str]]:
+    """Return explicit class order from output.known_classes when configured."""
+    known_classes = config.get("output", {}).get("known_classes")
+    if known_classes:
+        return [str(c) for c in known_classes]
+    return None
+
+
+def get_derived_target_config(config: dict, target: str) -> Optional[dict]:
+    """Return derived target configuration for *target*, if any."""
+    derived_targets = config.get("output", {}).get("derived_targets", {})
+    cfg = derived_targets.get(target)
+    return cfg if isinstance(cfg, dict) else None
+
+
+def get_sample_target(sample_info: dict, config: dict) -> Optional[str]:
+    """Map sample metadata to the configured classification target."""
+    target = get_prediction_target(config)
+    if target in ("superpopulation", "population"):
+        value = sample_info.get(target)
+        return None if value is None else str(value)
+
+    derived_cfg = get_derived_target_config(config, target)
+    if derived_cfg is None:
+        value = sample_info.get(target)
+        if value is None:
+            raise ValueError(
+                f"prediction target '{target}' is neither a metadata field nor configured in output.derived_targets"
+            )
+        return str(value)
+
+    source_field = derived_cfg.get("source_field")
+    class_map = derived_cfg.get("class_map", {})
+    exclude_unmapped = derived_cfg.get("exclude_unmapped", False)
+    if not source_field:
+        raise ValueError(f"output.derived_targets.{target}.source_field is not configured")
+
+    source_value = sample_info.get(source_field)
+    if source_value is None:
+        return None
+
+    for class_name, source_values in class_map.items():
+        if source_value in source_values:
+            return str(class_name)
+
+    if exclude_unmapped:
+        return None
+    return str(source_value)
+
+
+def resolve_target_classes(config: dict, target_values: List[str]) -> List[str]:
+    """Resolve class order from config or observed target values."""
+    known_classes = get_known_classes(config)
+    if known_classes is not None:
+        return known_classes
+    return sorted(set(target_values))
 
 
 def build_binary_phenotype_labels(
@@ -572,7 +640,7 @@ def _build_statistics_path(config: dict) -> str:
         output_dir = os.path.dirname(output_dir)
 
     ref_subsets = sorted(stat_cfg.get("reference_subsets", ["train"]))
-    level = pred_cfg.get("level", "superpopulation")
+    level = get_prediction_target(config)
     min_maf = stat_cfg.get("min_maf", 0.01)
     max_snps = stat_cfg.get("max_snps", None)
     haplotype_mode = pred_cfg.get("haplotype_mode", "H1+H2")
@@ -585,7 +653,7 @@ def _build_statistics_path(config: dict) -> str:
     parts = [
         "snp_ancestry_statistics",
         "+".join(ref_subsets),
-        level,
+        _safe_tag(level),
         f"maf{min_maf}",
         f"max{max_snps}" if max_snps else "maxall",
         panel_tag,
@@ -617,18 +685,41 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
         sid for sid, m in meta.items() if m["split"] in ref_subsets
     )
 
-    level = pred_cfg.get("level", "superpopulation")
-    pop_map = {sid: meta[sid][level] for sid in ref_ids}
-    populations = sorted(set(pop_map.values()))
+    level = get_prediction_target(config)
+    raw_ref_count = len(ref_ids)
+    pop_map = {
+        sid: target
+        for sid in ref_ids
+        for target in [get_sample_target(meta[sid], config)]
+        if target is not None
+    }
+    ref_ids = [sid for sid in ref_ids if sid in pop_map]
+    if not ref_ids:
+        console.print(f"[red]No reference individuals have labels for target '{level}'.[/red]")
+        sys.exit(1)
+    populations = resolve_target_classes(config, [pop_map[sid] for sid in ref_ids])
+    allowed_classes = set(populations)
+    ref_ids = [sid for sid in ref_ids if pop_map[sid] in allowed_classes]
+    if not ref_ids:
+        console.print(f"[red]No reference individuals remain after applying classes for target '{level}'.[/red]")
+        sys.exit(1)
     pop_idx = {p: i for i, p in enumerate(populations)}
     K = len(populations)
 
     pop_sizes: Dict[str, int] = defaultdict(int)
     for sid in ref_ids:
         pop_sizes[pop_map[sid]] += 1
+    empty_classes = [p for p in populations if pop_sizes[p] == 0]
+    if empty_classes:
+        console.print(
+            f"[red]No reference individuals found for class(es) {empty_classes} in target '{level}'.[/red]"
+        )
+        sys.exit(1)
 
     console.print(f"  Reference subsets: {ref_subsets} ({len(ref_ids)} individuals)")
-    console.print(f"  Level: {level} ({K} classes)")
+    if len(ref_ids) < raw_ref_count:
+        console.print(f"  Excluded unmapped target samples: {raw_ref_count - len(ref_ids)}")
+    console.print(f"  Target: {level} ({K} classes)")
     for p in populations:
         console.print(f"    {p}: {pop_sizes[p]}")
 
@@ -769,6 +860,8 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
         "metadata": {
             "reference_subsets": ref_subsets,
             "level": level,
+            "target": level,
+            "derived_target_config": get_derived_target_config(config, level),
             "populations": populations,
             "pop_sizes": dict(pop_sizes),
             "n_individuals": len(ref_ids),
@@ -1129,7 +1222,7 @@ def predict_single_individual(
     needed_snps = set(allele_freqs.keys())
 
     method = pred_cfg.get("method", "admixture_em")
-    level = pred_cfg.get("level", "superpopulation")
+    level = stats["metadata"].get("level", get_prediction_target(config))
 
     sample_id = ind_path.stem
     console.print(
@@ -1185,9 +1278,11 @@ def predict_single_individual(
         "proportions": props,
         "method": method,
         "level": level,
+        "target": level,
     }
 
-    ind_file = Path(f"{sample_id}_{method}_{level}.json")
+    level_tag = _safe_tag(level)
+    ind_file = Path(f"{sample_id}_{method}_{level_tag}.json")
     with open(ind_file, "w") as fout:
         json.dump(entry, fout, indent=2)
 
@@ -1243,7 +1338,7 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
     maybe_validate_family_aware_splits(config, splits, console)
     meta = sample_metadata(splits)
     eval_subsets = pred_cfg.get("evaluation_subsets", ["test"])
-    eval_ids = [sid for sid, m in meta.items() if m["split"] in eval_subsets]
+    raw_eval_ids = [sid for sid, m in meta.items() if m["split"] in eval_subsets]
 
     ind_dir = Path(inp["individuals_dir"])
     fname_tpl = config.get("conversion", {}).get(
@@ -1251,7 +1346,14 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
     )
 
     method = pred_cfg.get("method", "mle")
-    level = pred_cfg.get("level", "superpopulation")
+    level = stats["metadata"].get("level", get_prediction_target(config))
+    eval_targets = {
+        sid: target
+        for sid in raw_eval_ids
+        for target in [get_sample_target(meta[sid], config)]
+        if target is not None and target in populations
+    }
+    eval_ids = [sid for sid in raw_eval_ids if sid in eval_targets]
     results_dir = Path(
         pred_cfg.get("results_dir", str(SCRIPT_DIR / "results"))
     )
@@ -1261,6 +1363,8 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
 
     haplotype_mode = pred_cfg.get("haplotype_mode", "H1+H2")
     console.print(f"  Evaluation: {len(eval_ids)} individuals from {eval_subsets}")
+    if len(eval_ids) < len(raw_eval_ids):
+        console.print(f"  Excluded unmapped/out-of-class target samples: {len(raw_eval_ids) - len(eval_ids)}")
     console.print(f"  Method: {method}")
     console.print(f"  Haplotype mode: {haplotype_mode}")
 
@@ -1288,7 +1392,7 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
                 continue
 
             genos = _load_23andme_genotypes(str(fpath), needed_snps)
-            true_label = meta[sid][level]
+            true_label = eval_targets[sid]
             sid_split = meta[sid]["split"]
 
             if method == "mle":
@@ -1359,8 +1463,9 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
                 console.print(f"[red]Unknown method: {method}[/red]")
                 return
 
-            ind_file = ind_results_dir / f"{sid}_{method}_{level}.json"
-            ind_data = {**entry, "method": method, "level": level}
+            level_tag = _safe_tag(level)
+            ind_file = ind_results_dir / f"{sid}_{method}_{level_tag}.json"
+            ind_data = {**entry, "method": method, "level": level, "target": level}
             with open(ind_file, "w") as fout:
                 json.dump(ind_data, fout, indent=2)
 
@@ -1504,12 +1609,14 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
         )
 
     # ── Save ─────────────────────────────────────────
-    results_path = results_dir / f"predictions_{method}_{level}.json"
+    results_path = results_dir / f"predictions_{method}_{_safe_tag(level)}.json"
 
     results_output = {
         "metadata": {
             "method": method,
             "level": level,
+            "target": level,
+            "derived_target_config": get_derived_target_config(config, level),
             "evaluation_subsets": eval_subsets,
             "n_snps": len(needed_snps),
             "n_individuals": len(predictions),

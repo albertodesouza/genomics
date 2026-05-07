@@ -2,7 +2,7 @@
 
 > Ancestry prediction from genome-wide SNP genotypes using allele frequency-based methods.
 
-This module extracts SNP genotypes from multi-sample 1000 Genomes VCF files, converts them to the 23andMe raw data format, computes per-population allele frequency statistics, and predicts ancestry at the superpopulation or population level.
+This module extracts SNP genotypes from multi-sample 1000 Genomes VCF files, converts them to the 23andMe raw data format, computes per-class allele frequency statistics, and predicts ancestry or derived population-group labels.
 
 ---
 
@@ -47,7 +47,7 @@ The **SNP Ancestry Predictor** is a three-step pipeline that:
 
 - Fully configurable via a single YAML file
 - Batch VCF processing via `bcftools` for high throughput
-- Supports both superpopulation (5 classes: AFR, AMR, EAS, EUR, SAS) and population (26 classes) prediction levels
+- Supports superpopulation, population, and config-defined derived targets such as binary phenotype classes from 1000G populations
 - Three estimation methods: Maximum Likelihood Classification, Admixture EM (fast), and Admixture MLE
 - Idempotent execution: safely resume after interruption
 - Validates family-aware splits by checking that samples sharing the same `family_id`
@@ -278,7 +278,7 @@ The YAML configuration file has five sections. All paths can be absolute or rela
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `level` | string | `"superpopulation"` | `"superpopulation"` (5 classes) or `"population"` (26 classes) |
+| `level` | string | `"superpopulation"` | Legacy target selector: `"superpopulation"` (5 classes) or `"population"` (26 classes). Ignored when `output.prediction_target` is set. |
 | `haplotype_mode` | string | `"H1+H2"` | `"H1+H2"` (diploid, both haplotypes), `"H1"` (first haplotype only), or `"H2"` (second haplotype only). Affects Steps 2 and 3. Use `"H1"` to match `neural_ancestry_predictor`'s default for a fair comparison. |
 | `method` | string | `"admixture_em"` | `"mle"`, `"admixture_em"`, or `"admixture_mle"` |
 | `evaluation_subsets` | list | `["test"]` | Split subsets to evaluate |
@@ -286,6 +286,29 @@ The YAML configuration file has five sections. All paths can be absolute or rela
 | `admixture_em.max_iter` | int | `1000` | Maximum EM iterations per individual |
 | `admixture_em.tol` | float | `1e-7` | Convergence tolerance on proportions |
 | `admixture_mle.n_restarts` | int | `20` | Random restarts for the L-BFGS-B optimiser |
+
+### `output`
+
+Use `output.prediction_target` to select the classification target with the same format supported by `neural_ancestry_predictor`. Built-in targets are `superpopulation` and `population`. Derived targets can map a source metadata field, such as 1000G `population`, into custom classes.
+
+```yaml
+output:
+  prediction_target: "pigmentation"
+  known_classes:
+    - "strong pigmentation"
+    - "weak pigmentation"
+  derived_targets:
+    pigmentation:
+      source_field: "population"
+      exclude_unmapped: true
+      class_map:
+        strong pigmentation: ["YRI", "ESN", "LWK", "MSL", "GWD"]
+        weak pigmentation: ["FIN", "CEU", "GBR"]
+```
+
+With this configuration, Step 2 computes allele frequencies for `strong pigmentation` and `weak pigmentation` instead of population/superpopulation classes. Step 3 evaluates only samples mapped to one of those classes when `exclude_unmapped: true`.
+
+`configs/pigmentation_binary.yaml` provides a complete SNP-based configuration matching `neural_ancestry_predictor/configs/pigmentation_binary.yaml`.
 
 ### `pipeline`
 
@@ -396,6 +419,7 @@ $$k^* = \arg\max_k \; \alpha_k$$
   "metadata": {
     "reference_subsets": ["train"],
     "level": "superpopulation",
+    "target": "superpopulation",
     "populations": ["AFR", "AMR", "EAS", "EUR", "SAS"],
     "pop_sizes": {"AFR": 200, "AMR": 85, ...},
     "n_individuals": 910,
@@ -412,7 +436,7 @@ $$k^* = \arg\max_k \; \alpha_k$$
 }
 ```
 
-The frequency arrays follow the order defined in `metadata.populations`.
+The frequency arrays follow the order defined in `metadata.populations`. For derived targets, `metadata.level` and `metadata.target` contain the derived target name, and `metadata.populations` contains the configured class names.
 
 ### Predictions file (Step 3)
 
@@ -421,6 +445,7 @@ The frequency arrays follow the order defined in `metadata.populations`.
   "metadata": {
     "method": "mle",
     "level": "superpopulation",
+    "target": "superpopulation",
     "n_snps": 500000,
     "n_individuals": 195
   },
