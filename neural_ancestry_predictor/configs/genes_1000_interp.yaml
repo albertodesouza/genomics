@@ -655,7 +655,8 @@ debug:
       
       # Classe alvo para gerar o mapa de ativação
       # "predicted" = usa a classe predita pela rede (padrão)
-      # "AFR", "AMR", "EAS", "EUR", "SAS" = classe específica
+      # "AFR", "AMR", "EAS", "EUR", "SAS" = classe específica (superpopulation)
+      # Também aceita qualquer nome em output.known_classes (ex.: "strong pigmentation").
       # Isso permite visualizar quais regiões ativam uma classe específica,
       # independente do que a rede prediz para a amostra
       target_class: "AFR"
@@ -669,7 +670,8 @@ debug:
       
       # Classe alvo para gerar as atribuições
       # "predicted" = usa a classe predita pela rede (padrão)
-      # "AFR", "AMR", "EAS", "EUR", "SAS" = classe específica
+      # "AFR", "AMR", "EAS", "EUR", "SAS" = classe específica (superpopulation)
+      # Também aceita qualquer nome em output.known_classes (ex.: "strong pigmentation").
       target_class: "AFR"
       
       # Tamanho da sequência FASTA a extrair para cada região (em bp)
