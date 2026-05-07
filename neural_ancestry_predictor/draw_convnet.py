@@ -11,13 +11,18 @@ Arquitetura:
   • Stage 3: 64 filters, kernel=(1, 5), stride=(1, 2) → Output: 64 x 11 x 256
   • Global MaxPool: kernel=(1, 256) → 64 x 11 x 1
   • Flatten: 704
-  • FC: 704 → 256 → 5
+  • FC: 704 → 256 → N (N=5 ancestralidade ou N=2 pigmentação binária)
 
 Genes: MC1R, TYRP1, TYR, SLC45A2, DDB1, EDAR, MFSD12, OCA2, HERC2, SLC24A5, TCHH
+
+Uso:
+  python draw_convnet.py                # 5 classes de ancestralidade (default)
+  python draw_convnet.py --binary       # 2 classes: Strong P. / Weak P.
 
 Based on original code by Gavin Weiguang Ding (BSD-3-Clause License)
 """
 
+import argparse
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -170,16 +175,32 @@ def draw_fc_layer(ax, x_pos, num_neurons, max_show=10, color='#DDA0DD',
     return x_pos + spacing
 
 
-def draw_cnn2_architecture():
+def draw_cnn2_architecture(binary=False):
     """
     Desenha a arquitetura completa do CNN2AncestryPredictor.
     Otimizado para colunas de artigos IEEE (fontes grandes).
+
+    Args:
+        binary: Se True, desenha a versão com 2 saídas (Strong P. / Weak P.)
+                para classificação binária de pigmentação. Se False (default),
+                desenha a versão com 5 classes de ancestralidade.
     """
     fig, ax = plt.subplots(1, 1, figsize=(20, 12))
-    
+
+    # Configuração da camada de saída conforme o modo
+    if binary:
+        output_classes = ['Strong P.', 'Weak P.']
+        output_label = 'Output\n2 classes'
+        title_suffix = '11 Genes → Binary Pigmentation'
+    else:
+        output_classes = ['AFR', 'AMR', 'EAS', 'EUR', 'SAS']
+        output_label = 'Output\n5 classes'
+        title_suffix = '11 Genes → 5 Ancestry Classes'
+    num_output = len(output_classes)
+
     # Título
     ax.set_title('CNN2AncestryPredictor Architecture\n'
-                 '11 Genes → 5 Ancestry Classes', 
+                 f'{title_suffix}',
                  fontsize=36, fontweight='bold', pad=30)
     
     x_pos = 0
@@ -271,18 +292,20 @@ def draw_cnn2_architecture():
     x_pos = x_pos + fc_spacing + 10
     
     # ========== OUTPUT ==========
-    # 5 classes
     output_neuron_size = 9
-    end_x = draw_fc_layer(ax, x_pos, 5, max_show=5, color=COLOR_OUTPUT,
-                          label_text='Output\n5 classes', neuron_size=output_neuron_size)
-    
-    # Adicionar labels das classes de ancestralidade
-    ancestry_classes = ['AFR', 'AMR', 'EAS', 'EUR', 'SAS']
+    end_x = draw_fc_layer(ax, x_pos, num_output, max_show=num_output,
+                          color=COLOR_OUTPUT,
+                          label_text=output_label,
+                          neuron_size=output_neuron_size)
+
+    # Adicionar labels das classes de saída (rótulos mais longos no modo binário
+    # precisam de um pequeno deslocamento extra para não sobrepor os neurônios)
     spacing_output = output_neuron_size * 1.5  # neuron_size * 1.5 para output
-    for i, cls in enumerate(ancestry_classes):
-        y = (5 * spacing_output)/2 - i * spacing_output - spacing_output/2
-        ax.text(x_pos + 16, y, cls, fontsize=24, va='center', fontweight='bold',
-                color='darkblue')
+    label_offset = 18 if binary else 16
+    for i, cls in enumerate(output_classes):
+        y = (num_output * spacing_output)/2 - i * spacing_output - spacing_output/2
+        ax.text(x_pos + label_offset, y, cls, fontsize=24, va='center',
+                fontweight='bold', color='darkblue')
     
     # ========== LEGENDA ==========
     legend_elements = [
@@ -306,22 +329,41 @@ def draw_cnn2_architecture():
     return fig
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description='Desenha a arquitetura do CNN2AncestryPredictor.'
+    )
+    parser.add_argument(
+        '--binary', '--pigmentation',
+        dest='binary',
+        action='store_true',
+        help='Gera a versão da CNN com 2 saídas (Strong P. / Weak P.) '
+             'para classificação binária de pigmentação. Sem este flag, '
+             'gera a versão padrão com 5 classes de ancestralidade.'
+    )
+    return parser.parse_args()
+
+
 if __name__ == '__main__':
-    # Desenhar a arquitetura
-    fig = draw_cnn2_architecture()
-    
-    # Salvar figura
+    args = parse_args()
+
+    # Desenhar a arquitetura (5 classes ou 2 classes conforme o modo)
+    fig = draw_cnn2_architecture(binary=args.binary)
+
+    # Nome base dos arquivos: usa sufixo "_binary" no modo binário
     fig_dir = os.path.dirname(os.path.abspath(__file__))
-    fig_name = 'cnn2_ancestry_predictor_architecture.png'
-    fig_path = os.path.join(fig_dir, fig_name)
-    
-    fig.savefig(fig_path, dpi=300, bbox_inches='tight', 
+    base_name = 'cnn2_ancestry_predictor_architecture'
+    if args.binary:
+        base_name += '_binary'
+
+    fig_path = os.path.join(fig_dir, base_name + '.png')
+    fig.savefig(fig_path, dpi=300, bbox_inches='tight',
                 pad_inches=0.2, facecolor='white')
     print(f"Figura salva em: {fig_path}")
-    
+
     # Também salvar em PDF para alta qualidade
-    fig_path_pdf = os.path.join(fig_dir, 'cnn2_ancestry_predictor_architecture.pdf')
+    fig_path_pdf = os.path.join(fig_dir, base_name + '.pdf')
     fig.savefig(fig_path_pdf, bbox_inches='tight', pad_inches=0.2)
     print(f"PDF salvo em: {fig_path_pdf}")
-    
+
     plt.show()
