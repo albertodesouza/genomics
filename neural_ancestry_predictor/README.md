@@ -871,6 +871,17 @@ python3 sklearn_pca_cache.py --config configs/genes_1000.yaml --force
 
 # Plot cumulative explained variance for IncrementalPCA
 python3 plot_sklearn_pca_variance.py --config configs/genes_1000.yaml --output runs/pca_variance.png
+python3 plot_sklearn_pca_variance.py --config configs/genes_1000.yaml \
+    --output runs/pca_variance.png --json-output runs/pca_variance.json
+
+# Replot from an existing PCA cache and also export exact values to JSON
+python3 plot_sklearn_pca_variance.py --from-cache /path/to/pca_cache/rna_seq_..._pca300 \
+    --output runs/pca_variance.png --json-output runs/pca_variance.json
+
+# Plot only the cumulative explained variance ratio from the JSON, without title,
+# marking only the y=0.95 threshold point with dashed guide lines and axis values
+python3 plot_pca_cumulative_from_json.py --input-json runs/pca_variance.json \
+    --output runs/pca_cumulative_variance_clean.png
 
 # Plot confusion matrix PNGs from train/val/test_results.json
 python3 plot_sklearn_confusion_matrices.py --experiment-dirs /path/to/svm_run /path/to/rf_run /path/to/xgboost_run
@@ -886,6 +897,13 @@ python3 tune_sklearn_baselines.py --config configs/genes_1000.yaml --output-dir 
 ```
 
 Outputs:
+- `pca_variance.png` with cumulative and per-component explained variance from IncrementalPCA
+- optional `pca_variance.json` via `--json-output`, containing exact numeric values used in the plot:
+  - `thresholds["0.95"].first_k`: first component count where cumulative explained variance reaches 95%
+  - `thresholds["0.95"].cumulative_at_first_k`: exact cumulative value at that component
+  - `explained_variance_ratio`: per-component explained variance ratios
+  - `cumulative_explained_variance_ratio`: cumulative explained variance ratios for every k
+- `pca_cumulative_variance_clean.png` from `plot_pca_cumulative_from_json.py`, showing only the cumulative curve and the `0.95` threshold point
 - `tuning_results.csv` / `tuning_results.json` with per-trial metrics
 - `tuning_best_per_model_val_metrics.png` (best trial per model, selected by validation accuracy)
 - `tuning_top_trials_val_accuracy.png` (top-k bars per model; controlled by `--top-k-bars` and `--label-max-len`)
@@ -1768,7 +1786,8 @@ plt.savefig('loss_curve.png', dpi=300, bbox_inches='tight')
 neural_ancestry_predictor/
 ├── neural_ancestry_predictor.py      # Main training/inference program
 ├── sklearn_pca_cache.py              # Shared StandardScaler+IncrementalPCA disk cache for sklearn baselines
-├── plot_sklearn_pca_variance.py      # Cumulative explained variance plot (IncrementalPCA)
+├── plot_sklearn_pca_variance.py      # Cumulative explained variance plot/JSON (IncrementalPCA)
+├── plot_pca_cumulative_from_json.py  # Clean cumulative PCA variance plot from JSON
 ├── plot_sklearn_confusion_matrices.py # Confusion matrix plotting from sklearn result JSONs
 ├── tune_sklearn_baselines.py          # Hyperparameter tuning on cached PCA (val metrics + plots)
 ├── annotate_deeplift_windows.py      # DeepLIFT output variant annotation
@@ -1828,7 +1847,7 @@ For issues or questions:
   - optional `pca_align_n_train` to avoid tail padding
 - ✨ **NEW: progress bars for PCA/scaler stages** in cache and no-cache paths
 - ✨ **NEW: diagnostics utilities**
-  - `plot_sklearn_pca_variance.py` for cumulative explained variance
+  - `plot_sklearn_pca_variance.py` for cumulative explained variance plot and optional exact JSON export
   - `plot_sklearn_confusion_matrices.py` for train/val/test confusion-matrix PNGs
   - `tune_sklearn_baselines.py` for grid search on cached PCA with validation metric plots
 - ✨ **NEW: large-grid friendly tuning plots**
