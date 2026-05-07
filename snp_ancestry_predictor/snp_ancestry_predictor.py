@@ -28,13 +28,11 @@ import sys
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
-import matplotlib.pyplot as plt
 import numpy as np
 import yaml
 from scipy.optimize import minimize
-from scipy.stats import chi2_contingency
 
 from rich.console import Console
 from rich.panel import Panel
@@ -77,24 +75,7 @@ GT_DOSE = {
 def load_config(path: Path) -> dict:
     """Load YAML configuration file."""
     with open(path, "r") as f:
-        config = yaml.safe_load(f)
-    config["_config_dir"] = str(path.resolve().parent)
-    return config
-
-
-def resolve_config_path(config: dict, path: Optional[str]) -> Optional[str]:
-    """Resolve config paths relative to the YAML file directory when needed."""
-    if path is None:
-        return None
-    p = Path(path)
-    if p.is_absolute() or p.exists():
-        return str(p)
-    cfg_dir = config.get("_config_dir")
-    if cfg_dir:
-        candidate = Path(cfg_dir) / p
-        if candidate.exists():
-            return str(candidate)
-    return str(p)
+        return yaml.safe_load(f)
 
 
 def load_splits(path: str) -> dict:
@@ -103,193 +84,38 @@ def load_splits(path: str) -> dict:
         return json.load(f)
 
 
-def _load_individual_pedigree(individuals_dir: Path, sample_ids: Set[str]) -> Dict[str, Dict[str, Any]]:
-    """Load per-sample metadata when available."""
-    pedigree: Dict[str, Dict[str, Any]] = {}
-    for sample_id in sample_ids:
-        metadata_path = individuals_dir / sample_id / "individual_metadata.json"
-        if not metadata_path.exists():
-            continue
-        try:
-            with open(metadata_path, "r") as f:
-                pedigree[sample_id] = json.load(f)
-        except Exception:
-            continue
-    return pedigree
+def _resolve_derived_target(source_value: Optional[str], dt_cfg: dict) -> Optional[str]:
+    """Resolve one derived target value from its source field."""
+    class_map = dt_cfg.get("class_map", {})
+    exclude_unmapped = dt_cfg.get("exclude_unmapped", False)
+    for class_name, source_values in class_map.items():
+        if source_value in source_values:
+            return class_name
+    if exclude_unmapped:
+        return None
+    return source_value
 
 
-def validate_family_aware_splits(splits: dict, individuals_dir: Path, console: Console) -> None:
-    """Ensure family groups stay inside a single split.
+def sample_metadata(splits: dict, config: Optional[dict] = None) -> Dict[str, dict]:
+    """Build sample metadata, optionally including derived targets."""
+    pred_cfg = (config or {}).get("prediction", {})
+    derived_targets = pred_cfg.get("derived_targets", {})
 
-    The neural pipeline already emits family-aware splits. This SNP baseline
-    consumes those splits and should fail fast if a provided split file breaks
-    the same invariant.
-    """
-    split_to_ids: Dict[str, List[str]] = {
-        split_name: [entry["sample_id"] for entry in splits.get(split_name, [])]
-        for split_name in ("train", "val", "test")
-    }
-    sample_to_split = {
-        sample_id: split_name
-        for split_name, sample_ids in split_to_ids.items()
-        for sample_id in sample_ids
-    }
-    if not sample_to_split:
-        return
-
-    pedigree = _load_individual_pedigree(individuals_dir, set(sample_to_split))
-    if not pedigree:
-        console.print("[cyan]Family-aware split check: no individual_metadata.json files found; skipping.[/cyan]")
-        return
-
-    groups_by_family_id: Dict[str, List[str]] = {}
-    for sample_id in sample_to_split:
-        metadata = pedigree.get(sample_id, {})
-        family_id = metadata.get("family_id")
-        if family_id in [None, "", "0"]:
-            family_key = sample_id
-        else:
-            family_key = str(family_id)
-        groups_by_family_id.setdefault(family_key, []).append(sample_id)
-
-    groups = list(groups_by_family_id.values())
-    family_groups = sum(1 for group in groups if len(group) > 1)
-    console.print(
-        f"[cyan]Family-aware split check: source=family_id, groups={len(groups)}, family_groups={family_groups}[/cyan]"
-    )
-
-    conflicts: List[Tuple[List[str], Set[str]]] = []
-    for group in groups:
-        group_splits = {sample_to_split[sample_id] for sample_id in group if sample_id in sample_to_split}
-        if len(group_splits) > 1:
-            conflicts.append((sorted(group), group_splits))
-
-    if conflicts:
-        console.print(
-            f"[red]Error: found {len(conflicts)} family group(s) split across train/val/test.[/red]"
-        )
-        for group, group_splits in conflicts[:10]:
-            console.print(f"  [red]{', '.join(group)} -> {', '.join(sorted(group_splits))}[/red]")
-        if len(conflicts) > 10:
-            console.print(f"  [red]... and {len(conflicts) - 10} more[/red]")
-        sys.exit(1)
-
-
-def maybe_validate_family_aware_splits(config: dict, splits: dict, console: Console) -> None:
-    """Optionally validate family-aware split invariants."""
-    inp = config.get("input", {})
-    if not inp.get("validate_family_aware_splits", True):
-        console.print("[yellow]Family-aware split check disabled by config.[/yellow]")
-        return
-    validate_family_aware_splits(splits, Path(inp["individuals_dir"]), console)
-
-
-def sample_metadata(splits: dict) -> Dict[str, dict]:
-    """Build {sample_id: metadata}, preserving split entry fields."""
     meta: Dict[str, dict] = {}
     for split_name in ("train", "val", "test"):
         for entry in splits.get(split_name, []):
-            item = dict(entry)
-            item["split"] = split_name
-            meta[entry["sample_id"]] = item
-    return meta
-
-
-def _safe_tag(value: str) -> str:
-    """Make a compact filesystem-safe tag for config-derived names."""
-    return "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in value).strip("_") or "target"
-
-
-def get_prediction_target(config: dict) -> str:
-    """Return the configured classification target, with prediction.level as legacy fallback."""
-    return config.get("output", {}).get(
-        "prediction_target",
-        config.get("prediction", {}).get("level", "superpopulation"),
-    )
-
-
-def get_known_classes(config: dict) -> Optional[List[str]]:
-    """Return explicit class order from output.known_classes when configured."""
-    known_classes = config.get("output", {}).get("known_classes")
-    if known_classes:
-        return [str(c) for c in known_classes]
-    return None
-
-
-def get_derived_target_config(config: dict, target: str) -> Optional[dict]:
-    """Return derived target configuration for *target*, if any."""
-    derived_targets = config.get("output", {}).get("derived_targets", {})
-    cfg = derived_targets.get(target)
-    return cfg if isinstance(cfg, dict) else None
-
-
-def get_sample_target(sample_info: dict, config: dict) -> Optional[str]:
-    """Map sample metadata to the configured classification target."""
-    target = get_prediction_target(config)
-    if target in ("superpopulation", "population"):
-        value = sample_info.get(target)
-        return None if value is None else str(value)
-
-    derived_cfg = get_derived_target_config(config, target)
-    if derived_cfg is None:
-        value = sample_info.get(target)
-        if value is None:
-            raise ValueError(
-                f"prediction target '{target}' is neither a metadata field nor configured in output.derived_targets"
-            )
-        return str(value)
-
-    source_field = derived_cfg.get("source_field")
-    class_map = derived_cfg.get("class_map", {})
-    exclude_unmapped = derived_cfg.get("exclude_unmapped", False)
-    if not source_field:
-        raise ValueError(f"output.derived_targets.{target}.source_field is not configured")
-
-    source_value = sample_info.get(source_field)
-    if source_value is None:
-        return None
-
-    for class_name, source_values in class_map.items():
-        if source_value in source_values:
-            return str(class_name)
-
-    if exclude_unmapped:
-        return None
-    return str(source_value)
-
-
-def resolve_target_classes(config: dict, target_values: List[str]) -> List[str]:
-    """Resolve class order from config or observed target values."""
-    known_classes = get_known_classes(config)
-    if known_classes is not None:
-        return known_classes
-    return sorted(set(target_values))
-
-
-def build_binary_phenotype_labels(
-    splits: dict,
-    positive_populations: Set[str],
-    negative_populations: Set[str],
-) -> Dict[str, Dict[str, Any]]:
-    """Build binary phenotype labels from population membership."""
-    meta: Dict[str, Dict[str, Any]] = {}
-    for split_name in ("train", "val", "test"):
-        for entry in splits.get(split_name, []):
-            population = entry["population"]
-            if population in positive_populations:
-                meta[entry["sample_id"]] = {
-                    "label": 1,
-                    "label_name": "positive",
-                    "population": population,
-                    "split": split_name,
-                }
-            elif population in negative_populations:
-                meta[entry["sample_id"]] = {
-                    "label": 0,
-                    "label_name": "negative",
-                    "population": population,
-                    "split": split_name,
-                }
+            sample_id = entry["sample_id"]
+            item = {
+                "superpopulation": entry["superpopulation"],
+                "population": entry["population"],
+                "sex": entry.get("sex", 0),
+                "split": split_name,
+            }
+            for level_name, dt_cfg in derived_targets.items():
+                source_field = dt_cfg.get("source_field")
+                source_value = entry.get(source_field) if source_field else None
+                item[level_name] = _resolve_derived_target(source_value, dt_cfg)
+            meta[sample_id] = item
     return meta
 
 
@@ -326,40 +152,6 @@ def load_snp_panel(path: str) -> Set[str]:
             if tok and not tok.startswith("#"):
                 panel.add(tok)
     return panel
-
-
-def load_region_bed(path: str) -> Dict[str, List[Tuple[int, int]]]:
-    """Load BED-like regions as {normalized_chrom: [(start_1based, end_1based_inclusive)]}."""
-    regions: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            parts = line.split()
-            if len(parts) < 3:
-                continue
-            chrom = normalize_chrom(parts[0])
-            # BED is 0-based half-open; convert to 1-based inclusive VCF coordinates.
-            start = int(parts[1]) + 1
-            end = int(parts[2])
-            regions[chrom].append((start, end))
-    for chrom in regions:
-        regions[chrom].sort()
-    return dict(regions)
-
-
-def position_in_regions(chrom: str, pos: int, regions: Optional[Dict[str, List[Tuple[int, int]]]]) -> bool:
-    """Return True when no region filter is set or chrom:pos is inside a configured region."""
-    if regions is None:
-        return True
-    chrom_regions = regions.get(normalize_chrom(chrom), [])
-    for start, end in chrom_regions:
-        if pos < start:
-            return False
-        if start <= pos <= end:
-            return True
-    return False
 
 
 def _ensure_fd_limit(needed: int, console: Console) -> int:
@@ -460,7 +252,6 @@ def _process_chromosome_batch(
     fname_tpl: str,
     inc_expr: str,
     panel: Optional[Set[str]],
-    regions: Optional[Dict[str, List[Tuple[int, int]]]],
     dbsnp_vcf: Optional[str] = None,
 ) -> Dict[str, int]:
     """Run bcftools query for *batch_ids* on one chromosome and write results.
@@ -490,8 +281,6 @@ def _process_chromosome_batch(
         rsid = parts[2]
         if panel is not None and rsid not in panel:
             continue
-        if regions is not None and not position_in_regions(parts[0], int(parts[1]), regions):
-            continue
 
         ref, alt = parts[3], parts[4]
         nc = normalize_chrom(parts[0])
@@ -516,8 +305,7 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
     conv = config.get("conversion", {})
 
     splits = load_splits(inp["splits_metadata"])
-    maybe_validate_family_aware_splits(config, splits, console)
-    meta = sample_metadata(splits)
+    meta = sample_metadata(splits, config)
     all_ids = list(meta.keys())
     ind_dir = Path(inp["individuals_dir"])
     fname_tpl = conv.get("output_filename", "{sample_id}_23andme.txt")
@@ -538,21 +326,13 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
 
     panel: Optional[Set[str]] = None
     if conv.get("snp_panel"):
-        panel = load_snp_panel(resolve_config_path(config, conv["snp_panel"]))
+        panel = load_snp_panel(conv["snp_panel"])
         console.print(f"  SNP panel: {len(panel):,} SNPs")
     elif conv.get("filter_by_chip_panel", False):
         ref_dir = conv.get("ref_dir", str(SCRIPT_DIR / "refs"))
         panel_path = ensure_chip_panel_available(fmt_version, ref_dir)
         panel = load_snp_panel(str(panel_path))
         console.print(f"  Chip panel ({fmt_version}): {len(panel):,} SNPs")
-
-    regions: Optional[Dict[str, List[Tuple[int, int]]]] = None
-    if conv.get("region_bed"):
-        region_bed = resolve_config_path(config, conv["region_bed"])
-        regions = load_region_bed(region_bed)
-        console.print(
-            f"  Region filter: {sum(len(v) for v in regions.values()):,} regions from {region_bed}"
-        )
 
     chroms = inp.get("chromosomes", DEFAULT_CHROMS)
     vcf_pat = inp["vcf_pattern"]
@@ -640,7 +420,7 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
                 prog.update(task, description=label)
 
                 batch_counts = _process_chromosome_batch(
-                    vcf, batch, ind_dir, fname_tpl, inc_expr, panel, regions,
+                    vcf, batch, ind_dir, fname_tpl, inc_expr, panel,
                     dbsnp_vcf=dbsnp_vcf,
                 )
                 for sid, cnt in batch_counts.items():
@@ -702,30 +482,23 @@ def _build_statistics_path(config: dict) -> str:
         output_dir = os.path.dirname(output_dir)
 
     ref_subsets = sorted(stat_cfg.get("reference_subsets", ["train"]))
-    level = get_prediction_target(config)
+    level = pred_cfg.get("level", "superpopulation")
     min_maf = stat_cfg.get("min_maf", 0.01)
     max_snps = stat_cfg.get("max_snps", None)
     haplotype_mode = pred_cfg.get("haplotype_mode", "H1+H2")
 
     panel_tag = "nopanel"
-    snp_panel = resolve_config_path(config, stat_cfg.get("snp_panel"))
+    snp_panel = stat_cfg.get("snp_panel")
     if snp_panel:
         panel_tag = Path(snp_panel).stem
-    region_tag = "noregion"
-    region_bed = resolve_config_path(
-        config, stat_cfg.get("region_bed") or config.get("conversion", {}).get("region_bed")
-    )
-    if region_bed:
-        region_tag = Path(region_bed).stem
 
     parts = [
         "snp_ancestry_statistics",
         "+".join(ref_subsets),
-        _safe_tag(level),
+        level,
         f"maf{min_maf}",
         f"max{max_snps}" if max_snps else "maxall",
         panel_tag,
-        region_tag,
     ]
     if haplotype_mode != "H1+H2":
         parts.append(haplotype_mode)
@@ -746,49 +519,27 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
         return
 
     splits = load_splits(inp["splits_metadata"])
-    maybe_validate_family_aware_splits(config, splits, console)
-    meta = sample_metadata(splits)
+    meta = sample_metadata(splits, config)
 
+    level = pred_cfg.get("level", "superpopulation")
     ref_subsets = stat_cfg.get("reference_subsets", ["train"])
     ref_ids = sorted(
-        sid for sid, m in meta.items() if m["split"] in ref_subsets
+        sid
+        for sid, m in meta.items()
+        if m["split"] in ref_subsets and m.get(level) is not None
     )
 
-    level = get_prediction_target(config)
-    raw_ref_count = len(ref_ids)
-    pop_map = {
-        sid: target
-        for sid in ref_ids
-        for target in [get_sample_target(meta[sid], config)]
-        if target is not None
-    }
-    ref_ids = [sid for sid in ref_ids if sid in pop_map]
-    if not ref_ids:
-        console.print(f"[red]No reference individuals have labels for target '{level}'.[/red]")
-        sys.exit(1)
-    populations = resolve_target_classes(config, [pop_map[sid] for sid in ref_ids])
-    allowed_classes = set(populations)
-    ref_ids = [sid for sid in ref_ids if pop_map[sid] in allowed_classes]
-    if not ref_ids:
-        console.print(f"[red]No reference individuals remain after applying classes for target '{level}'.[/red]")
-        sys.exit(1)
+    pop_map = {sid: meta[sid][level] for sid in ref_ids}
+    populations = sorted(set(pop_map.values()))
     pop_idx = {p: i for i, p in enumerate(populations)}
     K = len(populations)
 
     pop_sizes: Dict[str, int] = defaultdict(int)
     for sid in ref_ids:
         pop_sizes[pop_map[sid]] += 1
-    empty_classes = [p for p in populations if pop_sizes[p] == 0]
-    if empty_classes:
-        console.print(
-            f"[red]No reference individuals found for class(es) {empty_classes} in target '{level}'.[/red]"
-        )
-        sys.exit(1)
 
     console.print(f"  Reference subsets: {ref_subsets} ({len(ref_ids)} individuals)")
-    if len(ref_ids) < raw_ref_count:
-        console.print(f"  Excluded unmapped target samples: {raw_ref_count - len(ref_ids)}")
-    console.print(f"  Target: {level} ({K} classes)")
+    console.print(f"  Level: {level} ({K} classes)")
     for p in populations:
         console.print(f"    {p}: {pop_sizes[p]}")
 
@@ -796,18 +547,8 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
 
     stat_panel: Optional[Set[str]] = None
     if stat_cfg.get("snp_panel"):
-        stat_panel_path = resolve_config_path(config, stat_cfg["snp_panel"])
-        stat_panel = load_snp_panel(stat_panel_path)
+        stat_panel = load_snp_panel(stat_cfg["snp_panel"])
         console.print(f"  SNP panel filter: {len(stat_panel):,} SNPs")
-    stat_regions: Optional[Dict[str, List[Tuple[int, int]]]] = None
-    stat_region_bed = resolve_config_path(
-        config, stat_cfg.get("region_bed") or config.get("conversion", {}).get("region_bed")
-    )
-    if stat_region_bed:
-        stat_regions = load_region_bed(stat_region_bed)
-        console.print(
-            f"  Region filter: {sum(len(v) for v in stat_regions.values()):,} regions from {stat_region_bed}"
-        )
 
     min_maf = stat_cfg.get("min_maf", 0.01)
     max_snps = stat_cfg.get("max_snps", None)
@@ -862,8 +603,6 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
                         continue
                     if stat_panel is not None and rsid not in stat_panel:
                         continue
-                    if stat_regions is not None and not position_in_regions(parts[1], int(parts[2]), stat_regions):
-                        continue
 
                     if rsid not in tracked_allele:
                         tracked_allele[rsid] = geno[0]
@@ -888,6 +627,18 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
             prog.advance(task)
 
     console.print(f"  Total SNPs collected: {len(snp_count):,}")
+
+    if len(snp_count) == 0:
+        console.print(
+            "[red]No SNPs collected from any 23andMe file.[/red]\n"
+            "  Common causes:\n"
+            "    • conversion.output_filename points at files generated with a\n"
+            "      different SNP panel (no rsIDs overlap with statistics.snp_panel).\n"
+            "    • statistics.snp_panel is empty or unreadable.\n"
+            "    • The 23andMe files exist but are empty (e.g. failed Step 1).\n"
+            "  Aborting before saving an empty statistics file."
+        )
+        sys.exit(1)
 
     snp_ref_allele = tracked_allele
     snp_ref_count = snp_count
@@ -941,15 +692,12 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
         "metadata": {
             "reference_subsets": ref_subsets,
             "level": level,
-            "target": level,
-            "derived_target_config": get_derived_target_config(config, level),
             "populations": populations,
             "pop_sizes": dict(pop_sizes),
             "n_individuals": len(ref_ids),
             "n_snps": len(freq_data),
             "min_maf": min_maf,
             "max_snps": max_snps,
-            "region_bed": stat_region_bed,
             "created_at": datetime.now().isoformat(),
         },
         "ref_alleles": {r: snp_ref_allele[r] for r in freq_data},
@@ -1304,7 +1052,7 @@ def predict_single_individual(
     needed_snps = set(allele_freqs.keys())
 
     method = pred_cfg.get("method", "admixture_em")
-    level = stats["metadata"].get("level", get_prediction_target(config))
+    level = pred_cfg.get("level", "superpopulation")
 
     sample_id = ind_path.stem
     console.print(
@@ -1360,11 +1108,9 @@ def predict_single_individual(
         "proportions": props,
         "method": method,
         "level": level,
-        "target": level,
     }
 
-    level_tag = _safe_tag(level)
-    ind_file = Path(f"{sample_id}_{method}_{level_tag}.json")
+    ind_file = Path(f"{sample_id}_{method}_{level}.json")
     with open(ind_file, "w") as fout:
         json.dump(entry, fout, indent=2)
 
@@ -1417,10 +1163,13 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
     )
 
     splits = load_splits(inp["splits_metadata"])
-    maybe_validate_family_aware_splits(config, splits, console)
-    meta = sample_metadata(splits)
+    meta = sample_metadata(splits, config)
+    level = pred_cfg.get("level", "superpopulation")
     eval_subsets = pred_cfg.get("evaluation_subsets", ["test"])
-    raw_eval_ids = [sid for sid, m in meta.items() if m["split"] in eval_subsets]
+    eval_ids = [
+        sid for sid, m in meta.items()
+        if m["split"] in eval_subsets and m.get(level) is not None
+    ]
 
     ind_dir = Path(inp["individuals_dir"])
     fname_tpl = config.get("conversion", {}).get(
@@ -1428,14 +1177,6 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
     )
 
     method = pred_cfg.get("method", "mle")
-    level = stats["metadata"].get("level", get_prediction_target(config))
-    eval_targets = {
-        sid: target
-        for sid in raw_eval_ids
-        for target in [get_sample_target(meta[sid], config)]
-        if target is not None and target in populations
-    }
-    eval_ids = [sid for sid in raw_eval_ids if sid in eval_targets]
     results_dir = Path(
         pred_cfg.get("results_dir", str(SCRIPT_DIR / "results"))
     )
@@ -1445,8 +1186,6 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
 
     haplotype_mode = pred_cfg.get("haplotype_mode", "H1+H2")
     console.print(f"  Evaluation: {len(eval_ids)} individuals from {eval_subsets}")
-    if len(eval_ids) < len(raw_eval_ids):
-        console.print(f"  Excluded unmapped/out-of-class target samples: {len(raw_eval_ids) - len(eval_ids)}")
     console.print(f"  Method: {method}")
     console.print(f"  Haplotype mode: {haplotype_mode}")
 
@@ -1474,7 +1213,7 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
                 continue
 
             genos = _load_23andme_genotypes(str(fpath), needed_snps)
-            true_label = eval_targets[sid]
+            true_label = meta[sid][level]
             sid_split = meta[sid]["split"]
 
             if method == "mle":
@@ -1545,9 +1284,8 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
                 console.print(f"[red]Unknown method: {method}[/red]")
                 return
 
-            level_tag = _safe_tag(level)
-            ind_file = ind_results_dir / f"{sid}_{method}_{level_tag}.json"
-            ind_data = {**entry, "method": method, "level": level, "target": level}
+            ind_file = ind_results_dir / f"{sid}_{method}_{level}.json"
+            ind_data = {**entry, "method": method, "level": level}
             with open(ind_file, "w") as fout:
                 json.dump(ind_data, fout, indent=2)
 
@@ -1691,14 +1429,12 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
         )
 
     # ── Save ─────────────────────────────────────────
-    results_path = results_dir / f"predictions_{method}_{_safe_tag(level)}.json"
+    results_path = results_dir / f"predictions_{method}_{level}.json"
 
     results_output = {
         "metadata": {
             "method": method,
             "level": level,
-            "target": level,
-            "derived_target_config": get_derived_target_config(config, level),
             "evaluation_subsets": eval_subsets,
             "n_snps": len(needed_snps),
             "n_individuals": len(predictions),
@@ -1722,341 +1458,6 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
     console.print(
         f"\n[green]Step 3 done — results saved to {results_path}[/green]"
     )
-
-
-# ============================================================================
-# Step 4 — Binary phenotype association
-# ============================================================================
-
-
-def _build_association_prefix(config: dict) -> str:
-    """Build output prefix for binary association artifacts."""
-    assoc_cfg = config.get("association", {})
-    output_dir = assoc_cfg.get("output_dir", str(SCRIPT_DIR / "results" / "association"))
-    phenotype_name = assoc_cfg.get("phenotype_name", "binary_trait")
-    haplotype_mode = assoc_cfg.get(
-        "haplotype_mode",
-        config.get("prediction", {}).get("haplotype_mode", "H1+H2"),
-    )
-    subsets = sorted(assoc_cfg.get("subsets", ["train", "val", "test"]))
-    test_name = assoc_cfg.get("test", "chi_square")
-    min_maf = assoc_cfg.get("min_maf", 0.01)
-    max_snps = assoc_cfg.get("max_snps", None)
-    panel_tag = "nopanel"
-    snp_panel = assoc_cfg.get("snp_panel") or config.get("statistics", {}).get("snp_panel")
-    if snp_panel:
-        panel_tag = Path(snp_panel).stem
-    parts = [
-        phenotype_name,
-        "+".join(subsets),
-        haplotype_mode,
-        test_name,
-        f"maf{min_maf}",
-        f"max{max_snps}" if max_snps else "maxall",
-        panel_tag,
-    ]
-    return os.path.join(output_dir, "association_" + "_".join(parts))
-
-
-def _compute_binary_maf(ref_count: int, total_count: int) -> float:
-    """Compute minor allele frequency from aggregate allele counts."""
-    if total_count <= 0:
-        return 0.0
-    freq = ref_count / total_count
-    return min(freq, 1.0 - freq)
-
-
-def _make_manhattan_plot(results: List[Dict[str, Any]], output_png: str, title: str) -> None:
-    """Write a simple Manhattan plot from per-SNP association results."""
-    chrom_order = {f"chr{i}": i for i in range(1, 23)}
-    chrom_order.update({str(i): i for i in range(1, 23)})
-    chrom_order.update({"chrX": 23, "X": 23})
-
-    rows = []
-    for row in results:
-        chrom = str(row.get("chrom", ""))
-        pos = row.get("pos")
-        p_value = row.get("p_value")
-        if chrom not in chrom_order or pos is None or p_value is None or p_value <= 0:
-            continue
-        rows.append((chrom_order[chrom], int(pos), -math.log10(max(p_value, 1e-300))))
-
-    if not rows:
-        return
-
-    rows.sort()
-    chrom_to_points: Dict[int, List[Tuple[int, float]]] = defaultdict(list)
-    for chrom_num, pos, score in rows:
-        chrom_to_points[chrom_num].append((pos, score))
-
-    xs: List[int] = []
-    ys: List[float] = []
-    colors: List[str] = []
-    tick_positions: List[float] = []
-    tick_labels: List[str] = []
-    offset = 0
-    palette = ["#1f77b4", "#ff7f0e"]
-
-    for chrom_num in sorted(chrom_to_points):
-        chrom_points = sorted(chrom_to_points[chrom_num])
-        start_x = offset
-        max_pos = chrom_points[-1][0]
-        for pos, score in chrom_points:
-            xs.append(offset + pos)
-            ys.append(score)
-            colors.append(palette[chrom_num % 2])
-        end_x = offset + max_pos
-        tick_positions.append((start_x + end_x) / 2)
-        tick_labels.append("X" if chrom_num == 23 else str(chrom_num))
-        offset = end_x + 1_000_000
-
-    plt.figure(figsize=(14, 6))
-    plt.scatter(xs, ys, c=colors, s=8, linewidths=0, alpha=0.85)
-    plt.axhline(-math.log10(5e-8), color="red", linestyle="--", linewidth=1)
-    plt.xlabel("Chromosome")
-    plt.ylabel("-log10(p)")
-    plt.title(title)
-    plt.xticks(tick_positions, tick_labels)
-    plt.tight_layout()
-    plt.savefig(output_png, dpi=180)
-    plt.close()
-
-
-def _make_qq_plot(results: List[Dict[str, Any]], output_png: str, title: str) -> None:
-    """Write a QQ plot of -log10(p) values."""
-    p_values = [r.get("p_value") for r in results if r.get("p_value") is not None and r.get("p_value") > 0]
-    if not p_values:
-        return
-
-    n = len(p_values)
-    observed = sorted([-math.log10(max(p, 1e-300)) for p in p_values])
-    expected = sorted([-math.log10(max(i / n, 1e-300)) for i in range(1, n + 1)])
-
-    plt.figure(figsize=(6, 6))
-    plt.scatter(expected, observed, c="black", s=8, alpha=0.7)
-    
-    max_val = max(max(expected), max(observed))
-    plt.plot([0, max_val], [0, max_val], color="red", linestyle="--")
-    
-    plt.xlabel("Expected -log10(p)")
-    plt.ylabel("Observed -log10(p)")
-    plt.title(title)
-    plt.tight_layout()
-    plt.savefig(output_png, dpi=180)
-    plt.close()
-
-
-def step4_binary_association(config: dict, console: Console) -> None:
-    """Run case-control SNP association for a binary phenotype."""
-    inp = config["input"]
-    assoc_cfg = config.get("association", {})
-    if not assoc_cfg.get("enabled", False):
-        return
-
-    splits = load_splits(inp["splits_metadata"])
-    maybe_validate_family_aware_splits(config, splits, console)
-
-    positive_populations = set(assoc_cfg.get("positive_populations", []))
-    negative_populations = set(assoc_cfg.get("negative_populations", []))
-    if not positive_populations or not negative_populations:
-        console.print("[red]Association step requires positive_populations and negative_populations.[/red]")
-        sys.exit(1)
-
-    labels = build_binary_phenotype_labels(
-        splits,
-        positive_populations,
-        negative_populations,
-    )
-    subsets = set(assoc_cfg.get("subsets", ["train", "val", "test"]))
-    sample_ids = sorted(
-        sample_id
-        for sample_id, info in labels.items()
-        if info["split"] in subsets
-    )
-    if not sample_ids:
-        console.print("[red]No labeled individuals found for binary association.[/red]")
-        sys.exit(1)
-
-    haplotype_mode = assoc_cfg.get(
-        "haplotype_mode",
-        config.get("prediction", {}).get("haplotype_mode", "H1+H2"),
-    )
-    ind_dir = Path(inp["individuals_dir"])
-    fname_tpl = config.get("conversion", {}).get("output_filename", "{sample_id}_23andme.txt")
-    snp_panel_path = resolve_config_path(
-        config, assoc_cfg.get("snp_panel") or config.get("statistics", {}).get("snp_panel")
-    )
-    snp_panel = load_snp_panel(snp_panel_path) if snp_panel_path else None
-    min_maf = assoc_cfg.get("min_maf", 0.01)
-    max_snps = assoc_cfg.get("max_snps", None)
-
-    phenotype_name = assoc_cfg.get("phenotype_name", "binary_trait")
-    positive_label = assoc_cfg.get("positive_label", "positive")
-    negative_label = assoc_cfg.get("negative_label", "negative")
-
-    console.print(f"  Binary phenotype: {phenotype_name}")
-    console.print(f"  Positive populations: {sorted(positive_populations)}")
-    console.print(f"  Negative populations: {sorted(negative_populations)}")
-    console.print(f"  Subsets: {sorted(subsets)} ({len(sample_ids)} individuals)")
-    console.print(f"  Haplotype mode: {haplotype_mode}")
-
-    case_n = sum(1 for sid in sample_ids if labels[sid]["label"] == 1)
-    ctrl_n = sum(1 for sid in sample_ids if labels[sid]["label"] == 0)
-    console.print(f"  Cases/controls: {case_n} / {ctrl_n}")
-
-    tracked_allele: Dict[str, str] = {}
-    snp_chrom_pos: Dict[str, Tuple[str, str]] = {}
-    case_ref_count: Dict[str, int] = defaultdict(int)
-    case_total_count: Dict[str, int] = defaultdict(int)
-    ctrl_ref_count: Dict[str, int] = defaultdict(int)
-    ctrl_total_count: Dict[str, int] = defaultdict(int)
-
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        TimeRemainingColumn(),
-        console=console,
-    ) as prog:
-        task = prog.add_task("Step 4 — reading 23andMe files", total=len(sample_ids))
-        for sid in sample_ids:
-            prog.update(task, description=f"Step 4 — {sid}")
-            fpath = ind_dir / sid / fname_tpl.format(sample_id=sid)
-            if not fpath.exists():
-                prog.advance(task)
-                continue
-
-            label = labels[sid]["label"]
-            ploidy = 1 if haplotype_mode in ("H1", "H2") else 2
-            with open(fpath) as f:
-                for line in f:
-                    if line.startswith("#"):
-                        continue
-                    parts = line.rstrip("\n").split("\t")
-                    if len(parts) < 4:
-                        continue
-                    rsid = parts[0]
-                    geno = parts[3]
-                    if geno == "--" or len(geno) != 2:
-                        continue
-                    if snp_panel is not None and rsid not in snp_panel:
-                        continue
-
-                    if rsid not in tracked_allele:
-                        tracked_allele[rsid] = geno[0]
-                        snp_chrom_pos[rsid] = (parts[1], parts[2])
-
-                    dose = _genotype_dose(geno, tracked_allele[rsid], haplotype_mode)
-                    if dose is None:
-                        continue
-
-                    if label == 1:
-                        case_ref_count[rsid] += dose
-                        case_total_count[rsid] += ploidy
-                    else:
-                        ctrl_ref_count[rsid] += dose
-                        ctrl_total_count[rsid] += ploidy
-            prog.advance(task)
-
-    results: List[Dict[str, Any]] = []
-    for rsid, ref_allele in tracked_allele.items():
-        case_total = case_total_count.get(rsid, 0)
-        ctrl_total = ctrl_total_count.get(rsid, 0)
-        total_count = case_total + ctrl_total
-        if case_total == 0 or ctrl_total == 0 or total_count == 0:
-            continue
-
-        total_ref = case_ref_count.get(rsid, 0) + ctrl_ref_count.get(rsid, 0)
-        maf = _compute_binary_maf(total_ref, total_count)
-        if maf < min_maf:
-            continue
-
-        case_ref = case_ref_count.get(rsid, 0)
-        ctrl_ref = ctrl_ref_count.get(rsid, 0)
-        case_alt = case_total - case_ref
-        ctrl_alt = ctrl_total - ctrl_ref
-        table = np.array([[case_ref, case_alt], [ctrl_ref, ctrl_alt]], dtype=np.int64)
-        try:
-            chi2, p_value, _, _ = chi2_contingency(table, correction=False)
-        except ValueError:
-            continue
-
-        case_freq = case_ref / case_total
-        ctrl_freq = ctrl_ref / ctrl_total
-        odds_ratio = None
-        if case_ref > 0 and ctrl_ref > 0 and case_alt > 0 and ctrl_alt > 0:
-            odds_ratio = (case_ref * ctrl_alt) / (case_alt * ctrl_ref)
-
-        chrom, pos = snp_chrom_pos[rsid]
-        results.append({
-            "rsid": rsid,
-            "chrom": chrom,
-            "pos": int(pos),
-            "ref_allele": ref_allele,
-            "case_ref_count": int(case_ref),
-            "case_total_count": int(case_total),
-            "ctrl_ref_count": int(ctrl_ref),
-            "ctrl_total_count": int(ctrl_total),
-            "case_ref_freq": round(case_freq, 6),
-            "ctrl_ref_freq": round(ctrl_freq, 6),
-            "maf": round(maf, 6),
-            "chi2": float(chi2),
-            "p_value": float(p_value),
-            "minus_log10_p": float(-math.log10(max(p_value, 1e-300))),
-            "odds_ratio_ref": None if odds_ratio is None else float(odds_ratio),
-        })
-
-    results.sort(key=lambda row: row["p_value"])
-    if max_snps:
-        results = results[:max_snps]
-
-    prefix = _build_association_prefix(config)
-    output_dir = Path(prefix).parent
-    output_dir.mkdir(parents=True, exist_ok=True)
-    json_path = prefix + ".json"
-    tsv_path = prefix + ".tsv"
-    png_path = prefix + ".png"
-
-    output = {
-        "metadata": {
-            "phenotype_name": phenotype_name,
-            "positive_label": positive_label,
-            "negative_label": negative_label,
-            "positive_populations": sorted(positive_populations),
-            "negative_populations": sorted(negative_populations),
-            "subsets": sorted(subsets),
-            "haplotype_mode": haplotype_mode,
-            "n_individuals": len(sample_ids),
-            "n_cases": case_n,
-            "n_controls": ctrl_n,
-            "n_snps": len(results),
-            "min_maf": min_maf,
-            "max_snps": max_snps,
-            "created_at": datetime.now().isoformat(),
-        },
-        "results": results,
-    }
-    with open(json_path, "w") as f:
-        json.dump(output, f, indent=2)
-
-    with open(tsv_path, "w") as f:
-        headers = [
-            "rsid", "chrom", "pos", "ref_allele", "case_ref_count", "case_total_count",
-            "ctrl_ref_count", "ctrl_total_count", "case_ref_freq", "ctrl_ref_freq", "maf",
-            "chi2", "p_value", "minus_log10_p", "odds_ratio_ref",
-        ]
-        f.write("\t".join(headers) + "\n")
-        for row in results:
-            f.write("\t".join(str(row[h]) for h in headers) + "\n")
-    qq_png_path = prefix + ".qq.png"
-    _make_manhattan_plot(results, png_path, f"{phenotype_name} association")
-    _make_qq_plot(results, qq_png_path, f"{phenotype_name} QQ plot")
-
-    console.print(f"[green]Step 4 done — {len(results):,} SNPs saved to {json_path}[/green]")
-    console.print(f"  TSV: {tsv_path}")
-    console.print(f"  Manhattan plot: {png_path}")
-    console.print(f"  QQ plot: {qq_png_path}")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2123,12 +1524,6 @@ def main() -> None:
             "\n[bold blue]══════ Step 3: Predict Ancestry ══════[/bold blue]"
         )
         step3_predict_ancestry(config, console)
-
-    if steps.get("binary_association", False):
-        console.print(
-            "\n[bold blue]══════ Step 4: Binary Association ══════[/bold blue]"
-        )
-        step4_binary_association(config, console)
 
     console.print("\n[bold green]All steps completed.[/bold green]")
 

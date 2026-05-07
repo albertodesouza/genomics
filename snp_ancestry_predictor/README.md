@@ -2,7 +2,7 @@
 
 > Ancestry prediction from genome-wide SNP genotypes using allele frequency-based methods.
 
-This module extracts SNP genotypes from multi-sample 1000 Genomes VCF files, converts them to the 23andMe raw data format, computes per-class allele frequency statistics, and predicts ancestry or derived population-group labels.
+This module extracts SNP genotypes from multi-sample 1000 Genomes VCF files, converts them to the 23andMe raw data format, computes per-population allele frequency statistics, and predicts ancestry at the superpopulation or population level.
 
 ---
 
@@ -16,8 +16,9 @@ This module extracts SNP genotypes from multi-sample 1000 Genomes VCF files, con
   - [Step 1 — Generate 23andMe Files](#step-1--generate-23andme-files)
   - [Step 2 — Compute Statistics](#step-2--compute-statistics)
   - [Step 3 — Predict Ancestry](#step-3--predict-ancestry)
-  - [Step 4 — Binary Association](#step-4--binary-association)
 - [Configuration Reference](#configuration-reference)
+- [Family-Aware Splitting](#family-aware-splitting)
+- [Custom (Derived) Classification Targets](#custom-derived-classification-targets)
 - [Ancestry Estimation Methods](#ancestry-estimation-methods)
   - [Maximum Likelihood Classification (MLC)](#maximum-likelihood-classification-mlc)
   - [Admixture EM](#admixture-em)
@@ -41,17 +42,14 @@ The **SNP Ancestry Predictor** is a three-step pipeline that:
 1. **Extracts SNP genotypes** from multi-sample 1000 Genomes VCF files and writes per-individual files in the widely-used 23andMe raw data format.
 2. **Computes reference allele frequency statistics** from a configurable subset of individuals (train, validation, and/or test splits).
 3. **Predicts ancestry** for evaluation individuals using Maximum Likelihood Classification (single population assignment), Admixture EM (fast mixture proportion estimation), or Admixture MLE (numerical optimisation-based mixture estimation).
-4. **Runs binary SNP association analyses** for traits defined from population groups, exporting JSON/TSV summary statistics and a Manhattan plot.
 
 ### Key Features
 
 - Fully configurable via a single YAML file
 - Batch VCF processing via `bcftools` for high throughput
-- Supports superpopulation, population, and config-defined derived targets such as binary phenotype classes from 1000G populations
+- Supports both superpopulation (5 classes: AFR, AMR, EAS, EUR, SAS) and population (26 classes) prediction levels
 - Three estimation methods: Maximum Likelihood Classification, Admixture EM (fast), and Admixture MLE
 - Idempotent execution: safely resume after interruption
-- Validates family-aware splits by checking that samples sharing the same `family_id`
-  in `individual_metadata.json` stay inside a single train/val/test subset
 - MAF filtering and Fst-based SNP selection for optimal ancestry discrimination
 - Detailed evaluation metrics: accuracy, precision, recall, F1, confusion matrix
 - Per-individual result files with ancestry proportions (JSON)
@@ -72,10 +70,6 @@ The **SNP Ancestry Predictor** is a three-step pipeline that:
 - Multi-sample VCF files from the 1000 Genomes Project (per-chromosome, phased)
 - A `splits_metadata.json` file defining train/val/test splits (produced by `neural_ancestry_predictor`)
 - An individuals directory with per-sample subdirectories (produced by `build_non_longevous_dataset`)
-
-When those split files come from the neural pipeline with `family_split_mode: "family_aware"`,
-this module now verifies the invariant before processing: any samples sharing the same
-`family_id` in `individual_metadata.json` must remain in the same subset.
 
 ---
 
@@ -216,26 +210,6 @@ where $\bar{p}_i$ is the mean allele frequency across populations and $\mathrm{V
 
 **Output:** A JSON file at `<results_dir>/predictions_<method>_<level>.json` containing metrics and per-individual predictions.
 
-### Step 4 — Binary Association
-
-**Purpose:** Run per-SNP case-control association for a binary phenotype such as pigmentation.
-
-**How it works:**
-
-1. Reads `splits_metadata.json` and maps populations into positive and negative phenotype classes.
-2. Loads the per-individual 23andMe files for the selected subsets.
-3. Aggregates allele counts separately for cases and controls, respecting the configured haplotype mode.
-4. Applies a minimum MAF filter.
-5. Runs a 2x2 chi-square test per SNP using allele counts.
-6. Exports ranked results as JSON and TSV and generates a Manhattan plot PNG.
-
-**Output:**
-- `<output_dir>/association_<...>.json`
-- `<output_dir>/association_<...>.tsv`
-- `<output_dir>/association_<...>.png`
-
-This step is intended as a lightweight statistical baseline for the binary pigmentation setting already used in `neural_ancestry_predictor`.
-
 ---
 
 ## Configuration Reference
@@ -262,7 +236,6 @@ The YAML configuration file has five sections. All paths can be absolute or rela
 | `filter_by_chip_panel` | bool | `false` | Auto-download and apply the Illumina chip panel matching `format_version` |
 | `ref_dir` | string | `"refs"` | Directory where downloaded reference files (dbSNP, chip panel) are cached |
 | `snp_panel` | string/null | `null` | Path to custom SNP panel file (one rsID per line); overrides `filter_by_chip_panel` |
-| `region_bed` | string/null | `null` | Optional BED file used to keep only variants inside selected genomic regions during Step 1 |
 | `output_filename` | string | `"{sample_id}_23andme.txt"` | Filename template for output files |
 
 ### `statistics`
@@ -274,13 +247,13 @@ The YAML configuration file has five sections. All paths can be absolute or rela
 | `min_maf` | float | `0.01` | Minimum minor allele frequency |
 | `max_snps` | int/null | `500000` | Maximum SNPs (top by Fst); null = keep all |
 | `snp_panel` | string/null | `null` | Optional SNP panel filter for statistics |
-| `region_bed` | string/null | `null` | Optional BED file used to keep only variants inside selected genomic regions during Step 2. Defaults to `conversion.region_bed` when omitted. |
 
 ### `prediction`
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `level` | string | `"superpopulation"` | Legacy target selector: `"superpopulation"` (5 classes) or `"population"` (26 classes). Ignored when `output.prediction_target` is set. |
+| `level` | string | `"superpopulation"` | `"superpopulation"` (5 classes), `"population"` (26 classes), or a derived target name defined in `derived_targets` (e.g. `"pigmentation"`) |
+| `derived_targets` | object (optional) | — | Custom target mappings built from an existing metadata field (`superpopulation` or `population`) using `source_field`, `class_map`, and `exclude_unmapped` |
 | `haplotype_mode` | string | `"H1+H2"` | `"H1+H2"` (diploid, both haplotypes), `"H1"` (first haplotype only), or `"H2"` (second haplotype only). Affects Steps 2 and 3. Use `"H1"` to match `neural_ancestry_predictor`'s default for a fair comparison. |
 | `method` | string | `"admixture_em"` | `"mle"`, `"admixture_em"`, or `"admixture_mle"` |
 | `evaluation_subsets` | list | `["test"]` | Split subsets to evaluate |
@@ -289,16 +262,48 @@ The YAML configuration file has five sections. All paths can be absolute or rela
 | `admixture_em.tol` | float | `1e-7` | Convergence tolerance on proportions |
 | `admixture_mle.n_restarts` | int | `20` | Random restarts for the L-BFGS-B optimiser |
 
-### `output`
+### `pipeline`
 
-Use `output.prediction_target` to select the classification target with the same format supported by `neural_ancestry_predictor`. Built-in targets are `superpopulation` and `population`. Derived targets can map a source metadata field, such as 1000G `population`, into custom classes.
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `steps.generate_23andme` | bool | `true` | Enable/disable Step 1 |
+| `steps.compute_statistics` | bool | `true` | Enable/disable Step 2 |
+| `steps.predict_ancestry` | bool | `true` | Enable/disable Step 3 |
+
+---
+
+## Family-Aware Splitting
+
+Standard train/validation/test splits shuffle individuals at random. In pedigree-rich cohorts such as **1000 Genomes**, related samples can end up in different splits unless you constrain the partition. **`neural_ancestry_predictor`** can build splits where whole families remain in a single subset by setting **`data_split.family_split_mode: "family_aware"`** in its YAML config. It derives family groups from `family_id` in each `individual_metadata.json` (or from pedigree metadata when applicable).
+
+### How this pipeline uses those splits
+
+**`snp_ancestry_predictor` does not recompute splits** — it only reads whatever `train` / `val` / `test` assignments are stored in **`input.splits_metadata`**. To use family-aware partitioning:
+
+1. Run **`neural_ancestry_predictor.py`** with a config that enables `family_split_mode: "family_aware"` so that cached `datasets/<dataset_name>/splits_metadata.json` is written with family-aware memberships.
+2. Point **`input.splits_metadata`** in your SNP predictor YAML at that **`splits_metadata.json`** path.
+3. Set **`input.individuals_dir`**, **`statistics.output_dir`**, and **`prediction.results_dir`** so they match the same dataset root (individuals vs statistics vs results directories must agree).
+
+Concrete commented paths for a family-aware run based on **`configs/pigmentation_binary.yaml`** (dataset `*_genes_1000_all`) are shown in **`configs/default.yaml`** — uncomment the `_all` triple and comment out the default ~1300-individual paths.
+
+### Important notes
+
+- **Larger cohort:** Family-aware setups often use a dataset with **more individuals** (~3202 vs ~1300 in the trimmed panel). Run **Step 1** until every sample in the new `splits_metadata.json` has a 23andMe file.
+- **`target` fields:** Some neural configs add extra keys per sample (e.g. `target` for derived pigmentation labels). **`snp_ancestry_predictor` ignores unknown fields** — only `sample_id`, `superpopulation`, `population`, `sex`, and `split` (derived from array membership) matter for ancestry here.
+
+---
+
+## Custom (Derived) Classification Targets
+
+Besides the built-in ancestry levels (`superpopulation`, `population`), you can define **derived targets** in YAML and set `prediction.level` to that target name.
+
+This is analogous to `derived_targets` in `neural_ancestry_predictor`, and allows tasks such as binary pigmentation classification.
+
+### YAML schema
 
 ```yaml
-output:
-  prediction_target: "pigmentation"
-  known_classes:
-    - "strong pigmentation"
-    - "weak pigmentation"
+prediction:
+  level: "pigmentation"
   derived_targets:
     pigmentation:
       source_field: "population"
@@ -308,19 +313,21 @@ output:
         weak pigmentation: ["FIN", "CEU", "GBR"]
 ```
 
-With this configuration, Step 2 computes allele frequencies for `strong pigmentation` and `weak pigmentation` instead of population/superpopulation classes. Step 3 evaluates only samples mapped to one of those classes when `exclude_unmapped: true`.
+- `source_field`: field read from each sample in `splits_metadata.json` (typically `superpopulation` or `population`)
+- `class_map`: maps each output class to one or more source values
+- `exclude_unmapped: true`: drops samples that are not mapped to any class
 
-`configs/pigmentation_binary.yaml` provides a complete SNP-based configuration matching `neural_ancestry_predictor/configs/pigmentation_binary.yaml`.
+### Ready-to-run binary pigmentation config
 
-`configs/pigmentation_binary_selected_genes.yaml` restricts the SNP baseline to the central 32 kb windows of the 11 genes used by `neural_ancestry_predictor/configs/genes_1000_all.yaml`, via `configs/genes_1000_all_w32768.bed`.
+Use:
 
-### `pipeline`
+```bash
+python3 snp_ancestry_predictor.py --config configs/default_pigmentation_binary.yaml
+```
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `steps.generate_23andme` | bool | `true` | Enable/disable Step 1 |
-| `steps.compute_statistics` | bool | `true` | Enable/disable Step 2 |
-| `steps.predict_ancestry` | bool | `true` | Enable/disable Step 3 |
+This config uses family-aware splits from the `_all` dataset and predicts two classes:
+- `strong pigmentation`
+- `weak pigmentation`
 
 ---
 
@@ -423,7 +430,6 @@ $$k^* = \arg\max_k \; \alpha_k$$
   "metadata": {
     "reference_subsets": ["train"],
     "level": "superpopulation",
-    "target": "superpopulation",
     "populations": ["AFR", "AMR", "EAS", "EUR", "SAS"],
     "pop_sizes": {"AFR": 200, "AMR": 85, ...},
     "n_individuals": 910,
@@ -440,7 +446,7 @@ $$k^* = \arg\max_k \; \alpha_k$$
 }
 ```
 
-The frequency arrays follow the order defined in `metadata.populations`. For derived targets, `metadata.level` and `metadata.target` contain the derived target name, and `metadata.populations` contains the configured class names.
+The frequency arrays follow the order defined in `metadata.populations`.
 
 ### Predictions file (Step 3)
 
@@ -449,7 +455,6 @@ The frequency arrays follow the order defined in `metadata.populations`. For der
   "metadata": {
     "method": "mle",
     "level": "superpopulation",
-    "target": "superpopulation",
     "n_snps": 500000,
     "n_individuals": 195
   },
@@ -560,8 +565,6 @@ At the population level, colours are assigned automatically from the `tab20` pal
 ---
 
 ## Computing Gene-Window SNP Panels
-
-For direct region filtering, set `conversion.region_bed` and `statistics.region_bed` to a BED file. `configs/pigmentation_binary_selected_genes.yaml` uses this mode with `configs/genes_1000_all_w32768.bed`, which contains the central 32 kb windows for the 11 genes in `neural_ancestry_predictor/configs/genes_1000_all.yaml`.
 
 The `compute_snp_panel.py` script generates a **subset** of an existing SNP panel (e.g. the 23andMe V5 panel) by retaining only SNPs whose genomic positions fall within the central windows of genes specified in a `neural_ancestry_predictor` configuration.
 
