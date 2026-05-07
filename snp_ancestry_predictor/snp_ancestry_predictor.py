@@ -77,7 +77,24 @@ GT_DOSE = {
 def load_config(path: Path) -> dict:
     """Load YAML configuration file."""
     with open(path, "r") as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+    config["_config_dir"] = str(path.resolve().parent)
+    return config
+
+
+def resolve_config_path(config: dict, path: Optional[str]) -> Optional[str]:
+    """Resolve config paths relative to the YAML file directory when needed."""
+    if path is None:
+        return None
+    p = Path(path)
+    if p.is_absolute() or p.exists():
+        return str(p)
+    cfg_dir = config.get("_config_dir")
+    if cfg_dir:
+        candidate = Path(cfg_dir) / p
+        if candidate.exists():
+            return str(candidate)
+    return str(p)
 
 
 def load_splits(path: str) -> dict:
@@ -311,6 +328,40 @@ def load_snp_panel(path: str) -> Set[str]:
     return panel
 
 
+def load_region_bed(path: str) -> Dict[str, List[Tuple[int, int]]]:
+    """Load BED-like regions as {normalized_chrom: [(start_1based, end_1based_inclusive)]}."""
+    regions: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+            chrom = normalize_chrom(parts[0])
+            # BED is 0-based half-open; convert to 1-based inclusive VCF coordinates.
+            start = int(parts[1]) + 1
+            end = int(parts[2])
+            regions[chrom].append((start, end))
+    for chrom in regions:
+        regions[chrom].sort()
+    return dict(regions)
+
+
+def position_in_regions(chrom: str, pos: int, regions: Optional[Dict[str, List[Tuple[int, int]]]]) -> bool:
+    """Return True when no region filter is set or chrom:pos is inside a configured region."""
+    if regions is None:
+        return True
+    chrom_regions = regions.get(normalize_chrom(chrom), [])
+    for start, end in chrom_regions:
+        if pos < start:
+            return False
+        if start <= pos <= end:
+            return True
+    return False
+
+
 def _ensure_fd_limit(needed: int, console: Console) -> int:
     """Raise the soft file-descriptor limit; return usable batch size."""
     try:
@@ -409,6 +460,7 @@ def _process_chromosome_batch(
     fname_tpl: str,
     inc_expr: str,
     panel: Optional[Set[str]],
+    regions: Optional[Dict[str, List[Tuple[int, int]]]],
     dbsnp_vcf: Optional[str] = None,
 ) -> Dict[str, int]:
     """Run bcftools query for *batch_ids* on one chromosome and write results.
@@ -437,6 +489,8 @@ def _process_chromosome_batch(
 
         rsid = parts[2]
         if panel is not None and rsid not in panel:
+            continue
+        if regions is not None and not position_in_regions(parts[0], int(parts[1]), regions):
             continue
 
         ref, alt = parts[3], parts[4]
@@ -484,13 +538,21 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
 
     panel: Optional[Set[str]] = None
     if conv.get("snp_panel"):
-        panel = load_snp_panel(conv["snp_panel"])
+        panel = load_snp_panel(resolve_config_path(config, conv["snp_panel"]))
         console.print(f"  SNP panel: {len(panel):,} SNPs")
     elif conv.get("filter_by_chip_panel", False):
         ref_dir = conv.get("ref_dir", str(SCRIPT_DIR / "refs"))
         panel_path = ensure_chip_panel_available(fmt_version, ref_dir)
         panel = load_snp_panel(str(panel_path))
         console.print(f"  Chip panel ({fmt_version}): {len(panel):,} SNPs")
+
+    regions: Optional[Dict[str, List[Tuple[int, int]]]] = None
+    if conv.get("region_bed"):
+        region_bed = resolve_config_path(config, conv["region_bed"])
+        regions = load_region_bed(region_bed)
+        console.print(
+            f"  Region filter: {sum(len(v) for v in regions.values()):,} regions from {region_bed}"
+        )
 
     chroms = inp.get("chromosomes", DEFAULT_CHROMS)
     vcf_pat = inp["vcf_pattern"]
@@ -578,7 +640,7 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
                 prog.update(task, description=label)
 
                 batch_counts = _process_chromosome_batch(
-                    vcf, batch, ind_dir, fname_tpl, inc_expr, panel,
+                    vcf, batch, ind_dir, fname_tpl, inc_expr, panel, regions,
                     dbsnp_vcf=dbsnp_vcf,
                 )
                 for sid, cnt in batch_counts.items():
@@ -646,9 +708,15 @@ def _build_statistics_path(config: dict) -> str:
     haplotype_mode = pred_cfg.get("haplotype_mode", "H1+H2")
 
     panel_tag = "nopanel"
-    snp_panel = stat_cfg.get("snp_panel")
+    snp_panel = resolve_config_path(config, stat_cfg.get("snp_panel"))
     if snp_panel:
         panel_tag = Path(snp_panel).stem
+    region_tag = "noregion"
+    region_bed = resolve_config_path(
+        config, stat_cfg.get("region_bed") or config.get("conversion", {}).get("region_bed")
+    )
+    if region_bed:
+        region_tag = Path(region_bed).stem
 
     parts = [
         "snp_ancestry_statistics",
@@ -657,6 +725,7 @@ def _build_statistics_path(config: dict) -> str:
         f"maf{min_maf}",
         f"max{max_snps}" if max_snps else "maxall",
         panel_tag,
+        region_tag,
     ]
     if haplotype_mode != "H1+H2":
         parts.append(haplotype_mode)
@@ -727,8 +796,18 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
 
     stat_panel: Optional[Set[str]] = None
     if stat_cfg.get("snp_panel"):
-        stat_panel = load_snp_panel(stat_cfg["snp_panel"])
+        stat_panel_path = resolve_config_path(config, stat_cfg["snp_panel"])
+        stat_panel = load_snp_panel(stat_panel_path)
         console.print(f"  SNP panel filter: {len(stat_panel):,} SNPs")
+    stat_regions: Optional[Dict[str, List[Tuple[int, int]]]] = None
+    stat_region_bed = resolve_config_path(
+        config, stat_cfg.get("region_bed") or config.get("conversion", {}).get("region_bed")
+    )
+    if stat_region_bed:
+        stat_regions = load_region_bed(stat_region_bed)
+        console.print(
+            f"  Region filter: {sum(len(v) for v in stat_regions.values()):,} regions from {stat_region_bed}"
+        )
 
     min_maf = stat_cfg.get("min_maf", 0.01)
     max_snps = stat_cfg.get("max_snps", None)
@@ -782,6 +861,8 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
                     if geno == "--" or len(geno) != 2:
                         continue
                     if stat_panel is not None and rsid not in stat_panel:
+                        continue
+                    if stat_regions is not None and not position_in_regions(parts[1], int(parts[2]), stat_regions):
                         continue
 
                     if rsid not in tracked_allele:
@@ -868,6 +949,7 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
             "n_snps": len(freq_data),
             "min_maf": min_maf,
             "max_snps": max_snps,
+            "region_bed": stat_region_bed,
             "created_at": datetime.now().isoformat(),
         },
         "ref_alleles": {r: snp_ref_allele[r] for r in freq_data},
@@ -1801,7 +1883,9 @@ def step4_binary_association(config: dict, console: Console) -> None:
     )
     ind_dir = Path(inp["individuals_dir"])
     fname_tpl = config.get("conversion", {}).get("output_filename", "{sample_id}_23andme.txt")
-    snp_panel_path = assoc_cfg.get("snp_panel") or config.get("statistics", {}).get("snp_panel")
+    snp_panel_path = resolve_config_path(
+        config, assoc_cfg.get("snp_panel") or config.get("statistics", {}).get("snp_panel")
+    )
     snp_panel = load_snp_panel(snp_panel_path) if snp_panel_path else None
     min_maf = assoc_cfg.get("min_maf", 0.01)
     max_snps = assoc_cfg.get("max_snps", None)

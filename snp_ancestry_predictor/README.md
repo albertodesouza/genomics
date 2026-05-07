@@ -262,6 +262,7 @@ The YAML configuration file has five sections. All paths can be absolute or rela
 | `filter_by_chip_panel` | bool | `false` | Auto-download and apply the Illumina chip panel matching `format_version` |
 | `ref_dir` | string | `"refs"` | Directory where downloaded reference files (dbSNP, chip panel) are cached |
 | `snp_panel` | string/null | `null` | Path to custom SNP panel file (one rsID per line); overrides `filter_by_chip_panel` |
+| `region_bed` | string/null | `null` | Optional BED file used to keep only variants inside selected genomic regions during Step 1 |
 | `output_filename` | string | `"{sample_id}_23andme.txt"` | Filename template for output files |
 
 ### `statistics`
@@ -273,6 +274,7 @@ The YAML configuration file has five sections. All paths can be absolute or rela
 | `min_maf` | float | `0.01` | Minimum minor allele frequency |
 | `max_snps` | int/null | `500000` | Maximum SNPs (top by Fst); null = keep all |
 | `snp_panel` | string/null | `null` | Optional SNP panel filter for statistics |
+| `region_bed` | string/null | `null` | Optional BED file used to keep only variants inside selected genomic regions during Step 2. Defaults to `conversion.region_bed` when omitted. |
 
 ### `prediction`
 
@@ -309,6 +311,8 @@ output:
 With this configuration, Step 2 computes allele frequencies for `strong pigmentation` and `weak pigmentation` instead of population/superpopulation classes. Step 3 evaluates only samples mapped to one of those classes when `exclude_unmapped: true`.
 
 `configs/pigmentation_binary.yaml` provides a complete SNP-based configuration matching `neural_ancestry_predictor/configs/pigmentation_binary.yaml`.
+
+`configs/pigmentation_binary_selected_genes.yaml` restricts the SNP baseline to the central 32 kb windows of the 11 genes used by `neural_ancestry_predictor/configs/genes_1000_all.yaml`, via `configs/genes_1000_all_w32768.bed`.
 
 ### `pipeline`
 
@@ -556,6 +560,8 @@ At the population level, colours are assigned automatically from the `tab20` pal
 ---
 
 ## Computing Gene-Window SNP Panels
+
+For direct region filtering, set `conversion.region_bed` and `statistics.region_bed` to a BED file. `configs/pigmentation_binary_selected_genes.yaml` uses this mode with `configs/genes_1000_all_w32768.bed`, which contains the central 32 kb windows for the 11 genes in `neural_ancestry_predictor/configs/genes_1000_all.yaml`.
 
 The `compute_snp_panel.py` script generates a **subset** of an existing SNP panel (e.g. the 23andMe V5 panel) by retaining only SNPs whose genomic positions fall within the central windows of genes specified in a `neural_ancestry_predictor` configuration.
 
