@@ -58,6 +58,7 @@ def _first_k_at_threshold(cumulative: np.ndarray, thresholds: List[float]) -> Di
 def run_plot(
     config_path: Path,
     output_path: Path,
+    json_output_path: Optional[Path],
     max_components: Optional[int],
     show: bool,
     *,
@@ -137,6 +138,19 @@ def run_plot(
             console.print(f"  • {t:.0%}: não atingido com k≤{effective_k}")
         else:
             console.print(f"  • {t:.0%}: k ≥ {kk}  (cum={cumulative[kk - 1]:.4f})")
+
+    if json_output_path is not None:
+        _save_variance_summary_json(
+            json_output_path,
+            ratios,
+            cumulative,
+            thresholds,
+            crosses,
+            effective_k=effective_k,
+            n_train=n_train,
+            n_features=n_features,
+            source="fit",
+        )
 
     _save_variance_plot(
         cumulative,
@@ -243,9 +257,47 @@ def _save_variance_plot(
         plt.close(fig)
 
 
+def _save_variance_summary_json(
+    json_output_path: Path,
+    ratios: np.ndarray,
+    cumulative: np.ndarray,
+    thresholds: List[float],
+    crosses: Dict[float, Optional[int]],
+    *,
+    effective_k: int,
+    n_train: int,
+    n_features: int,
+    source: str,
+) -> None:
+    """Salva os valores numéricos usados no gráfico para consulta exata."""
+    summary = {
+        "source": source,
+        "effective_k": int(effective_k),
+        "n_train": int(n_train),
+        "n_features": int(n_features),
+        "total_explained_variance_ratio": float(cumulative[-1]) if len(cumulative) else 0.0,
+        "thresholds": {
+            f"{t:.2f}": {
+                "first_k": None if crosses[t] is None else int(crosses[t]),
+                "cumulative_at_first_k": None if crosses[t] is None else float(cumulative[crosses[t] - 1]),
+            }
+            for t in thresholds
+        },
+        "explained_variance_ratio": [float(x) for x in ratios],
+        "cumulative_explained_variance_ratio": [float(x) for x in cumulative],
+    }
+
+    json_output_path = Path(json_output_path)
+    json_output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(json_output_path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2)
+    print(f"JSON guardado em {json_output_path.resolve()}")
+
+
 def run_plot_from_cache(
     cache_dir: Path,
     output_path: Path,
+    json_output_path: Optional[Path],
     show: bool,
     *,
     paper_clean: bool = False,
@@ -297,6 +349,19 @@ def run_plot_from_cache(
         else:
             print(f"  {t:.0%}: k >= {kk}  (cum={cumulative[kk - 1]:.4f})")
 
+    if json_output_path is not None:
+        _save_variance_summary_json(
+            json_output_path,
+            ratios,
+            cumulative,
+            thresholds,
+            crosses,
+            effective_k=effective_k,
+            n_train=n_train,
+            n_features=n_features,
+            source="cache",
+        )
+
     _save_variance_plot(
         cumulative,
         ratios,
@@ -343,6 +408,12 @@ def main() -> None:
         help="PNG path for the figure",
     )
     parser.add_argument(
+        "--json-output",
+        type=str,
+        default=None,
+        help="Optional JSON path with exact explained-variance values and threshold crossings.",
+    )
+    parser.add_argument(
         "--show",
         action="store_true",
         help="Open an interactive matplotlib window after saving",
@@ -375,6 +446,7 @@ def main() -> None:
         run_plot_from_cache(
             Path(args.from_cache),
             Path(args.output),
+            Path(args.json_output) if args.json_output else None,
             args.show,
             paper_clean=args.paper_clean,
             paper_k=args.paper_k,
@@ -385,6 +457,7 @@ def main() -> None:
         run_plot(
             Path(args.config),
             Path(args.output),
+            Path(args.json_output) if args.json_output else None,
             args.max_components,
             args.show,
             paper_clean=args.paper_clean,
