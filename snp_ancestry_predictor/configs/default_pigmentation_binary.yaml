@@ -59,6 +59,10 @@ conversion:
   filter_by_chip_panel: true
   ref_dir: "/dados/GENOMICS_DATA/top3/refs"
   snp_panel: null
+
+  # Parallel chromosome jobs in Step 1 (worker processes). See default.yaml.
+  parallel_chroms: "auto"
+
   # The _all individuals dir contains multiple 23andMe variants per sample
   # (e.g. {sample_id}_23andme.txt was generated with a small AISNP panel).
   # Use the V5 files (a strict superset of the gene-window panel applied in

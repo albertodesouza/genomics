@@ -87,6 +87,12 @@ conversion:
   # Overrides filter_by_chip_panel when set. Set to null to use chip panel.
   snp_panel: null
 
+  # Step 1: how many chromosome partitions run in parallel (separate worker
+  # processes, each with its own bcftools pipeline). Use 1 for sequential
+  # processing (lower RAM); use an integer for a fixed worker count; or "auto"
+  # for os.cpu_count() (default — maximizes throughput on multi-core machines).
+  parallel_chroms: "auto"
+
   # Output filename template inside each individual's directory.
   # {sample_id} is replaced by the individual's sample ID.
   output_filename: "{sample_id}_23andme.txt"

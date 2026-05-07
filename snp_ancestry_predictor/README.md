@@ -236,6 +236,7 @@ The YAML configuration file has five sections. All paths can be absolute or rela
 | `filter_by_chip_panel` | bool | `false` | Auto-download and apply the Illumina chip panel matching `format_version` |
 | `ref_dir` | string | `"refs"` | Directory where downloaded reference files (dbSNP, chip panel) are cached |
 | `snp_panel` | string/null | `null` | Path to custom SNP panel file (one rsID per line); overrides `filter_by_chip_panel` |
+| `parallel_chroms` | int/string | `"auto"` | Step 1: parallel worker processes for chromosome partitions (`"auto"` = `os.cpu_count()`, `1` = sequential) |
 | `output_filename` | string | `"{sample_id}_23andme.txt"` | Filename template for output files |
 
 ### `statistics`
@@ -633,12 +634,44 @@ Each step is designed to be safely re-run without recomputing completed work:
 | Step 3 | Always runs (prediction is fast) |
 
 To force recomputation:
-- **Step 1:** Delete the individual's `*_23andme.txt` file(s).
+- **Step 1:** Delete the individual's `*_23andme.txt` file(s) (and any leftover `*.partial` / `*.tmp` files in the same directory).
 - **Step 2:** Delete the statistics JSON file.
+
+### Step 1 resume by chromosome
+
+Step 1 writes each chromosome to a per-chromosome checkpoint file before assembling the final 23andMe file:
+
+```
+{sample_id}_v5_23andme.chr1.partial   <- chr1 fully written (no header)
+{sample_id}_v5_23andme.chr2.partial
+...
+{sample_id}_v5_23andme.chr5.tmp       <- chr5 currently being written (discardable)
+```
+
+Once all chromosomes have a `.partial`, the final `{sample_id}_v5_23andme.txt` is built atomically by concatenating `header + chr1.partial + ... + chrX.partial`. Only after the atomic rename succeeds are the `.partial` files removed.
+
+Implications for interrupted runs:
+
+- A `Ctrl+C` (or kill) leaves a `.tmp` for the chromosome currently in progress and `.partial` files for previously finished chromosomes.
+- The next run automatically deletes any orphan `.tmp` files, then skips chromosomes whose `.partial` already exists, processing only what is missing.
+- If the assembly was interrupted, the final file is not present yet; the `.partial` files remain and are reused on the next run.
+- A successful run produces the final file with no `.partial`/`.tmp` siblings.
+
+To force reprocessing of a single chromosome for a given sample, delete the corresponding `.partial` file and re-run. To force the whole sample to be regenerated, delete the final file plus any `.partial`/`.tmp` files for that sample.
 
 ---
 
 ## Performance and Scalability
+
+### Parallel chromosome processing (Step 1)
+
+Step 1 can process multiple chromosome partitions concurrently via separate worker processes (`conversion.parallel_chroms`, default `"auto"` = `os.cpu_count()`). Each worker runs its own `bcftools` pipeline and writes per-chromosome `.partial` checkpoint files; the **main process** then concatenates them **sequentially** into the final file (`header + chr1.partial + … + chrX.partial`), so ordering and the header are always correct.
+
+- Use `"auto"` to saturate multi-core machines (e.g. ~8–12× faster Step 1 vs sequential on a 16-core NVMe box, depending on I/O).
+- Use `1` for the original sequential behaviour (lower peak RAM and fewer concurrent reads).
+- Use an integer (e.g. `4`) to cap parallelism when sharing the machine.
+
+On Windows and macOS the multiprocessing start method is **spawn**; on Linux it is **fork** (workers inherit the raised file-descriptor limit from the parent).
 
 ### Estimated runtimes
 

@@ -18,11 +18,14 @@ Author: Alberto F. De Souza
 """
 
 import argparse
+import concurrent.futures
 import glob as glob_module
 import json
 import math
+import multiprocessing
 import os
 import resource
+import shutil
 import subprocess
 import sys
 from collections import defaultdict
@@ -245,6 +248,93 @@ def _start_bcftools_query(
     return proc, None
 
 
+def _partial_path(
+    sid: str, ind_dir: Path, base_tpl: str, chrom: str
+) -> Path:
+    """Path of the per-chromosome ``.partial`` checkpoint file for *sid*.
+
+    Example: ``{sid}_v5_23andme.txt`` -> ``{sid}_v5_23andme.chr5.partial``.
+    """
+    base = base_tpl.format(sample_id=sid)
+    stem, _ = os.path.splitext(base)
+    return ind_dir / sid / f"{stem}.{chrom}.partial"
+
+
+def _tmp_path(
+    sid: str, ind_dir: Path, base_tpl: str, chrom: str
+) -> Path:
+    """Path of the in-flight ``.tmp`` file for the chrom checkpoint."""
+    base = base_tpl.format(sample_id=sid)
+    stem, _ = os.path.splitext(base)
+    return ind_dir / sid / f"{stem}.{chrom}.tmp"
+
+
+def _final_path(sid: str, ind_dir: Path, base_tpl: str) -> Path:
+    return ind_dir / sid / base_tpl.format(sample_id=sid)
+
+
+def _concatenate_partials(
+    sid: str,
+    ind_dir: Path,
+    base_tpl: str,
+    chroms: List[str],
+    header: str,
+) -> bool:
+    """Assemble final 23andMe file from all per-chrom ``.partial`` files.
+
+    Writes ``header + chr1.partial + ... + chrX.partial`` atomically to
+    ``{sid}_*.txt`` via a ``.assembling`` staging file and ``os.replace``.
+    Removes the ``.partial`` files only after the rename succeeds.
+
+    Returns True iff the final file ended up in place.
+    """
+    final = _final_path(sid, ind_dir, base_tpl)
+    asm = final.with_suffix(final.suffix + ".assembling")
+
+    missing = [
+        c for c in chroms
+        if not _partial_path(sid, ind_dir, base_tpl, c).exists()
+    ]
+    if missing:
+        return False
+
+    with open(asm, "w") as out:
+        out.write(header)
+        for c in chroms:
+            p = _partial_path(sid, ind_dir, base_tpl, c)
+            with open(p) as src:
+                shutil.copyfileobj(src, out)
+
+    os.replace(asm, final)
+
+    for c in chroms:
+        _partial_path(sid, ind_dir, base_tpl, c).unlink(missing_ok=True)
+    return True
+
+
+def _cleanup_orphan_tmps(
+    sids: List[str], ind_dir: Path, base_tpl: str
+) -> int:
+    """Remove ``.tmp`` files left by interrupted previous runs.
+
+    Returns the number of files removed.
+    """
+    n = 0
+    for sid in sids:
+        sample_dir = ind_dir / sid
+        if not sample_dir.is_dir():
+            continue
+        base = base_tpl.format(sample_id=sid)
+        stem, _ = os.path.splitext(base)
+        for tmp in sample_dir.glob(f"{stem}.*.tmp"):
+            try:
+                tmp.unlink()
+                n += 1
+            except OSError:
+                pass
+    return n
+
+
 def _process_chromosome_batch(
     vcf_path: str,
     batch_ids: List[str],
@@ -252,9 +342,18 @@ def _process_chromosome_batch(
     fname_tpl: str,
     inc_expr: str,
     panel: Optional[Set[str]],
+    chrom_label: str,
     dbsnp_vcf: Optional[str] = None,
 ) -> Dict[str, int]:
-    """Run bcftools query for *batch_ids* on one chromosome and write results.
+    """Run bcftools query for *batch_ids* on one chromosome.
+
+    Output for each sample is written first to ``{sid}_*.{chrom}.tmp`` and,
+    upon successful exit of bcftools, atomically renamed to
+    ``{sid}_*.{chrom}.partial`` (the per-chrom checkpoint).
+
+    If interrupted, the ``.tmp`` files are left behind and cleaned by the
+    next run; ``.partial`` files from earlier successful chromosomes stay
+    intact, providing per-chromosome resume.
 
     Returns per-individual SNP counts for this chromosome.
     """
@@ -266,37 +365,89 @@ def _process_chromosome_batch(
     )
 
     fhs: Dict[str, "IO"] = {}
+    tmp_paths: Dict[str, Path] = {}
     for sid in batch_ids:
-        fhs[sid] = open(
-            ind_dir / sid / fname_tpl.format(sample_id=sid), "a"
-        )
+        tmp = _tmp_path(sid, ind_dir, fname_tpl, chrom_label)
+        tmp.parent.mkdir(parents=True, exist_ok=True)
+        tmp_paths[sid] = tmp
+        fhs[sid] = open(tmp, "w")
 
     counts: Dict[str, int] = {sid: 0 for sid in batch_ids}
 
-    for line in proc.stdout:
-        parts = line.rstrip("\n").split("\t")
-        if len(parts) < 5 + n:
-            continue
+    try:
+        for line in proc.stdout:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) < 5 + n:
+                continue
 
-        rsid = parts[2]
-        if panel is not None and rsid not in panel:
-            continue
+            rsid = parts[2]
+            if panel is not None and rsid not in panel:
+                continue
 
-        ref, alt = parts[3], parts[4]
-        nc = normalize_chrom(parts[0])
-        prefix = f"{rsid}\t{nc}\t{parts[1]}\t"
+            ref, alt = parts[3], parts[4]
+            nc = normalize_chrom(parts[0])
+            prefix = f"{rsid}\t{nc}\t{parts[1]}\t"
 
-        for i in range(n):
-            geno = _gt_to_23andme(parts[5 + i], ref, alt)
-            fhs[batch_ids[i]].write(prefix + geno + "\n")
-            counts[batch_ids[i]] += 1
+            for i in range(n):
+                geno = _gt_to_23andme(parts[5 + i], ref, alt)
+                fhs[batch_ids[i]].write(prefix + geno + "\n")
+                counts[batch_ids[i]] += 1
 
-    proc.wait()
-    if p_ann is not None:
-        p_ann.wait()
-    for fh in fhs.values():
-        fh.close()
+        proc.wait()
+        if p_ann is not None:
+            p_ann.wait()
+    finally:
+        for fh in fhs.values():
+            fh.close()
+
+    if proc.returncode != 0 or (p_ann is not None and p_ann.returncode != 0):
+        for tmp in tmp_paths.values():
+            tmp.unlink(missing_ok=True)
+        rc = proc.returncode
+        raise RuntimeError(
+            f"bcftools failed for {chrom_label} (exit code {rc})"
+        )
+
+    for sid, tmp in tmp_paths.items():
+        partial = _partial_path(sid, ind_dir, fname_tpl, chrom_label)
+        os.replace(tmp, partial)
+
     return counts
+
+
+# ── Step 1 multiprocessing workers (must be module-level for pickle) ──
+
+_WORKER_PANEL: Optional[Set[str]] = None
+_WORKER_INC_EXPR: str = ""
+
+
+def _worker_init(panel_path: Optional[str], inc_expr: str) -> None:
+    """Load SNP panel once per worker process for parallel Step 1."""
+    global _WORKER_PANEL, _WORKER_INC_EXPR
+    _WORKER_PANEL = load_snp_panel(panel_path) if panel_path else None
+    _WORKER_INC_EXPR = inc_expr
+
+
+def _worker_run_chrom(
+    args: Tuple[str, List[str], str, str, str, Optional[str]],
+) -> Tuple[str, Dict[str, int]]:
+    """Run ``_process_chromosome_batch`` in a worker process.
+
+    *args*: ``(vcf_path, batch_ids, ind_dir_str, fname_tpl, chrom_label,
+    dbsnp_vcf)``
+    """
+    vcf, batch, ind_dir_str, fname_tpl, chrom_label, dbsnp_vcf = args
+    counts = _process_chromosome_batch(
+        vcf,
+        batch,
+        Path(ind_dir_str),
+        fname_tpl,
+        _WORKER_INC_EXPR,
+        _WORKER_PANEL,
+        chrom_label=chrom_label,
+        dbsnp_vcf=dbsnp_vcf,
+    )
+    return chrom_label, counts
 
 
 def step1_generate_23andme(config: dict, console: Console) -> None:
@@ -325,13 +476,16 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
     fmt_version = conv.get("format_version", "V5")
 
     panel: Optional[Set[str]] = None
+    panel_path_for_workers: Optional[str] = None
     if conv.get("snp_panel"):
-        panel = load_snp_panel(conv["snp_panel"])
+        panel_path_for_workers = str(conv["snp_panel"])
+        panel = load_snp_panel(panel_path_for_workers)
         console.print(f"  SNP panel: {len(panel):,} SNPs")
     elif conv.get("filter_by_chip_panel", False):
         ref_dir = conv.get("ref_dir", str(SCRIPT_DIR / "refs"))
-        panel_path = ensure_chip_panel_available(fmt_version, ref_dir)
-        panel = load_snp_panel(str(panel_path))
+        panel_file = ensure_chip_panel_available(fmt_version, ref_dir)
+        panel_path_for_workers = str(panel_file)
+        panel = load_snp_panel(panel_path_for_workers)
         console.print(f"  Chip panel ({fmt_version}): {len(panel):,} SNPs")
 
     chroms = inp.get("chromosomes", DEFAULT_CHROMS)
@@ -369,11 +523,30 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
         console.print(f"  dbSNP ready: {dbsnp_path.name}")
 
     header = generate_header("GRCh38", fmt_version)
+
     for sid in valid:
-        out = ind_dir / sid / fname_tpl.format(sample_id=sid)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        with open(out, "w") as f:
-            f.write(header)
+        (ind_dir / sid).mkdir(parents=True, exist_ok=True)
+
+    n_tmp_removed = _cleanup_orphan_tmps(valid, ind_dir, fname_tpl)
+    if n_tmp_removed:
+        console.print(
+            f"  [yellow]Cleaned {n_tmp_removed:,} orphan .tmp file(s) "
+            f"from a previous run[/yellow]"
+        )
+
+    n_partials = sum(
+        1
+        for s in valid
+        for c in chroms
+        if _partial_path(s, ind_dir, fname_tpl, c).exists()
+    )
+    total_chr_jobs = len(valid) * len(chroms)
+    if n_partials > 0:
+        console.print(
+            f"  [yellow]Resuming: {n_partials:,}/{total_chr_jobs:,} "
+            f"chromosome jobs already done from previous run "
+            f"({100.0 * n_partials / total_chr_jobs:.1f}%)[/yellow]"
+        )
 
     skip_rsid = conv.get("skip_no_rsid", True)
     inc_parts = ['TYPE="snp"', "N_ALT=1"]
@@ -393,6 +566,57 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
             f"  Processing in {n_batches} batches of up to {batch_size}"
         )
 
+    # Parallel chromosome jobs: resolve worker count (default auto = all CPUs).
+    raw_pc = conv.get("parallel_chroms", "auto")
+    if raw_pc == "auto" or raw_pc is None:
+        n_workers_parallel = os.cpu_count() or 1
+    else:
+        try:
+            n_workers_parallel = max(1, int(raw_pc))
+        except (TypeError, ValueError):
+            n_workers_parallel = os.cpu_count() or 1
+            console.print(
+                "  [yellow]parallel_chroms invalid; using auto[/yellow]"
+            )
+
+    total_jobs = len(chroms) * n_batches
+    tasks: List[Tuple[str, List[str], str, str, str, Optional[str]]] = []
+    for batch in batches:
+        for chrom in chroms:
+            vcf = find_vcf(vcf_pat, chrom)
+            if not vcf:
+                continue
+            samples_needing = [
+                s for s in batch
+                if not _partial_path(s, ind_dir, fname_tpl, chrom).exists()
+            ]
+            if not samples_needing:
+                continue
+            tasks.append(
+                (
+                    vcf,
+                    samples_needing,
+                    str(ind_dir.resolve()),
+                    fname_tpl,
+                    chrom,
+                    dbsnp_vcf,
+                )
+            )
+
+    skipped_jobs = total_jobs - len(tasks)
+    use_parallel = n_workers_parallel > 1 and len(tasks) > 1
+
+    if use_parallel:
+        console.print(
+            f"  Parallel chromosome jobs: {n_workers_parallel} workers, "
+            f"{len(tasks)} pending partition jobs ({skipped_jobs} slots skipped)"
+        )
+    elif n_workers_parallel > 1 and len(tasks) <= 1:
+        console.print(
+            "  [dim]parallel_chroms>1 but only one pending job; "
+            "running sequentially[/dim]"
+        )
+
     per_ind_snps: Dict[str, int] = {sid: 0 for sid in valid}
 
     with Progress(
@@ -403,29 +627,82 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
         TimeRemainingColumn(),
         console=console,
     ) as prog:
-        task = prog.add_task("Step 1", total=len(chroms) * n_batches)
+        task_prog = prog.add_task("Step 1", total=total_jobs)
 
-        for bi, batch in enumerate(batches):
-            for chrom in chroms:
-                vcf = find_vcf(vcf_pat, chrom)
-                if not vcf:
-                    prog.advance(task)
-                    continue
+        if skipped_jobs:
+            prog.advance(task_prog, skipped_jobs)
 
-                label = (
-                    f"Step 1 — {chrom}"
-                    if n_batches == 1
-                    else f"Step 1 — {chrom} (batch {bi + 1}/{n_batches})"
-                )
-                prog.update(task, description=label)
-
-                batch_counts = _process_chromosome_batch(
-                    vcf, batch, ind_dir, fname_tpl, inc_expr, panel,
-                    dbsnp_vcf=dbsnp_vcf,
+        if use_parallel:
+            mp_ctx = multiprocessing.get_context(
+                "spawn" if sys.platform in ("win32", "darwin") else "fork"
+            )
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=n_workers_parallel,
+                mp_context=mp_ctx,
+                initializer=_worker_init,
+                initargs=(panel_path_for_workers, inc_expr),
+            ) as ex:
+                futures = {
+                    ex.submit(_worker_run_chrom, t): t[4] for t in tasks
+                }
+                try:
+                    for fut in concurrent.futures.as_completed(futures):
+                        chrom_label, batch_counts = fut.result()
+                        for sid, cnt in batch_counts.items():
+                            per_ind_snps[sid] += cnt
+                        prog.update(
+                            task_prog,
+                            description=f"Step 1 — {chrom_label} done",
+                        )
+                        prog.advance(task_prog)
+                except KeyboardInterrupt:
+                    try:
+                        ex.shutdown(wait=False, cancel_futures=True)
+                    except TypeError:
+                        ex.shutdown(wait=False)
+                    raise
+        else:
+            for t in tasks:
+                chrom_label, batch_counts = _process_chromosome_batch(
+                    t[0],
+                    t[1],
+                    Path(t[2]),
+                    t[3],
+                    inc_expr,
+                    panel,
+                    chrom_label=t[4],
+                    dbsnp_vcf=t[5],
                 )
                 for sid, cnt in batch_counts.items():
                     per_ind_snps[sid] += cnt
-                prog.advance(task)
+                prog.update(
+                    task_prog,
+                    description=(
+                        f"Step 1 — {chrom_label}"
+                        if n_batches == 1
+                        else f"Step 1 — {chrom_label} (batch)"
+                    ),
+                )
+                prog.advance(task_prog)
+
+        prog.update(task_prog, description="Step 1 — assembling final files")
+        for sid in valid:
+            _concatenate_partials(
+                sid, ind_dir, fname_tpl, chroms, header,
+            )
+
+    for sid in valid:
+        final = _final_path(sid, ind_dir, fname_tpl)
+        if not final.exists():
+            per_ind_snps[sid] = 0
+            continue
+        try:
+            with open(final) as f:
+                per_ind_snps[sid] = sum(
+                    1 for ln in f if ln and not ln.startswith("#")
+                )
+        except OSError:
+            pass
 
     counts = list(per_ind_snps.values())
     min_snps, max_snps, mean_snps = min(counts), max(counts), sum(counts) / len(counts)
