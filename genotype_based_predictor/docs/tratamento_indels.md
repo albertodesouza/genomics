@@ -304,6 +304,88 @@ O procedimento completo pode ser resumido da seguinte forma:
 9. Concatenar valores e máscaras para formar a entrada final da CNN.
 10. Repetir o processo separadamente para H1 e H2.
 
+### O.1 Normalizacao Local Do REF Do VCF
+
+Na implementacao atual, o `DynamicIndelAligner` usa o arquivo `ref.window.fa` como fonte local de verdade para posicionar INDELs.
+
+Para cada variante de comprimento diferente, o aligner compara o campo `REF` do VCF com a sequencia da janela. Se a posicao bruta do VCF nao bate exatamente com o `REF` local, ele procura um pequeno deslocamento local e usa a coordenada que realmente corresponde ao `REF`.
+
+Esse passo evita deslocamentos artificiais em casos como:
+
+```text
+VCF: CA -> C
+```
+
+Nessa delecao, o `C` e a base ancora e deve permanecer alinhado. O `X` deve aparecer na linha da base removida `A`:
+
+```text
+REF:        C A
+individuo: C X
+```
+
+O resultado correto no viewer fica equivalente a:
+
+```text
+540  C  C
+541  A  X
+```
+
+e nao:
+
+```text
+540  C  X
+541  A  C
+```
+
+Esse comportamento esta implementado em `dynamic_indel_alignment.py`.
+
+### O.2 Cache Compartilhada De Alinhamento
+
+O alinhamento dinamico e implementado uma unica vez em `DynamicIndelAligner` e reutilizado por treino, exportacao de TSVs e viewers.
+
+A cache persistente padrao fica em:
+
+```text
+<dataset_dir>/alignment_cache/dynamic_indel_ref_window_v2/
+```
+
+Ela e separada por conjunto de amostras, pois o eixo expandido depende das insercoes observadas naquele conjunto. Portanto, uma exportacao com 5 individuos nao reaproveita o mesmo eixo de uma execucao com todos os individuos.
+
+Dentro de cada conjunto, a estrutura e:
+
+```text
+samples_<N>_<hash>/<GENE>/axis.json
+samples_<N>_<hash>/<GENE>/samples/<sample_id>.json
+```
+
+O `axis.json` guarda o eixo expandido. Os arquivos por amostra guardam `copy_from_indices`, `expanded_indices`, `insertion_indices` e `deletion_indices` para H1/H2.
+
+A cache processada da CNN salva uma assinatura dessa cache de alinhamento em `metadata.json`. Caches processadas antigas sem essa assinatura sao invalidadas automaticamente.
+
+### O.3 Janela 32k Centrada No Gene
+
+Ao treinar a CNN, a janela central de 32.768 posicoes deve permanecer centrada no gene de interesse, definido no eixo da referencia, e nao no centro geometrico do eixo expandido.
+
+A implementacao atual usa a seguinte regra:
+
+1. define o centro da janela do gene no eixo de referencia original;
+2. converte esse indice para o eixo expandido usando `expanded_index_map`;
+3. corta uma janela simetrica ao redor desse indice expandido.
+
+Para `window_center_size=32768`, isso produz 16.384 posicoes a esquerda e 16.384 posicoes a direita do centro de referencia mapeado para o eixo expandido, exceto se a janela bater em uma borda extrema.
+
+Essa regra evita o erro de usar simplesmente `expanded_length // 2`, que poderia deslocar o centro biologico quando ha assimetria no numero de insercoes antes e depois do gene.
+
+Por padrao, o `DynamicIndelAligner` consulta e alinha apenas essa regiao central de 32.768 bases da referencia. O comportamento antigo de consultar toda a janela de aproximadamente 512 kbp continua disponivel no export com `--full-window`.
+
+Mesmo quando a consulta e limitada a 32.768 bases de referencia, o eixo expandido pode ficar ligeiramente maior que 32.768 colunas por causa de insercoes dentro da regiao.
+
+A cache processada registra essa politica como:
+
+```text
+center_window_policy = reference_center_to_expanded_axis
+```
+
 ---
 
 ## P. Visualização em Texto do Alinhamento de DNA
@@ -392,8 +474,10 @@ less -R genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.color.columns.txt
 Para usar todos os indivíduos definidos pela view ou, se a view não define amostras explicitamente, todos os indivíduos de `dataset_metadata.json`, use `--all-samples`:
 
 ```bash
-source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.export_aligned_dna genotype_based_predictor/configs/one_gene_10_individuals.yaml genotype_based_predictor/aligned_dna_MC1R_all.tsv --gene MC1R --all-samples
+source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.export_aligned_dna genotype_based_predictor/configs/one_gene_10_individuals.yaml genotype_based_predictor/aligned_dna_MC1R_all.tsv --gene MC1R --all-samples --batch-size 4
 ```
+
+O argumento `--batch-size` controla quantos individuos sao processados por vez. Em maquinas com 16 GB RAM, recomenda-se `--batch-size 2` ou `--batch-size 4` para evitar uso excessivo de memoria.
 
 ### P.6 Todos os genes de `genes_1000_all.yaml`
 
@@ -403,10 +487,31 @@ A configuração `genotype_based_predictor/configs/genes_1000_all.yaml` usa a vi
 MC1R TYRP1 TYR SLC45A2 DDB1 EDAR MFSD12 OCA2 HERC2 SLC24A5 TCHH
 ```
 
-Para gerar um TSV e uma visualização colorida por gene, para todos os indivíduos do dataset:
+Para gerar um TSV por gene, para todos os individuos do dataset, use execucao em lotes. Evite rodar varios genes em paralelo em maquinas com pouca memoria:
 
 ```bash
-source scripts/start_genomics_universal.sh && mkdir -p genotype_based_predictor/aligned_dna_genes_1000_all && for gene in MC1R TYRP1 TYR SLC45A2 DDB1 EDAR MFSD12 OCA2 HERC2 SLC24A5 TCHH; do python3 -m genotype_based_predictor.export_aligned_dna genotype_based_predictor/configs/genes_1000_all.yaml "genotype_based_predictor/aligned_dna_genes_1000_all/${gene}.tsv" --gene "$gene" --all-samples && python3 -m genotype_based_predictor.aligned_dna_columns "genotype_based_predictor/aligned_dna_genes_1000_all/${gene}.tsv" "genotype_based_predictor/aligned_dna_genes_1000_all/${gene}.color.columns.txt" --color; done
+source scripts/start_genomics_universal.sh
+mkdir -p genotype_based_predictor/aligned_dna_genes_1000_all
+
+for gene in MC1R TYRP1 TYR SLC45A2 DDB1 EDAR MFSD12 OCA2 HERC2 SLC24A5 TCHH; do
+  nice -n 10 python3 -m genotype_based_predictor.export_aligned_dna \
+    genotype_based_predictor/configs/genes_1000_all.yaml \
+    "genotype_based_predictor/aligned_dna_genes_1000_all/${gene}.tsv" \
+    --gene "$gene" \
+    --all-samples \
+    --batch-size 4
+done
+```
+
+Se o computador ficar lento, interrompa e reduza para `--batch-size 2`.
+
+Para gerar uma visualizacao colorida em texto de um gene ja exportado:
+
+```bash
+python3 -m genotype_based_predictor.aligned_dna_columns \
+  genotype_based_predictor/aligned_dna_genes_1000_all/MC1R.tsv \
+  genotype_based_predictor/aligned_dna_genes_1000_all/MC1R.color.columns.txt \
+  --color
 ```
 
 Para abrir um gene específico:
@@ -448,11 +553,16 @@ http://127.0.0.1:8765
 Funcionalidades:
 
 - seleção do gene de interesse;
-- seleção de indivíduos;
-- filtro textual de indivíduos;
+- seleção de indivíduos por checkboxes;
+- filtros por superpopulação, população e busca textual;
 - seleção de `H1`, `H2` ou ambos;
 - escolha da posição inicial e tamanho da janela;
+- navegação por janela anterior/próxima;
 - opção de mostrar apenas posições com diferença em relação à referência;
+- coluna `index`, correspondente ao eixo alinhado/expandido;
+- coluna `ref genome pos`, correspondente à coordenada no genoma de referência;
+- célula vazia em `ref genome pos` quando a linha do `REF` contém `X`;
+- tabela de variantes do VCF contidas na janela selecionada;
 - destaque visual de diferenças em vermelho;
 - destaque de `X` em amarelo.
 

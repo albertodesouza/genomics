@@ -316,7 +316,7 @@ class AlphaGenomeRepository:
 
     def _get_aligner(self) -> DynamicIndelAligner:
         if self._aligner is None:
-            self._aligner = DynamicIndelAligner(self.dataset_dir, selected_sample_ids=self.individuals)
+            self._aligner = DynamicIndelAligner(self.dataset_dir, selected_sample_ids=self.individuals, center_window_size=None)
         return self._aligner
 
     def track_payload(
@@ -387,6 +387,8 @@ class AlphaGenomeRepository:
             raise ValueError(f"Too many series: max {MAX_SERIES} sample/haplotype combinations")
 
         aligner = self._get_aligner() if align else None
+        if aligner is not None:
+            aligner.build_alignment_axis_for_gene(gene, self.individuals)
         expanded_length = aligner.get_expanded_length(gene) if aligner else None
         series = []
         array_shape: Optional[List[int]] = None

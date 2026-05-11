@@ -88,6 +88,7 @@ class ProcessedGenomicDataset(Dataset):
         self.dynamic_indel_aligner = DynamicIndelAligner(
             Path(di.dataset_dir),
             selected_sample_ids=self.selected_sample_ids,
+            center_window_size=di.window_center_size,
         )
         self._base_item_cache: OrderedDict[int, Tuple[Any, Any]] = OrderedDict()
         self._base_item_cache_limit = 4
@@ -133,6 +134,19 @@ class ProcessedGenomicDataset(Dataset):
         if not selected and not di.superpopulations_to_use and not di.populations_to_use:
             return None
         return selected
+
+    def prepare_alignment_cache(self, sample_ids: Optional[List[str]] = None) -> None:
+        if sample_ids is None:
+            sample_ids = []
+            for base_idx in self.valid_sample_indices:
+                if base_idx < len(self.individuals):
+                    sample_ids.append(str(self.individuals[base_idx]))
+        sample_ids = [str(sample_id) for sample_id in sample_ids if sample_id]
+        if not sample_ids:
+            return
+        self.dynamic_indel_aligner.selected_sample_ids = set(sample_ids)
+        for gene_name in sorted(self.genes_to_use):
+            self.dynamic_indel_aligner.build_alignment_axis_for_gene(gene_name, sample_ids)
 
     # ------------------------------------------------------------------
     # Normalização
@@ -420,7 +434,12 @@ class ProcessedGenomicDataset(Dataset):
         if entry is None:
             return None
 
-        expanded_length = self.dynamic_indel_aligner.get_expanded_length(window_name)
+        axis = self.dynamic_indel_aligner.get_alignment_axis(window_name)
+        expanded_length = int(axis["expanded_length"])
+        ref_start_offset = int(axis.get("ref_start_offset", 0))
+        ref_length = int(axis.get("ref_length", 0))
+        center_slice = self.dynamic_indel_aligner.get_reference_centered_expanded_slice(window_name, self.window_center_size)
+        expanded_slice = (int(center_slice["expanded_start"]), int(center_slice["expanded_end"]))
         signal_rows = []
         shared_masks = None
         if array.ndim == 2:
@@ -432,24 +451,30 @@ class ProcessedGenomicDataset(Dataset):
                 if not (0 <= track_index < array.shape[1]):
                     raise ValueError(f"selected_track_index={track_index} fora do limite para {output_type} com shape={array.shape}")
                 row = np.asarray(array[:, track_index], dtype=np.float32)
+                if ref_length > 0:
+                    row = row[ref_start_offset:ref_start_offset + ref_length]
                 aligned = build_aligned_haplotype_tensor(
                     row=row,
                     entry=entry,
                     expanded_length=expanded_length,
                     neutral_value=self.indel_neutral_value,
                     include_valid_mask=True,
+                    expanded_slice=expanded_slice,
                 )
                 signal_rows.append(aligned[0:1, :])
                 if shared_masks is None:
                     shared_masks = aligned[1:, :]
         else:
             row = np.asarray(array.flatten() if array.ndim > 1 else array, dtype=np.float32)
+            if ref_length > 0:
+                row = row[ref_start_offset:ref_start_offset + ref_length]
             aligned = build_aligned_haplotype_tensor(
                 row=row,
                 entry=entry,
                 expanded_length=expanded_length,
                 neutral_value=self.indel_neutral_value,
                 include_valid_mask=True,
+                expanded_slice=expanded_slice,
             )
             signal_rows.append(aligned[0:1, :])
             shared_masks = aligned[1:, :]
@@ -458,11 +483,7 @@ class ProcessedGenomicDataset(Dataset):
             return None
 
         signals = np.concatenate(signal_rows, axis=0)
-        center = signals.shape[1] // 2
-        half = self.window_center_size // 2
-        start = max(0, center - half)
-        end = min(signals.shape[1], start + self.window_center_size)
-        return signals[:, start:end], shared_masks[:, start:end]
+        return signals, shared_masks
 
     def _filter_track_indices(self, output_type: str, track_metadata: List[Dict]) -> List[int]:
         if not self.ontology_terms:

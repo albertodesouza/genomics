@@ -31,29 +31,26 @@ def compute_center_window_slice(
     haplotypes: Sequence[str] = ("H1", "H2"),
 ) -> CenterWindowSlice:
     center_half = center_window_size // 2
-    center_ref_start = max(0, (ref_length // 2) - center_half)
+    center_ref_idx = ref_length // 2
+    center_ref_start = max(0, center_ref_idx - center_half)
     center_ref_end = min(ref_length, center_ref_start + center_window_size)
-
-    expanded_indices_covering_center: List[int] = []
-    for sample_payload in gene_mapping.get("samples", {}).values():
-        for haplotype in haplotypes:
-            hap_entry = sample_payload.get(haplotype)
-            if hap_entry is None:
-                continue
-            for source_idx, target_idx in zip(hap_entry.get("copy_from_indices", []), hap_entry.get("expanded_indices", [])):
-                if center_ref_start <= int(source_idx) < center_ref_end:
-                    expanded_indices_covering_center.append(int(target_idx))
-            for target_idx in hap_entry.get("deletion_indices", []):
-                expanded_indices_covering_center.append(int(target_idx))
-
-    if not expanded_indices_covering_center:
-        raise RuntimeError("Nao foi possivel localizar indices expandidos para a janela central.")
+    expanded_index_map = gene_mapping.get("expanded_index_map", {})
+    center_expanded_idx = int(expanded_index_map.get(center_ref_idx, center_ref_idx))
+    expanded_length = int(gene_mapping.get("expanded_length", ref_length))
+    center_expanded_start = center_expanded_idx - center_half
+    center_expanded_end = center_expanded_start + center_window_size
+    if center_expanded_start < 0:
+        center_expanded_end -= center_expanded_start
+        center_expanded_start = 0
+    if center_expanded_end > expanded_length:
+        center_expanded_start = max(0, center_expanded_start - (center_expanded_end - expanded_length))
+        center_expanded_end = expanded_length
 
     return CenterWindowSlice(
         center_ref_start=center_ref_start,
         center_ref_end=center_ref_end,
-        center_expanded_start=min(expanded_indices_covering_center),
-        center_expanded_end=max(expanded_indices_covering_center) + 1,
+        center_expanded_start=center_expanded_start,
+        center_expanded_end=center_expanded_end,
     )
 
 

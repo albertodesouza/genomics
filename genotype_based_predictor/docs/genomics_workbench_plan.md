@@ -159,28 +159,37 @@ Paleta sugerida:
 
 ## 5.1 Aligned DNA Viewer
 
-Status: MVP implementado em `aligned_dna_viewer.py`.
+Status: implementado em `aligned_dna_viewer.py` e integrado ao Workbench em `/apps/alignment/`.
 
 Objetivo: visualizar TSVs alinhados gerados por `export_aligned_dna.py`.
 
 Funcionalidades atuais:
 
 - lista genes a partir de arquivos `.tsv`;
-- seleciona individuos;
+- seleciona individuos por checkboxes com filtros de superpopulacao, populacao e busca textual;
 - seleciona haplotipo (`H1`, `H2`, ambos);
 - escolhe janela (`start`, `length`);
+- possui botoes de janela anterior/proxima, incluindo botao inferior ao fim da tabela;
 - destaca mutacoes em relacao a referencia;
 - destaca `X`;
 - filtra apenas posicoes variantes;
 - usa indice por offset.
+- mostra coluna `index` com a posicao no eixo expandido;
+- mostra coluna `ref genome pos` com a coordenada genomica de referencia;
+- deixa `ref genome pos` vazio quando o `REF` contem `X` naquela linha;
+- mostra variantes do VCF que caem na janela selecionada.
 
 Melhorias futuras:
 
-- busca por coordenada genomica absoluta;
 - exportar janela visivel como TSV/PNG;
 - mini-mapa de variantes;
-- integracao com tracks AlphaGenome;
-- mostrar evento VCF correspondente.
+- links cruzados com tracks AlphaGenome.
+
+Documentacao operacional atual:
+
+```text
+genotype_based_predictor/README.md
+```
 
 ## 5.2 Dataset Browser
 
@@ -285,6 +294,8 @@ Comandos iniciais:
 - iniciar treino (`train.py`);
 - iniciar web viewers;
 - gerar alinhamentos para todos os genes de uma view.
+
+Observacao: a geracao de TSVs para todos os individuos deve usar `export_aligned_dna.py --batch-size` para limitar memoria. Em maquinas com 16 GB RAM, usar `--batch-size 2` ou `--batch-size 4` e evitar varios genes em paralelo.
 
 Cuidados:
 

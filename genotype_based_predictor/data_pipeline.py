@@ -49,6 +49,14 @@ def _materialize_cache_chunk(
         normalization_params=normalization_params,
         compute_normalization=False,
     )
+    individuals = getattr(base_dataset, "dataset_metadata", {}).get("individuals", [])
+    shard_sample_ids = []
+    for proc_idx in split_indices:
+        if 0 <= proc_idx < len(processed_dataset.valid_sample_indices):
+            base_idx = processed_dataset.valid_sample_indices[proc_idx]
+            if base_idx < len(individuals):
+                shard_sample_ids.append(str(individuals[base_idx]))
+    processed_dataset.prepare_alignment_cache(shard_sample_ids)
 
     items = processed_dataset.get_items_bulk(split_indices)
     torch.save(items, shard_path)
@@ -103,6 +111,24 @@ def _build_resolved_view_definition(config: PipelineConfig, processed_dataset: P
     view["resolved_sample_ids"] = sample_ids
     view["resolved_genes"] = sorted(processed_dataset.genes_to_use) if processed_dataset.genes_to_use else None
     return view
+
+
+def _alignment_cache_signature(processed_dataset: ProcessedGenomicDataset) -> Dict[str, Any]:
+    signature = {}
+    for gene_name in sorted(processed_dataset.genes_to_use):
+        try:
+            axis = processed_dataset.dynamic_indel_aligner.get_alignment_axis(gene_name)
+            signature[gene_name] = {
+                "algorithm_version": axis.get("algorithm_version"),
+                "sample_set_key": axis.get("sample_set_key"),
+                "cache_dir": axis.get("cache_dir"),
+                "expanded_length": axis.get("expanded_length"),
+                "ref_length": axis.get("ref_length"),
+                "fingerprints": axis.get("fingerprints"),
+            }
+        except Exception as exc:
+            signature[gene_name] = {"error": str(exc)}
+    return signature
 
 
 def _resolve_runtime_dataset_dir(config: PipelineConfig) -> Path:
@@ -181,6 +207,7 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
             "tensor_layout": config.dataset_input.tensor_layout,
             "prediction_target": config.output.prediction_target,
             "input_shape": "3D_haplotype_channels",
+            "center_window_policy": "reference_center_to_expanded_axis",
         }
         for k, v in checks.items():
             if pp.get(k) != v:
@@ -189,6 +216,10 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
 
         if meta.get("splits", {}).get("random_seed") != config.data_split.random_seed:
             console.print("[yellow]Cache inválido: random_seed diferente[/yellow]")
+            return False
+
+        if not meta.get("alignment_cache_signature"):
+            console.print("[yellow]Cache inválido: sem assinatura da cache de alinhamento compartilhada[/yellow]")
             return False
 
         console.print("[green]✓ Cache válido e compatível[/green]")
@@ -451,6 +482,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
             "gene_order": gene_order,
             "tracks_per_gene": 2 * (len(config.dataset_input.ontology_terms or []) or 1) + 6,
             "gene_window_metadata": gene_window_metadata,
+            "alignment_cache_signature": _alignment_cache_signature(processed_dataset),
             "processing_params": {
                 "alphagenome_outputs": config.dataset_input.alphagenome_outputs,
                 "haplotype_mode": config.dataset_input.haplotype_mode,
@@ -468,6 +500,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                 "dataset_dir": str(dataset_dir.resolve()),
                 "prediction_target": config.output.prediction_target,
                 "input_shape": "3D_haplotype_channels",
+                "center_window_policy": "reference_center_to_expanded_axis",
             },
             "splits": {
                 "train_size": len(splits_meta.get("train", [])),
@@ -690,6 +723,7 @@ def prepare_data(config: PipelineConfig, experiment_dir: Path):
         norm_params = temp_ds.normalization_params
 
     processed_ds = ProcessedGenomicDataset(base_dataset, config, normalization_params=norm_params, compute_normalization=False)
+    processed_ds.prepare_alignment_cache()
 
     norm_path = experiment_dir / "models" / "normalization_params.json"
     norm_path.parent.mkdir(parents=True, exist_ok=True)

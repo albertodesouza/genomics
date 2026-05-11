@@ -15,6 +15,8 @@ from urllib.parse import parse_qs, urlparse
 
 DEFAULT_MAX_CELLS = 200_000
 DEFAULT_MAX_VARIANTS = 1_000
+DEFAULT_MODEL_WINDOW_SIZE = 32_768
+DEFAULT_VCF_TIMEOUT_SECONDS = 20
 DEFAULT_DATASET_DIR = Path("/dados/GENOMICS_DATA/v1/1kG_high_coverage")
 
 
@@ -69,7 +71,12 @@ def _stream_vcf_variants(vcf_path: str, sample_ids: List[str], region: str):
     finally:
         if proc.stdout is not None:
             proc.stdout.close()
-        returncode = proc.wait()
+        try:
+            returncode = proc.wait(timeout=DEFAULT_VCF_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=2)
+            raise TimeoutError(f"Consulta VCF excedeu {DEFAULT_VCF_TIMEOUT_SECONDS}s para {region}")
         if returncode != 0:
             stderr = proc.stderr.read() if proc.stderr is not None else ""
             raise subprocess.CalledProcessError(returncode, cmd, stderr=stderr)
@@ -183,6 +190,7 @@ class TsvAlignmentIndex:
         samples: List[str] = []
         gene: Optional[str] = None
         expanded_length: Optional[int] = None
+        alignment_start_1based: Optional[int] = None
 
         with open(self.tsv_path, "rb") as f:
             while True:
@@ -200,6 +208,8 @@ class TsvAlignmentIndex:
                         gene = text.split("=", 1)[1].strip()
                     elif text.startswith("# expanded_length="):
                         expanded_length = int(text.split("=", 1)[1].strip())
+                    elif text.startswith("# alignment_start_1based="):
+                        alignment_start_1based = int(text.split("=", 1)[1].strip())
                     continue
 
                 first_tab = line.find(b"\t")
@@ -228,6 +238,7 @@ class TsvAlignmentIndex:
             "gene": gene,
             "expanded_length": expanded_length,
             "comments": comments,
+            "alignment_start_1based": alignment_start_1based,
             "offsets": offsets,
             "samples": samples,
         }
@@ -271,6 +282,38 @@ class TsvAlignmentIndex:
             if base != "X":
                 ref_offset += 1
         return positions
+
+    def reference_centered_model_window(self, window_size: int = DEFAULT_MODEL_WINDOW_SIZE) -> Dict[str, int]:
+        ref_h1, _ref_h2 = self.read_sample_sequences("REF")
+        ref_length = sum(1 for base in ref_h1 if base != "X")
+        center_ref_idx = ref_length // 2
+        ref_offset = 0
+        center_expanded_pos = 1
+        for expanded_pos, base in enumerate(ref_h1, start=1):
+            if base != "X":
+                if ref_offset == center_ref_idx:
+                    center_expanded_pos = expanded_pos
+                    break
+                ref_offset += 1
+        size = max(int(window_size), 1)
+        half = size // 2
+        start = center_expanded_pos - half
+        end = start + size - 1
+        if start < 1:
+            end += 1 - start
+            start = 1
+        if end > self.expanded_length:
+            start = max(1, start - (end - self.expanded_length))
+            end = self.expanded_length
+        return {
+            "policy": "reference_center_to_expanded_axis",
+            "window_size": end - start + 1,
+            "requested_window_size": size,
+            "center_ref_idx_0based": center_ref_idx,
+            "center_expanded_pos": center_expanded_pos,
+            "start": start,
+            "end": end,
+        }
 
 
 class AlignmentRepository:
@@ -386,7 +429,7 @@ class AlignmentRepository:
             raise KeyError(f"raw_variant_source.vcf_path ausente para {gene}")
 
         chrom = str(window_meta["chromosome"])
-        reference_start_1based = int(window_meta["start"]) + 1
+        reference_start_1based = idx.data.get("alignment_start_1based") or int(window_meta["start"]) + 1
         genomic_start = reference_start_1based + ref_start_offset
         genomic_end = reference_start_1based + ref_end_offset
         region = f"{chrom}:{genomic_start}-{genomic_end}"
@@ -445,9 +488,14 @@ class AlignmentRepository:
 
     def reference_genomic_positions(self, gene: str, start: int, end: int) -> List[Optional[int]]:
         idx = self.get(gene)
-        window_meta = self._load_window_metadata(gene)
-        reference_start_1based = int(window_meta["start"]) + 1
+        reference_start_1based = idx.data.get("alignment_start_1based")
+        if not reference_start_1based:
+            window_meta = self._load_window_metadata(gene)
+            reference_start_1based = int(window_meta["start"]) + 1
         return idx.expanded_window_genomic_positions(start, end, reference_start_1based)
+
+    def model_window_payload(self, gene: str, window_size: int = DEFAULT_MODEL_WINDOW_SIZE) -> Dict[str, int]:
+        return self.get(gene).reference_centered_model_window(window_size)
 
 
 class AlignmentViewerHandler(BaseHTTPRequestHandler):
@@ -521,6 +569,8 @@ class AlignmentViewerHandler(BaseHTTPRequestHandler):
         length = max(int(qs.get("length", ["200"])[0]), 1)
         end = min(start + length - 1, idx.expanded_length)
         variant_only = qs.get("variant_only", ["false"])[0].lower() in {"1", "true", "yes", "on"}
+        model_window_size = int(qs.get("model_window_size", [str(DEFAULT_MODEL_WINDOW_SIZE)])[0])
+        model_window = self.repository.model_window_payload(gene, model_window_size)
 
         columns = ["REF"]
         selected_column_names: List[Tuple[str, str]] = []
@@ -568,6 +618,7 @@ class AlignmentViewerHandler(BaseHTTPRequestHandler):
             "start": start,
             "end": end,
             "expanded_length": idx.expanded_length,
+            "model_window": model_window,
             "columns": columns,
             "rows": rows,
         })
@@ -619,6 +670,9 @@ INDEX_HTML = r"""
     .mut { color: var(--mut); font-weight: 800; }
     .gap { color: var(--gap); font-weight: 900; }
     .ref { color: #dce5f2; }
+    tr.model-window td { background: rgba(46, 160, 67, 0.18); }
+    tr.model-center td { background: rgba(124, 199, 255, 0.24); box-shadow: inset 0 1px 0 #7cc7ff, inset 0 -1px 0 #7cc7ff; }
+    .model-badge { margin: 0 0 12px; padding: 10px 12px; border: 1px solid #2ea043; border-radius: 10px; background: rgba(46, 160, 67, 0.12); color: #c7f7d4; font-size: 13px; }
     @media (max-width: 860px) { main { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid var(--line); } }
   </style>
 </head>
@@ -670,16 +724,21 @@ INDEX_HTML = r"""
       </div>
 
       <label><input id="variantOnly" type="checkbox" style="width:auto;margin-right:6px" /> mostrar apenas posições diferentes da referência</label>
+      <label><input id="highlightModelWindow" type="checkbox" checked style="width:auto;margin-right:6px" /> destacar faixa usada no treinamento CNN</label>
+      <label>Tamanho da janela do modelo</label>
+      <input id="modelWindowSize" type="number" value="32768" min="1" />
 
       <button id="load">Carregar janela</button>
       <div class="row">
         <button class="secondary" id="prevWindow">Janela anterior</button>
         <button class="secondary" id="nextWindow">Próxima janela</button>
       </div>
+      <button class="secondary" id="goModelWindow">Ir para janela da CNN</button>
       <p class="hint">Cores: vermelho = base diferente da referência; amarelo = X/gap. A tabela carrega apenas a janela selecionada.</p>
     </aside>
     <section>
       <p class="status" id="status">Carregando...</p>
+      <div class="model-badge" id="modelWindowInfo">Faixa CNN: -</div>
       <div class="table-wrap"><table id="table"></table><div class="bottom-actions"><button id="nextWindowBottom">Próxima janela</button></div></div>
       <div class="variants-head"><h2>Mutações no VCF da janela selecionada</h2><span class="pill" id="variantStatus">-</span></div>
       <div class="variants-wrap"><table id="variantTable"></table></div>
@@ -690,6 +749,7 @@ INDEX_HTML = r"""
     const sampleFilter = document.getElementById('sampleFilter');
     const statusEl = document.getElementById('status');
     const table = document.getElementById('table');
+    const modelWindowInfo = document.getElementById('modelWindowInfo');
     const variantTable = document.getElementById('variantTable');
     const variantStatus = document.getElementById('variantStatus');
     let allSamples = [];
@@ -816,6 +876,9 @@ INDEX_HTML = r"""
 
     function renderTable(data) {
       table.innerHTML = '';
+      const modelWindow = data.model_window || {};
+      const highlightModel = document.getElementById('highlightModelWindow').checked;
+      modelWindowInfo.textContent = `Faixa CNN (${modelWindow.policy || '-'}) | index ${modelWindow.start || '-'}-${modelWindow.end || '-'} | centro ${modelWindow.center_expanded_pos || '-'} | tamanho ${modelWindow.window_size || '-'}`;
       const thead = document.createElement('thead');
       const hrow = document.createElement('tr');
       ['index', 'ref genome pos', ...data.columns].forEach(name => {
@@ -829,6 +892,12 @@ INDEX_HTML = r"""
       const tbody = document.createElement('tbody');
       for (const row of data.rows) {
         const tr = document.createElement('tr');
+        if (highlightModel && modelWindow.start && row.pos >= modelWindow.start && row.pos <= modelWindow.end) {
+          tr.classList.add('model-window');
+        }
+        if (highlightModel && modelWindow.center_expanded_pos && row.pos === modelWindow.center_expanded_pos) {
+          tr.classList.add('model-center');
+        }
         const pos = document.createElement('td');
         pos.textContent = row.pos;
         tr.appendChild(pos);
@@ -894,6 +963,7 @@ INDEX_HTML = r"""
       params.set('start', document.getElementById('start').value);
       params.set('length', document.getElementById('length').value);
       params.set('variant_only', document.getElementById('variantOnly').checked ? 'true' : 'false');
+      params.set('model_window_size', document.getElementById('modelWindowSize').value);
       setStatus('Carregando janela...');
       const data = await fetchJson(`/api/view?${params.toString()}`);
       renderTable(data);
@@ -901,6 +971,20 @@ INDEX_HTML = r"""
       const variants = await fetchJson(`/api/variants?${params.toString()}`);
       renderVariants(variants);
       setStatus(`${data.gene}: posições ${data.start}-${data.end}; ${data.rows.length} linhas renderizadas.`);
+    }
+
+    async function goToModelWindow() {
+      const params = new URLSearchParams();
+      params.set('gene', geneSelect.value);
+      params.set('samples', selectedSamples().slice(0, 1).join(',') || (allSamples[0] || ''));
+      params.set('start', '1');
+      params.set('length', '1');
+      params.set('model_window_size', document.getElementById('modelWindowSize').value);
+      const data = await fetchJson(`/api/view?${params.toString()}`);
+      const mw = data.model_window;
+      document.getElementById('start').value = mw.start;
+      document.getElementById('length').value = mw.window_size;
+      await loadView();
     }
 
     geneSelect.addEventListener('change', loadSamples);
@@ -919,6 +1003,8 @@ INDEX_HTML = r"""
     document.getElementById('prevWindow').addEventListener('click', () => moveWindow(-1));
     document.getElementById('nextWindow').addEventListener('click', () => moveWindow(1));
     document.getElementById('nextWindowBottom').addEventListener('click', () => moveWindow(1));
+    document.getElementById('highlightModelWindow').addEventListener('change', () => loadView().catch(e => setStatus(e.message)));
+    document.getElementById('goModelWindow').addEventListener('click', () => goToModelWindow().catch(e => setStatus(e.message)));
 
     loadGenes().then(loadView).catch(e => setStatus(e.message));
   </script>
