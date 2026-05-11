@@ -303,3 +303,163 @@ O procedimento completo pode ser resumido da seguinte forma:
 8. Construir as máscaras de inserção, deleção e, opcionalmente, validade.
 9. Concatenar valores e máscaras para formar a entrada final da CNN.
 10. Repetir o processo separadamente para H1 e H2.
+
+---
+
+## P. Visualização em Texto do Alinhamento de DNA
+
+Para inspecionar se o `DynamicIndelAligner` está construindo o eixo expandido corretamente, existem dois utilitários no módulo:
+
+```text
+genotype_based_predictor/export_aligned_dna.py
+genotype_based_predictor/aligned_dna_columns.py
+```
+
+O primeiro gera um arquivo TSV com a sequência alinhada da referência e dos indivíduos. O segundo converte esse TSV para uma visualização em colunas, em que cada posição alinhada ocupa uma linha e cada indivíduo/haplótipo ocupa uma coluna.
+
+### P.1 Ambiente
+
+Antes de executar os comandos, inicialize o ambiente `genomics`, que contém `bcftools`:
+
+```bash
+source scripts/start_genomics_universal.sh
+```
+
+Também é possível prefixar cada comando com `source scripts/start_genomics_universal.sh && ...`.
+
+### P.2 Arquivo TSV alinhado
+
+Exemplo para o gene `MC1R` e os 5 primeiros indivíduos da view `one_gene_10_individuals`:
+
+```bash
+source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.export_aligned_dna genotype_based_predictor/configs/one_gene_10_individuals.yaml genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.tsv --sample-limit 5
+```
+
+O formato gerado é:
+
+```text
+# gene=MC1R
+# expanded_length=524906
+sample_id    H1_aligned    H2_aligned
+REF          ...           ...
+HG00096      ...           ...
+HG00097      ...           ...
+```
+
+O caractere `X` indica uma coluna do eixo expandido que não possui base naquele haplótipo. Isso ocorre, por exemplo, quando a coluna representa uma inserção presente em outro indivíduo ou uma posição deletada no indivíduo atual.
+
+### P.3 Visualização em colunas
+
+Para converter o TSV para uma visualização comparável com `more` ou `less`:
+
+```bash
+source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.aligned_dna_columns genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.tsv genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.columns.txt
+```
+
+O formato fica:
+
+```text
+# gene=MC1R
+# expanded_length=524906
+pos    REF    HG00096_H1    HG00096_H2    HG00097_H1    HG00097_H2
+1      G      G             G             G             G
+2      C      C             C             C             C
+3      C      C             C             C             C
+```
+
+### P.4 Visualização com cores
+
+Para destacar diferenças em relação à referência e posições `X`, use `--color`:
+
+```bash
+source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.aligned_dna_columns genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.tsv genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.color.columns.txt --color
+```
+
+Convenção de cores:
+
+- `X` aparece em amarelo.
+- bases diferentes da referência aparecem em vermelho.
+- bases iguais à referência ficam sem destaque.
+
+Para abrir preservando as cores ANSI:
+
+```bash
+less -R genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.color.columns.txt
+```
+
+### P.5 Todos os indivíduos de uma view
+
+Para usar todos os indivíduos definidos pela view ou, se a view não define amostras explicitamente, todos os indivíduos de `dataset_metadata.json`, use `--all-samples`:
+
+```bash
+source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.export_aligned_dna genotype_based_predictor/configs/one_gene_10_individuals.yaml genotype_based_predictor/aligned_dna_MC1R_all.tsv --gene MC1R --all-samples
+```
+
+### P.6 Todos os genes de `genes_1000_all.yaml`
+
+A configuração `genotype_based_predictor/configs/genes_1000_all.yaml` usa a view `genes_1000_all`, que inclui os genes:
+
+```text
+MC1R TYRP1 TYR SLC45A2 DDB1 EDAR MFSD12 OCA2 HERC2 SLC24A5 TCHH
+```
+
+Para gerar um TSV e uma visualização colorida por gene, para todos os indivíduos do dataset:
+
+```bash
+source scripts/start_genomics_universal.sh && mkdir -p genotype_based_predictor/aligned_dna_genes_1000_all && for gene in MC1R TYRP1 TYR SLC45A2 DDB1 EDAR MFSD12 OCA2 HERC2 SLC24A5 TCHH; do python3 -m genotype_based_predictor.export_aligned_dna genotype_based_predictor/configs/genes_1000_all.yaml "genotype_based_predictor/aligned_dna_genes_1000_all/${gene}.tsv" --gene "$gene" --all-samples && python3 -m genotype_based_predictor.aligned_dna_columns "genotype_based_predictor/aligned_dna_genes_1000_all/${gene}.tsv" "genotype_based_predictor/aligned_dna_genes_1000_all/${gene}.color.columns.txt" --color; done
+```
+
+Para abrir um gene específico:
+
+```bash
+less -R genotype_based_predictor/aligned_dna_genes_1000_all/MC1R.color.columns.txt
+```
+
+### P.7 Observações de desempenho
+
+O `DynamicIndelAligner` usa `bcftools query` quando `bcftools` está disponível no ambiente. Isso é o caminho recomendado para views grandes.
+
+Se `bcftools` não estiver disponível, o código possui um fallback que lê o `.vcf.gz` diretamente em Python. Esse fallback é útil para inspeções pequenas, mas é mais lento e não é recomendado para todos os indivíduos ou muitos genes.
+
+As visualizações em colunas podem ficar muito grandes. Para cerca de 1000 indivíduos, cada indivíduo gera duas colunas (`H1` e `H2`), além da coluna `REF` e da coluna `pos`. Portanto, cada arquivo por gene pode ter milhares de colunas e centenas de milhares de linhas. Nesses casos, prefira `less -R` em vez de `more`, ou gere subconjuntos menores com `--sample-limit`.
+
+### P.8 Interface web para TSVs alinhados
+
+Para explorar os TSVs sem converter tudo para uma tabela de texto gigante, use a interface web:
+
+```text
+genotype_based_predictor/aligned_dna_viewer.py
+```
+
+Ela lê arquivos `.tsv` gerados por `export_aligned_dna.py`, cria um índice pequeno (`.idx.json`) com os offsets das linhas e carrega apenas a janela de posições solicitada. Isso evita carregar o arquivo inteiro em memória.
+
+Para iniciar a interface usando um diretório com um `.tsv` por gene:
+
+```bash
+source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.aligned_dna_viewer genotype_based_predictor/aligned_dna_genes_1000_all --host 127.0.0.1 --port 8765
+```
+
+Depois abra no navegador:
+
+```text
+http://127.0.0.1:8765
+```
+
+Funcionalidades:
+
+- seleção do gene de interesse;
+- seleção de indivíduos;
+- filtro textual de indivíduos;
+- seleção de `H1`, `H2` ou ambos;
+- escolha da posição inicial e tamanho da janela;
+- opção de mostrar apenas posições com diferença em relação à referência;
+- destaque visual de diferenças em vermelho;
+- destaque de `X` em amarelo.
+
+Por padrão, a API limita a renderização a 200.000 células por requisição. Isso protege máquinas com pouca memória e evita travar o navegador. Para alterar o limite:
+
+```bash
+source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.aligned_dna_viewer genotype_based_predictor/aligned_dna_genes_1000_all --host 127.0.0.1 --port 8765 --max-cells 300000
+```
+
+Evite selecionar todos os indivíduos com janelas muito grandes. Para uma análise ampla, use janelas menores ou ative a opção de mostrar apenas variantes.

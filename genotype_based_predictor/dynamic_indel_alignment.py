@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import gzip
+import shutil
 import subprocess
 import time
 from collections import OrderedDict
@@ -62,6 +64,10 @@ def _stream_gene_variants(vcf_path: str, sample_ids: List[str], region: str):
     if not sample_ids:
         return
 
+    if shutil.which("bcftools") is None:
+        yield from _stream_gene_variants_from_gzip(vcf_path, sample_ids, region)
+        return
+
     fmt = "%POS\t%REF\t%ALT[\t%GT]\n"
     cmd = [
         "bcftools",
@@ -98,6 +104,66 @@ def _stream_gene_variants(vcf_path: str, sample_ids: List[str], region: str):
             raise subprocess.CalledProcessError(returncode, cmd, stderr=stderr)
         if proc.stderr is not None:
             proc.stderr.close()
+
+
+def _parse_region(region: str) -> Tuple[str, int, int]:
+    chrom, span = region.split(":", 1)
+    start_raw, end_raw = span.split("-", 1)
+    return chrom, int(start_raw), int(end_raw)
+
+
+def _stream_gene_variants_from_gzip(vcf_path: str, sample_ids: List[str], region: str):
+    chrom, start_1based, end_1based = _parse_region(region)
+    wanted_samples = list(sample_ids)
+    sample_column_indices: List[int] = []
+
+    with gzip.open(vcf_path, "rt") as f:
+        for line in f:
+            if line.startswith("##"):
+                continue
+            if line.startswith("#CHROM"):
+                header = line.rstrip("\n").split("\t")
+                sample_to_col = {sample_id: idx for idx, sample_id in enumerate(header[9:])}
+                missing = [sample_id for sample_id in wanted_samples if sample_id not in sample_to_col]
+                if missing:
+                    raise KeyError(f"Samples ausentes no VCF: {missing}")
+                sample_column_indices = [9 + sample_to_col[sample_id] for sample_id in wanted_samples]
+                break
+
+        if not sample_column_indices:
+            raise RuntimeError(f"Header #CHROM nao encontrado em {vcf_path}")
+
+        for line in f:
+            if not line or line.startswith("#"):
+                continue
+            fields = line.rstrip("\n").split("\t")
+            row_chrom = fields[0]
+            if row_chrom != chrom and row_chrom.removeprefix("chr") != chrom.removeprefix("chr"):
+                continue
+            pos = int(fields[1])
+            if pos < start_1based:
+                continue
+            if pos > end_1based:
+                break
+
+            fmt_keys = fields[8].split(":") if len(fields) > 8 else []
+            try:
+                gt_idx = fmt_keys.index("GT")
+            except ValueError:
+                gt_idx = 0
+
+            gts = []
+            for col_idx in sample_column_indices:
+                sample_field = fields[col_idx] if col_idx < len(fields) else "./."
+                parts = sample_field.split(":")
+                gts.append(parts[gt_idx] if gt_idx < len(parts) else parts[0])
+
+            yield {
+                "pos_1based": pos,
+                "ref": fields[3],
+                "alt": fields[4],
+                "gts": gts,
+            }
 
 
 class DynamicIndelAligner:
@@ -148,6 +214,8 @@ class DynamicIndelAligner:
             "start_1based": start_1based,
             "ref_length": ref_length,
             "expanded_length": ref_length,
+            "expanded_index_map": {i: i for i in range(ref_length)},
+            "insertion_slots_by_ref": {},
         }
         self._gene_cache[gene_name] = payload
         self._sample_entry_cache[gene_name] = OrderedDict()
@@ -231,6 +299,8 @@ class DynamicIndelAligner:
                 expanded_cursor += ins_slots
 
         gene_payload["expanded_length"] = expanded_cursor
+        gene_payload["expanded_index_map"] = expanded_index_map
+        gene_payload["insertion_slots_by_ref"] = insertion_slots_by_ref
 
         for sample_id, hap_entries in sample_entries.items():
             per_hap: Dict[str, object] = {}
@@ -275,6 +345,16 @@ class DynamicIndelAligner:
 
     def get_expanded_length(self, gene_name: str) -> int:
         return int(self._load_gene_mapping(gene_name)["expanded_length"])
+
+    def get_alignment_axis(self, gene_name: str) -> Dict[str, object]:
+        """Return the current expanded reference axis metadata for a gene."""
+        payload = self._load_gene_mapping(gene_name)
+        return {
+            "expanded_length": int(payload["expanded_length"]),
+            "ref_length": int(payload["ref_length"]),
+            "expanded_index_map": dict(payload.get("expanded_index_map", {})),
+            "insertion_slots_by_ref": dict(payload.get("insertion_slots_by_ref", {})),
+        }
 
     def get_haplotype_entry(self, gene_name: str, sample_id: str, haplotype: str) -> Optional[Dict[str, object]]:
         self._build_sample_entries_for_gene(gene_name, [sample_id])
