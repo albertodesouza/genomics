@@ -6,6 +6,8 @@ dataset_input:
   ontology_terms: ["CL:1000458", "CL:0000346", "CL:2000092"]
   selected_track_index: 0
   indel_include_valid_mask: true
+  alignment_mapping: "bcftools_chain"
+  consensus_dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all"
 
 output:
   prediction_target: "superpopulation"

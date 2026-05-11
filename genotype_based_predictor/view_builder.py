@@ -309,10 +309,10 @@ INDEX_HTML = r"""
     :root { color-scheme: dark; --bg:#10151f; --panel:#172131; --muted:#93a4bd; --text:#eef4ff; --line:#26374f; --blue:#5aa9ff; --green:#4dd688; --yellow:#ffd166; --red:#ff6b6b; }
     * { box-sizing: border-box; }
     body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, sans-serif; background: radial-gradient(circle at top left, #20324b 0, var(--bg) 42rem); color: var(--text); }
-    main { max-width: 1280px; margin: 0 auto; padding: 24px; }
+    main { width: min(1920px, calc(100vw - 28px)); margin: 0 auto; padding: 18px 14px 28px; }
     h1 { margin: 0 0 6px; font-size: clamp(28px, 5vw, 46px); letter-spacing: -0.04em; }
     p { color: var(--muted); }
-    .grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(320px, .95fr); gap: 18px; align-items: start; }
+    .grid { display: grid; grid-template-columns: minmax(720px, 1.25fr) minmax(520px, .95fr); gap: 18px; align-items: start; }
     .card { background: color-mix(in srgb, var(--panel) 94%, transparent); border: 1px solid var(--line); border-radius: 18px; padding: 18px; box-shadow: 0 18px 70px rgba(0,0,0,.28); }
     label { display: block; margin: 12px 0 6px; color: #c9d7ea; font-weight: 650; }
     input, textarea, select, button { width: 100%; border-radius: 12px; border: 1px solid var(--line); background: #0e1521; color: var(--text); padding: 10px 12px; font: inherit; }
@@ -333,7 +333,7 @@ INDEX_HTML = r"""
     .individuals { max-height: 220px; overflow: auto; border: 1px solid var(--line); border-radius: 12px; padding: 8px; background: #0e1521; }
     .individuals label { display: flex; gap: 8px; align-items: center; margin: 4px 0; font-weight: 500; font-size: 13px; color: #d7e2f2; }
     .individuals input { width: auto; }
-    .filter-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .filter-grid { display: grid; grid-template-columns: repeat(3, minmax(260px, 1fr)); gap: 12px; }
     .filter-panel { border: 1px solid var(--line); border-radius: 14px; background: #0e1521; padding: 10px; }
     .filter-panel h3 { margin: 0 0 8px; font-size: 13px; color: #dce8fb; display: flex; justify-content: space-between; gap: 8px; }
     .check-list { max-height: 220px; overflow: auto; margin-top: 8px; }
@@ -377,7 +377,7 @@ INDEX_HTML = r"""
           <div class="split-actions">
             <button class="secondary" onclick="setChecks('superpopulations', true)">All</button>
             <button class="secondary" onclick="setChecks('superpopulations', false)">None</button>
-            <button class="secondary" onclick="renderIndividuals(); preview()">Apply</button>
+            <button class="secondary" onclick="renderPopulations(); preview()">Apply</button>
           </div>
           <div id="superpopulations" class="check-list"></div>
         </div>
@@ -475,15 +475,48 @@ function fillCheckList(id, rows, labels, searchId, countId) {
   document.getElementById(countId).textContent = `${checkedValues(id).length}/${filtered.length}`;
   document.querySelectorAll(`#${id} input`).forEach(cb => cb.addEventListener('change', () => {
     document.getElementById(countId).textContent = `${checkedValues(id).length}/${filtered.length}`;
-    renderIndividuals();
+    if (id === 'superpopulations') renderPopulations();
+    else renderIndividuals();
   }));
+}
+
+function renderPopulations() {
+  const previous = new Set(checkedValues('populations'));
+  const hadPrevious = document.querySelectorAll('#populations input').length > 0;
+  const supers = new Set(checkedValues('superpopulations'));
+  const counts = new Map();
+  for (const row of options.individuals) {
+    if (supers.size && !supers.has(row.superpopulation || '')) continue;
+    const pop = row.population || '';
+    if (!pop) continue;
+    counts.set(pop, (counts.get(pop) || 0) + 1);
+  }
+  const rows = Array.from(counts.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([id, count]) => ({id, count}));
+  const needle = input('populationSearch').trim().toLowerCase();
+  const filtered = rows.filter(row => !needle || row.id.toLowerCase().includes(needle));
+  const el = document.getElementById('populations');
+  el.innerHTML = '';
+  filtered.forEach(row => {
+    const label = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = row.id;
+    cb.checked = !hadPrevious || previous.has(row.id);
+    label.appendChild(cb);
+    label.append(`${row.id} (${row.count})`);
+    el.appendChild(label);
+  });
+  document.getElementById('populationCount').textContent = `${checkedValues('populations').length}/${filtered.length}`;
+  document.querySelectorAll('#populations input').forEach(cb => cb.addEventListener('change', renderIndividuals));
+  renderIndividuals();
 }
 function setChecks(id, checked) {
   document.querySelectorAll(`#${id} input`).forEach(el => { el.checked = checked; });
   if (id === 'genes') document.getElementById('geneCount').textContent = `${checkedValues(id).length}/${document.querySelectorAll(`#${id} input`).length}`;
   if (id === 'superpopulations') document.getElementById('superpopCount').textContent = `${checkedValues(id).length}/${document.querySelectorAll(`#${id} input`).length}`;
   if (id === 'populations') document.getElementById('populationCount').textContent = `${checkedValues(id).length}/${document.querySelectorAll(`#${id} input`).length}`;
-  renderIndividuals();
+  if (id === 'superpopulations') renderPopulations();
+  else renderIndividuals();
   preview();
 }
 function currentPayload() {
@@ -566,7 +599,7 @@ async function init() {
     options = await fetchJson('/api/options');
     fillCheckList('genes', options.genes, null, 'geneSearch', 'geneCount');
     fillCheckList('superpopulations', options.superpopulations, options.superpopulation_distribution, 'superpopSearch', 'superpopCount');
-    fillCheckList('populations', options.populations, options.population_distribution, 'populationSearch', 'populationCount');
+    renderPopulations();
     fillSelect('normalization_method', options.normalization_methods);
     document.getElementById('normalization_method').value = options.defaults.normalization_method;
     document.getElementById('output_path').value = options.defaults.output_path;
@@ -582,7 +615,7 @@ async function init() {
 window.addEventListener('load', () => {
   document.getElementById('geneSearch').addEventListener('input', () => fillCheckList('genes', options.genes, null, 'geneSearch', 'geneCount'));
   document.getElementById('superpopSearch').addEventListener('input', () => fillCheckList('superpopulations', options.superpopulations, options.superpopulation_distribution, 'superpopSearch', 'superpopCount'));
-  document.getElementById('populationSearch').addEventListener('input', () => fillCheckList('populations', options.populations, options.population_distribution, 'populationSearch', 'populationCount'));
+  document.getElementById('populationSearch').addEventListener('input', renderPopulations);
   document.getElementById('individual_query').addEventListener('input', () => { renderIndividuals(); preview(); });
 });
 window.addEventListener('load', init);

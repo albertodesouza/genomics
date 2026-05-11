@@ -20,6 +20,14 @@ Dataset padrao usado pelas ferramentas:
 /dados/GENOMICS_DATA/v1/1kG_high_coverage
 ```
 
+Dataset preservado com os FASTAs/VCFs usados para gerar as predicoes AlphaGenome:
+
+```text
+/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all
+```
+
+Esse diretorio contem `ref.window.fa`, `*.window.consensus_ready.vcf.gz`, `*.window.raw.fa`, `*.window.fixed.fa` e `predictions_H1/H2`. Ele e necessario para o modo padrao `bcftools_chain`, que reproduz o consenso do `bcftools` e gera chain files para mapear as predicoes AlphaGenome ao eixo expandido usado no treinamento.
+
 Runs padrao:
 
 ```text
@@ -172,11 +180,13 @@ Uso direto:
 python3 -m genotype_based_predictor.aligned_dna_viewer \
   genotype_based_predictor/aligned_dna_genes_1000_all \
   --dataset-dir /dados/GENOMICS_DATA/v1/1kG_high_coverage \
+  --alignment-mapping bcftools_chain \
+  --consensus-dataset-dir /dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all \
   --host 127.0.0.1 \
   --port 8765
 ```
 
-O viewer le TSVs gerados por `export_aligned_dna.py`, cria um indice pequeno `.idx.json` e carrega apenas a janela solicitada.
+O viewer le os TSVs gerados por `export_aligned_dna.py` para obter o eixo expandido, a referencia e metadados de janela. No modo padrao `bcftools_chain`, as sequencias dos individuos renderizadas na tabela sao reconstruidas a partir dos FASTAs reais usados pelo AlphaGenome e dos chain files gerados por `bcftools consensus -c`. Assim, a visualizacao usa o mesmo mapeamento que o treinamento.
 
 Recursos atuais:
 
@@ -206,14 +216,46 @@ Para alterar:
 python3 -m genotype_based_predictor.aligned_dna_viewer \
   genotype_based_predictor/aligned_dna_genes_1000_all \
   --dataset-dir /dados/GENOMICS_DATA/v1/1kG_high_coverage \
+  --alignment-mapping bcftools_chain \
+  --consensus-dataset-dir /dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all \
   --max-cells 300000
 ```
 
 Evite selecionar muitos individuos com janelas grandes. Isso pode travar o navegador mesmo quando o backend esta protegido.
 
-## 4. Gerar TSVs De DNA Alinhado
+## 4. Mapeamento FASTA AlphaGenome Para Eixo Expandido
 
-O exportador usa o `DynamicIndelAligner` para projetar REF, H1 e H2 no mesmo eixo expandido.
+O treinamento usa `dataset_input.alignment_mapping`. O modo recomendado e:
+
+```yaml
+dataset_input:
+  alignment_mapping: "bcftools_chain"
+  consensus_dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all"
+```
+
+Nesse modo, para cada gene/individuo/haplotipo, o pipeline:
+
+- roda `bcftools consensus -c` usando o `ref.window.fa` e o `*.window.consensus_ready.vcf.gz` preservados;
+- valida que o consenso reconstruido bate com `*.window.raw.fa`;
+- aplica a mesma regra de `adjust_to_target_size` e valida contra `*.window.fixed.fa`;
+- parseia o chain para mapear indices do FASTA/predicao AlphaGenome para posicoes da referencia;
+- usa o `DynamicIndelAligner` para definir o eixo expandido global e os slots de insercao;
+- gera um `entry` com `copy_from_indices` absolutos no FASTA/predicao e `expanded_indices` no eixo global;
+- copia os valores das predicoes AlphaGenome para o tensor final usando esse mapa.
+
+O modo antigo `dynamic_indel` ainda existe para compatibilidade e diagnostico, mas nao deve ser usado como fonte principal quando as predicoes AlphaGenome vieram dos FASTAs gerados por `bcftools consensus`.
+
+Cache do mapeador chain:
+
+```text
+/dados/GENOMICS_DATA/v1/1kG_high_coverage/alignment_cache/bcftools_chain_mapper_v1
+```
+
+## 5. Gerar TSVs De DNA Alinhado
+
+O exportador usa o `DynamicIndelAligner` para projetar REF, H1 e H2 no mesmo eixo expandido. As bases de H1/H2 no TSV sao reconstruidas diretamente do VCF cromossomico e da referencia. Esse TSV e util para inspecionar o eixo e as variantes, mas no modo recomendado `bcftools_chain` as sequencias dos individuos usadas para treino/visualizacao sao derivadas dos FASTAs reais do AlphaGenome e dos chain files.
+
+Isso e importante porque os FASTAs fixos foram gerados para alimentar o AlphaGenome com comprimento constante. Eles podem ter sido truncados/padronizados apos `bcftools consensus` e nao devem ser usados como fonte de verdade para validar coordenadas base-a-base contra o VCF.
 
 Arquivo:
 
@@ -304,7 +346,7 @@ Se o computador ficar lento, interrompa com `Ctrl+C` e reduza para:
 --batch-size 2
 ```
 
-## 5. Converter TSV Para Texto Em Colunas
+## 6. Converter TSV Para Texto Em Colunas
 
 Arquivo:
 
@@ -329,7 +371,7 @@ less -R genotype_based_predictor/aligned_dna_genes_1000_all/MC1R.color.columns.t
 
 Para muitos individuos, prefira o `Aligned DNA Viewer`. O arquivo em colunas pode ficar gigantesco.
 
-## 6. DynamicIndelAligner
+## 7. DynamicIndelAligner
 
 Arquivo:
 
@@ -387,10 +429,10 @@ A cache e separada por conjunto de amostras, porque o eixo expandido depende das
 samples_<N>_<hash>/<GENE>/
 ```
 
-Exemplo:
+Exemplo da cache do eixo expandido global:
 
 ```text
-alignment_cache/dynamic_indel_ref_window_v2/samples_5_d8dd50e1ef446666/MC1R/
+alignment_cache/dynamic_indel_ref_window_v4/samples_5_d8dd50e1ef446666/MC1R/
 ```
 
 Arquivos principais:
@@ -402,6 +444,14 @@ samples/HG00097.json
 ```
 
 O `axis.json` guarda o eixo expandido do gene. Cada arquivo em `samples/` guarda as entradas H1/H2 de um individuo naquele mesmo eixo.
+
+No modo recomendado `bcftools_chain`, existe tambem a cache do mapeamento FASTA AlphaGenome -> eixo expandido:
+
+```text
+alignment_cache/bcftools_chain_mapper_v1/<GENE>/<SAMPLE>/<HAP>.entry.json
+```
+
+Essa entrada e gerada a partir de `bcftools consensus -c`, validada contra os FASTAs existentes e usada tanto no treinamento quanto na visualizacao.
 
 A cache inclui metadados de proveniencia com:
 
@@ -426,7 +476,7 @@ mas agora ela salva em `metadata.json` uma `alignment_cache_signature`. Caches p
 
 Isso garante que o treino nao reutilize tensores gerados por um algoritmo de alinhamento antigo.
 
-## 7. Views E Configs
+## 8. Views E Configs
 
 Views ficam em:
 
@@ -444,6 +494,16 @@ Regra pratica:
 
 - `views/`: define o que entra no modelo ou nos viewers, como genes, individuos, populacoes e outputs.
 - `configs/`: define como o experimento usa esses dados, como modelo, treino, split e metrica.
+
+Campos importantes para alinhamento das predicoes AlphaGenome:
+
+```yaml
+dataset_input:
+  alignment_mapping: "bcftools_chain"
+  consensus_dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all"
+```
+
+Use `dynamic_indel` apenas para diagnostico/compatibilidade com caches antigas.
 
 Config atual de referencia para os 11 genes principais:
 
@@ -463,7 +523,7 @@ Genes:
 MC1R TYRP1 TYR SLC45A2 DDB1 EDAR MFSD12 OCA2 HERC2 SLC24A5 TCHH
 ```
 
-## 8. Treino E Experimentos
+## 9. Treino E Experimentos
 
 O treinamento principal continua em:
 
@@ -480,7 +540,7 @@ python3 -m genotype_based_predictor.train genotype_based_predictor/configs/genes
 
 Use o `Experiment Dashboard` para inspecionar resultados ja gerados.
 
-## 9. Cuidados De Memoria
+## 10. Cuidados De Memoria
 
 Regras praticas:
 
@@ -491,7 +551,7 @@ Regras praticas:
 - Se estiver usando o Workbench, prefira navegar por janelas pequenas e filtros.
 - Regenerar TSVs invalida os `.idx.json` automaticamente se tamanho ou mtime mudarem.
 
-## 10. Documentos Relacionados
+## 11. Documentos Relacionados
 
 - `docs/genomics_workbench_plan.md`: arquitetura e plano do Workbench.
 - `docs/tratamento_indels.md`: explicacao tecnica sobre INDELs, eixo expandido e visualizacao.

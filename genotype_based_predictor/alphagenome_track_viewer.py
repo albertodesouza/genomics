@@ -526,7 +526,7 @@ INDEX_HTML = """<!doctype html>
     :root { color-scheme: dark; --bg: #10141f; --panel: #172033; --line: #67d2ff; --muted: #9ca9bf; --text: #edf4ff; --warn: #ffd166; --bad: #ff6b6b; --ok: #4dd187; }
     * { box-sizing: border-box; }
     body { margin: 0; background: radial-gradient(circle at top left, #1d3150, var(--bg) 42rem); color: var(--text); font-family: system-ui, -apple-system, Segoe UI, sans-serif; }
-    main { width: min(1200px, calc(100vw - 24px)); margin: 20px auto 36px; }
+    main { width: min(1920px, calc(100vw - 24px)); margin: 14px auto 30px; }
     h1 { margin: 0 0 4px; font-size: clamp(1.6rem, 3vw, 2.5rem); letter-spacing: -0.04em; }
     .sub { color: var(--muted); margin-bottom: 18px; }
     .panel { background: color-mix(in srgb, var(--panel), transparent 4%); border: 1px solid #2b3b59; border-radius: 18px; padding: 16px; box-shadow: 0 20px 50px #0007; }
@@ -555,9 +555,9 @@ INDEX_HTML = """<!doctype html>
     .stat { background: #0c1220; border: 1px solid #273854; border-radius: 14px; padding: 12px; min-width: 0; }
     .stat b { display: block; font-size: .78rem; color: var(--muted); font-weight: 600; }
     .stat span { display: block; margin-top: 4px; overflow-wrap: anywhere; }
-    .viz-grid { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:12px; align-items:stretch; }
-    .plot-wrap { height: min(58vh, 560px); min-height: 320px; background: #080d17; border: 1px solid #273854; border-radius: 16px; overflow: hidden; }
-    .side-panel { background:#0c1220; border:1px solid #273854; border-radius:16px; padding:12px; overflow:auto; max-height:min(58vh,560px); }
+    .viz-grid { display:grid; grid-template-columns:minmax(900px,1fr) 420px; gap:12px; align-items:stretch; }
+    .plot-wrap { height: min(68vh, 760px); min-height: 460px; background: #080d17; border: 1px solid #273854; border-radius: 16px; overflow: hidden; }
+    .side-panel { background:#0c1220; border:1px solid #273854; border-radius:16px; padding:12px; overflow:auto; max-height:min(68vh,760px); }
     .person { border-bottom:1px solid #273854; padding:8px 0; }
     .person b { color:#ffd166; }
     .kv { display:grid; grid-template-columns:110px 1fr; gap:5px; font-size:.82rem; color:#dbe7f3; }
@@ -674,7 +674,8 @@ function checkedValues(id) { return Array.from(document.querySelectorAll(`#${id}
 function setChecks(id, checked) {
   document.querySelectorAll(`#${id} input`).forEach(el => { el.checked = checked; });
   updateCounts();
-  if (id !== 'sampleChecks') renderSamples();
+  if (id === 'superpopChecks') renderPopulations();
+  else if (id !== 'sampleChecks') renderSamples();
   scheduleLoad();
 }
 
@@ -694,7 +695,35 @@ function renderCheckList(id, rows, searchId, countId, formatter) {
     return `<label><input type="checkbox" value="${row.id}" ${checked}>${formatter(row)}</label>`;
   }).join('');
   $(countId).textContent = `${checkedValues(id).length}/${filtered.length}`;
-  document.querySelectorAll(`#${id} input`).forEach(el => el.addEventListener('change', () => { updateCounts(); renderSamples(); scheduleLoad(); }));
+  document.querySelectorAll(`#${id} input`).forEach(el => el.addEventListener('change', () => {
+    updateCounts();
+    if (id === 'superpopChecks') renderPopulations();
+    else renderSamples();
+    scheduleLoad();
+  }));
+}
+
+function renderPopulations() {
+  const previous = new Set(checkedValues('populationChecks'));
+  const hadPrevious = document.querySelectorAll('#populationChecks input').length > 0;
+  const superpops = new Set(checkedValues('superpopChecks'));
+  const counts = new Map();
+  for (const row of allIndividuals) {
+    if (superpops.size && !superpops.has(row.superpopulation || '')) continue;
+    const pop = row.population || '';
+    if (!pop) continue;
+    counts.set(pop, (counts.get(pop) || 0) + 1);
+  }
+  const rows = Array.from(counts.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([id, count]) => ({id, count}));
+  const needle = $('populationSearch').value.trim().toLowerCase();
+  const filtered = rows.filter(row => !needle || row.id.toLowerCase().includes(needle));
+  $('populationChecks').innerHTML = filtered.map(row => {
+    const checked = (!hadPrevious || previous.has(row.id)) ? 'checked' : '';
+    return `<label><input type="checkbox" value="${row.id}" ${checked}>${row.id} (${row.count})</label>`;
+  }).join('');
+  $('populationCount').textContent = `${checkedValues('populationChecks').length}/${filtered.length}`;
+  document.querySelectorAll('#populationChecks input').forEach(el => el.addEventListener('change', () => { updateCounts(); renderSamples(); scheduleLoad(); }));
+  renderSamples();
 }
 
 function renderSamples() {
@@ -939,15 +968,14 @@ async function init() {
   populationRows = Object.entries(options.populations || {}).map(([id, count]) => ({id, count}));
   superpopulationRows = Object.entries(options.superpopulations || {}).map(([id, count]) => ({id, count}));
   renderCheckList('superpopChecks', superpopulationRows, 'superpopSearch', 'superpopCount', row => `${row.id} (${row.count})`);
-  renderCheckList('populationChecks', populationRows, 'populationSearch', 'populationCount', row => `${row.id} (${row.count})`);
-  renderSamples();
+  renderPopulations();
   await loadTrackOptions();
   if (selectedSamples().length && $('gene').value) await loadTrack();
 }
 
 $('controls').addEventListener('submit', (event) => { event.preventDefault(); loadTrack().catch(showError); });
-$('superpopSearch').addEventListener('input', () => renderCheckList('superpopChecks', superpopulationRows, 'superpopSearch', 'superpopCount', row => `${row.id} (${row.count})`));
-$('populationSearch').addEventListener('input', () => renderCheckList('populationChecks', populationRows, 'populationSearch', 'populationCount', row => `${row.id} (${row.count})`));
+$('superpopSearch').addEventListener('input', () => { renderCheckList('superpopChecks', superpopulationRows, 'superpopSearch', 'superpopCount', row => `${row.id} (${row.count})`); renderPopulations(); });
+$('populationSearch').addEventListener('input', renderPopulations);
 $('sampleFilter').addEventListener('input', renderSamples);
 $('superpopAll').addEventListener('click', () => setChecks('superpopChecks', true));
 $('superpopNone').addEventListener('click', () => setChecks('superpopChecks', false));

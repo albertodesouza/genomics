@@ -8,7 +8,9 @@ Considerando 11 genes e 6 trilhas por gene, obtém-se uma matriz de dimensão $6
 
 Entretanto, a presença de inserções e deleções (INDELs) entre indivíduos introduz desalinhamentos entre as posições correspondentes dessas matrizes, uma vez que as coordenadas das saídas do modelo passam a depender da sequência específica de cada indivíduo.
 
-Para mitigar esse problema, propomos um método de alinhamento das saídas baseado em uma referência expandida, complementado por máscaras explícitas de inserção e deleção. O objetivo é permitir que posições homólogas entre indivíduos sejam comparadas de forma consistente, mesmo quando as respectivas sequências haplotípicas contêm INDELs.
+Para mitigar esse problema, usamos um eixo de referência expandido, complementado por máscaras explícitas de inserção e deleção. A ponte entre as predições AlphaGenome e esse eixo expandido é feita, no modo recomendado, por chain files gerados pelo próprio `bcftools consensus -c`. Isso garante que o treinamento use o mesmo FASTA que foi efetivamente enviado ao AlphaGenome, em vez de tentar reproduzir a semântica do consenso apenas a partir do VCF.
+
+O modo antigo baseado apenas em `DynamicIndelAligner` ainda existe para diagnóstico, mas o pipeline principal deve usar `alignment_mapping: bcftools_chain`.
 
 ---
 
@@ -129,13 +131,13 @@ $$
 
 onde $C = 66$ corresponde aos canais resultantes da concatenação dos 11 genes e 6 tracks por gene, e $L_i$ é o comprimento efetivo da representação para o indivíduo, após considerar sua sequência haplotípica.
 
-Utilizando os arquivos VCF e a referência GRCh38, construímos uma função de mapeamento entre coordenadas da referência e coordenadas do indivíduo:
+O eixo expandido global continua sendo construído a partir dos VCFs e da referência GRCh38. Porém, o mapeamento entre a saída AlphaGenome e o eixo expandido é derivado dos FASTAs reais via chain file do `bcftools consensus`:
 
 $$
-f_i : \mathrm{pos}_{ref} \rightarrow \mathrm{pos}_{ind}
+f_i : \mathrm{pos}_{fasta} \rightarrow \mathrm{pos}_{ref/ins} \rightarrow \mathrm{pos}_{expandida}
 $$
 
-Esse mapeamento permite identificar, para cada posição do eixo expandido, se a posição corresponde a:
+Esse mapeamento permite identificar, para cada índice do FASTA/predição AlphaGenome, se a posição corresponde a:
 
 1. uma correspondência direta entre referência e indivíduo;
 2. uma deleção no indivíduo;
@@ -145,7 +147,14 @@ Esse mapeamento permite identificar, para cada posição do eixo expandido, se a
 
 ## G. Projeção das Saídas no Eixo Expandido
 
-Cada saída $X_i$ é projetada no eixo expandido, produzindo um tensor alinhado:
+Cada saída $X_i$ é indexada pelo FASTA fixo que foi enviado ao AlphaGenome. O `bcftools_chain_mapper` reconstrói o consenso com `bcftools consensus -c`, valida contra `*.window.raw.fa` e `*.window.fixed.fa`, parseia o chain e produz pares:
+
+```text
+copy_from_indices: índices absolutos no FASTA/predição AlphaGenome
+expanded_indices: índices correspondentes no eixo expandido global
+```
+
+Com esses pares, cada saída é projetada no eixo expandido, produzindo um tensor alinhado:
 
 $$
 \tilde{X}_i \in \mathbb{R}^{C \times L^*}
@@ -217,11 +226,11 @@ Para múltiplas tracks, o mesmo processo é realizado canal a canal. Assim, no l
 
 ---
 
-## J. Tratamento de Coordenadas e Bordas
+## J. Tratamento de Coordenadas, Consenso e Bordas
 
-Todas as operações devem ser realizadas em coordenadas genômicas absolutas. A janela de 32.768 posições deve ser definida em relação ao genoma de referência, e apenas INDELs que intersectam essa janela devem ser considerados.
+Todas as operações devem ser realizadas em coordenadas genômicas absolutas. A janela de 32.768 posições é definida em relação ao genoma de referência e convertida para o eixo expandido. O chain file do `bcftools consensus` é usado para conectar o índice do FASTA fixo às coordenadas da referência; em seguida, `expanded_index_map` e `insertion_slots_by_ref` conectam essas coordenadas ao eixo global.
 
-Esse cuidado é especialmente importante em regiões próximas às bordas da janela. Por exemplo, uma inserção imediatamente antes do início da janela de interesse pode deslocar os índices locais da sequência individual, mas não deve deslocar artificialmente o eixo de análise definido sobre a referência.
+Esse cuidado é especialmente importante em regiões próximas às bordas da janela. Por exemplo, uma inserção imediatamente antes do início da janela de interesse pode deslocar os índices locais do FASTA individual, mas não deve deslocar artificialmente o eixo de análise definido sobre a referência.
 
 Assim, a janela de interesse deve ser tratada como um intervalo genômico fixo, por exemplo:
 

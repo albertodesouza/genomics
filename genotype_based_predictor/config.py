@@ -118,6 +118,12 @@ class DatasetInputConfig(BaseModel):
     indel_include_valid_mask: bool = False
     """Se True, concatena também a máscara de validade além de inserção e deleção."""
 
+    alignment_mapping: Literal["dynamic_indel", "bcftools_chain"] = "dynamic_indel"
+    """Fonte do mapa predição AlphaGenome -> eixo expandido global."""
+
+    consensus_dataset_dir: Optional[str] = None
+    """Dataset original com ref.window.fa, raw.fa e consensus_ready.vcf.gz para alignment_mapping='bcftools_chain'."""
+
     @field_validator("downsample_factor")
     @classmethod
     def downsample_must_be_positive(cls, v: int) -> int:

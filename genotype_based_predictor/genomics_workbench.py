@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 DEFAULT_DATASET_DIR = Path("/dados/GENOMICS_DATA/v1/1kG_high_coverage")
 DEFAULT_RUNS_ROOT = Path("/dados/GENOMICS_DATA/v1/1kG_high_coverage_runs")
 DEFAULT_ALIGNED_TSV_ROOT = Path("genotype_based_predictor/aligned_dna_genes_1000_all")
+DEFAULT_CONSENSUS_DATASET_DIR = Path("/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all")
 
 
 @dataclass
@@ -74,6 +75,7 @@ def _build_specs(args: argparse.Namespace) -> List[ViewerSpec]:
     dataset_dir = Path(args.dataset_dir).resolve()
     runs_root = Path(args.runs_root).resolve()
     aligned_tsv_root = Path(args.aligned_tsv_root).resolve()
+    consensus_dataset_dir = Path(args.consensus_dataset_dir).resolve()
 
     specs = [
         ViewerSpec(
@@ -122,7 +124,12 @@ def _build_specs(args: argparse.Namespace) -> List[ViewerSpec]:
             description="Compare sequencias alinhadas, mutacoes e X/gaps a partir de TSVs por gene.",
             module="genotype_based_predictor.aligned_dna_viewer",
             port=args.alignment_port,
-            args=[str(aligned_tsv_root), "--host", "127.0.0.1", "--port", str(args.alignment_port), "--dataset-dir", str(dataset_dir)],
+            args=[
+                str(aligned_tsv_root), "--host", "127.0.0.1", "--port", str(args.alignment_port),
+                "--dataset-dir", str(dataset_dir),
+                "--alignment-mapping", args.alignment_mapping,
+                "--consensus-dataset-dir", str(consensus_dataset_dir),
+            ],
             enabled=_has_tsvs(aligned_tsv_root),
             disabled_reason=f"Nenhum .tsv encontrado em: {aligned_tsv_root}",
         ),
@@ -359,7 +366,11 @@ INDEX_HTML = r"""
     h1 { margin:0; font-size:21px; letter-spacing:.2px; }
     .subtitle { margin:4px 0 0; color:var(--muted); font-size:13px; }
     button { border:1px solid #3d8bfd; background:#1f6feb; color:white; border-radius:8px; padding:8px 12px; cursor:pointer; font-weight:700; }
+    .actions { display:flex; gap:8px; align-items:center; }
+    button.secondary { background:#172033; border-color:var(--line); }
     main { display:grid; grid-template-columns: 360px 1fr; height: calc(100vh - 73px); }
+    body.nav-hidden main { grid-template-columns: 1fr; }
+    body.nav-hidden aside { display:none; }
     aside { border-right:1px solid var(--line); background:var(--panel); overflow:auto; padding:14px; }
     section { min-width:0; background:#050914; }
     .card { width:100%; text-align:left; margin:0 0 10px; padding:13px; border:1px solid var(--line); border-radius:14px; background:linear-gradient(180deg, #1a2438, #141d2e); color:var(--text); cursor:pointer; display:block; }
@@ -387,7 +398,10 @@ INDEX_HTML = r"""
       <h1>Genomics Workbench</h1>
       <p class="subtitle">Visualizacoes locais com roteamento unico, leitura sob demanda e execucao isolada por aplicativo.</p>
     </div>
-    <button id="refresh">Atualizar status</button>
+    <div class="actions">
+      <button class="secondary" id="toggleNav">Ocultar apps</button>
+      <button id="refresh">Atualizar status</button>
+    </div>
   </header>
   <main>
     <aside id="nav"></aside>
@@ -401,7 +415,13 @@ INDEX_HTML = r"""
     const frameWrap = document.getElementById('frameWrap');
     const current = document.getElementById('current');
     const openLink = document.getElementById('open');
+    const toggleNav = document.getElementById('toggleNav');
     let activeKey = null;
+
+    function setNavHidden(hidden) {
+      document.body.classList.toggle('nav-hidden', hidden);
+      toggleNav.textContent = hidden ? 'Mostrar apps' : 'Ocultar apps';
+    }
 
     async function status() {
       const res = await fetch('/api/status');
@@ -448,6 +468,12 @@ INDEX_HTML = r"""
     }
 
     document.getElementById('refresh').onclick = refresh;
+    toggleNav.onclick = () => {
+      const hidden = !document.body.classList.contains('nav-hidden');
+      setNavHidden(hidden);
+      localStorage.setItem('genomicsWorkbenchNavHidden', hidden ? '1' : '0');
+    };
+    setNavHidden(localStorage.getItem('genomicsWorkbenchNavHidden') === '1');
     refresh();
     setInterval(refresh, 10000);
   </script>
@@ -461,6 +487,8 @@ def main() -> None:
     parser.add_argument("--dataset-dir", type=Path, default=DEFAULT_DATASET_DIR)
     parser.add_argument("--runs-root", type=Path, default=DEFAULT_RUNS_ROOT)
     parser.add_argument("--aligned-tsv-root", type=Path, default=DEFAULT_ALIGNED_TSV_ROOT)
+    parser.add_argument("--consensus-dataset-dir", type=Path, default=DEFAULT_CONSENSUS_DATASET_DIR)
+    parser.add_argument("--alignment-mapping", choices=["dynamic_indel", "bcftools_chain"], default="bcftools_chain")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8780)
     parser.add_argument("--dataset-port", type=int, default=8770)

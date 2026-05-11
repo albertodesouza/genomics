@@ -262,7 +262,7 @@ INDEX_HTML = r"""
     header { padding: 1.25rem clamp(1rem, 3vw, 2rem); border-bottom: 1px solid var(--line); background: #0b1120; position: sticky; top: 0; z-index: 4; }
     h1 { margin: 0 0 .25rem; font-size: clamp(1.35rem, 3vw, 2.2rem); letter-spacing: -.03em; }
     .sub { color: var(--muted); font-size: .95rem; }
-    main { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, .8fr); gap: 1rem; padding: 1rem; max-width: 1500px; margin: 0 auto; }
+    main { display: grid; grid-template-columns: minmax(760px, 1.35fr) minmax(520px, .9fr); gap: 1rem; padding: 1rem; width: min(1920px, calc(100vw - 24px)); margin: 0 auto; }
     .card { background: #111827; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; box-shadow: 0 20px 50px rgba(0, 0, 0, .22); }
     .toolbar { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; padding: .9rem; border-bottom: 1px solid var(--line); background: #172033; }
     input, select, button { background: #0f172a; color: var(--text); border: 1px solid #334155; border-radius: 10px; padding: .55rem .7rem; font: inherit; }

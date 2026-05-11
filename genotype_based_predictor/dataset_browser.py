@@ -474,7 +474,32 @@ INDEX_HTML = r"""<!doctype html>
       document.getElementById(countId).textContent = `${selectedValues(containerId).length}/${filtered.length}`;
       document.querySelectorAll(`#${containerId} input`).forEach(el => el.addEventListener('change', () => {
         document.getElementById(countId).textContent = `${selectedValues(containerId).length}/${filtered.length}`;
+        if (containerId === 'superpopChecks') renderPopulationChecks();
+        else if (containerId === 'populationChecks') renderSampleChecks();
       }));
+    }
+
+    function renderPopulationChecks() {
+      const previous = new Set(selectedValues('populationChecks'));
+      const hadPrevious = document.querySelectorAll('#populationChecks input').length > 0;
+      const selectedSuperpops = new Set(selectedValues('superpopChecks'));
+      const counts = new Map();
+      for (const row of allIndividuals) {
+        if (selectedSuperpops.size && !selectedSuperpops.has(row.superpopulation || '')) continue;
+        const pop = row.population || '';
+        if (!pop) continue;
+        counts.set(pop, (counts.get(pop) || 0) + 1);
+      }
+      const rows = Array.from(counts.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([id, count]) => ({id, count}));
+      const needle = document.getElementById('populationSearch').value.trim().toLowerCase();
+      const filtered = rows.filter(row => !needle || row.id.toLowerCase().includes(needle));
+      document.getElementById('populationChecks').innerHTML = filtered.map(row => {
+        const checked = (!hadPrevious || previous.has(row.id)) ? 'checked' : '';
+        return `<label><input type="checkbox" value="${row.id}" ${checked}>${row.id} (${row.count})</label>`;
+      }).join('');
+      document.getElementById('populationCount').textContent = `${selectedValues('populationChecks').length}/${filtered.length}`;
+      document.querySelectorAll('#populationChecks input').forEach(el => el.addEventListener('change', renderSampleChecks));
+      renderSampleChecks();
     }
 
     function renderSampleChecks() {
@@ -548,8 +573,7 @@ INDEX_HTML = r"""<!doctype html>
       populationRows = data.populations || [];
       superpopulationRows = data.superpopulations || [];
       renderCheckList('superpopChecks', superpopulationRows, 'superpopSearch', 'superpopCount', row => `${row.id} (${row.count})`, true);
-      renderCheckList('populationChecks', populationRows, 'populationSearch', 'populationCount', row => `${row.id} (${row.count})`, true);
-      renderSampleChecks();
+      renderPopulationChecks();
     }
 
     async function loadIndividual(sampleId) {
@@ -569,11 +593,11 @@ INDEX_HTML = r"""<!doctype html>
     document.getElementById('prevPage').addEventListener('click', () => { if (state.page > 1) { state.page--; loadIndividuals().catch(e => setStatus(e.message, true)); } });
     document.getElementById('nextPage').addEventListener('click', () => { if (!state.totalPages || state.page < state.totalPages) { state.page++; loadIndividuals().catch(e => setStatus(e.message, true)); } });
     document.getElementById('q').addEventListener('keydown', ev => { if (ev.key === 'Enter') { state.page = 1; loadIndividuals().catch(e => setStatus(e.message, true)); } });
-    document.getElementById('superpopSearch').addEventListener('input', () => renderCheckList('superpopChecks', superpopulationRows, 'superpopSearch', 'superpopCount', row => `${row.id} (${row.count})`, true));
-    document.getElementById('populationSearch').addEventListener('input', () => renderCheckList('populationChecks', populationRows, 'populationSearch', 'populationCount', row => `${row.id} (${row.count})`, true));
+    document.getElementById('superpopSearch').addEventListener('input', () => { renderCheckList('superpopChecks', superpopulationRows, 'superpopSearch', 'superpopCount', row => `${row.id} (${row.count})`, true); renderPopulationChecks(); });
+    document.getElementById('populationSearch').addEventListener('input', renderPopulationChecks);
     document.getElementById('sampleSearch').addEventListener('input', renderSampleChecks);
-    document.getElementById('superpopAll').addEventListener('click', () => { setChecks('superpopChecks', true); renderSampleChecks(); });
-    document.getElementById('superpopNone').addEventListener('click', () => { setChecks('superpopChecks', false); renderSampleChecks(); });
+    document.getElementById('superpopAll').addEventListener('click', () => { setChecks('superpopChecks', true); renderPopulationChecks(); });
+    document.getElementById('superpopNone').addEventListener('click', () => { setChecks('superpopChecks', false); renderPopulationChecks(); });
     document.getElementById('populationAll').addEventListener('click', () => { setChecks('populationChecks', true); renderSampleChecks(); });
     document.getElementById('populationNone').addEventListener('click', () => { setChecks('populationChecks', false); renderSampleChecks(); });
     document.getElementById('sampleAllVisible').addEventListener('click', () => setChecks('sampleChecks', true));

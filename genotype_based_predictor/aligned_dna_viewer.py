@@ -12,12 +12,15 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
+from genotype_based_predictor.bcftools_chain_mapper import BcftoolsChainMapper
+from genotype_based_predictor.dynamic_indel_alignment import DynamicIndelAligner
 
 DEFAULT_MAX_CELLS = 200_000
 DEFAULT_MAX_VARIANTS = 1_000
 DEFAULT_MODEL_WINDOW_SIZE = 32_768
 DEFAULT_VCF_TIMEOUT_SECONDS = 20
 DEFAULT_DATASET_DIR = Path("/dados/GENOMICS_DATA/v1/1kG_high_coverage")
+DEFAULT_CONSENSUS_DATASET_DIR = Path("/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all")
 
 
 def _parse_region(region: str) -> Tuple[str, int, int]:
@@ -140,6 +143,17 @@ def _stream_vcf_variants_from_gzip(vcf_path: str, sample_ids: List[str], region:
 
 def _decode(value: bytes) -> str:
     return value.decode("utf-8", errors="replace")
+
+
+def _read_fasta_sequence(path: Path) -> str:
+    lines: List[str] = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith(">"):
+                continue
+            lines.append(line)
+    return "".join(lines).upper()
 
 
 def _gene_from_path(path: Path) -> str:
@@ -317,9 +331,17 @@ class TsvAlignmentIndex:
 
 
 class AlignmentRepository:
-    def __init__(self, tsv_root: Path, dataset_dir: Optional[Path] = None):
+    def __init__(
+        self,
+        tsv_root: Path,
+        dataset_dir: Optional[Path] = None,
+        alignment_mapping: str = "dynamic_indel",
+        consensus_dataset_dir: Optional[Path] = None,
+    ):
         self.tsv_root = Path(tsv_root)
         self.dataset_dir = Path(dataset_dir) if dataset_dir else DEFAULT_DATASET_DIR
+        self.alignment_mapping = alignment_mapping
+        self.consensus_dataset_dir = Path(consensus_dataset_dir) if consensus_dataset_dir else DEFAULT_CONSENSUS_DATASET_DIR
         self.sample_metadata = self._load_sample_metadata()
         self.indexes = self._discover_indexes()
 
@@ -429,7 +451,7 @@ class AlignmentRepository:
             raise KeyError(f"raw_variant_source.vcf_path ausente para {gene}")
 
         chrom = str(window_meta["chromosome"])
-        reference_start_1based = idx.data.get("alignment_start_1based") or int(window_meta["start"]) + 1
+        reference_start_1based = idx.data.get("alignment_start_1based") or int(window_meta["start"])
         genomic_start = reference_start_1based + ref_start_offset
         genomic_end = reference_start_1based + ref_end_offset
         region = f"{chrom}:{genomic_start}-{genomic_end}"
@@ -491,12 +513,43 @@ class AlignmentRepository:
         reference_start_1based = idx.data.get("alignment_start_1based")
         if not reference_start_1based:
             window_meta = self._load_window_metadata(gene)
-            reference_start_1based = int(window_meta["start"]) + 1
+            reference_start_1based = int(window_meta["start"])
         return idx.expanded_window_genomic_positions(start, end, reference_start_1based)
 
     def model_window_payload(self, gene: str, window_size: int = DEFAULT_MODEL_WINDOW_SIZE) -> Dict[str, int]:
         return self.get(gene).reference_centered_model_window(window_size)
 
+    def _build_chain_context(self, gene: str, sample_ids: List[str]) -> Tuple[DynamicIndelAligner, BcftoolsChainMapper]:
+        idx = self.get(gene)
+        aligner = DynamicIndelAligner(self.dataset_dir, selected_sample_ids=idx.samples, center_window_size=DEFAULT_MODEL_WINDOW_SIZE)
+        aligner.build_alignment_axis_for_gene(gene, idx.samples)
+        mapper = BcftoolsChainMapper(
+            dataset_dir=self.dataset_dir,
+            consensus_dataset_dir=self.consensus_dataset_dir,
+            aligner=aligner,
+        )
+        return aligner, mapper
+
+    def _read_chain_aligned_window(
+        self,
+        mapper: BcftoolsChainMapper,
+        gene: str,
+        sample_id: str,
+        haplotype: str,
+        start: int,
+        end: int,
+    ) -> str:
+        entry = mapper.get_haplotype_entry(gene, sample_id, haplotype)
+        if entry is None:
+            return "X" * max(end - start + 1, 0)
+        fasta_path = entry.get("fasta_path") or self.consensus_dataset_dir / "individuals" / sample_id / "windows" / gene / f"{sample_id}.{haplotype}.window.fixed.fa"
+        fasta = _read_fasta_sequence(Path(fasta_path))
+        expanded_to_source = {int(target) + 1: int(source) for source, target in zip(entry.get("copy_from_indices", []), entry.get("expanded_indices", []))}
+        bases = []
+        for pos in range(start, end + 1):
+            source_idx = expanded_to_source.get(pos)
+            bases.append("X" if source_idx is None or source_idx < 0 or source_idx >= len(fasta) else fasta[source_idx])
+        return "".join(bases)
 
 class AlignmentViewerHandler(BaseHTTPRequestHandler):
     repository: AlignmentRepository
@@ -592,8 +645,15 @@ class AlignmentViewerHandler(BaseHTTPRequestHandler):
         ref_h1, _ref_h2 = idx.read_sample_window("REF", start, end)
         genomic_positions = self.repository.reference_genomic_positions(gene, start, end)
         window_sequences: List[Tuple[str, str]] = []
+        chain_mapper = None
+        if self.repository.alignment_mapping == "bcftools_chain":
+            _aligner, chain_mapper = self.repository._build_chain_context(gene, selected)
         for sample_id in selected:
-            h1_window, h2_window = idx.read_sample_window(sample_id, start, end)
+            if chain_mapper is None:
+                h1_window, h2_window = idx.read_sample_window(sample_id, start, end)
+            else:
+                h1_window = self.repository._read_chain_aligned_window(chain_mapper, gene, sample_id, "H1", start, end)
+                h2_window = self.repository._read_chain_aligned_window(chain_mapper, gene, sample_id, "H2", start, end)
             if haplotype in {"both", "H1"}:
                 window_sequences.append((f"{sample_id}_H1", h1_window))
             if haplotype in {"both", "H2"}:
@@ -638,6 +698,8 @@ INDEX_HTML = r"""
     header { padding: 16px 20px; border-bottom: 1px solid var(--line); background: #0d1117; }
     h1 { margin: 0; font-size: 20px; }
     main { display: grid; grid-template-columns: 330px 1fr; min-height: calc(100vh - 58px); }
+    body.sidebar-hidden main { grid-template-columns: 1fr; }
+    body.sidebar-hidden aside { display: none; }
     aside { padding: 16px; border-right: 1px solid var(--line); background: var(--panel); overflow: auto; }
     section { padding: 16px; overflow: auto; }
     label { display: block; margin-top: 12px; font-size: 13px; color: #b8c2d2; }
@@ -645,6 +707,7 @@ INDEX_HTML = r"""
     select[multiple] { height: 220px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     button { cursor: pointer; background: #1f6feb; border-color: #388bfd; font-weight: 700; }
     button.secondary { background: #21262d; border-color: var(--line); }
+    .sidebar-toggle { position: fixed; top: 12px; right: 16px; z-index: 20; width: auto; margin: 0; padding: 7px 11px; font-size: 12px; }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .filter-panel { border: 1px solid var(--line); border-radius: 10px; padding: 9px; background: #0d1117; margin-top: 10px; }
     .filter-panel h3 { margin: 0 0 8px; font-size: 13px; color: #dce8fb; display:flex; justify-content:space-between; }
@@ -656,6 +719,8 @@ INDEX_HTML = r"""
     .status { margin: 0 0 12px; color: #b8c2d2; }
     .table-wrap { border: 1px solid var(--line); border-radius: 10px; overflow: auto; max-height: calc(100vh - 150px); background: #0d1117; }
     .variants-wrap { margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; overflow: auto; background: #0d1117; max-height: 360px; }
+    .sticky-variants { position: sticky; top: 0; z-index: 10; padding-bottom: 12px; background: var(--bg); }
+    .sticky-variants .variants-head { margin-top: 0; }
     .variants-head { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-top: 18px; }
     .variants-head h2 { font-size:16px; margin:0; }
     .pill { display:inline-block; padding:2px 7px; border-radius:999px; background:#1f2937; color:#dce8fb; font-size:12px; }
@@ -672,11 +737,15 @@ INDEX_HTML = r"""
     .ref { color: #dce5f2; }
     tr.model-window td { background: rgba(46, 160, 67, 0.18); }
     tr.model-center td { background: rgba(124, 199, 255, 0.24); box-shadow: inset 0 1px 0 #7cc7ff, inset 0 -1px 0 #7cc7ff; }
+    tr.variant-row { cursor: pointer; }
+    tr.variant-row:hover td { background: rgba(124, 199, 255, 0.14); }
+    tr.jump-target td { background: rgba(255, 209, 102, 0.26) !important; box-shadow: inset 0 1px 0 #ffd166, inset 0 -1px 0 #ffd166; }
     .model-badge { margin: 0 0 12px; padding: 10px 12px; border: 1px solid #2ea043; border-radius: 10px; background: rgba(46, 160, 67, 0.12); color: #c7f7d4; font-size: 13px; }
     @media (max-width: 860px) { main { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid var(--line); } }
   </style>
 </head>
 <body>
+  <button class="secondary sidebar-toggle" id="sidebarToggle">Ocultar filtros</button>
   <header><h1>Aligned DNA Viewer</h1></header>
   <main>
     <aside>
@@ -739,9 +808,11 @@ INDEX_HTML = r"""
     <section>
       <p class="status" id="status">Carregando...</p>
       <div class="model-badge" id="modelWindowInfo">Faixa CNN: -</div>
-      <div class="table-wrap"><table id="table"></table><div class="bottom-actions"><button id="nextWindowBottom">Próxima janela</button></div></div>
-      <div class="variants-head"><h2>Mutações no VCF da janela selecionada</h2><span class="pill" id="variantStatus">-</span></div>
-      <div class="variants-wrap"><table id="variantTable"></table></div>
+      <div class="sticky-variants">
+        <div class="variants-head"><h2>Mutações no VCF da janela selecionada</h2><span class="pill" id="variantStatus">-</span></div>
+        <div class="variants-wrap"><table id="variantTable"></table></div>
+      </div>
+      <div class="table-wrap" id="tableWrap"><table id="table"></table><div class="bottom-actions"><button id="nextWindowBottom">Próxima janela</button></div></div>
     </section>
   </main>
   <script>
@@ -749,9 +820,11 @@ INDEX_HTML = r"""
     const sampleFilter = document.getElementById('sampleFilter');
     const statusEl = document.getElementById('status');
     const table = document.getElementById('table');
+    const tableWrap = document.getElementById('tableWrap');
     const modelWindowInfo = document.getElementById('modelWindowInfo');
     const variantTable = document.getElementById('variantTable');
     const variantStatus = document.getElementById('variantStatus');
+    const sidebarToggle = document.getElementById('sidebarToggle');
     let allSamples = [];
     let sampleRows = [];
     let populationRows = [];
@@ -767,6 +840,11 @@ INDEX_HTML = r"""
 
     function setStatus(text) { statusEl.textContent = text; }
 
+    function setSidebarHidden(hidden) {
+      document.body.classList.toggle('sidebar-hidden', hidden);
+      sidebarToggle.textContent = hidden ? 'Mostrar filtros' : 'Ocultar filtros';
+    }
+
     function checkedValues(id) { return Array.from(document.querySelectorAll(`#${id} input:checked`)).map(el => el.value); }
     function updateCounts() {
       document.getElementById('superpopCount').textContent = `${checkedValues('superpopChecks').length}/${document.querySelectorAll('#superpopChecks input').length}`;
@@ -776,7 +854,8 @@ INDEX_HTML = r"""
     function setChecks(id, checked) {
       document.querySelectorAll(`#${id} input`).forEach(el => { el.checked = checked; });
       updateCounts();
-      if (id !== 'sampleChecks') renderSampleOptions();
+      if (id === 'superpopChecks') renderPopulationOptions();
+      else if (id !== 'sampleChecks') renderSampleOptions();
     }
     function renderCheckList(id, rows, searchId, countId, formatter) {
       const previous = new Set(checkedValues(id));
@@ -788,7 +867,34 @@ INDEX_HTML = r"""
         return `<label><input type="checkbox" value="${row.id}" ${checked}>${formatter(row)}</label>`;
       }).join('');
       document.getElementById(countId).textContent = `${checkedValues(id).length}/${filtered.length}`;
-      document.querySelectorAll(`#${id} input`).forEach(el => el.addEventListener('change', () => { updateCounts(); renderSampleOptions(); }));
+      document.querySelectorAll(`#${id} input`).forEach(el => el.addEventListener('change', () => {
+        updateCounts();
+        if (id === 'superpopChecks') renderPopulationOptions();
+        else renderSampleOptions();
+      }));
+    }
+
+    function renderPopulationOptions() {
+      const selected = new Set(checkedValues('populationChecks'));
+      const hadPrevious = document.querySelectorAll('#populationChecks input').length > 0;
+      const superpops = new Set(checkedValues('superpopChecks'));
+      const counts = new Map();
+      for (const row of sampleRows) {
+        if (superpops.size && !superpops.has(row.superpopulation || '')) continue;
+        const pop = row.population || '';
+        if (!pop) continue;
+        counts.set(pop, (counts.get(pop) || 0) + 1);
+      }
+      const rows = Array.from(counts.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([id, count]) => ({id, count}));
+      const needle = document.getElementById('populationSearch').value.trim().toLowerCase();
+      const filtered = rows.filter(row => !needle || row.id.toLowerCase().includes(needle));
+      document.getElementById('populationChecks').innerHTML = filtered.map(row => {
+        const checked = (!hadPrevious || selected.has(row.id)) ? 'checked' : '';
+        return `<label><input type="checkbox" value="${row.id}" ${checked}>${row.id} (${row.count})</label>`;
+      }).join('');
+      document.getElementById('populationCount').textContent = `${checkedValues('populationChecks').length}/${filtered.length}`;
+      document.querySelectorAll('#populationChecks input').forEach(el => el.addEventListener('change', () => { updateCounts(); renderSampleOptions(); }));
+      renderSampleOptions();
     }
     function renderSampleOptions() {
       const previous = new Set(checkedValues('sampleChecks'));
@@ -830,8 +936,7 @@ INDEX_HTML = r"""
       populationRows = Object.entries(data.populations || {}).map(([id, count]) => ({id, count}));
       superpopulationRows = Object.entries(data.superpopulations || {}).map(([id, count]) => ({id, count}));
       renderCheckList('superpopChecks', superpopulationRows, 'superpopSearch', 'superpopCount', row => `${row.id} (${row.count})`);
-      renderCheckList('populationChecks', populationRows, 'populationSearch', 'populationCount', row => `${row.id} (${row.count})`);
-      renderSampleOptions();
+      renderPopulationOptions();
       setStatus(`${gene}: ${allSamples.length} indivíduos disponíveis. Limite de renderização: ${maxCells} células.`);
     }
 
@@ -874,6 +979,24 @@ INDEX_HTML = r"""
       return '';
     }
 
+    function firstExpandedPosition(span) {
+      const text = String(span || '').split('-', 1)[0];
+      const pos = Number(text);
+      return Number.isFinite(pos) ? pos : null;
+    }
+
+    function jumpToAlignedPosition(pos) {
+      const target = table.querySelector(`tr[data-pos="${pos}"]`);
+      if (!target) {
+        setStatus(`Posição ${pos} não está renderizada na janela atual.`);
+        return;
+      }
+      table.querySelectorAll('tr.jump-target').forEach(row => row.classList.remove('jump-target'));
+      target.classList.add('jump-target');
+      const top = target.offsetTop - tableWrap.clientHeight / 2 + target.clientHeight / 2;
+      tableWrap.scrollTo({top: Math.max(0, top), behavior: 'smooth'});
+    }
+
     function renderTable(data) {
       table.innerHTML = '';
       const modelWindow = data.model_window || {};
@@ -892,6 +1015,7 @@ INDEX_HTML = r"""
       const tbody = document.createElement('tbody');
       for (const row of data.rows) {
         const tr = document.createElement('tr');
+        tr.dataset.pos = row.pos;
         if (highlightModel && modelWindow.start && row.pos >= modelWindow.start && row.pos <= modelWindow.end) {
           tr.classList.add('model-window');
         }
@@ -939,6 +1063,12 @@ INDEX_HTML = r"""
       }
       for (const row of data.variants) {
         const tr = document.createElement('tr');
+        const alignedPos = firstExpandedPosition(row.expanded_span);
+        if (alignedPos !== null) {
+          tr.classList.add('variant-row');
+          tr.title = `Ir para posição alinhada ${alignedPos}`;
+          tr.addEventListener('click', () => jumpToAlignedPosition(alignedPos));
+        }
         const gtText = Object.entries(row.gts || {}).map(([sample, gt]) => `${sample}:${gt}`).join('  ');
         const altText = (row.alt_samples || []).join(', ');
         const values = [row.expanded_span, row.genomic_pos, row.type, row.ref, row.alt, `${row.alt_count}/${row.called_count}${altText ? ' | ' + altText : ''}`, gtText, row.id || '-', row.filter || '-'];
@@ -988,8 +1118,11 @@ INDEX_HTML = r"""
     }
 
     geneSelect.addEventListener('change', loadSamples);
-    document.getElementById('superpopSearch').addEventListener('input', () => renderCheckList('superpopChecks', superpopulationRows, 'superpopSearch', 'superpopCount', row => `${row.id} (${row.count})`));
-    document.getElementById('populationSearch').addEventListener('input', () => renderCheckList('populationChecks', populationRows, 'populationSearch', 'populationCount', row => `${row.id} (${row.count})`));
+    document.getElementById('superpopSearch').addEventListener('input', () => {
+      renderCheckList('superpopChecks', superpopulationRows, 'superpopSearch', 'superpopCount', row => `${row.id} (${row.count})`);
+      renderPopulationOptions();
+    });
+    document.getElementById('populationSearch').addEventListener('input', renderPopulationOptions);
     sampleFilter.addEventListener('input', renderSampleOptions);
     document.getElementById('superpopAll').addEventListener('click', () => setChecks('superpopChecks', true));
     document.getElementById('superpopNone').addEventListener('click', () => setChecks('superpopChecks', false));
@@ -1005,6 +1138,12 @@ INDEX_HTML = r"""
     document.getElementById('nextWindowBottom').addEventListener('click', () => moveWindow(1));
     document.getElementById('highlightModelWindow').addEventListener('change', () => loadView().catch(e => setStatus(e.message)));
     document.getElementById('goModelWindow').addEventListener('click', () => goToModelWindow().catch(e => setStatus(e.message)));
+    sidebarToggle.addEventListener('click', () => {
+      const hidden = !document.body.classList.contains('sidebar-hidden');
+      setSidebarHidden(hidden);
+      localStorage.setItem('alignedDnaSidebarHidden', hidden ? '1' : '0');
+    });
+    setSidebarHidden(localStorage.getItem('alignedDnaSidebarHidden') === '1');
 
     loadGenes().then(loadView).catch(e => setStatus(e.message));
   </script>
@@ -1024,9 +1163,16 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--max-cells", type=int, default=DEFAULT_MAX_CELLS)
     parser.add_argument("--dataset-dir", type=Path, default=DEFAULT_DATASET_DIR, help="Dataset dir used to load population/superpopulation metadata")
+    parser.add_argument("--alignment-mapping", choices=["dynamic_indel", "bcftools_chain"], default="bcftools_chain")
+    parser.add_argument("--consensus-dataset-dir", type=Path, default=DEFAULT_CONSENSUS_DATASET_DIR)
     args = parser.parse_args()
 
-    repository = AlignmentRepository(args.tsv_root.resolve(), args.dataset_dir.resolve() if args.dataset_dir else None)
+    repository = AlignmentRepository(
+        args.tsv_root.resolve(),
+        args.dataset_dir.resolve() if args.dataset_dir else None,
+        alignment_mapping=args.alignment_mapping,
+        consensus_dataset_dir=args.consensus_dataset_dir.resolve() if args.consensus_dataset_dir else None,
+    )
 
     class Handler(AlignmentViewerHandler):
         pass
@@ -1037,6 +1183,7 @@ def main() -> None:
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"Aligned DNA viewer: http://{args.host}:{args.port}")
     print(f"TSV root: {args.tsv_root.resolve()}")
+    print(f"Alignment mapping: {args.alignment_mapping}")
     print(f"Genes: {', '.join(repository.indexes.keys())}")
     server.serve_forever()
 

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 
-ALIGNMENT_ALGORITHM_VERSION = "dynamic_indel_ref_window_v2"
+ALIGNMENT_ALGORITHM_VERSION = "dynamic_indel_ref_window_v4"
 DEFAULT_ALIGNMENT_CENTER_WINDOW_SIZE = 32_768
 
 
@@ -294,13 +294,13 @@ class DynamicIndelAligner:
             return json.load(f)
 
     def _build_region(self, window_meta: Dict[str, object]) -> str:
-        start_1based = int(window_meta["start"]) + 1
-        end_1based = int(window_meta["end"]) + 1
+        start_1based = int(window_meta["start"])
+        end_1based = int(window_meta["end"])
         return f"{window_meta['chromosome']}:{start_1based}-{end_1based}"
 
     def _alignment_ref_span(self, window_meta: Dict[str, object]) -> Tuple[int, int, int, int]:
-        full_start_1based = int(window_meta["start"]) + 1
-        full_end_1based = int(window_meta["end"]) + 1
+        full_start_1based = int(window_meta["start"])
+        full_end_1based = int(window_meta["end"])
         full_ref_length = full_end_1based - full_start_1based + 1
         if self.center_window_size is None or int(self.center_window_size) <= 0:
             return full_start_1based, full_end_1based, 0, full_ref_length
@@ -329,8 +329,8 @@ class DynamicIndelAligner:
         if not vcf_path:
             raise KeyError(f"raw_variant_source.vcf_path ausente para {gene_name}")
 
-        start_1based = int(window_meta["start"]) + 1
-        end_1based = int(window_meta["end"]) + 1
+        start_1based = int(window_meta["start"])
+        end_1based = int(window_meta["end"])
         full_ref_length = end_1based - start_1based + 1
         alignment_start_1based, alignment_end_1based, ref_start_offset, ref_length = self._alignment_ref_span(window_meta)
         ref_sequence_path = self.dataset_dir / "references" / "windows" / gene_name / "ref.window.fa"
@@ -340,7 +340,7 @@ class DynamicIndelAligner:
 
         payload = {
             "vcf_path": vcf_path,
-            "region": self._build_alignment_region(window_meta),
+            "region": self._build_region(window_meta) if ref_start_offset else self._build_alignment_region(window_meta),
             "full_start_1based": start_1based,
             "full_ref_length": full_ref_length,
             "alignment_start_1based": alignment_start_1based,
@@ -450,6 +450,7 @@ class DynamicIndelAligner:
         t0 = time.perf_counter()
         insertion_after_ref_index: Dict[int, int] = {}
         start_1based = int(gene_payload["start_1based"])
+        full_start_1based = int(gene_payload.get("full_start_1based", start_1based))
         ref_length = int(gene_payload["ref_length"])
         ref_sequence = str(gene_payload.get("ref_sequence", ""))
         axis_finalized = bool(gene_payload.get("axis_finalized"))
@@ -463,6 +464,7 @@ class DynamicIndelAligner:
                 hap_entries[haplotype] = {
                     "deletion_positions": deletion_positions,
                     "insertion_specs": insertion_specs,
+                    "source_start_idx": int(gene_payload.get("ref_start_offset", 0)),
                 }
             sample_entries[sample_id] = hap_entries
 
@@ -472,8 +474,11 @@ class DynamicIndelAligner:
                 continue
             row_gts = row.get("gts", [])
             ref = str(row["ref"])
-            pos0 = _resolve_ref_index(ref_sequence, int(row["pos_1based"]) - start_1based, ref)
-            if pos0 < 0 or pos0 >= ref_length:
+            pos0_full = int(row["pos_1based"]) - full_start_1based
+            ref_start_offset = int(gene_payload.get("ref_start_offset", 0))
+            pos0 = _resolve_ref_index(ref_sequence, pos0_full - ref_start_offset, ref)
+            before_alignment = pos0 < 0
+            if not before_alignment and pos0 >= ref_length:
                 continue
 
             for sample_idx, sample_id in enumerate(missing_sample_ids):
@@ -482,6 +487,15 @@ class DynamicIndelAligner:
                 gt_left, gt_right = _parse_gt(str(row_gts[sample_idx]))
                 for haplotype, token in (("H1", gt_left), ("H2", gt_right)):
                     allele = _allele_sequence(ref, str(row["alt"]), token)
+                    delta_len = len(allele) - len(ref)
+                    if before_alignment:
+                        hap_state = sample_entries[sample_id][haplotype]
+                        span_end = pos0 + len(ref)
+                        if span_end <= 0:
+                            hap_state["source_start_idx"] += delta_len
+                        elif delta_len < 0:
+                            hap_state["source_start_idx"] += max(delta_len, -max(0, -pos0))
+                        continue
                     if len(allele) == len(ref):
                         continue
                     hap_state = sample_entries[sample_id][haplotype]
@@ -491,7 +505,7 @@ class DynamicIndelAligner:
                             if 0 <= ref_idx < ref_length:
                                 hap_state["deletion_positions"].add(ref_idx)
                     else:
-                        ins_len = len(allele) - len(ref)
+                        ins_len = delta_len
                         if ins_len > 0:
                             hap_state["insertion_specs"].append((pos0, ins_len))
                             if not axis_finalized:
@@ -546,6 +560,7 @@ class DynamicIndelAligner:
                             source_cursor += 1
 
                 per_hap[haplotype] = {
+                    "source_start_idx": int(hap_state.get("source_start_idx", gene_payload.get("ref_start_offset", 0))),
                     "copy_from_indices": copy_from_indices,
                     "expanded_indices": expanded_indices,
                     "insertion_indices": insertion_slots,
@@ -570,6 +585,7 @@ class DynamicIndelAligner:
             return
 
         start_1based = int(gene_payload["start_1based"])
+        full_start_1based = int(gene_payload.get("full_start_1based", start_1based))
         ref_length = int(gene_payload["ref_length"])
         ref_sequence = str(gene_payload.get("ref_sequence", ""))
         insertion_after_ref_index: Dict[int, int] = {}
@@ -579,7 +595,8 @@ class DynamicIndelAligner:
             if _classify_length_behavior(str(row["ref"]), str(row["alt"])) != "length_change":
                 continue
             ref = str(row["ref"])
-            pos0 = _resolve_ref_index(ref_sequence, int(row["pos_1based"]) - start_1based, ref)
+            pos0_full = int(row["pos_1based"]) - full_start_1based
+            pos0 = _resolve_ref_index(ref_sequence, pos0_full - int(gene_payload.get("ref_start_offset", 0)), ref)
             if pos0 < 0 or pos0 >= ref_length:
                 continue
             for gt in row.get("gts", []):

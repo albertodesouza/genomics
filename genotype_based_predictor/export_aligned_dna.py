@@ -6,7 +6,14 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from genotype_based_predictor.config import load_config
-from genotype_based_predictor.dynamic_indel_alignment import DEFAULT_ALIGNMENT_CENTER_WINDOW_SIZE, DynamicIndelAligner
+from genotype_based_predictor.dynamic_indel_alignment import (
+    DEFAULT_ALIGNMENT_CENTER_WINDOW_SIZE,
+    DynamicIndelAligner,
+    _allele_sequence,
+    _parse_gt,
+    _resolve_ref_index,
+    _stream_gene_variants,
+)
 
 
 DEFAULT_BATCH_SIZE = 16
@@ -63,16 +70,68 @@ def _build_reference_alignment(ref_sequence: str, axis: Dict[str, object]) -> st
     return "".join(aligned)
 
 
-def _build_haplotype_alignment(sequence: str, entry: Dict[str, object], expanded_length: int) -> str:
-    aligned = ["X"] * expanded_length
-    copy_from = entry.get("copy_from_indices", [])
-    copy_to = entry.get("expanded_indices", [])
-    for source_idx_raw, target_idx_raw in zip(copy_from, copy_to):
-        source_idx = int(source_idx_raw)
-        target_idx = int(target_idx_raw)
-        if 0 <= source_idx < len(sequence) and 0 <= target_idx < expanded_length:
-            aligned[target_idx] = sequence[source_idx]
-    return "".join(aligned)
+def _load_window_metadata(dataset_dir: Path, gene_name: str) -> Dict[str, object]:
+    with open(dataset_dir / "references" / "windows" / gene_name / "window_metadata.json") as f:
+        return json.load(f)
+
+
+def _build_batch_haplotype_alignments(
+    *,
+    ref_aligned: str,
+    ref_sequence: str,
+    axis: Dict[str, object],
+    vcf_path: str,
+    sample_ids: List[str],
+) -> Dict[str, Dict[str, str]]:
+    expanded_index_map = {int(k): int(v) for k, v in axis["expanded_index_map"].items()}
+    insertion_slots_by_ref = {int(k): [int(x) for x in v] for k, v in axis.get("insertion_slots_by_ref", {}).items()}
+    alignment_start_1based = int(axis["alignment_start_1based"])
+    alignment_end_1based = int(axis["alignment_end_1based"])
+    region = str(axis.get("region") or f"{axis.get('chromosome', '')}:{alignment_start_1based}-{alignment_end_1based}")
+    if not region or region.startswith(":"):
+        raise ValueError("Regiao de alinhamento ausente no axis")
+
+    result = {
+        sample_id: {"H1": list(ref_aligned), "H2": list(ref_aligned)}
+        for sample_id in sample_ids
+    }
+
+    query_region = region
+    # The axis region can be wider when it was built to compute haplotype offsets.
+    chrom = query_region.split(":", 1)[0]
+    query_region = f"{chrom}:{alignment_start_1based}-{alignment_end_1based}"
+    for row in _stream_gene_variants(vcf_path, sample_ids, query_region):
+        ref = str(row["ref"])
+        alt = str(row["alt"])
+        ref_idx = _resolve_ref_index(ref_sequence, int(row["pos_1based"]) - alignment_start_1based, ref)
+        if ref_idx < 0 or ref_idx >= len(ref_sequence):
+            continue
+        gts = row.get("gts", [])
+        for sample_idx, sample_id in enumerate(sample_ids):
+            if sample_idx >= len(gts):
+                continue
+            gt_left, gt_right = _parse_gt(str(gts[sample_idx]))
+            for haplotype, token in (("H1", gt_left), ("H2", gt_right)):
+                if token in {"0", ".", "nan", "None"}:
+                    continue
+                allele = _allele_sequence(ref, alt, token)
+                aligned = result[sample_id][haplotype]
+                for offset in range(len(ref)):
+                    target_ref_idx = ref_idx + offset
+                    target = expanded_index_map.get(target_ref_idx)
+                    if target is None or not (0 <= target < len(aligned)):
+                        continue
+                    aligned[target] = allele[offset] if offset < len(allele) else "X"
+                if len(allele) > len(ref):
+                    inserted = allele[len(ref):]
+                    for slot, base in zip(insertion_slots_by_ref.get(ref_idx, []), inserted):
+                        if 0 <= slot < len(aligned):
+                            aligned[slot] = base
+
+    return {
+        sample_id: {hap: "".join(chars) for hap, chars in haps.items()}
+        for sample_id, haps in result.items()
+    }
 
 
 def export_aligned_dna(
@@ -115,6 +174,11 @@ def export_aligned_dna(
     if ref_start_offset or center_window_size:
         ref_sequence = ref_sequence[ref_start_offset:ref_start_offset + int(axis.get("ref_length", len(ref_sequence)))]
     ref_aligned = _build_reference_alignment(ref_sequence, axis)
+    window_meta = _load_window_metadata(dataset_dir, gene_name)
+    raw_variant_source = window_meta.get("raw_variant_source") or {}
+    vcf_path = raw_variant_source.get("vcf_path")
+    if not vcf_path:
+        raise KeyError(f"raw_variant_source.vcf_path ausente para {gene_name}")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as out:
@@ -130,21 +194,16 @@ def export_aligned_dna(
         for batch_start in range(0, len(sample_ids), max(batch_size, 1)):
             batch = sample_ids[batch_start:batch_start + max(batch_size, 1)]
             aligner._build_sample_entries_for_gene(gene_name, batch)
+            batch_alignments = _build_batch_haplotype_alignments(
+                ref_aligned=ref_aligned,
+                ref_sequence=ref_sequence,
+                axis=axis,
+                vcf_path=str(vcf_path),
+                sample_ids=batch,
+            )
             for sample_id in batch:
-                sample_dir = dataset_dir / "individuals" / sample_id / "windows" / gene_name
-                h1_sequence = _read_fasta_sequence(sample_dir / f"{sample_id}.H1.window.fixed.fa")
-                h2_sequence = _read_fasta_sequence(sample_dir / f"{sample_id}.H2.window.fixed.fa")
-                if ref_start_offset or center_window_size:
-                    ref_len = int(axis.get("ref_length", len(h1_sequence)))
-                    h1_sequence = h1_sequence[ref_start_offset:ref_start_offset + ref_len]
-                    h2_sequence = h2_sequence[ref_start_offset:ref_start_offset + ref_len]
-                sample_entry = aligner._sample_entry_cache[gene_name].get(sample_id)
-                h1_entry = None if sample_entry is None else sample_entry.get("H1")
-                h2_entry = None if sample_entry is None else sample_entry.get("H2")
-                if h1_entry is None or h2_entry is None:
-                    raise RuntimeError(f"Entrada de alinhamento ausente para {sample_id}")
-                h1_aligned = _build_haplotype_alignment(h1_sequence, h1_entry, expanded_length)
-                h2_aligned = _build_haplotype_alignment(h2_sequence, h2_entry, expanded_length)
+                h1_aligned = batch_alignments[sample_id]["H1"]
+                h2_aligned = batch_alignments[sample_id]["H2"]
                 out.write(f"{sample_id}\t{h1_aligned}\t{h2_aligned}\n")
             aligner._sample_entry_cache[gene_name].clear()
 

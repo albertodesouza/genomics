@@ -17,6 +17,7 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeEl
 from torch.utils.data import Dataset
 
 from genotype_based_predictor.config import PipelineConfig
+from genotype_based_predictor.bcftools_chain_mapper import BcftoolsChainMapper
 from genotype_based_predictor.dynamic_indel_alignment import DynamicIndelAligner
 from genotype_based_predictor.indel_tensor_builder import build_aligned_haplotype_tensor
 from genotype_based_predictor.normalization import (
@@ -77,6 +78,8 @@ class ProcessedGenomicDataset(Dataset):
         self.genes_to_use = set(di.genes_to_use or [])
         self.indel_neutral_value = di.indel_neutral_value
         self.indel_include_valid_mask = di.indel_include_valid_mask
+        self.alignment_mapping = di.alignment_mapping
+        self.consensus_dataset_dir = Path(di.consensus_dataset_dir) if di.consensus_dataset_dir else None
         out = config.output
         self.prediction_target = out.prediction_target
         self.derived_targets = out.derived_targets
@@ -90,6 +93,15 @@ class ProcessedGenomicDataset(Dataset):
             selected_sample_ids=self.selected_sample_ids,
             center_window_size=di.window_center_size,
         )
+        self.bcftools_chain_mapper: Optional[BcftoolsChainMapper] = None
+        if self.alignment_mapping == "bcftools_chain":
+            if self.consensus_dataset_dir is None:
+                raise ValueError("dataset_input.consensus_dataset_dir é obrigatório para alignment_mapping='bcftools_chain'")
+            self.bcftools_chain_mapper = BcftoolsChainMapper(
+                dataset_dir=Path(di.dataset_dir),
+                consensus_dataset_dir=self.consensus_dataset_dir,
+                aligner=self.dynamic_indel_aligner,
+            )
         self._base_item_cache: OrderedDict[int, Tuple[Any, Any]] = OrderedDict()
         self._base_item_cache_limit = 4
         self._processed_item_cache: OrderedDict[int, Tuple[torch.Tensor, torch.Tensor]] = OrderedDict()
@@ -147,6 +159,10 @@ class ProcessedGenomicDataset(Dataset):
         self.dynamic_indel_aligner.selected_sample_ids = set(sample_ids)
         for gene_name in sorted(self.genes_to_use):
             self.dynamic_indel_aligner.build_alignment_axis_for_gene(gene_name, sample_ids)
+            if self.bcftools_chain_mapper is not None:
+                for sample_id in sample_ids:
+                    self.bcftools_chain_mapper.get_haplotype_entry(gene_name, sample_id, "H1")
+                    self.bcftools_chain_mapper.get_haplotype_entry(gene_name, sample_id, "H2")
 
     # ------------------------------------------------------------------
     # Normalização
@@ -430,13 +446,16 @@ class ProcessedGenomicDataset(Dataset):
             raise ValueError("tensor_layout='haplotype_channels' nao suporta downsample_factor diferente de 1")
         if self.window_center_size <= 0:
             raise ValueError("tensor_layout='haplotype_channels' requer window_center_size > 0")
-        entry = self.dynamic_indel_aligner.get_haplotype_entry(window_name, sample_id, haplotype)
+        if self.bcftools_chain_mapper is not None:
+            entry = self.bcftools_chain_mapper.get_haplotype_entry(window_name, sample_id, haplotype)
+        else:
+            entry = self.dynamic_indel_aligner.get_haplotype_entry(window_name, sample_id, haplotype)
         if entry is None:
             return None
 
         axis = self.dynamic_indel_aligner.get_alignment_axis(window_name)
         expanded_length = int(axis["expanded_length"])
-        ref_start_offset = int(axis.get("ref_start_offset", 0))
+        source_start_idx = int(entry.get("source_start_idx", axis.get("ref_start_offset", 0)))
         ref_length = int(axis.get("ref_length", 0))
         center_slice = self.dynamic_indel_aligner.get_reference_centered_expanded_slice(window_name, self.window_center_size)
         expanded_slice = (int(center_slice["expanded_start"]), int(center_slice["expanded_end"]))
@@ -451,8 +470,8 @@ class ProcessedGenomicDataset(Dataset):
                 if not (0 <= track_index < array.shape[1]):
                     raise ValueError(f"selected_track_index={track_index} fora do limite para {output_type} com shape={array.shape}")
                 row = np.asarray(array[:, track_index], dtype=np.float32)
-                if ref_length > 0:
-                    row = row[ref_start_offset:ref_start_offset + ref_length]
+                if self.alignment_mapping != "bcftools_chain" and ref_length > 0:
+                    row = row[source_start_idx:source_start_idx + ref_length]
                 aligned = build_aligned_haplotype_tensor(
                     row=row,
                     entry=entry,
@@ -466,8 +485,8 @@ class ProcessedGenomicDataset(Dataset):
                     shared_masks = aligned[1:, :]
         else:
             row = np.asarray(array.flatten() if array.ndim > 1 else array, dtype=np.float32)
-            if ref_length > 0:
-                row = row[ref_start_offset:ref_start_offset + ref_length]
+            if self.alignment_mapping != "bcftools_chain" and ref_length > 0:
+                row = row[source_start_idx:source_start_idx + ref_length]
             aligned = build_aligned_haplotype_tensor(
                 row=row,
                 entry=entry,

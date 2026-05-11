@@ -98,6 +98,8 @@ def _build_view_definition(config: PipelineConfig) -> Dict[str, Any]:
         "normalization_method": di.normalization_method,
         "selected_track_index": di.selected_track_index,
         "indel_include_valid_mask": di.indel_include_valid_mask,
+        "alignment_mapping": di.alignment_mapping,
+        "consensus_dataset_dir": di.consensus_dataset_dir,
         "tensor_layout": di.tensor_layout,
     }
 
@@ -204,6 +206,8 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
             "normalization_method": config.dataset_input.normalization_method,
             "selected_track_index": config.dataset_input.selected_track_index,
             "indel_include_valid_mask": config.dataset_input.indel_include_valid_mask,
+            "alignment_mapping": config.dataset_input.alignment_mapping,
+            "consensus_dataset_dir": config.dataset_input.consensus_dataset_dir,
             "tensor_layout": config.dataset_input.tensor_layout,
             "prediction_target": config.output.prediction_target,
             "input_shape": "3D_haplotype_channels",
