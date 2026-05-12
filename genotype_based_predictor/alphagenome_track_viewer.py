@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 
+from genotype_based_predictor.bcftools_chain_mapper import BcftoolsChainMapper
 from genotype_based_predictor.dynamic_indel_alignment import DynamicIndelAligner
 
 
@@ -118,8 +119,10 @@ def _align_signal_window(
     window = np.full(end - start + 1, np.nan, dtype=np.float32)
     copy_from = entry.get("copy_from_indices", [])
     copy_to = entry.get("expanded_indices", [])
+    source_start = int(entry.get("source_start_idx", 0))
+    absolute_source = str(entry.get("mapping_method")) == "bcftools_chain"
     for source_raw, target_raw in zip(copy_from, copy_to):
-        source = int(source_raw)
+        source = int(source_raw) if absolute_source else source_start + int(source_raw)
         target = int(target_raw)
         if start <= target + 1 <= end and 0 <= source < signal.size:
             window[target + 1 - start] = signal[source]
@@ -146,14 +149,16 @@ def _downsample(signal: np.ndarray, start: int, points: int) -> Tuple[List[int],
         bucket = signal[left:right]
         if bucket.size == 0:
             continue
+        finite = bucket[np.isfinite(bucket)]
         xs.append(start + (left + right - 1) // 2)
-        ys.append(_json_scalar(np.nanmean(bucket)))
+        ys.append(None if finite.size == 0 else _json_scalar(np.mean(finite)))
     return xs, ys, "mean"
 
 
 class AlphaGenomeRepository:
-    def __init__(self, dataset_dir: Path):
+    def __init__(self, dataset_dir: Path, consensus_dataset_dir: Optional[Path] = None):
         self.dataset_dir = Path(dataset_dir).resolve()
+        self.consensus_dataset_dir = Path(consensus_dataset_dir).resolve() if consensus_dataset_dir else Path("/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all")
         metadata_path = self.dataset_dir / "dataset_metadata.json"
         if not metadata_path.exists():
             raise FileNotFoundError(f"dataset_metadata.json not found: {metadata_path}")
@@ -163,6 +168,7 @@ class AlphaGenomeRepository:
         self.genes = self._load_genes()
         self.outputs = self._load_outputs()
         self._aligner: Optional[DynamicIndelAligner] = None
+        self._chain_mapper: Optional[BcftoolsChainMapper] = None
 
     def _load_individuals(self) -> List[str]:
         raw = self.metadata.get("individuals", [])
@@ -316,8 +322,18 @@ class AlphaGenomeRepository:
 
     def _get_aligner(self) -> DynamicIndelAligner:
         if self._aligner is None:
-            self._aligner = DynamicIndelAligner(self.dataset_dir, selected_sample_ids=self.individuals, center_window_size=None)
+            self._aligner = DynamicIndelAligner(self.dataset_dir, selected_sample_ids=self.individuals, center_window_size=DEFAULT_VIEW_LENGTH)
         return self._aligner
+
+    def _get_chain_mapper(self) -> BcftoolsChainMapper:
+        aligner = self._get_aligner()
+        if self._chain_mapper is None:
+            self._chain_mapper = BcftoolsChainMapper(
+                dataset_dir=self.dataset_dir,
+                consensus_dataset_dir=self.consensus_dataset_dir,
+                aligner=aligner,
+            )
+        return self._chain_mapper
 
     def track_payload(
         self,
@@ -387,9 +403,19 @@ class AlphaGenomeRepository:
             raise ValueError(f"Too many series: max {MAX_SERIES} sample/haplotype combinations")
 
         aligner = self._get_aligner() if align else None
+        chain_mapper = self._get_chain_mapper() if align else None
         if aligner is not None:
             aligner.build_alignment_axis_for_gene(gene, self.individuals)
         expanded_length = aligner.get_expanded_length(gene) if aligner else None
+        axis = aligner.get_alignment_axis(gene) if aligner else None
+        effective_start = start
+        effective_length = length
+        if axis is not None:
+            ref_start_offset = int(axis.get("ref_start_offset", 0))
+            if start > int(expanded_length or 0) and ref_start_offset > 0:
+                effective_start = max(1, start - ref_start_offset)
+            effective_start = max(1, min(effective_start, int(expanded_length or 1)))
+            effective_length = max(1, min(length, int(expanded_length or 1) - effective_start + 1))
         series = []
         array_shape: Optional[List[int]] = None
         array_dtype: Optional[str] = None
@@ -405,11 +431,11 @@ class AlphaGenomeRepository:
                 metadata = self._load_track_metadata(pred_dir, output)
                 full_signal = _extract_full_signal(array, track=track)
                 if aligner is not None:
-                    entry = aligner.get_haplotype_entry(gene, sample, haplotype)
+                    entry = chain_mapper.get_haplotype_entry(gene, sample, haplotype) if chain_mapper is not None else None
                     if entry is None:
                         raise RuntimeError(f"Alignment entry missing for {sample} {haplotype}")
-                    signal = _align_signal_window(full_signal, entry, int(expanded_length), start, length)
-                    x_start = start
+                    signal = _align_signal_window(full_signal, entry, int(expanded_length), effective_start, effective_length)
+                    x_start = effective_start
                 else:
                     signal = _extract_signal(array, track=track, start=start, length=length)
                     x_start = max(1, start)
@@ -445,7 +471,8 @@ class AlphaGenomeRepository:
             "array_shape": array_shape or [],
             "array_dtype": array_dtype,
             "requested": {"start": start, "length": length, "points": points, "align": align},
-            "x_axis": "expanded_alignment" if align else "sample_sequence",
+            "effective_window": {"start": effective_start, "length": effective_length},
+            "x_axis": "bcftools_chain_expanded_alignment" if align else "sample_sequence",
             "expanded_length": expanded_length,
             "individuals": individual_summaries,
             "series": series,
@@ -571,7 +598,7 @@ INDEX_HTML = """<!doctype html>
 <body>
 <main>
   <h1>AlphaGenome Track Viewer</h1>
-  <div class="sub">Compare AlphaGenome tracks across samples and haplotypes, optionally aligned by DynamicIndelAligner.</div>
+  <div class="sub">Compare AlphaGenome tracks across samples and haplotypes, optionally aligned with the bcftools_chain mapping used for training.</div>
   <section class="panel">
     <form id="controls">
       <div class="full filter-grid">
@@ -602,7 +629,7 @@ INDEX_HTML = """<!doctype html>
       <label>Start<input id="start" type="number" value="1" min="1"></label>
       <label>Length<input id="length" type="number" value="2000" min="1"></label>
       <label>Points<input id="points" type="number" value="1000" min="1" max="20000"></label>
-      <label>Alignment<div class="checks"><label><input id="align" type="checkbox"> align with DynamicIndelAligner</label></div></label>
+      <label>Alignment<div class="checks"><label><input id="align" type="checkbox"> align with bcftools_chain</label></div></label>
       <button type="submit">Refresh now</button>
       <button type="button" id="prevWindow">Previous window</button>
       <button type="button" id="nextWindow">Next window</button>
@@ -1003,12 +1030,13 @@ init().catch(showError);
 """
 
 
-def serve(dataset_dir: Path, host: str, port: int) -> None:
-    repository = AlphaGenomeRepository(dataset_dir)
+def serve(dataset_dir: Path, host: str, port: int, consensus_dataset_dir: Optional[Path] = None) -> None:
+    repository = AlphaGenomeRepository(dataset_dir, consensus_dataset_dir=consensus_dataset_dir)
     AlphaGenomeTrackViewerHandler.repository = repository
     server = ThreadingHTTPServer((host, port), AlphaGenomeTrackViewerHandler)
     print(f"AlphaGenome Track Viewer: http://{host}:{port}")
     print(f"Dataset: {repository.dataset_dir}")
+    print(f"Consensus dataset: {repository.consensus_dataset_dir}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -1022,8 +1050,9 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("dataset_dir", type=Path, help="Dataset directory containing dataset_metadata.json")
     parser.add_argument("--host", default="127.0.0.1", help="Bind host")
     parser.add_argument("--port", type=int, default=8774, help="Bind port")
+    parser.add_argument("--consensus-dataset-dir", type=Path, default=Path("/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all"))
     args = parser.parse_args(argv)
-    serve(args.dataset_dir, args.host, args.port)
+    serve(args.dataset_dir, args.host, args.port, args.consensus_dataset_dir)
 
 
 if __name__ == "__main__":

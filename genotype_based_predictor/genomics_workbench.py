@@ -114,7 +114,7 @@ def _build_specs(args: argparse.Namespace) -> List[ViewerSpec]:
             description="Visualize tracks AlphaGenome por individuo, gene, haplotipo e output.",
             module="genotype_based_predictor.alphagenome_track_viewer",
             port=args.track_port,
-            args=[str(dataset_dir), "--host", "127.0.0.1", "--port", str(args.track_port)],
+            args=[str(dataset_dir), "--host", "127.0.0.1", "--port", str(args.track_port), "--consensus-dataset-dir", str(consensus_dataset_dir)],
             enabled=dataset_dir.exists(),
             disabled_reason=f"Dataset nao encontrado: {dataset_dir}",
         ),

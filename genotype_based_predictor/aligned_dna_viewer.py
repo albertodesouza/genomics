@@ -551,6 +551,38 @@ class AlignmentRepository:
             bases.append("X" if source_idx is None or source_idx < 0 or source_idx >= len(fasta) else fasta[source_idx])
         return "".join(bases)
 
+    def _read_chain_aligned_window_with_masks(
+        self,
+        mapper: BcftoolsChainMapper,
+        gene: str,
+        sample_id: str,
+        haplotype: str,
+        start: int,
+        end: int,
+    ) -> Tuple[str, List[Dict[str, object]]]:
+        entry = mapper.get_haplotype_entry(gene, sample_id, haplotype)
+        if entry is None:
+            length = max(end - start + 1, 0)
+            return "X" * length, [{"valid": 0, "ins": 0, "del": 0, "source_idx": None} for _ in range(length)]
+        fasta_path = entry.get("fasta_path") or self.consensus_dataset_dir / "individuals" / sample_id / "windows" / gene / f"{sample_id}.{haplotype}.window.fixed.fa"
+        fasta = _read_fasta_sequence(Path(fasta_path))
+        expanded_to_source = {int(target) + 1: int(source) for source, target in zip(entry.get("copy_from_indices", []), entry.get("expanded_indices", []))}
+        insertion_positions = {int(v) + 1 for v in entry.get("insertion_indices", [])}
+        deletion_positions = {int(v) + 1 for v in entry.get("deletion_indices", [])}
+        bases = []
+        masks = []
+        for pos in range(start, end + 1):
+            source_idx = expanded_to_source.get(pos)
+            valid = source_idx is not None and 0 <= source_idx < len(fasta)
+            bases.append(fasta[source_idx] if valid else "X")
+            masks.append({
+                "valid": 1 if valid else 0,
+                "ins": 1 if pos in insertion_positions else 0,
+                "del": 1 if pos in deletion_positions else 0,
+                "source_idx": source_idx if valid else None,
+            })
+        return "".join(bases), masks
+
 class AlignmentViewerHandler(BaseHTTPRequestHandler):
     repository: AlignmentRepository
     max_cells: int
@@ -645,33 +677,40 @@ class AlignmentViewerHandler(BaseHTTPRequestHandler):
         ref_h1, _ref_h2 = idx.read_sample_window("REF", start, end)
         genomic_positions = self.repository.reference_genomic_positions(gene, start, end)
         window_sequences: List[Tuple[str, str]] = []
+        window_masks: List[Tuple[str, List[Dict[str, object]]]] = []
         chain_mapper = None
         if self.repository.alignment_mapping == "bcftools_chain":
             _aligner, chain_mapper = self.repository._build_chain_context(gene, selected)
         for sample_id in selected:
             if chain_mapper is None:
                 h1_window, h2_window = idx.read_sample_window(sample_id, start, end)
+                h1_masks = [{"valid": 1 if base != "X" else 0, "ins": 0, "del": 1 if base == "X" else 0, "source_idx": None} for base in h1_window]
+                h2_masks = [{"valid": 1 if base != "X" else 0, "ins": 0, "del": 1 if base == "X" else 0, "source_idx": None} for base in h2_window]
             else:
-                h1_window = self.repository._read_chain_aligned_window(chain_mapper, gene, sample_id, "H1", start, end)
-                h2_window = self.repository._read_chain_aligned_window(chain_mapper, gene, sample_id, "H2", start, end)
+                h1_window, h1_masks = self.repository._read_chain_aligned_window_with_masks(chain_mapper, gene, sample_id, "H1", start, end)
+                h2_window, h2_masks = self.repository._read_chain_aligned_window_with_masks(chain_mapper, gene, sample_id, "H2", start, end)
             if haplotype in {"both", "H1"}:
                 window_sequences.append((f"{sample_id}_H1", h1_window))
+                window_masks.append((f"{sample_id}_H1", h1_masks))
             if haplotype in {"both", "H2"}:
                 window_sequences.append((f"{sample_id}_H2", h2_window))
+                window_masks.append((f"{sample_id}_H2", h2_masks))
 
         rows = []
         for offset, pos in enumerate(range(start, end + 1)):
             ref_base = ref_h1[offset]
             bases = [ref_base]
+            masks = [{"valid": 1 if ref_base != "X" else 0, "ins": 0, "del": 0, "source_idx": None}]
             has_variant = False
-            for _name, seq in window_sequences:
+            for (_name, seq), (_mask_name, mask_seq) in zip(window_sequences, window_masks):
                 base = seq[offset]
                 bases.append(base)
+                masks.append(mask_seq[offset])
                 if base != ref_base:
                     has_variant = True
             if variant_only and not has_variant:
                 continue
-            rows.append({"pos": pos, "genomic_pos": genomic_positions[offset], "ref": ref_base, "bases": bases})
+            rows.append({"pos": pos, "genomic_pos": genomic_positions[offset], "ref": ref_base, "bases": bases, "masks": masks})
 
         self._send_json({
             "gene": gene,
@@ -997,6 +1036,21 @@ INDEX_HTML = r"""
       tableWrap.scrollTo({top: Math.max(0, top), behavior: 'smooth'});
     }
 
+    function maskTooltip(columnName, row, idx) {
+      const mask = (row.masks || [])[idx] || {};
+      const source = mask.source_idx == null ? '-' : mask.source_idx;
+      return [
+        `${columnName}`,
+        `index: ${row.pos}`,
+        `ref genome pos: ${row.genomic_pos || '-'}`,
+        `base: ${(row.bases || [])[idx] || '-'}`,
+        `valid_mask: ${mask.valid ?? '-'}`,
+        `insertion_mask: ${mask.ins ?? '-'}`,
+        `deletion_mask: ${mask.del ?? '-'}`,
+        `fasta/prediction index: ${source}`,
+      ].join('\n');
+    }
+
     function renderTable(data) {
       table.innerHTML = '';
       const modelWindow = data.model_window || {};
@@ -1032,6 +1086,7 @@ INDEX_HTML = r"""
           const td = document.createElement('td');
           td.textContent = base;
           td.className = cellClass(base, row.ref, idx);
+          td.title = maskTooltip(data.columns[idx], row, idx);
           tr.appendChild(td);
         });
         tbody.appendChild(tr);

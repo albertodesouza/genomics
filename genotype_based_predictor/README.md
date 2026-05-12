@@ -164,7 +164,7 @@ python3 -m genotype_based_predictor.alphagenome_track_viewer \
   --port 8774
 ```
 
-Permite comparar tracks AlphaGenome por gene, individuo, haplotipo, output e track. Tambem pode alinhar visualmente com o `DynamicIndelAligner`.
+Permite comparar tracks AlphaGenome por gene, individuo, haplotipo, output e track. Quando `align with bcftools_chain` esta ativo, o viewer usa o mesmo mapeamento FASTA/predicao -> eixo expandido do treinamento.
 
 ### Aligned DNA Viewer
 
