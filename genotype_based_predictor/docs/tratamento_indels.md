@@ -348,14 +348,14 @@ e nao:
 
 Esse comportamento esta implementado em `dynamic_indel_alignment.py`.
 
-### O.2 Cache Compartilhada De Alinhamento
+### O.2 Caches De Alinhamento
 
 O alinhamento dinamico e implementado uma unica vez em `DynamicIndelAligner` e reutilizado por treino, exportacao de TSVs e viewers.
 
-A cache persistente padrao fica em:
+A cache persistente do eixo expandido global fica em:
 
 ```text
-<dataset_dir>/alignment_cache/dynamic_indel_ref_window_v2/
+<dataset_dir>/alignment_cache/dynamic_indel_ref_window_v4/
 ```
 
 Ela e separada por conjunto de amostras, pois o eixo expandido depende das insercoes observadas naquele conjunto. Portanto, uma exportacao com 5 individuos nao reaproveita o mesmo eixo de uma execucao com todos os individuos.
@@ -368,6 +368,14 @@ samples_<N>_<hash>/<GENE>/samples/<sample_id>.json
 ```
 
 O `axis.json` guarda o eixo expandido. Os arquivos por amostra guardam `copy_from_indices`, `expanded_indices`, `insertion_indices` e `deletion_indices` para H1/H2.
+
+No modo recomendado `bcftools_chain`, o mapeamento das predicoes AlphaGenome para esse eixo fica em:
+
+```text
+<dataset_dir>/alignment_cache/bcftools_chain_mapper_v3/<GENE>/<AXIS_KEY>/<SAMPLE>/<HAP>.entry.json
+```
+
+Essa cache e derivada de `bcftools consensus -c`, validada contra `*.window.raw.fa` e `*.window.fixed.fa`, e inclui a chave do eixo usado. Isso evita reaproveitar por engano um mapa gerado para eixo completo em um treino que usa apenas a janela central.
 
 A cache processada da CNN salva uma assinatura dessa cache de alinhamento em `metadata.json`. Caches processadas antigas sem essa assinatura sao invalidadas automaticamente.
 
@@ -387,7 +395,11 @@ Essa regra evita o erro de usar simplesmente `expanded_length // 2`, que poderia
 
 Por padrao, o `DynamicIndelAligner` consulta e alinha apenas essa regiao central de 32.768 bases da referencia. O comportamento antigo de consultar toda a janela de aproximadamente 512 kbp continua disponivel no export com `--full-window`.
 
-Mesmo quando a consulta e limitada a 32.768 bases de referencia, o eixo expandido pode ficar ligeiramente maior que 32.768 colunas por causa de insercoes dentro da regiao.
+Mesmo quando a consulta e limitada a 32.768 bases de referencia, o eixo expandido do gene pode ficar ligeiramente maior que 32.768 colunas por causa de insercoes dentro da regiao. Para a CNN, a fatia final entregue ao modelo e cortada para `window_center_size`, garantindo shape fixo entre genes. Na config de 3 ontologias validada, o tensor final tem shape:
+
+```text
+(2, 66, 32768)
+```
 
 A cache processada registra essa politica como:
 

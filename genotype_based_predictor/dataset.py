@@ -159,10 +159,23 @@ class ProcessedGenomicDataset(Dataset):
         self.dynamic_indel_aligner.selected_sample_ids = set(sample_ids)
         for gene_name in sorted(self.genes_to_use):
             self.dynamic_indel_aligner.build_alignment_axis_for_gene(gene_name, sample_ids)
-            if self.bcftools_chain_mapper is not None:
-                for sample_id in sample_ids:
-                    self.bcftools_chain_mapper.get_haplotype_entry(gene_name, sample_id, "H1")
-                    self.bcftools_chain_mapper.get_haplotype_entry(gene_name, sample_id, "H2")
+        if self.bcftools_chain_mapper is not None:
+            total = len(sample_ids) * len(self.genes_to_use) * 2
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("{task.description}"),
+                BarColumn(),
+                TextColumn("{task.completed}/{task.total}"),
+                TimeElapsedColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task("Preparando bcftools_chain...", total=total)
+                for gene_name in sorted(self.genes_to_use):
+                    for sample_id in sample_ids:
+                        self.bcftools_chain_mapper.get_haplotype_entry(gene_name, sample_id, "H1")
+                        progress.update(task, advance=1)
+                        self.bcftools_chain_mapper.get_haplotype_entry(gene_name, sample_id, "H2")
+                        progress.update(task, advance=1)
 
     # ------------------------------------------------------------------
     # Normalização

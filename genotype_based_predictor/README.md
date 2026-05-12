@@ -248,7 +248,7 @@ O modo antigo `dynamic_indel` ainda existe para compatibilidade e diagnostico, m
 Cache do mapeador chain:
 
 ```text
-/dados/GENOMICS_DATA/v1/1kG_high_coverage/alignment_cache/bcftools_chain_mapper_v1
+/dados/GENOMICS_DATA/v1/1kG_high_coverage/alignment_cache/bcftools_chain_mapper_v3
 ```
 
 ## 5. Gerar TSVs De DNA Alinhado
@@ -448,7 +448,7 @@ O `axis.json` guarda o eixo expandido do gene. Cada arquivo em `samples/` guarda
 No modo recomendado `bcftools_chain`, existe tambem a cache do mapeamento FASTA AlphaGenome -> eixo expandido:
 
 ```text
-alignment_cache/bcftools_chain_mapper_v1/<GENE>/<SAMPLE>/<HAP>.entry.json
+alignment_cache/bcftools_chain_mapper_v3/<GENE>/<AXIS_KEY>/<SAMPLE>/<HAP>.entry.json
 ```
 
 Essa entrada e gerada a partir de `bcftools consensus -c`, validada contra os FASTAs existentes e usada tanto no treinamento quanto na visualizacao.
@@ -531,11 +531,56 @@ O treinamento principal continua em:
 train.py
 ```
 
+Antes de treinar, valide a entrada do pipeline `bcftools_chain`:
+
+```bash
+source scripts/start_genomics_universal.sh
+python3 -m genotype_based_predictor.validate_training_input \
+  genotype_based_predictor/configs/genes_1000_all_3ontologies.yaml \
+  --sample-limit 5 \
+  --max-tensor-items 3
+```
+
+O validador reconstrói consensos com `bcftools consensus -c`, valida os FASTAs preservados, checa limites dos `.npz` AlphaGenome e monta alguns tensores finais pelo `ProcessedGenomicDataset`. Para a config de 3 ontologias, o shape esperado deve ser fixo, por exemplo:
+
+```text
+(2, 66, 32768)
+```
+
+Para acelerar a primeira execução, precompute a cache `bcftools_chain` em paralelo antes do treino:
+
+```bash
+source scripts/start_genomics_universal.sh
+python3 -m genotype_based_predictor.precompute_bcftools_chain_cache \
+  genotype_based_predictor/configs/genes_1000_all_3ontologies.yaml \
+  --workers 6 \
+  --chunk-size 25
+```
+
+Esse comando e retomavel: entradas ja geradas sao reaproveitadas. Se uma reconstrução cacheada nao bater com `*.window.raw.fa` ou `*.window.fixed.fa`, o mapper regenera o consenso/chain uma vez antes de falhar.
+
+Se quiser processar em blocos retomáveis:
+
+```bash
+python3 -m genotype_based_predictor.precompute_bcftools_chain_cache \
+  genotype_based_predictor/configs/genes_1000_all_3ontologies.yaml \
+  --workers 6 \
+  --start 0 \
+  --limit 500
+```
+
 Exemplo geral:
 
 ```bash
 source scripts/start_genomics_universal.sh
 python3 -m genotype_based_predictor.train genotype_based_predictor/configs/genes_1000_all.yaml
+```
+
+Para a config de 3 ontologias:
+
+```bash
+source scripts/start_genomics_universal.sh
+python3 -m genotype_based_predictor.train genotype_based_predictor/configs/genes_1000_all_3ontologies.yaml
 ```
 
 Use o `Experiment Dashboard` para inspecionar resultados ja gerados.

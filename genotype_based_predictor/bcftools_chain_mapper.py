@@ -15,7 +15,7 @@ from genotype_based_predictor.dynamic_indel_alignment import DynamicIndelAligner
 DEFAULT_DATASET_DIR = Path("/dados/GENOMICS_DATA/v1/1kG_high_coverage")
 DEFAULT_CONSENSUS_ROOT = Path("/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all")
 DEFAULT_TSV_ROOT = Path("genotype_based_predictor/aligned_dna_genes_1000_all")
-BCFTOOLS_CHAIN_MAPPER_VERSION = "bcftools_chain_mapper_v2"
+BCFTOOLS_CHAIN_MAPPER_VERSION = "bcftools_chain_mapper_v3"
 
 
 @dataclass(frozen=True)
@@ -63,6 +63,7 @@ def run_bcftools_consensus_with_chain(
     sample_id: str,
     haplotype: str,
     cache_dir: Path,
+    force: bool = False,
 ) -> Tuple[Path, Path]:
     if shutil.which("bcftools") is None:
         raise RuntimeError("bcftools nao encontrado no PATH. Rode source scripts/start_genomics_universal.sh")
@@ -76,15 +77,20 @@ def run_bcftools_consensus_with_chain(
     cache_dir.mkdir(parents=True, exist_ok=True)
     raw_out = cache_dir / f"{sample_id}.{haplotype}.window.raw.rebuilt.fa"
     chain_out = cache_dir / f"{sample_id}.{haplotype}.window.raw.chain"
-    if raw_out.exists() and chain_out.exists():
+    if raw_out.exists() and chain_out.exists() and not force:
         return raw_out, chain_out
+    if force:
+        raw_out.unlink(missing_ok=True)
+        chain_out.unlink(missing_ok=True)
     with open(raw_out, "w") as out:
-        subprocess.run(
+        proc = subprocess.run(
             ["bcftools", "consensus", "-H", hap_arg, "-f", str(ref_path), "-c", str(chain_out), str(vcf_path)],
-            check=True,
             stdout=out,
+            stderr=subprocess.PIPE,
             text=True,
         )
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, proc.args, stderr=proc.stderr)
     return raw_out, chain_out
 
 
@@ -237,19 +243,29 @@ class BcftoolsChainMapper:
         self.consensus_dataset_dir = Path(consensus_dataset_dir)
         self.aligner = aligner
         self.cache_dir = Path(cache_dir) if cache_dir else self.dataset_dir / "alignment_cache" / BCFTOOLS_CHAIN_MAPPER_VERSION
-        self._entry_cache: Dict[Tuple[str, str, str], Dict[str, object]] = {}
+        self._entry_cache: Dict[Tuple[str, str, str, str], Dict[str, object]] = {}
 
     def _case_dir(self, gene: str, sample_id: str) -> Path:
         return self.consensus_dataset_dir / "individuals" / sample_id / "windows" / gene
 
-    def _entry_cache_path(self, gene: str, sample_id: str, haplotype: str) -> Path:
-        return self.cache_dir / gene / sample_id / f"{haplotype}.entry.json"
+    def _axis_cache_key(self, gene: str) -> str:
+        axis = self.aligner.get_alignment_axis(gene)
+        return (
+            f"expanded_{int(axis.get('expanded_length', 0))}"
+            f"_ref_{int(axis.get('ref_length', 0))}"
+            f"_offset_{int(axis.get('ref_start_offset', 0))}"
+            f"_{axis.get('sample_set_key', 'samples') }"
+        )
+
+    def _entry_cache_path(self, gene: str, sample_id: str, haplotype: str, axis_key: str) -> Path:
+        return self.cache_dir / gene / axis_key / sample_id / f"{haplotype}.entry.json"
 
     def get_haplotype_entry(self, gene: str, sample_id: str, haplotype: str) -> Optional[Dict[str, object]]:
-        key = (gene, sample_id, haplotype)
+        axis_key = self._axis_cache_key(gene)
+        key = (gene, sample_id, haplotype, axis_key)
         if key in self._entry_cache:
             return self._entry_cache[key]
-        path = self._entry_cache_path(gene, sample_id, haplotype)
+        path = self._entry_cache_path(gene, sample_id, haplotype, axis_key)
         if path.exists():
             try:
                 with open(path) as f:
@@ -267,21 +283,10 @@ class BcftoolsChainMapper:
         if not fixed_path.exists():
             return None
         raw_path = case_dir / f"{sample_id}.{haplotype}.window.raw.fa"
-        raw_rebuilt, chain_path = run_bcftools_consensus_with_chain(
-            case_dir=case_dir,
-            sample_id=sample_id,
-            haplotype=haplotype,
-            cache_dir=self.cache_dir / gene / sample_id / haplotype,
-        )
+        raw_rebuilt, chain_path = self._build_validated_consensus(case_dir, sample_id, haplotype)
         raw_rebuilt_seq = read_fasta_sequence(raw_rebuilt)
-        if raw_path.exists() and raw_rebuilt_seq != read_fasta_sequence(raw_path):
-            raise ValueError(f"Consenso reconstruido difere do raw existente: {raw_path}")
-
         fixed_seq = read_fasta_sequence(fixed_path)
         ref_seq = read_fasta_sequence(case_dir / "ref.window.fa")
-        rebuilt_fixed = adjust_to_target_size(raw_rebuilt_seq, ref_seq, len(fixed_seq))
-        if rebuilt_fixed != fixed_seq:
-            raise ValueError(f"Consenso reconstruido difere do fixed existente: {fixed_path}")
 
         axis = self.aligner.get_alignment_axis(gene)
         entry = build_chain_entry(
@@ -294,11 +299,51 @@ class BcftoolsChainMapper:
         entry["chain_path"] = str(chain_path)
         entry["raw_rebuilt_path"] = str(raw_rebuilt)
         entry["version"] = BCFTOOLS_CHAIN_MAPPER_VERSION
+        entry["axis_cache_key"] = axis_key
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
             json.dump({"version": BCFTOOLS_CHAIN_MAPPER_VERSION, "entry": entry}, f, indent=2)
         self._entry_cache[key] = entry
         return entry
+
+    def _build_validated_consensus(self, case_dir: Path, sample_id: str, haplotype: str) -> Tuple[Path, Path]:
+        cache_dir = self.cache_dir / case_dir.name / sample_id / haplotype
+        raw_path = case_dir / f"{sample_id}.{haplotype}.window.raw.fa"
+        fixed_path = case_dir / f"{sample_id}.{haplotype}.window.fixed.fa"
+        ref_path = case_dir / "ref.window.fa"
+        raw_rebuilt, chain_path = run_bcftools_consensus_with_chain(
+            case_dir=case_dir,
+            sample_id=sample_id,
+            haplotype=haplotype,
+            cache_dir=cache_dir,
+        )
+
+        def is_valid(raw_file: Path) -> Tuple[bool, str]:
+            raw_rebuilt_seq = read_fasta_sequence(raw_file)
+            if raw_path.exists() and raw_rebuilt_seq != read_fasta_sequence(raw_path):
+                return False, f"Consenso reconstruido difere do raw existente: {raw_path}"
+            fixed_seq = read_fasta_sequence(fixed_path)
+            ref_seq = read_fasta_sequence(ref_path)
+            rebuilt_fixed = adjust_to_target_size(raw_rebuilt_seq, ref_seq, len(fixed_seq))
+            if rebuilt_fixed != fixed_seq:
+                return False, f"Consenso reconstruido difere do fixed existente: {fixed_path}"
+            return True, ""
+
+        valid, reason = is_valid(raw_rebuilt)
+        if valid:
+            return raw_rebuilt, chain_path
+
+        raw_rebuilt, chain_path = run_bcftools_consensus_with_chain(
+            case_dir=case_dir,
+            sample_id=sample_id,
+            haplotype=haplotype,
+            cache_dir=cache_dir,
+            force=True,
+        )
+        valid, reason = is_valid(raw_rebuilt)
+        if not valid:
+            raise ValueError(reason)
+        return raw_rebuilt, chain_path
 
 
 def load_tsv_sample_ids(tsv_root: Path, gene: str) -> List[str]:

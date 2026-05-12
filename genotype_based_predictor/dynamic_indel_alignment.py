@@ -662,7 +662,7 @@ class DynamicIndelAligner:
         center_ref_idx = ref_length // 2
         center_expanded_idx = int(expanded_index_map.get(center_ref_idx, center_ref_idx))
         size = max(int(window_size), 1)
-        if ref_length <= size:
+        if expanded_length <= size:
             return {
                 "center_ref_idx": center_ref_idx,
                 "center_expanded_idx": center_expanded_idx,
