@@ -176,6 +176,10 @@ class ProcessedGenomicDataset(Dataset):
                         progress.update(task, advance=1)
                         self.bcftools_chain_mapper.get_haplotype_entry(gene_name, sample_id, "H2")
                         progress.update(task, advance=1)
+                    self.bcftools_chain_mapper.clear_memory_cache()
+                    cache = self.dynamic_indel_aligner._sample_entry_cache.get(gene_name)
+                    if cache is not None:
+                        cache.clear()
 
     # ------------------------------------------------------------------
     # Normalização

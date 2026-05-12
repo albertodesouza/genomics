@@ -27,8 +27,8 @@ from genotype_based_predictor.data_splitting import (
 from genotype_based_predictor.utils import worker_init_fn
 
 console = Console()
-SHARD_SIZE = 8
-MAX_CACHE_BUILD_WORKERS = 1
+SHARD_SIZE = 16
+MAX_CACHE_BUILD_WORKERS = 4
 
 
 def _materialize_cache_chunk(

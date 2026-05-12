@@ -5,6 +5,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -238,12 +239,25 @@ class BcftoolsChainMapper:
         consensus_dataset_dir: Path,
         aligner: DynamicIndelAligner,
         cache_dir: Optional[Path] = None,
+        memory_cache_limit: int = 256,
     ):
         self.dataset_dir = Path(dataset_dir)
         self.consensus_dataset_dir = Path(consensus_dataset_dir)
         self.aligner = aligner
         self.cache_dir = Path(cache_dir) if cache_dir else self.dataset_dir / "alignment_cache" / BCFTOOLS_CHAIN_MAPPER_VERSION
-        self._entry_cache: Dict[Tuple[str, str, str, str], Dict[str, object]] = {}
+        self._entry_cache: OrderedDict[Tuple[str, str, str, str], Dict[str, object]] = OrderedDict()
+        self._memory_cache_limit = max(int(memory_cache_limit), 0)
+
+    def clear_memory_cache(self) -> None:
+        self._entry_cache.clear()
+
+    def _remember_entry(self, key: Tuple[str, str, str, str], entry: Dict[str, object]) -> None:
+        if self._memory_cache_limit <= 0:
+            return
+        self._entry_cache[key] = entry
+        self._entry_cache.move_to_end(key)
+        while len(self._entry_cache) > self._memory_cache_limit:
+            self._entry_cache.popitem(last=False)
 
     def _case_dir(self, gene: str, sample_id: str) -> Path:
         return self.consensus_dataset_dir / "individuals" / sample_id / "windows" / gene
@@ -264,6 +278,7 @@ class BcftoolsChainMapper:
         axis_key = self._axis_cache_key(gene)
         key = (gene, sample_id, haplotype, axis_key)
         if key in self._entry_cache:
+            self._entry_cache.move_to_end(key)
             return self._entry_cache[key]
         path = self._entry_cache_path(gene, sample_id, haplotype, axis_key)
         if path.exists():
@@ -273,7 +288,7 @@ class BcftoolsChainMapper:
                 if payload.get("version") == BCFTOOLS_CHAIN_MAPPER_VERSION:
                     entry = payload.get("entry")
                     if isinstance(entry, dict):
-                        self._entry_cache[key] = entry
+                        self._remember_entry(key, entry)
                         return entry
             except Exception:
                 pass
@@ -303,7 +318,7 @@ class BcftoolsChainMapper:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
             json.dump({"version": BCFTOOLS_CHAIN_MAPPER_VERSION, "entry": entry}, f, indent=2)
-        self._entry_cache[key] = entry
+        self._remember_entry(key, entry)
         return entry
 
     def _build_validated_consensus(self, case_dir: Path, sample_id: str, haplotype: str) -> Tuple[Path, Path]:
