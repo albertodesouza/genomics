@@ -645,6 +645,9 @@ class ProcessedGenomicDataset(Dataset):
     def _normalize_features_tensor(self, features_tensor: torch.Tensor) -> torch.Tensor:
         method = self.normalization_params.get("method", "zscore")
         per_track = self.normalization_params.get("per_track", False)
+        mask_channels_per_gene = 3 if self.indel_include_valid_mask else 2
+        signal_channels_per_gene = len(self.ontology_terms) if self.ontology_terms else 1
+        channels_per_gene = signal_channels_per_gene + mask_channels_per_gene
 
         if features_tensor.ndim != 3:
             raise ValueError(f"Esperado tensor 3D (2,4,L), recebido shape={tuple(features_tensor.shape)}")
@@ -656,6 +659,12 @@ class ProcessedGenomicDataset(Dataset):
             for ti in range(flat.shape[0]):
                 p = track_params[ti]
                 row = flat[ti: ti + 1, :]
+                channel_idx = ti % features_tensor.shape[1]
+                gene_channel_idx = channel_idx % channels_per_gene if channels_per_gene > 0 else channel_idx
+                is_mask_channel = gene_channel_idx >= signal_channels_per_gene
+                if is_mask_channel:
+                    rows.append(row)
+                    continue
                 if method == "zscore":
                     row = zscore_normalize(row, p["mean"], p["std"])
                 elif method == "minmax_keep_zero":
@@ -668,7 +677,15 @@ class ProcessedGenomicDataset(Dataset):
             return features_tensor
 
         t0 = time.perf_counter()
-        features_tensor = apply_normalization(features_tensor, self.normalization_params)
+        normalized = features_tensor.clone()
+        for channel_idx in range(features_tensor.shape[1]):
+            gene_channel_idx = channel_idx % channels_per_gene if channels_per_gene > 0 else channel_idx
+            if gene_channel_idx >= signal_channels_per_gene:
+                continue
+            normalized[:, channel_idx:channel_idx + 1, :] = apply_normalization(
+                features_tensor[:, channel_idx:channel_idx + 1, :], self.normalization_params
+            )
+        features_tensor = normalized
         self.profile_stats["normalization_s"] += time.perf_counter() - t0
         return features_tensor
 

@@ -212,6 +212,7 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
             "prediction_target": config.output.prediction_target,
             "input_shape": "3D_haplotype_channels",
             "center_window_policy": "reference_center_to_expanded_axis",
+            "mask_normalization_policy": "preserve_binary_masks_v1",
         }
         for k, v in checks.items():
             if pp.get(k) != v:
@@ -505,6 +506,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                 "prediction_target": config.output.prediction_target,
                 "input_shape": "3D_haplotype_channels",
                 "center_window_policy": "reference_center_to_expanded_axis",
+                "mask_normalization_policy": "preserve_binary_masks_v1",
             },
             "splits": {
                 "train_size": len(splits_meta.get("train", [])),
