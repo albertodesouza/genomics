@@ -544,7 +544,7 @@ python3 -m genotype_based_predictor.validate_training_input \
 O validador reconstrói consensos com `bcftools consensus -c`, valida os FASTAs preservados, checa limites dos `.npz` AlphaGenome e monta alguns tensores finais pelo `ProcessedGenomicDataset`. Para a config de 3 ontologias, o shape esperado deve ser fixo, por exemplo:
 
 ```text
-(2, 66, 32768)
+(2, 99, 32768)
 ```
 
 Para acelerar a primeira execução, precompute a cache `bcftools_chain` em paralelo antes do treino:
@@ -582,6 +582,28 @@ Para a config de 3 ontologias:
 source scripts/start_genomics_universal.sh
 python3 -m genotype_based_predictor.train genotype_based_predictor/configs/genes_1000_all_3ontologies.yaml
 ```
+
+### Conferencia Visual Da Cache Processada
+
+Durante a materializacao da cache processada, e util conferir rapidamente se os sinais dos shards estao alinhados. O script abaixo e uma versao versionada do `plot.py` usado manualmente dentro do diretorio temporario da cache:
+
+```bash
+python3 -m genotype_based_predictor.plot_processed_cache_shards \
+  /dados/GENOMICS_DATA/v1/1kG_high_coverage_runs/datasets/rna_seq_H1+H2_32768_ds1_log_shuf_ont3_view9d9f894aa231 \
+  --split train \
+  --max-shards 5 \
+  --max-samples 16 \
+  --channel 0 \
+  --output plot.png
+```
+
+O script carrega `train_data_shard_*.pt`, plota o canal escolhido para H1 e H2 em varias amostras e salva `plot.png`. Para a config de 3 ontologias, os canais por gene seguem a ordem:
+
+```text
+signal_ont1_strand+, signal_ont1_strand-, signal_ont2_strand+, signal_ont2_strand-, signal_ont3_strand+, signal_ont3_strand-, insertion_mask, deletion_mask, valid_mask
+```
+
+Assim, `--channel 0` plota o primeiro sinal AlphaGenome do primeiro gene; `--channel 6`, `--channel 7` e `--channel 8` inspecionam as mascaras do primeiro gene.
 
 Use o `Experiment Dashboard` para inspecionar resultados ja gerados.
 

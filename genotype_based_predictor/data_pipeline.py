@@ -213,6 +213,7 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
             "input_shape": "3D_haplotype_channels",
             "center_window_policy": "reference_center_to_expanded_axis",
             "mask_normalization_policy": "preserve_binary_masks_v1",
+            "strand_track_policy": "include_both_strands_v1",
         }
         for k, v in checks.items():
             if pp.get(k) != v:
@@ -485,7 +486,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
             "class_names": class_names,
             "dataset_dir": str(dataset_dir.resolve()),
             "gene_order": gene_order,
-            "tracks_per_gene": 2 * (len(config.dataset_input.ontology_terms or []) or 1) + 6,
+            "tracks_per_gene": 2 * (len(config.dataset_input.ontology_terms or []) or 1) + 3,
             "gene_window_metadata": gene_window_metadata,
             "alignment_cache_signature": _alignment_cache_signature(processed_dataset),
             "processing_params": {
@@ -507,6 +508,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                 "input_shape": "3D_haplotype_channels",
                 "center_window_policy": "reference_center_to_expanded_axis",
                 "mask_normalization_policy": "preserve_binary_masks_v1",
+                "strand_track_policy": "include_both_strands_v1",
             },
             "splits": {
                 "train_size": len(splits_meta.get("train", [])),

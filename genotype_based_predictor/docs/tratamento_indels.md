@@ -398,7 +398,7 @@ Por padrao, o `DynamicIndelAligner` consulta e alinha apenas essa regiao central
 Mesmo quando a consulta e limitada a 32.768 bases de referencia, o eixo expandido do gene pode ficar ligeiramente maior que 32.768 colunas por causa de insercoes dentro da regiao. Para a CNN, a fatia final entregue ao modelo e cortada para `window_center_size`, garantindo shape fixo entre genes. Na config de 3 ontologias validada, o tensor final tem shape:
 
 ```text
-(2, 66, 32768)
+(2, 99, 32768)
 ```
 
 A cache processada registra essa politica como:

@@ -189,7 +189,7 @@ class ProcessedGenomicDataset(Dataset):
         if self.normalization_method in {"log", "minmax_keep_zero"} and self.normalization_value not in (0, 0.0, None):
             num_genes = len(self.config.dataset_input.genes_to_use or []) or 1
             num_ontologies = len(self.ontology_terms) if self.ontology_terms else 1
-            num_tracks = (2 * num_ontologies + 6) * num_genes
+            num_tracks = (2 * num_ontologies + 3) * num_genes
             if self.normalization_method == "log":
                 track_params = [{"log_max": float(self.normalization_value)} for _ in range(num_tracks)]
             else:
@@ -527,7 +527,7 @@ class ProcessedGenomicDataset(Dataset):
         requested = set(self.ontology_terms)
         indices = [
             i for i, m in enumerate(track_metadata)
-            if m.get("ontology_curie") in requested and m.get("strand", "+") == "+"
+            if m.get("ontology_curie") in requested
         ]
         if not indices:
             available = sorted({m.get("ontology_curie", "") for m in track_metadata})
@@ -646,7 +646,7 @@ class ProcessedGenomicDataset(Dataset):
         method = self.normalization_params.get("method", "zscore")
         per_track = self.normalization_params.get("per_track", False)
         mask_channels_per_gene = 3 if self.indel_include_valid_mask else 2
-        signal_channels_per_gene = len(self.ontology_terms) if self.ontology_terms else 1
+        signal_channels_per_gene = 2 * len(self.ontology_terms) if self.ontology_terms else 1
         channels_per_gene = signal_channels_per_gene + mask_channels_per_gene
 
         if features_tensor.ndim != 3:
@@ -783,7 +783,7 @@ class ProcessedGenomicDataset(Dataset):
             effective = self.window_center_size // max(self.downsample_factor, 1)
             num_genes = len(self.config.dataset_input.genes_to_use or []) or 1
             num_ontologies = len(self.ontology_terms) if self.ontology_terms else 1
-            return ((2 * num_ontologies + 6) * num_genes, effective)
+            return ((2 * num_ontologies + 3) * num_genes, effective)
 
         for idx in range(min(64, len(self))):
             try:
@@ -797,7 +797,7 @@ class ProcessedGenomicDataset(Dataset):
         effective = self.window_center_size // max(self.downsample_factor, 1)
         num_genes = len(self.config.dataset_input.genes_to_use or []) or 1
         num_ontologies = len(self.ontology_terms) if self.ontology_terms else 1
-        return ((2 * num_ontologies + 6) * num_genes, effective)
+        return ((2 * num_ontologies + 3) * num_genes, effective)
 
     def get_input_size(self) -> int:
         r, c = self.get_input_shape()
