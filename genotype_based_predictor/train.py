@@ -11,7 +11,8 @@ from genotype_based_predictor.config import load_config
 from genotype_based_predictor.data_pipeline import prepare_data
 from genotype_based_predictor.evaluation import run_test_and_save
 from genotype_based_predictor.experiment import interrupt_state, setup_experiment_dir
-from genotype_based_predictor.models import CNN2AncestryPredictor, CNNAncestryPredictor, NNAncestryPredictor
+from genotype_based_predictor.models import CNN2AncestryPredictor, CNNAncestryPredictor, NNAncestryPredictor, SKLEARN_BASELINE_TYPES
+from genotype_based_predictor.models.sklearn_models import train_sklearn_baseline
 from genotype_based_predictor.training import Trainer
 from genotype_based_predictor.utils import set_random_seeds
 
@@ -67,6 +68,19 @@ def main() -> None:
     experiment_dir = setup_experiment_dir(config, str(config_path))
     full_ds, train_loader, val_loader, test_loader = prepare_data(config, experiment_dir)
     _install_signal_handlers()
+
+    if config.model.type.upper() in SKLEARN_BASELINE_TYPES:
+        train_sklearn_baseline(
+            config=config,
+            model_type=config.model.type,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            test_loader=test_loader,
+            full_dataset=full_ds,
+            experiment_dir=experiment_dir,
+            wandb_run=None,
+        )
+        return
 
     model = _build_model(config, full_ds).to(device)
     trainer = Trainer(

@@ -16,7 +16,6 @@ run_sklearn_test_mode        : Avaliação em modo test usando artefato joblib
 load_sklearn_baseline_artifact: Carrega artefato salvo
 """
 import json
-import hashlib
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -41,21 +40,6 @@ console = Console()
 
 SKLEARN_ARTIFACT_FILENAME = "sklearn_baseline.joblib"
 SCALER_PCA_FILENAME = "scaler_pca.joblib"
-
-
-def _load_dataset_cache_view(dataset_cache_dir: Path) -> Dict[str, Any]:
-    view_file = Path(dataset_cache_dir) / "view_definition.json"
-    if not view_file.exists():
-        raise FileNotFoundError(f"view_definition.json não encontrado em {dataset_cache_dir}")
-    with open(view_file) as f:
-        return json.load(f)
-
-
-def _get_pca_view_cache_dir(dataset_cache_dir: Path) -> Path:
-    view_payload = _load_dataset_cache_view(dataset_cache_dir)
-    resolved_view = view_payload.get("resolved_view", {})
-    resolved_hash = hashlib.sha1(json.dumps(resolved_view, sort_keys=True).encode("utf-8")).hexdigest()[:12]
-    return Path(dataset_cache_dir) / "sklearn_pca" / f"view_{resolved_hash}"
 
 
 def _effective_seed(config: PipelineConfig) -> int:
@@ -146,6 +130,13 @@ def run_sklearn_eval_and_save(results: Dict, experiment_dir: Path, dataset_name:
     json_file = experiment_dir / f"{dataset_name}_results.json"
     with open(json_file, "w") as f:
         json.dump(serializable, f, indent=2)
+    console.print(
+        f"[green]✓ {dataset_name}: "
+        f"acc={results['accuracy']:.4f} "
+        f"precision={results['precision']:.4f} "
+        f"recall={results['recall']:.4f} "
+        f"f1={results['f1']:.4f}[/green]"
+    )
     console.print(f"[green]✓ Resultados de {dataset_name} salvos em: {json_file}[/green]")
     if wandb_run:
         try:
@@ -188,7 +179,7 @@ def train_sklearn_baseline(config: PipelineConfig, model_type: str, train_loader
     if str(predictor_dir) not in sys.path:
         sys.path.insert(0, str(predictor_dir))
     from sklearn_pca_cache import (
-        ensure_sklearn_pca_cache, SKLEARN_PCA_METADATA_FILENAME,
+        ensure_sklearn_pca_cache, METADATA_FILENAME as SKLEARN_PCA_METADATA_FILENAME,
         fit_standard_scaler_incremental, fit_incremental_pca_on_train,
         stack_scaled_pca_batches, compute_sklearn_pca_effective_k,
     )
@@ -213,13 +204,10 @@ def train_sklearn_baseline(config: PipelineConfig, model_type: str, train_loader
     artifact_path = models_dir / SKLEARN_ARTIFACT_FILENAME
 
     if use_pca_cache:
-        # Precisamos passar config serializado para cache, mas a função antiga dele requer dict
-        # Se ensure_sklearn_pca_cache não suporta PipelineConfig, passamos dict
+        # A função de cache legada recebe config serializado e o diretório do dataset processado.
         dataset_cache_dir = get_dataset_cache_dir(config)
-        pca_root = _get_pca_view_cache_dir(dataset_cache_dir)
-        pca_root.mkdir(parents=True, exist_ok=True)
-        pca_dir = ensure_sklearn_pca_cache(config.model_dump(), pca_root, train_loader, val_loader,
-                                           test_loader, force=force_pca, log=console.print, rich_console=console)
+        pca_dir = ensure_sklearn_pca_cache(config.model_dump(), dataset_cache_dir, train_loader, val_loader,
+                                            test_loader, force=force_pca, log=console.print, rich_console=console)
         with open(pca_dir / SKLEARN_PCA_METADATA_FILENAME) as f:
             pca_meta = json.load(f)
         k = int(pca_meta["pca_n_components_effective"])
@@ -230,10 +218,16 @@ def train_sklearn_baseline(config: PipelineConfig, model_type: str, train_loader
         X_train, y_train = X_train[valid], y_train[valid]
 
         clf = build_sklearn_classifier(config, model_type, random_seed, n_train=len(y_train))
+        console.print(
+            f"[cyan]Treinando {model_type}: "
+            f"{len(y_train)} amostras x {X_train.shape[1]} componentes PCA...[/cyan]"
+        )
         clf.fit(X_train, y_train)
+        console.print(f"[green]✓ {model_type} treinado[/green]")
         joblib.dump({"classifier": clf, "model_type": model_type, "pca_n_components": k,
-                     "pca_cache_dir": str(pca_dir.resolve()),
-                     "pca_view_cache_dir": str(pca_root.resolve())}, artifact_path)
+                      "pca_cache_dir": str(pca_dir.resolve()),
+                      "dataset_cache_dir": str(dataset_cache_dir.resolve())}, artifact_path)
+        console.print(f"[green]✓ Artefato sklearn salvo em: {artifact_path}[/green]")
 
         for name, xk, yk in [("train", "X_train", "y_train"), ("val", "X_val", "y_val"), ("test", "X_test", "y_test")]:
             Xs = np.load(pca_dir / f"{xk}.npy")
@@ -252,8 +246,14 @@ def train_sklearn_baseline(config: PipelineConfig, model_type: str, train_loader
     valid = y_train >= 0
     X_train, y_train = X_train[valid], y_train[valid]
     clf = build_sklearn_classifier(config, model_type, random_seed, n_train=len(y_train))
+    console.print(
+        f"[cyan]Treinando {model_type}: "
+        f"{len(y_train)} amostras x {X_train.shape[1]} componentes PCA...[/cyan]"
+    )
     clf.fit(X_train, y_train)
+    console.print(f"[green]✓ {model_type} treinado[/green]")
     joblib.dump({"scaler": scaler, "pca": pca, "classifier": clf, "model_type": model_type, "pca_n_components": k}, artifact_path)
+    console.print(f"[green]✓ Artefato sklearn salvo em: {artifact_path}[/green]")
 
     for name, loader in [("train", train_loader), ("val", val_loader), ("test", test_loader)]:
         y_pred, y_true = sklearn_predict_labels(loader, scaler, pca, clf)

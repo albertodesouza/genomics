@@ -29,7 +29,8 @@ def _resolve_gene_rows(config: PipelineConfig, input_shape: Tuple[int, int]) -> 
         if not genes_to_use:
             raise ValueError("tensor_layout='haplotype_channels' requer ao menos um gene em genes_to_use")
         num_ontologies = len(config.dataset_input.ontology_terms or []) or 1
-        expected_rows = (2 * num_ontologies + 3) * len(genes_to_use)
+        num_haplotypes = 2 if config.dataset_input.haplotype_mode == "H1+H2" else 1
+        expected_rows = num_haplotypes * (2 * num_ontologies + 3) * len(genes_to_use)
         if input_shape[0] != expected_rows:
             raise ValueError(
                 f"tensor_layout='haplotype_channels' espera {expected_rows} linhas derivadas de {len(genes_to_use)} gene(s) e {num_ontologies} ontologia(s), recebeu {input_shape[0]}"

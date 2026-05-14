@@ -169,7 +169,10 @@ class ProcessedGenomicDataset(Dataset):
                 TimeElapsedColumn(),
                 console=console,
             ) as progress:
-                task = progress.add_task("Preparando bcftools_chain...", total=total)
+                task = progress.add_task(
+                    f"Preparando bcftools_chain entries ({len(sample_ids)} samples x {len(self.genes_to_use)} genes x 2 haps)...",
+                    total=total,
+                )
                 for gene_name in sorted(self.genes_to_use):
                     for sample_id in sample_ids:
                         self.bcftools_chain_mapper.get_haplotype_entry(gene_name, sample_id, "H1")
@@ -189,7 +192,8 @@ class ProcessedGenomicDataset(Dataset):
         if self.normalization_method in {"log", "minmax_keep_zero"} and self.normalization_value not in (0, 0.0, None):
             num_genes = len(self.config.dataset_input.genes_to_use or []) or 1
             num_ontologies = len(self.ontology_terms) if self.ontology_terms else 1
-            num_tracks = (2 * num_ontologies + 3) * num_genes
+            num_haplotypes = 2 if self.haplotype_mode == "H1+H2" else 1
+            num_tracks = num_haplotypes * (2 * num_ontologies + 3) * num_genes
             if self.normalization_method == "log":
                 track_params = [{"log_max": float(self.normalization_value)} for _ in range(num_tracks)]
             else:
@@ -657,7 +661,7 @@ class ProcessedGenomicDataset(Dataset):
             track_params = self.normalization_params["track_params"]
             rows = []
             for ti in range(flat.shape[0]):
-                p = track_params[ti]
+                p = track_params[ti] if ti < len(track_params) else track_params[ti % len(track_params)]
                 row = flat[ti: ti + 1, :]
                 channel_idx = ti % features_tensor.shape[1]
                 gene_channel_idx = channel_idx % channels_per_gene if channels_per_gene > 0 else channel_idx

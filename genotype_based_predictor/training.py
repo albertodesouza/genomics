@@ -238,7 +238,10 @@ class Trainer:
                 break
 
             train_metrics = self._run_epoch(self.train_loader, train=True)
-            val_metrics = self._run_epoch(self.val_loader, train=False)
+            if len(self.val_loader.dataset) > 0:
+                val_metrics = self._run_epoch(self.val_loader, train=False)
+            else:
+                val_metrics = {"loss": train_metrics["loss"], "accuracy": train_metrics["accuracy"], "samples": 0}
 
             # Scheduler step
             if self.scheduler is not None:

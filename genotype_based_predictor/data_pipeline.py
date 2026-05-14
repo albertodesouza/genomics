@@ -214,6 +214,7 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
             "center_window_policy": "reference_center_to_expanded_axis",
             "mask_normalization_policy": "preserve_binary_masks_v1",
             "strand_track_policy": "include_both_strands_v1",
+            "normalization_track_policy": "haplotype_rows_v1",
         }
         for k, v in checks.items():
             if pp.get(k) != v:
@@ -389,6 +390,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
 
                         batch_results: Dict[int, Any] = {}
                         completed_samples = 0
+                        batch_errors = []
                         for future in as_completed(future_to_batch):
                             batch_id, batch_indices = future_to_batch[future]
                             try:
@@ -413,11 +415,19 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                                     )
                             except Exception as e:
                                 console.print(f"[yellow]Erro ao processar batch_id={batch_id}: {e}[/yellow]")
+                                batch_errors.append((batch_id, e))
+
+                        if batch_errors:
+                            first_batch_id, first_error = batch_errors[0]
+                            raise RuntimeError(
+                                f"Falha ao materializar {len(batch_errors)} batch(es) do split {split_name}; "
+                                f"primeiro batch_id={first_batch_id}: {first_error}"
+                            )
 
                         for batch_id, batch_indices in enumerate(batches):
                             result = batch_results.get(batch_id)
                             if result is None:
-                                continue
+                                raise RuntimeError(f"Batch ausente apos materializacao: split={split_name} batch_id={batch_id}")
                             shard_names.append(Path(result["shard_path"]).name)
 
                             for idx in batch_indices:
@@ -450,6 +460,11 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                     "num_samples": len(split_sample_meta),
                     "shards": sorted(shard_names),
                 }
+                if len(indices) > 0 and len(split_sample_meta) != len(indices):
+                    raise RuntimeError(
+                        f"Cache inconsistente para split={split_name}: esperava {len(indices)} amostras, "
+                        f"salvou {len(split_sample_meta)}"
+                    )
             splits_meta[split_name] = split_sample_meta
             split_index[split_name] = [item["sample_id"] for item in split_sample_meta]
             total_samples += len(split_sample_meta)
@@ -509,6 +524,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                 "center_window_policy": "reference_center_to_expanded_axis",
                 "mask_normalization_policy": "preserve_binary_masks_v1",
                 "strand_track_policy": "include_both_strands_v1",
+                "normalization_track_policy": "haplotype_rows_v1",
             },
             "splits": {
                 "train_size": len(splits_meta.get("train", [])),

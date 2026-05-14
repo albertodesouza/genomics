@@ -10,43 +10,30 @@ dataset_input:
 
 output:
   prediction_target: "superpopulation"
-  known_classes: null
+  known_classes: ["AFR", "AMR", "EAS", "EUR", "SAS"]
 
 model:
-  type: "CNN2"
-  hidden_layers: [100, 40]
-  activation: "relu"
-  dropout_rate: 0.5
-  cnn2:
-    num_filters_stage1: 16
-    kernel_stage1: [1, 32]
-    num_filters_stage2: 32
-    kernel_stage2: 5
-    num_filters_stage3: 64
-    kernel_stage3: 3
-    global_pool_type: "avg"
-    fc_hidden_size: 256
+  type: "SVM"
+  sklearn:
+    pca_components: 32
+    use_pca_cache: true
+    pca_align_n_train: false
+    svm:
+      C: 1.0
+      max_iter: 20000
+      class_weight: "balanced"
+      calibrate_probabilities: false
 
 training:
   optimizer: "adam"
   learning_rate: 0.001
-  weight_decay: 0.0001
+  weight_decay: 0.0
   loss_function: "cross_entropy"
-  batch_size: 1
+  batch_size: 16
   num_epochs: 1
-  validation_frequency: 3
+  validation_frequency: 1
   lr_scheduler:
-    enabled: true
-    type: "cosine_warm_restarts"
-    mode: "min"
-    factor: 0.5
-    patience: 30
-    min_lr: 0.0000001
-    step_size: 30
-    T_max: 300
-    eta_min: 0.0000001
-    T_0: 50
-    T_mult: 1
+    enabled: false
 
 data_split:
   train_split: 0.7
@@ -59,7 +46,7 @@ data_split:
 
 wandb:
   use_wandb: false
-  project_name: "genotype-based-predictor-genes-1000-all-3ontologies"
+  project_name: "genotype-based-predictor-pca-svm"
   run_name: null
   log_frequency: 100
 
