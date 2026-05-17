@@ -36,6 +36,7 @@ def _materialize_cache_chunk(
     split_indices: list[int],
     normalization_params: Dict[str, Any],
     shard_path: str,
+    alignment_sample_ids: list[str],
 ):
     from genotype_based_predictor.config import PipelineConfig
     from genotype_based_predictor.dataset import ProcessedGenomicDataset
@@ -49,14 +50,8 @@ def _materialize_cache_chunk(
         normalization_params=normalization_params,
         compute_normalization=False,
     )
-    individuals = getattr(base_dataset, "dataset_metadata", {}).get("individuals", [])
-    shard_sample_ids = []
-    for proc_idx in split_indices:
-        if 0 <= proc_idx < len(processed_dataset.valid_sample_indices):
-            base_idx = processed_dataset.valid_sample_indices[proc_idx]
-            if base_idx < len(individuals):
-                shard_sample_ids.append(str(individuals[base_idx]))
-    processed_dataset.prepare_alignment_cache(shard_sample_ids)
+    shard_sample_ids = _sample_ids_for_processed_indices(processed_dataset, split_indices)
+    processed_dataset.prepare_alignment_cache(alignment_sample_ids, entry_sample_ids=shard_sample_ids)
 
     items = processed_dataset.get_items_bulk(split_indices)
     torch.save(items, shard_path)
@@ -99,6 +94,7 @@ def _build_view_definition(config: PipelineConfig) -> Dict[str, Any]:
         "selected_track_index": di.selected_track_index,
         "indel_include_valid_mask": di.indel_include_valid_mask,
         "alignment_mapping": di.alignment_mapping,
+        "alignment_axis_splits": di.alignment_axis_splits,
         "consensus_dataset_dir": di.consensus_dataset_dir,
         "tensor_layout": di.tensor_layout,
     }
@@ -113,6 +109,33 @@ def _build_resolved_view_definition(config: PipelineConfig, processed_dataset: P
     view["resolved_sample_ids"] = sample_ids
     view["resolved_genes"] = sorted(processed_dataset.genes_to_use) if processed_dataset.genes_to_use else None
     return view
+
+
+def _sample_ids_for_processed_indices(processed_dataset: ProcessedGenomicDataset, indices) -> list[str]:
+    sample_ids = []
+    for proc_idx in indices:
+        if 0 <= proc_idx < len(processed_dataset.valid_sample_indices):
+            base_idx = processed_dataset.valid_sample_indices[proc_idx]
+            if base_idx < len(processed_dataset.individuals):
+                sample_ids.append(str(processed_dataset.individuals[base_idx]))
+    return sample_ids
+
+
+def _alignment_indices_from_splits(config: PipelineConfig, train_indices, val_indices, test_indices) -> list[int]:
+    split_indices_by_name = {
+        "train": train_indices,
+        "val": val_indices,
+        "test": test_indices,
+    }
+    alignment_indices = []
+    for split_name in config.dataset_input.alignment_axis_splits:
+        alignment_indices.extend(split_indices_by_name[split_name])
+    if not alignment_indices:
+        raise ValueError(
+            "alignment_axis_splits nao selecionou nenhuma amostra para construir o eixo global: "
+            f"{config.dataset_input.alignment_axis_splits}"
+        )
+    return alignment_indices
 
 
 def _alignment_cache_signature(processed_dataset: ProcessedGenomicDataset) -> Dict[str, Any]:
@@ -207,6 +230,7 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
             "selected_track_index": config.dataset_input.selected_track_index,
             "indel_include_valid_mask": config.dataset_input.indel_include_valid_mask,
             "alignment_mapping": config.dataset_input.alignment_mapping,
+            "alignment_axis_splits": config.dataset_input.alignment_axis_splits,
             "consensus_dataset_dir": config.dataset_input.consensus_dataset_dir,
             "tensor_layout": config.dataset_input.tensor_layout,
             "prediction_target": config.output.prediction_target,
@@ -325,6 +349,8 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
 
     individuals = src_meta.get("individuals", [])
     pedigree = src_meta.get("individuals_pedigree", {})
+    alignment_indices = _alignment_indices_from_splits(config, train_indices, val_indices, test_indices)
+    alignment_sample_ids = _sample_ids_for_processed_indices(processed_dataset, alignment_indices)
 
     # Desativar taint_at_runtime durante o salvamento
     original_taint = processed_dataset.config.debug.taint_at_runtime
@@ -384,6 +410,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                                 batch_indices,
                                 processed_dataset.normalization_params,
                                 str(temp_dir / f"{split_name}_data_shard_{batch_id:05d}.pt"),
+                                alignment_sample_ids,
                             ): (batch_id, batch_indices)
                             for batch_id, batch_indices in enumerate(batches)
                         }
@@ -512,6 +539,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                 "normalization_method": config.dataset_input.normalization_method,
                 "selected_track_index": config.dataset_input.selected_track_index,
                 "indel_include_valid_mask": config.dataset_input.indel_include_valid_mask,
+                "alignment_axis_splits": config.dataset_input.alignment_axis_splits,
                 "indel_neutral_value": config.dataset_input.indel_neutral_value,
                 "tensor_layout": config.dataset_input.tensor_layout,
                 "cache_processed_tensors": config.dataset_input.cache_processed_tensors,
@@ -632,6 +660,9 @@ def _make_runtime_processed_datasets(runtime_dataset_dir: Path, cache_dir: Path,
     train_indices = [sample_to_processed_idx[sid] for sid in split_index.get("train", []) if sid in sample_to_processed_idx]
     val_indices = [sample_to_processed_idx[sid] for sid in split_index.get("val", []) if sid in sample_to_processed_idx]
     test_indices = [sample_to_processed_idx[sid] for sid in split_index.get("test", []) if sid in sample_to_processed_idx]
+    alignment_indices = _alignment_indices_from_splits(config, train_indices, val_indices, test_indices)
+    alignment_sample_ids = _sample_ids_for_processed_indices(processed_ds, alignment_indices)
+    processed_ds.prepare_alignment_cache(alignment_sample_ids, entry_sample_ids=[])
 
     train_ds = Subset(processed_ds, train_indices)
     val_ds = Subset(processed_ds, val_indices)
@@ -747,7 +778,9 @@ def prepare_data(config: PipelineConfig, experiment_dir: Path):
         norm_params = temp_ds.normalization_params
 
     processed_ds = ProcessedGenomicDataset(base_dataset, config, normalization_params=norm_params, compute_normalization=False)
-    processed_ds.prepare_alignment_cache()
+    alignment_idx = _alignment_indices_from_splits(config, train_idx, val_idx, test_idx)
+    alignment_sample_ids = _sample_ids_for_processed_indices(processed_ds, alignment_idx)
+    processed_ds.prepare_alignment_cache(alignment_sample_ids, entry_sample_ids=[])
 
     norm_path = experiment_dir / "models" / "normalization_params.json"
     norm_path.parent.mkdir(parents=True, exist_ok=True)

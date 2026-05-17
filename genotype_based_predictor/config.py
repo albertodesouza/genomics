@@ -121,6 +121,9 @@ class DatasetInputConfig(BaseModel):
     alignment_mapping: Literal["dynamic_indel", "bcftools_chain"] = "dynamic_indel"
     """Fonte do mapa predição AlphaGenome -> eixo expandido global."""
 
+    alignment_axis_splits: List[Literal["train", "val", "test"]] = Field(default_factory=lambda: ["train", "val", "test"])
+    """Splits usados para construir o eixo global de alinhamento INDEL."""
+
     consensus_dataset_dir: Optional[str] = None
     """Dataset original com ref.window.fa, raw.fa e consensus_ready.vcf.gz para alignment_mapping='bcftools_chain'."""
 
@@ -130,6 +133,13 @@ class DatasetInputConfig(BaseModel):
         if v < 1:
             raise ValueError("downsample_factor deve ser >= 1")
         return v
+
+    @field_validator("alignment_axis_splits")
+    @classmethod
+    def alignment_axis_splits_must_not_be_empty(cls, v: List[str]) -> List[str]:
+        if not v:
+            raise ValueError("alignment_axis_splits deve conter pelo menos um split")
+        return list(dict.fromkeys(v))
 
 class DerivedTargetConfig(BaseModel):
     """Configuração de um target derivado a partir de outro campo."""
@@ -520,6 +530,7 @@ def generate_dataset_name(config: PipelineConfig) -> str:
         "normalization_method": di.normalization_method,
         "selected_track_index": di.selected_track_index,
         "indel_include_valid_mask": di.indel_include_valid_mask,
+        "alignment_axis_splits": di.alignment_axis_splits,
         "prediction_target": config.output.prediction_target,
         "train_split": tr,
         "val_split": va,

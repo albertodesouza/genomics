@@ -558,6 +558,7 @@ class DynamicIndelAligner:
                             copy_from_indices.append(source_cursor)
                             expanded_indices.append(slot)
                             source_cursor += 1
+                        source_cursor += ins_len - len(slots)
 
                 per_hap[haplotype] = {
                     "source_start_idx": int(hap_state.get("source_start_idx", gene_payload.get("ref_start_offset", 0))),

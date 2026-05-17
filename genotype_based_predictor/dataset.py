@@ -147,7 +147,11 @@ class ProcessedGenomicDataset(Dataset):
             return None
         return selected
 
-    def prepare_alignment_cache(self, sample_ids: Optional[List[str]] = None) -> None:
+    def prepare_alignment_cache(
+        self,
+        sample_ids: Optional[List[str]] = None,
+        entry_sample_ids: Optional[List[str]] = None,
+    ) -> None:
         if sample_ids is None:
             sample_ids = []
             for base_idx in self.valid_sample_indices:
@@ -156,11 +160,14 @@ class ProcessedGenomicDataset(Dataset):
         sample_ids = [str(sample_id) for sample_id in sample_ids if sample_id]
         if not sample_ids:
             return
+        if entry_sample_ids is None:
+            entry_sample_ids = sample_ids
+        entry_sample_ids = [str(sample_id) for sample_id in entry_sample_ids if sample_id]
         self.dynamic_indel_aligner.selected_sample_ids = set(sample_ids)
         for gene_name in sorted(self.genes_to_use):
             self.dynamic_indel_aligner.build_alignment_axis_for_gene(gene_name, sample_ids)
         if self.bcftools_chain_mapper is not None:
-            total = len(sample_ids) * len(self.genes_to_use) * 2
+            total = len(entry_sample_ids) * len(self.genes_to_use) * 2
             with Progress(
                 SpinnerColumn(),
                 TextColumn("{task.description}"),
@@ -170,11 +177,11 @@ class ProcessedGenomicDataset(Dataset):
                 console=console,
             ) as progress:
                 task = progress.add_task(
-                    f"Preparando bcftools_chain entries ({len(sample_ids)} samples x {len(self.genes_to_use)} genes x 2 haps)...",
+                    f"Preparando bcftools_chain entries ({len(entry_sample_ids)} samples x {len(self.genes_to_use)} genes x 2 haps)...",
                     total=total,
                 )
                 for gene_name in sorted(self.genes_to_use):
-                    for sample_id in sample_ids:
+                    for sample_id in entry_sample_ids:
                         self.bcftools_chain_mapper.get_haplotype_entry(gene_name, sample_id, "H1")
                         progress.update(task, advance=1)
                         self.bcftools_chain_mapper.get_haplotype_entry(gene_name, sample_id, "H2")
