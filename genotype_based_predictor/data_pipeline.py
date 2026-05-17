@@ -221,6 +221,7 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
             return False
 
         pp = meta.get("processing_params", {})
+        requested_view = cache_view.get("requested_view", {})
         checks = {
             "alphagenome_outputs": config.dataset_input.alphagenome_outputs,
             "haplotype_mode": config.dataset_input.haplotype_mode,
@@ -240,9 +241,13 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
             "strand_track_policy": "include_both_strands_v1",
             "normalization_track_policy": "haplotype_rows_v1",
         }
+        view_fallback_keys = {"alignment_mapping", "alignment_axis_splits", "consensus_dataset_dir", "tensor_layout"}
         for k, v in checks.items():
-            if pp.get(k) != v:
-                console.print(f"[yellow]Cache inválido: {k} mudou ({pp.get(k)} → {v})[/yellow]")
+            cached_value = pp.get(k)
+            if cached_value is None and k in view_fallback_keys:
+                cached_value = requested_view.get(k)
+            if cached_value != v:
+                console.print(f"[yellow]Cache inválido: {k} mudou ({cached_value} → {v})[/yellow]")
                 return False
 
         if meta.get("splits", {}).get("random_seed") != config.data_split.random_seed:
@@ -539,7 +544,9 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                 "normalization_method": config.dataset_input.normalization_method,
                 "selected_track_index": config.dataset_input.selected_track_index,
                 "indel_include_valid_mask": config.dataset_input.indel_include_valid_mask,
+                "alignment_mapping": config.dataset_input.alignment_mapping,
                 "alignment_axis_splits": config.dataset_input.alignment_axis_splits,
+                "consensus_dataset_dir": config.dataset_input.consensus_dataset_dir,
                 "indel_neutral_value": config.dataset_input.indel_neutral_value,
                 "tensor_layout": config.dataset_input.tensor_layout,
                 "cache_processed_tensors": config.dataset_input.cache_processed_tensors,
