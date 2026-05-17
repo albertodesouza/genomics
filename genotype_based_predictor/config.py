@@ -181,11 +181,13 @@ class CNN2Config(BaseModel):
     """Hiperparâmetros da CNN multi-estágio (CNN2AncestryPredictor)."""
 
     num_filters_stage1: int = 16
-    kernel_stage1: List[int] = Field(default=[6, 32])
+    kernel_stage1: List[int] = Field(default=[9, 32])
+    stride_stage1: List[int] = Field(default=[9, 32])
     num_filters_stage2: int = 32
-    kernel_stage2: int = 8
     num_filters_stage3: int = 64
-    kernel_stage3: int = 3
+    kernel_stages23: List[int] = Field(default=[1, 5])
+    stride_stages23: List[int] = Field(default=[1, 2])
+    padding_stages23: List[int] = Field(default=[0, 2])
     global_pool_type: Literal["max", "avg"] = "max"
     fc_hidden_size: int = 128
 

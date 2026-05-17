@@ -22,12 +22,14 @@ model:
   dropout_rate: 0.5
   cnn2:
     num_filters_stage1: 16
-    kernel_stage1: [1, 32]
+    kernel_stage1: [9, 32]
+    stride_stage1: [9, 32]
     num_filters_stage2: 32
-    kernel_stage2: 5
     num_filters_stage3: 64
-    kernel_stage3: 3
-    global_pool_type: "avg"
+    kernel_stages23: [1, 5]
+    stride_stages23: [1, 2]
+    padding_stages23: [0, 2]
+    global_pool_type: "max"
     fc_hidden_size: 256
 
 training:
