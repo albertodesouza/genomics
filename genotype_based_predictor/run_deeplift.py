@@ -226,6 +226,7 @@ def _collect_indel_markers_from_mean_input(
     config: Any,
     max_markers: int,
     min_frequency: float,
+    genes_filter: Optional[set[str]] = None,
 ) -> List[Dict[str, Any]]:
     matrix = _flatten_haps_for_plot(mean_input, config)
     layout = _plot_layout(config)
@@ -237,6 +238,8 @@ def _collect_indel_markers_from_mean_input(
         return markers
 
     for gene_idx, gene_name in enumerate(genes):
+        if genes_filter and gene_name not in genes_filter:
+            continue
         for hap_idx, haplotype in enumerate(("H1", "H2")):
             block_offset = gene_idx * 2 * tracks_per_gene + hap_idx * tracks_per_gene
             for track_idx, variant_type in ((signal_track_count, "INDEL_ins"), (signal_track_count + 1, "INDEL_del")):
@@ -267,12 +270,21 @@ def _collect_indel_markers_from_mean_input(
     return markers if max_markers <= 0 else markers[:max_markers]
 
 
-def _variant_cache_path(out_dir: Path, sample_ids: List[str], variant_types: str, min_frequency: float, max_markers: int) -> Path:
+def _variant_cache_path(
+    out_dir: Path,
+    sample_ids: List[str],
+    variant_types: str,
+    min_frequency: float,
+    max_markers: int,
+    genes_filter: Optional[set[str]],
+) -> Path:
     payload = json.dumps({
+        "cache_version": 2,
         "sample_ids": sorted(sample_ids),
         "variant_types": variant_types,
         "min_frequency": min_frequency,
         "max_markers": max_markers,
+        "genes_filter": sorted(genes_filter or []),
     }, sort_keys=True)
     digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
     return out_dir / "variant_marker_cache" / f"variant_markers_{digest}.json"
@@ -286,6 +298,7 @@ def _collect_vcf_variant_markers(
     min_frequency: float,
     include_snps: bool,
     include_indels: bool,
+    genes_filter: Optional[set[str]] = None,
 ) -> List[Dict[str, Any]]:
     if not sample_ids:
         return []
@@ -301,14 +314,26 @@ def _collect_vcf_variant_markers(
         center_window_size=config.dataset_input.window_center_size,
     )
     counts: Dict[Tuple[str, str, int, str], Dict[str, Any]] = {}
+    summary: Dict[str, Dict[str, Any]] = {}
     sample_count = max(len(sample_ids), 1)
 
     for gene_idx, gene_name in enumerate(genes):
+        if genes_filter and gene_name not in genes_filter:
+            continue
+        gene_summary = summary.setdefault(gene_name, {
+            "rows_seen": 0,
+            "rows_after_type_filter": 0,
+            "rows_inside_center_slice": 0,
+            "non_ref_alleles": 0,
+            "markers_added": 0,
+            "error": None,
+        })
         try:
             axis = aligner.get_alignment_axis(gene_name)
             center_slice = aligner.get_reference_centered_expanded_slice(gene_name, config.dataset_input.window_center_size)
             gene_payload = aligner._load_gene_mapping(gene_name)
         except Exception as exc:
+            gene_summary["error"] = str(exc)
             console.print(f"[yellow]Variantes: pulando {gene_name}: {exc}[/yellow]")
             continue
 
@@ -323,6 +348,7 @@ def _collect_vcf_variant_markers(
         try:
             rows = _stream_gene_variants(gene_payload["vcf_path"], sample_ids, gene_payload["region"])
             for row in rows:
+                gene_summary["rows_seen"] += 1
                 ref = str(row["ref"])
                 alt = str(row["alt"])
                 pos0_full = int(row["pos_1based"]) - full_start_1based
@@ -334,9 +360,11 @@ def _collect_vcf_variant_markers(
                     continue
                 if behavior != "length_change" and not include_snps:
                     continue
+                gene_summary["rows_after_type_filter"] += 1
                 ref_expanded = expanded_index_map.get(pos0)
                 if ref_expanded is None or not (expanded_start <= ref_expanded < expanded_end):
                     continue
+                gene_summary["rows_inside_center_slice"] += 1
 
                 for sample_idx, gt in enumerate(row.get("gts", [])):
                     if sample_idx >= len(sample_ids):
@@ -348,6 +376,7 @@ def _collect_vcf_variant_markers(
                         allele = _allele_sequence(ref, alt, token)
                         if allele == ref:
                             continue
+                        gene_summary["non_ref_alleles"] += 1
                         if behavior == "length_change":
                             entry = aligner.get_haplotype_entry(gene_name, sample_ids[sample_idx], haplotype)
                             if entry is None:
@@ -384,7 +413,9 @@ def _collect_vcf_variant_markers(
                                 "track_idx": track_idx,
                             })
                             marker["count"] += 1
+                            gene_summary["markers_added"] += 1
         except Exception as exc:
+            gene_summary["error"] = str(exc)
             console.print(f"[yellow]Variantes: erro em {gene_name}: {exc}[/yellow]")
 
     markers = []
@@ -402,7 +433,11 @@ def _collect_vcf_variant_markers(
         marker["row_index"] = row_index
         markers.append(marker)
     markers.sort(key=lambda item: (item["frequency"], item["count"]), reverse=True)
-    return markers if max_markers <= 0 else markers[:max_markers]
+    selected = markers if max_markers <= 0 else markers[:max_markers]
+    for marker in selected:
+        marker["_summary_by_gene"] = summary.get(marker.get("gene_name"), {})
+    selected.append({"_variant_collection_summary": summary})
+    return selected
 
 
 def _plot_mean_deeplift(
@@ -525,7 +560,8 @@ def _plot_mean_deeplift(
             ax.scatter([x], [row_index], facecolors="none", edgecolors="lime", s=160, linewidths=2)
 
     if variant_markers:
-        for marker in variant_markers:
+        drawable_markers = [m for m in variant_markers if "x" in m and "row_index" in m]
+        for marker in drawable_markers:
             color = "#ff00ff" if marker.get("variant_type") == "SNP" else "#00e5ff"
             axes[1].scatter(
                 [int(marker["x"])],
@@ -536,9 +572,10 @@ def _plot_mean_deeplift(
                 linewidths=1.2,
                 alpha=0.85,
             )
-        axes[1].scatter([], [], facecolors="none", edgecolors="#ff00ff", s=80, linewidths=1.2, label="SNP")
-        axes[1].scatter([], [], facecolors="none", edgecolors="#00e5ff", s=80, linewidths=1.2, label="INDEL")
-        axes[1].legend(loc="lower right", fontsize=8, frameon=True, title="Variants")
+        if drawable_markers:
+            axes[1].scatter([], [], facecolors="none", edgecolors="#ff00ff", s=80, linewidths=1.2, label="SNP")
+            axes[1].scatter([], [], facecolors="none", edgecolors="#00e5ff", s=80, linewidths=1.2, label="INDEL")
+            axes[1].legend(loc="lower right", fontsize=8, frameon=True, title="Variants")
 
     top_labels = []
     for win in top_windows[:5]:
@@ -628,6 +665,8 @@ def main() -> None:
     parser.add_argument("--variant-types", choices=["indel", "snp", "all"], default="indel", help="Variant marker source: indel is fast from cached masks; snp/all may query VCF once and cache")
     parser.add_argument("--variant-marker-min-frequency", type=float, default=0.0, help="Minimum fraction of selected samples carrying a variant marker")
     parser.add_argument("--variant-marker-max", type=int, default=0, help="Maximum number of variant markers to draw; 0 means no limit")
+    parser.add_argument("--variant-marker-genes", type=str, default=None, help="Comma-separated genes for variant markers only, e.g. SLC45A2")
+    parser.add_argument("--variant-marker-force-refresh", action="store_true", help="Recompute variant marker cache only for the requested marker settings")
     args = parser.parse_args()
 
     config_path = Path(args.config_path).resolve()
@@ -661,6 +700,9 @@ def main() -> None:
     class_name_to_idx = {name: idx for idx, name in enumerate(class_names)}
     deeplift = DeepLIFT(model)
     filter_class_idx = _class_arg_to_idx(args.filter_class, class_name_to_idx) if args.filter_class is not None else None
+    variant_marker_genes = None
+    if args.variant_marker_genes:
+        variant_marker_genes = {g.strip() for g in args.variant_marker_genes.split(",") if g.strip()}
 
     per_sample_summaries: List[Dict[str, Any]] = []
     all_track_rows: List[Dict[str, Any]] = []
@@ -773,6 +815,8 @@ def main() -> None:
         "variant_types": args.variant_types,
         "variant_marker_min_frequency": args.variant_marker_min_frequency,
         "variant_marker_max": args.variant_marker_max,
+        "variant_marker_genes": sorted(variant_marker_genes or []),
+        "variant_marker_force_refresh": args.variant_marker_force_refresh,
     })
     _write_json(out_dir / "samples.json", per_sample_summaries)
     _write_json(out_dir / "aggregate_by_track.json", aggregate_by_track)
@@ -796,6 +840,7 @@ def main() -> None:
                     config=config,
                     max_markers=args.variant_marker_max,
                     min_frequency=args.variant_marker_min_frequency,
+                    genes_filter=variant_marker_genes,
                 )
             else:
                 cache_path = _variant_cache_path(
@@ -804,8 +849,9 @@ def main() -> None:
                     args.variant_types,
                     args.variant_marker_min_frequency,
                     args.variant_marker_max,
+                    variant_marker_genes,
                 )
-                if cache_path.exists():
+                if cache_path.exists() and not args.variant_marker_force_refresh:
                     with open(cache_path) as f:
                         variant_markers = json.load(f)
                     console.print(f"[green]Marcadores de variantes carregados do cache:[/green] {cache_path}")
@@ -817,10 +863,15 @@ def main() -> None:
                         min_frequency=args.variant_marker_min_frequency,
                         include_snps=args.variant_types in {"snp", "all"},
                         include_indels=args.variant_types == "all",
+                        genes_filter=variant_marker_genes,
                     )
                     cache_path.parent.mkdir(parents=True, exist_ok=True)
                     _write_json(cache_path, variant_markers)
             _write_json(out_dir / "variant_markers.json", variant_markers)
+            for item in variant_markers:
+                if "_variant_collection_summary" in item:
+                    _write_json(out_dir / "variant_collection_summary.json", item["_variant_collection_summary"])
+                    break
         plot_windows = all_window_rows
         if args.plot_top_from == "mean":
             plot_windows = _select_top_regions(
