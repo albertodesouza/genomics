@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -219,12 +220,68 @@ def _variant_row_index(gene_idx: int, haplotype: str, track_idx: int, tracks_per
     return gene_idx * 2 * tracks_per_gene + hap_offset + track_idx
 
 
-def _collect_variant_markers(
+def _collect_indel_markers_from_mean_input(
+    *,
+    mean_input: torch.Tensor,
+    config: Any,
+    max_markers: int,
+    min_frequency: float,
+) -> List[Dict[str, Any]]:
+    matrix = _flatten_haps_for_plot(mean_input, config)
+    layout = _plot_layout(config)
+    genes = layout["genes"]
+    tracks_per_gene = layout["tracks_per_gene"]
+    signal_track_count = layout["signal_track_count"]
+    markers: List[Dict[str, Any]] = []
+    if not genes:
+        return markers
+
+    for gene_idx, gene_name in enumerate(genes):
+        for hap_idx, haplotype in enumerate(("H1", "H2")):
+            block_offset = gene_idx * 2 * tracks_per_gene + hap_idx * tracks_per_gene
+            for track_idx, variant_type in ((signal_track_count, "INDEL_ins"), (signal_track_count + 1, "INDEL_del")):
+                row_index = block_offset + track_idx
+                if row_index >= matrix.shape[0]:
+                    continue
+                row = matrix[row_index]
+                positions = np.where(np.nan_to_num(row, nan=0.0) >= min_frequency)[0]
+                for x in positions.tolist():
+                    frequency = float(row[x])
+                    markers.append({
+                        "gene_name": gene_name,
+                        "gene_index": gene_idx,
+                        "haplotype": haplotype,
+                        "x": int(x),
+                        "variant_type": variant_type,
+                        "count": None,
+                        "frequency": frequency,
+                        "track_idx": track_idx,
+                        "row_index": int(row_index),
+                        "source": "mean_input_indel_mask",
+                    })
+    markers.sort(key=lambda item: (item["frequency"], item["gene_name"], item["x"]), reverse=True)
+    return markers if max_markers <= 0 else markers[:max_markers]
+
+
+def _variant_cache_path(out_dir: Path, sample_ids: List[str], variant_types: str, min_frequency: float, max_markers: int) -> Path:
+    payload = json.dumps({
+        "sample_ids": sorted(sample_ids),
+        "variant_types": variant_types,
+        "min_frequency": min_frequency,
+        "max_markers": max_markers,
+    }, sort_keys=True)
+    digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
+    return out_dir / "variant_marker_cache" / f"variant_markers_{digest}.json"
+
+
+def _collect_vcf_variant_markers(
     *,
     config: Any,
     sample_ids: List[str],
     max_markers: int,
     min_frequency: float,
+    include_snps: bool,
+    include_indels: bool,
 ) -> List[Dict[str, Any]]:
     if not sample_ids:
         return []
@@ -269,6 +326,10 @@ def _collect_variant_markers(
                 if pos0 < 0 or pos0 >= ref_length:
                     continue
                 behavior = _classify_length_behavior(ref, alt)
+                if behavior == "length_change" and not include_indels:
+                    continue
+                if behavior != "length_change" and not include_snps:
+                    continue
                 ref_expanded = expanded_index_map.get(pos0)
                 if ref_expanded is None or not (expanded_start <= ref_expanded < expanded_end):
                     continue
@@ -559,7 +620,8 @@ def main() -> None:
     parser.add_argument("--plot-top-from", choices=["mean", "samples"], default="mean", help="Circle top windows from the mean map or from per-sample windows")
     parser.add_argument("--save-raw-pixels", action="store_true", help="Save raw matrix PNGs with no axes/text/resize plus .npy matrices")
     parser.add_argument("--show-track-separators", action="store_true", help="Draw horizontal separators between signal/mask/gene blocks")
-    parser.add_argument("--show-variant-markers", action="store_true", help="Draw SNP/INDEL markers on the DeepLIFT panel using the aligned cache axis")
+    parser.add_argument("--show-variant-markers", action="store_true", help="Draw variant markers on the DeepLIFT panel using the aligned cache axis")
+    parser.add_argument("--variant-types", choices=["indel", "snp", "all"], default="indel", help="Variant marker source: indel is fast from cached masks; snp/all may query VCF once and cache")
     parser.add_argument("--variant-marker-min-frequency", type=float, default=0.0, help="Minimum fraction of selected samples carrying a variant marker")
     parser.add_argument("--variant-marker-max", type=int, default=0, help="Maximum number of variant markers to draw; 0 means no limit")
     args = parser.parse_args()
@@ -704,6 +766,7 @@ def main() -> None:
         "save_raw_pixels": args.save_raw_pixels,
         "show_track_separators": args.show_track_separators,
         "show_variant_markers": args.show_variant_markers,
+        "variant_types": args.variant_types,
         "variant_marker_min_frequency": args.variant_marker_min_frequency,
         "variant_marker_max": args.variant_marker_max,
     })
@@ -723,12 +786,36 @@ def main() -> None:
         mean_attr = attr_sum / n_samples
         variant_markers = None
         if args.show_variant_markers:
-            variant_markers = _collect_variant_markers(
-                config=config,
-                sample_ids=selected_sample_ids,
-                max_markers=args.variant_marker_max,
-                min_frequency=args.variant_marker_min_frequency,
-            )
+            if args.variant_types == "indel":
+                variant_markers = _collect_indel_markers_from_mean_input(
+                    mean_input=mean_input,
+                    config=config,
+                    max_markers=args.variant_marker_max,
+                    min_frequency=args.variant_marker_min_frequency,
+                )
+            else:
+                cache_path = _variant_cache_path(
+                    out_dir,
+                    selected_sample_ids,
+                    args.variant_types,
+                    args.variant_marker_min_frequency,
+                    args.variant_marker_max,
+                )
+                if cache_path.exists():
+                    with open(cache_path) as f:
+                        variant_markers = json.load(f)
+                    console.print(f"[green]Marcadores de variantes carregados do cache:[/green] {cache_path}")
+                else:
+                    variant_markers = _collect_vcf_variant_markers(
+                        config=config,
+                        sample_ids=selected_sample_ids,
+                        max_markers=args.variant_marker_max,
+                        min_frequency=args.variant_marker_min_frequency,
+                        include_snps=args.variant_types in {"snp", "all"},
+                        include_indels=args.variant_types == "all",
+                    )
+                    cache_path.parent.mkdir(parents=True, exist_ok=True)
+                    _write_json(cache_path, variant_markers)
             _write_json(out_dir / "variant_markers.json", variant_markers)
         plot_windows = all_window_rows
         if args.plot_top_from == "mean":
