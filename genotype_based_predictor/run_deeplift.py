@@ -8,10 +8,9 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import numpy as np
 import torch
-from matplotlib.patches import Patch
+from matplotlib.colors import LinearSegmentedColormap
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
-from matplotlib.colors import ListedColormap
 
 from genotype_based_predictor.config import generate_experiment_name, load_config
 from genotype_based_predictor.data_pipeline import prepare_data
@@ -196,9 +195,10 @@ def _save_raw_pixel_images(mean_input: torch.Tensor, mean_attr: torch.Tensor, co
         attr_lim = 1.0
     if mask_attr_lim <= 0:
         mask_attr_lim = 1.0
+    mask_cmap = LinearSegmentedColormap.from_list("mask_red_to_blue", ["#d73027", "#f7f7f7", "#2166ac"])
 
     plt.imsave(out_dir / "raw_input_signal_gray.png", signal_input, cmap="gray", vmin=0)
-    plt.imsave(out_dir / "raw_input_masks_0_1.png", np.clip(mask_input, 0.0, 1.0), cmap="viridis", vmin=0, vmax=1)
+    plt.imsave(out_dir / "raw_input_masks_0_1.png", np.clip(mask_input, 0.0, 1.0), cmap=mask_cmap, vmin=0, vmax=1)
     plt.imsave(out_dir / "raw_deeplift_signal_bwr.png", signal_attr, cmap="bwr", vmin=-attr_lim, vmax=attr_lim)
     plt.imsave(out_dir / "raw_deeplift_masks_bwr.png", mask_attr, cmap="bwr", vmin=-mask_attr_lim, vmax=mask_attr_lim)
 
@@ -231,12 +231,6 @@ def _plot_mean_deeplift(
                 signal_track_labels.append(f"{len(signal_track_labels)}:{ontology}{strand}")
     else:
         signal_track_labels.append("0:signal")
-    mask_track_names = ("ins_mask", "del_mask", "valid_mask")
-    mask_colors = {
-        signal_track_count: "#19a0ff",      # insertion mask
-        signal_track_count + 1: "#ff9f1c",  # deletion mask
-        signal_track_count + 2: "#2ec4b6",  # valid mask
-    }
 
     input_np = _flatten_haps_for_plot(mean_input, config)
     attr_np = _flatten_haps_for_plot(mean_attr, config)
@@ -249,57 +243,58 @@ def _plot_mean_deeplift(
     yticks = []
     ylabels = []
     if genes and input_np.shape[0] >= rows_per_hap:
+        track_labels = list(signal_track_labels) + [
+            f"{signal_track_count}:ins",
+            f"{signal_track_count + 1}:del",
+            f"{signal_track_count + 2}:valid",
+        ]
         for gene_idx, gene in enumerate(genes):
             gene_offset = gene_idx * 2 * tracks_per_gene
-            yticks.append(gene_offset + (tracks_per_gene - 1) / 2)
-            ylabels.append(f"H1:{gene}")
-            yticks.append(gene_offset + tracks_per_gene + (tracks_per_gene - 1) / 2)
-            ylabels.append(f"H2:{gene}")
+            for hap_idx, hap in enumerate(("H1", "H2")):
+                hap_offset = gene_offset + hap_idx * tracks_per_gene
+                for track_idx, label in enumerate(track_labels):
+                    yticks.append(hap_offset + track_idx)
+                    ylabels.append(f"{hap}:{gene}:{label}")
 
-    fig, axes = plt.subplots(2, 1, figsize=(17, 10), constrained_layout=True)
+    fig = plt.figure(figsize=(20, 18), constrained_layout=True)
+    gs = fig.add_gridspec(2, 3, width_ratios=[40, 1.4, 1.4])
+    axes = [fig.add_subplot(gs[0, 0]), fig.add_subplot(gs[1, 0])]
+    cax_signal = fig.add_subplot(gs[0, 1])
+    cax_mask = fig.add_subplot(gs[0, 2])
+    cax_attr = fig.add_subplot(gs[1, 1])
+    cax_mask_attr = fig.add_subplot(gs[1, 2])
     gray_cmap = plt.colormaps["gray"].copy()
     gray_cmap.set_bad(alpha=0.0)
     bwr_cmap = plt.colormaps["bwr"].copy()
     bwr_cmap.set_bad(alpha=0.0)
-    mask_cmap = ListedColormap(["none", "#19a0ff", "#ff9f1c", "#2ec4b6"])
+    mask_cmap = LinearSegmentedColormap.from_list("mask_red_to_blue", ["#d73027", "#f7f7f7", "#2166ac"]).copy()
     mask_cmap.set_bad(alpha=0.0)
 
     im0 = axes[0].imshow(signal_input_np, aspect="auto", cmap=gray_cmap, interpolation="nearest", vmin=0)
-    mask_code = np.full_like(input_np, np.nan, dtype=np.float32)
-    if genes and tracks_per_gene >= 4:
-        for row_idx in range(input_np.shape[0]):
-            track_idx = row_idx % tracks_per_gene
-            if track_idx in mask_colors:
-                mask_code[row_idx, :] = (track_idx - signal_track_count + 1) * mask_input_np[row_idx, :]
-    axes[0].imshow(mask_code, aspect="auto", cmap=mask_cmap, interpolation="nearest", vmin=0, vmax=3, alpha=0.85)
+    im0_mask = axes[0].imshow(mask_input_np, aspect="auto", cmap=mask_cmap, interpolation="nearest", vmin=0, vmax=1)
     axes[0].set_title(f"{split.upper()} SET | Class {class_label} ({num_samples} samples) | Input 2D Mean ({input_np.shape[0]}x{input_np.shape[1]})", fontsize=16, fontweight="bold")
-    axes[0].set_ylabel("Genes / tracks")
+    axes[0].set_ylabel("Tracks")
     axes[0].set_xlabel("Gene Position")
     if yticks:
         axes[0].set_yticks(yticks)
-        axes[0].set_yticklabels(ylabels, fontsize=8)
-    fig.colorbar(im0, ax=axes[0], label="Signal normalized value")
+        axes[0].set_yticklabels(ylabels, fontsize=4.5)
+    fig.colorbar(im0, cax=cax_signal, label="Ontology/strand tracks (gray)")
+    fig.colorbar(im0_mask, cax=cax_mask, label="Mask tracks (0 red -> 1 blue)")
 
     im1 = axes[1].imshow(signal_attr_np, aspect="auto", cmap=bwr_cmap, interpolation="nearest", vmin=-attr_lim, vmax=attr_lim)
-    mask_abs = np.abs(mask_attr_np)
-    mask_attr_max = float(np.nanmax(mask_abs)) if np.isfinite(mask_abs).any() else 0.0
-    mask_alpha = np.zeros_like(mask_attr_np, dtype=np.float32)
-    if mask_attr_max > 0:
-        mask_alpha = np.nan_to_num(np.clip(mask_abs / mask_attr_max, 0.0, 1.0), nan=0.0)
-    mask_attr_code = np.full_like(attr_np, np.nan, dtype=np.float32)
-    if genes and tracks_per_gene >= 4:
-        for row_idx in range(attr_np.shape[0]):
-            track_idx = row_idx % tracks_per_gene
-            if track_idx in mask_colors:
-                mask_attr_code[row_idx, :] = float(track_idx - signal_track_count + 1)
-    axes[1].imshow(mask_attr_code, aspect="auto", cmap=mask_cmap, interpolation="nearest", vmin=0, vmax=3, alpha=0.75 * mask_alpha)
+    mask_attr_abs = np.abs(mask_attr_np)
+    mask_attr_max = float(np.nanmax(mask_attr_abs)) if np.isfinite(mask_attr_abs).any() else 1.0
+    if mask_attr_max <= 0:
+        mask_attr_max = 1.0
+    im1_mask = axes[1].imshow(mask_attr_np, aspect="auto", cmap=bwr_cmap, interpolation="nearest", vmin=-mask_attr_max, vmax=mask_attr_max)
     axes[1].set_title(f"DeepLIFT: Mean Attribution for Class {class_label} ({num_samples} samples)", fontsize=16, fontweight="bold")
-    axes[1].set_ylabel("Genes / tracks")
+    axes[1].set_ylabel("Tracks")
     axes[1].set_xlabel("Gene Position")
     if yticks:
         axes[1].set_yticks(yticks)
-        axes[1].set_yticklabels(ylabels, fontsize=8)
-    fig.colorbar(im1, ax=axes[1], label="Attribution (+ class, - not class)")
+        axes[1].set_yticklabels(ylabels, fontsize=4.5)
+    fig.colorbar(im1, cax=cax_attr, label="Ontology/strand attribution")
+    fig.colorbar(im1_mask, cax=cax_mask_attr, label="Mask attribution")
 
     if genes and tracks_per_gene >= 4:
         for ax in axes:
@@ -310,18 +305,9 @@ def _plot_mean_deeplift(
         legend_text = (
             "Track order per haplotype: "
             f"signals = {', '.join(signal_track_labels)}; masks = "
-            f"{signal_track_count}:{mask_track_names[0]} (blue), "
-            f"{signal_track_count + 1}:{mask_track_names[1]} (orange), "
-            f"{signal_track_count + 2}:{mask_track_names[2]} (teal, 0-1 scale)"
+            f"{signal_track_count}:ins, {signal_track_count + 1}:del, {signal_track_count + 2}:valid"
         )
         fig.text(0.02, 0.035, legend_text, fontsize=10)
-        mask_handles = [
-            Patch(facecolor="#19a0ff", edgecolor="none", label="ins_mask (input scale 0-1)"),
-            Patch(facecolor="#ff9f1c", edgecolor="none", label="del_mask (input scale 0-1)"),
-            Patch(facecolor="#2ec4b6", edgecolor="none", label="valid_mask (input scale 0-1)"),
-        ]
-        axes[0].legend(handles=mask_handles, loc="upper right", fontsize=9, frameon=True, title="Mask tracks")
-        axes[1].legend(handles=mask_handles, loc="upper right", fontsize=9, frameon=True, title="Mask attribution color")
 
     for win in top_windows[:10]:
         row_index = int(win.get("row_index", 0))
