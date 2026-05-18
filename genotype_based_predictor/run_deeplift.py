@@ -19,6 +19,14 @@ from genotype_based_predictor.interpretability import (
     find_top_deeplift_windows,
     summarize_deeplift_by_track,
 )
+from genotype_based_predictor.dynamic_indel_alignment import (
+    DynamicIndelAligner,
+    _allele_sequence,
+    _classify_length_behavior,
+    _parse_gt,
+    _resolve_ref_index,
+    _stream_gene_variants,
+)
 from genotype_based_predictor.models import CNN2AncestryPredictor, CNNAncestryPredictor, NNAncestryPredictor
 from genotype_based_predictor.utils import set_random_seeds
 
@@ -206,6 +214,132 @@ def _save_raw_pixel_images(mean_input: torch.Tensor, mean_attr: torch.Tensor, co
     np.save(out_dir / "raw_deeplift_matrix.npy", attr_np)
 
 
+def _variant_row_index(gene_idx: int, haplotype: str, track_idx: int, tracks_per_gene: int) -> int:
+    hap_offset = 0 if haplotype == "H1" else tracks_per_gene
+    return gene_idx * 2 * tracks_per_gene + hap_offset + track_idx
+
+
+def _collect_variant_markers(
+    *,
+    config: Any,
+    sample_ids: List[str],
+    max_markers: int,
+    min_frequency: float,
+) -> List[Dict[str, Any]]:
+    if not sample_ids:
+        return []
+    genes = list(config.dataset_input.genes_to_use or config.dataset_input.gene_order or [])
+    if not genes:
+        return []
+    ontology_count = len(config.dataset_input.ontology_terms or []) or 1
+    signal_track_count = 2 * ontology_count
+    tracks_per_gene = signal_track_count + 3
+    aligner = DynamicIndelAligner(
+        Path(config.dataset_input.dataset_dir),
+        selected_sample_ids=set(sample_ids),
+        center_window_size=config.dataset_input.window_center_size,
+    )
+    counts: Dict[Tuple[str, str, int, str], Dict[str, Any]] = {}
+    sample_count = max(len(sample_ids), 1)
+
+    for gene_idx, gene_name in enumerate(genes):
+        try:
+            axis = aligner.get_alignment_axis(gene_name)
+            center_slice = aligner.get_reference_centered_expanded_slice(gene_name, config.dataset_input.window_center_size)
+            gene_payload = aligner._load_gene_mapping(gene_name)
+        except Exception as exc:
+            console.print(f"[yellow]Variantes: pulando {gene_name}: {exc}[/yellow]")
+            continue
+
+        expanded_index_map = {int(k): int(v) for k, v in axis.get("expanded_index_map", {}).items()}
+        expanded_start = int(center_slice["expanded_start"])
+        expanded_end = int(center_slice["expanded_end"])
+        ref_start_offset = int(axis.get("ref_start_offset", 0))
+        full_start_1based = int(gene_payload.get("full_start_1based", gene_payload.get("start_1based", 0)))
+        ref_sequence = str(gene_payload.get("ref_sequence", ""))
+        ref_length = int(axis.get("ref_length", 0))
+
+        try:
+            rows = _stream_gene_variants(gene_payload["vcf_path"], sample_ids, gene_payload["region"])
+            for row in rows:
+                ref = str(row["ref"])
+                alt = str(row["alt"])
+                pos0_full = int(row["pos_1based"]) - full_start_1based
+                pos0 = _resolve_ref_index(ref_sequence, pos0_full - ref_start_offset, ref)
+                if pos0 < 0 or pos0 >= ref_length:
+                    continue
+                behavior = _classify_length_behavior(ref, alt)
+                ref_expanded = expanded_index_map.get(pos0)
+                if ref_expanded is None or not (expanded_start <= ref_expanded < expanded_end):
+                    continue
+
+                for sample_idx, gt in enumerate(row.get("gts", [])):
+                    if sample_idx >= len(sample_ids):
+                        break
+                    gt_left, gt_right = _parse_gt(str(gt))
+                    for haplotype, token in (("H1", gt_left), ("H2", gt_right)):
+                        if token in {"0", ".", "nan", "None"}:
+                            continue
+                        allele = _allele_sequence(ref, alt, token)
+                        if allele == ref:
+                            continue
+                        if behavior == "length_change":
+                            entry = aligner.get_haplotype_entry(gene_name, sample_ids[sample_idx], haplotype)
+                            if entry is None:
+                                continue
+                            if len(allele) > len(ref):
+                                positions = [int(p) for p in entry.get("insertion_indices", [])]
+                                variant_type = "INDEL_ins"
+                                track_idx = signal_track_count
+                            elif len(allele) < len(ref):
+                                positions = [int(p) for p in entry.get("deletion_indices", [])]
+                                variant_type = "INDEL_del"
+                                track_idx = signal_track_count + 1
+                            else:
+                                positions = [ref_expanded]
+                                variant_type = "SNP"
+                                track_idx = 0
+                        else:
+                            positions = [ref_expanded]
+                            variant_type = "SNP"
+                            track_idx = 0
+
+                        for expanded_pos in positions:
+                            if not (expanded_start <= expanded_pos < expanded_end):
+                                continue
+                            x = int(expanded_pos - expanded_start)
+                            key = (gene_name, haplotype, x, variant_type)
+                            marker = counts.setdefault(key, {
+                                "gene_name": gene_name,
+                                "gene_index": gene_idx,
+                                "haplotype": haplotype,
+                                "x": x,
+                                "variant_type": variant_type,
+                                "count": 0,
+                                "track_idx": track_idx,
+                            })
+                            marker["count"] += 1
+        except Exception as exc:
+            console.print(f"[yellow]Variantes: erro em {gene_name}: {exc}[/yellow]")
+
+    markers = []
+    for marker in counts.values():
+        frequency = float(marker["count"]) / sample_count
+        if frequency < min_frequency:
+            continue
+        row_index = _variant_row_index(
+            int(marker["gene_index"]),
+            str(marker["haplotype"]),
+            int(marker["track_idx"]),
+            tracks_per_gene,
+        )
+        marker["frequency"] = frequency
+        marker["row_index"] = row_index
+        markers.append(marker)
+    markers.sort(key=lambda item: (item["frequency"], item["count"]), reverse=True)
+    return markers if max_markers <= 0 else markers[:max_markers]
+
+
 def _plot_mean_deeplift(
     mean_input: torch.Tensor,
     mean_attr: torch.Tensor,
@@ -216,6 +350,7 @@ def _plot_mean_deeplift(
     num_samples: int,
     output_path: Path,
     show_track_separators: bool = False,
+    variant_markers: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     import matplotlib.pyplot as plt
 
@@ -324,6 +459,22 @@ def _plot_mean_deeplift(
         for ax in axes:
             ax.scatter([x], [row_index], facecolors="none", edgecolors="lime", s=160, linewidths=2)
 
+    if variant_markers:
+        for marker in variant_markers:
+            color = "#ff00ff" if marker.get("variant_type") == "SNP" else "#00e5ff"
+            axes[1].scatter(
+                [int(marker["x"])],
+                [int(marker["row_index"])],
+                facecolors="none",
+                edgecolors=color,
+                s=80,
+                linewidths=1.2,
+                alpha=0.85,
+            )
+        axes[1].scatter([], [], facecolors="none", edgecolors="#ff00ff", s=80, linewidths=1.2, label="SNP")
+        axes[1].scatter([], [], facecolors="none", edgecolors="#00e5ff", s=80, linewidths=1.2, label="INDEL")
+        axes[1].legend(loc="lower right", fontsize=8, frameon=True, title="Variants")
+
     top_labels = []
     for win in top_windows[:5]:
         gene = win.get("gene_name")
@@ -408,6 +559,9 @@ def main() -> None:
     parser.add_argument("--plot-top-from", choices=["mean", "samples"], default="mean", help="Circle top windows from the mean map or from per-sample windows")
     parser.add_argument("--save-raw-pixels", action="store_true", help="Save raw matrix PNGs with no axes/text/resize plus .npy matrices")
     parser.add_argument("--show-track-separators", action="store_true", help="Draw horizontal separators between signal/mask/gene blocks")
+    parser.add_argument("--show-variant-markers", action="store_true", help="Draw SNP/INDEL markers on the DeepLIFT panel using the aligned cache axis")
+    parser.add_argument("--variant-marker-min-frequency", type=float, default=0.0, help="Minimum fraction of selected samples carrying a variant marker")
+    parser.add_argument("--variant-marker-max", type=int, default=0, help="Maximum number of variant markers to draw; 0 means no limit")
     args = parser.parse_args()
 
     config_path = Path(args.config_path).resolve()
@@ -448,6 +602,7 @@ def main() -> None:
     input_sum: Optional[torch.Tensor] = None
     attr_sum: Optional[torch.Tensor] = None
     plotted_class_label: Optional[str] = None
+    selected_sample_ids: List[str] = []
     max_samples = args.max_samples if args.max_samples and args.max_samples > 0 else len(dataset)
 
     with Progress(
@@ -512,6 +667,7 @@ def main() -> None:
                 "predicted_class": pred_name,
                 "deeplift_target_class": target_name,
             })
+            selected_sample_ids.append(sample_id)
 
             for row in track_rows:
                 row.update({"sample_index": idx, "sample_id": sample_id, "deeplift_target_class": target_name})
@@ -547,6 +703,9 @@ def main() -> None:
         "min_distance_bp": args.min_distance_bp,
         "save_raw_pixels": args.save_raw_pixels,
         "show_track_separators": args.show_track_separators,
+        "show_variant_markers": args.show_variant_markers,
+        "variant_marker_min_frequency": args.variant_marker_min_frequency,
+        "variant_marker_max": args.variant_marker_max,
     })
     _write_json(out_dir / "samples.json", per_sample_summaries)
     _write_json(out_dir / "aggregate_by_track.json", aggregate_by_track)
@@ -562,6 +721,15 @@ def main() -> None:
     if args.plot and input_sum is not None and attr_sum is not None:
         mean_input = input_sum / n_samples
         mean_attr = attr_sum / n_samples
+        variant_markers = None
+        if args.show_variant_markers:
+            variant_markers = _collect_variant_markers(
+                config=config,
+                sample_ids=selected_sample_ids,
+                max_markers=args.variant_marker_max,
+                min_frequency=args.variant_marker_min_frequency,
+            )
+            _write_json(out_dir / "variant_markers.json", variant_markers)
         plot_windows = all_window_rows
         if args.plot_top_from == "mean":
             plot_windows = _select_top_regions(
@@ -582,6 +750,7 @@ def main() -> None:
             num_samples=n_samples,
             output_path=out_dir / "deeplift_mean.png",
             show_track_separators=args.show_track_separators,
+            variant_markers=variant_markers,
         )
         if args.save_raw_pixels:
             _save_raw_pixel_images(mean_input, mean_attr, config, out_dir / "raw_pixels")
