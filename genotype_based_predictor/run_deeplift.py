@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import numpy as np
 import torch
+from matplotlib.patches import Patch
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from matplotlib.colors import ListedColormap
@@ -133,6 +134,78 @@ def _aggregate_metric(rows: Iterable[Dict[str, Any]], key: str) -> List[Dict[str
     return out
 
 
+def _plot_layout(config: Any) -> Dict[str, Any]:
+    genes = list(config.dataset_input.genes_to_use or config.dataset_input.gene_order or [])
+    tracks_per_gene = 2 * len(config.dataset_input.ontology_terms or []) + 3
+    return {
+        "genes": genes,
+        "tracks_per_gene": tracks_per_gene,
+        "rows_per_hap": len(genes) * tracks_per_gene,
+        "signal_track_count": tracks_per_gene - 3,
+    }
+
+
+def _flatten_haps_for_plot(x: torch.Tensor, config: Any) -> np.ndarray:
+    layout = _plot_layout(config)
+    genes = layout["genes"]
+    tracks_per_gene = layout["tracks_per_gene"]
+    rows_per_hap = layout["rows_per_hap"]
+    arr = x.detach().cpu()
+    if arr.ndim == 3:
+        if genes and arr.shape[0] == 2 and arr.shape[1] == rows_per_hap:
+            blocks = []
+            for gene_idx in range(len(genes)):
+                start = gene_idx * tracks_per_gene
+                end = start + tracks_per_gene
+                blocks.append(arr[0, start:end, :])
+                blocks.append(arr[1, start:end, :])
+            arr = torch.cat(blocks, dim=0)
+        else:
+            arr = arr.reshape(arr.shape[0] * arr.shape[1], arr.shape[2])
+    elif arr.ndim != 2:
+        raise ValueError(f"Esperado tensor 2D/3D para plot, recebeu {tuple(arr.shape)}")
+    return arr.numpy()
+
+
+def _split_signal_and_masks(matrix: np.ndarray, config: Any) -> Tuple[np.ndarray, np.ndarray]:
+    layout = _plot_layout(config)
+    tracks_per_gene = layout["tracks_per_gene"]
+    signal_track_count = layout["signal_track_count"]
+    signal = matrix.copy()
+    masks = np.full_like(matrix, np.nan, dtype=np.float32)
+    if tracks_per_gene >= 4:
+        for row_idx in range(matrix.shape[0]):
+            if row_idx % tracks_per_gene >= signal_track_count:
+                signal[row_idx, :] = np.nan
+                masks[row_idx, :] = matrix[row_idx, :]
+    return signal, masks
+
+
+def _save_raw_pixel_images(mean_input: torch.Tensor, mean_attr: torch.Tensor, config: Any, out_dir: Path) -> None:
+    import matplotlib.pyplot as plt
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    input_np = _flatten_haps_for_plot(mean_input, config)
+    attr_np = _flatten_haps_for_plot(mean_attr, config)
+    signal_input, mask_input = _split_signal_and_masks(input_np, config)
+    signal_attr, mask_attr = _split_signal_and_masks(attr_np, config)
+
+    attr_lim = float(np.nanmax(np.abs(signal_attr))) if np.isfinite(signal_attr).any() else 1.0
+    mask_attr_lim = float(np.nanmax(np.abs(mask_attr))) if np.isfinite(mask_attr).any() else 1.0
+    if attr_lim <= 0:
+        attr_lim = 1.0
+    if mask_attr_lim <= 0:
+        mask_attr_lim = 1.0
+
+    plt.imsave(out_dir / "raw_input_signal_gray.png", signal_input, cmap="gray", vmin=0)
+    plt.imsave(out_dir / "raw_input_masks_0_1.png", np.clip(mask_input, 0.0, 1.0), cmap="viridis", vmin=0, vmax=1)
+    plt.imsave(out_dir / "raw_deeplift_signal_bwr.png", signal_attr, cmap="bwr", vmin=-attr_lim, vmax=attr_lim)
+    plt.imsave(out_dir / "raw_deeplift_masks_bwr.png", mask_attr, cmap="bwr", vmin=-mask_attr_lim, vmax=mask_attr_lim)
+
+    np.save(out_dir / "raw_input_matrix.npy", input_np)
+    np.save(out_dir / "raw_deeplift_matrix.npy", attr_np)
+
+
 def _plot_mean_deeplift(
     mean_input: torch.Tensor,
     mean_attr: torch.Tensor,
@@ -145,10 +218,11 @@ def _plot_mean_deeplift(
 ) -> None:
     import matplotlib.pyplot as plt
 
-    genes = list(config.dataset_input.genes_to_use or config.dataset_input.gene_order or [])
-    tracks_per_gene = 2 * len(config.dataset_input.ontology_terms or []) + 3
-    rows_per_hap = len(genes) * tracks_per_gene
-    signal_track_count = tracks_per_gene - 3
+    layout = _plot_layout(config)
+    genes = layout["genes"]
+    tracks_per_gene = layout["tracks_per_gene"]
+    rows_per_hap = layout["rows_per_hap"]
+    signal_track_count = layout["signal_track_count"]
     ontology_terms = list(config.dataset_input.ontology_terms or [])
     signal_track_labels = []
     if ontology_terms:
@@ -164,37 +238,11 @@ def _plot_mean_deeplift(
         signal_track_count + 2: "#2ec4b6",  # valid mask
     }
 
-    def flatten_haps(x: torch.Tensor) -> np.ndarray:
-        arr = x.detach().cpu()
-        if arr.ndim == 3:
-            if genes and arr.shape[0] == 2 and arr.shape[1] == rows_per_hap:
-                blocks = []
-                for gene_idx in range(len(genes)):
-                    start = gene_idx * tracks_per_gene
-                    end = start + tracks_per_gene
-                    blocks.append(arr[0, start:end, :])
-                    blocks.append(arr[1, start:end, :])
-                arr = torch.cat(blocks, dim=0)
-            else:
-                arr = arr.reshape(arr.shape[0] * arr.shape[1], arr.shape[2])
-        elif arr.ndim != 2:
-            raise ValueError(f"Esperado tensor 2D/3D para plot, recebeu {tuple(arr.shape)}")
-        return arr.numpy()
-
-    input_np = flatten_haps(mean_input)
-    attr_np = flatten_haps(mean_attr)
-    signal_input_np = input_np.copy()
-    mask_input_np = np.full_like(input_np, np.nan, dtype=np.float32)
-    signal_attr_np = attr_np.copy()
-    mask_attr_np = np.full_like(attr_np, np.nan, dtype=np.float32)
-    if genes and tracks_per_gene >= 4:
-        for row_idx in range(input_np.shape[0]):
-            track_idx = row_idx % tracks_per_gene
-            if track_idx >= signal_track_count:
-                signal_input_np[row_idx, :] = np.nan
-                mask_input_np[row_idx, :] = np.clip(input_np[row_idx, :], 0.0, 1.0)
-                signal_attr_np[row_idx, :] = np.nan
-                mask_attr_np[row_idx, :] = attr_np[row_idx, :]
+    input_np = _flatten_haps_for_plot(mean_input, config)
+    attr_np = _flatten_haps_for_plot(mean_attr, config)
+    signal_input_np, mask_input_np = _split_signal_and_masks(input_np, config)
+    signal_attr_np, mask_attr_np = _split_signal_and_masks(attr_np, config)
+    mask_input_np = np.clip(mask_input_np, 0.0, 1.0)
     abs_max = float(np.nanmax(np.abs(attr_np))) if attr_np.size else 0.0
     attr_lim = abs_max if abs_max > 0 else 1.0
 
@@ -267,6 +315,13 @@ def _plot_mean_deeplift(
             f"{signal_track_count + 2}:{mask_track_names[2]} (teal, 0-1 scale)"
         )
         fig.text(0.02, 0.035, legend_text, fontsize=10)
+        mask_handles = [
+            Patch(facecolor="#19a0ff", edgecolor="none", label="ins_mask (input scale 0-1)"),
+            Patch(facecolor="#ff9f1c", edgecolor="none", label="del_mask (input scale 0-1)"),
+            Patch(facecolor="#2ec4b6", edgecolor="none", label="valid_mask (input scale 0-1)"),
+        ]
+        axes[0].legend(handles=mask_handles, loc="upper right", fontsize=9, frameon=True, title="Mask tracks")
+        axes[1].legend(handles=mask_handles, loc="upper right", fontsize=9, frameon=True, title="Mask attribution color")
 
     for win in top_windows[:10]:
         row_index = int(win.get("row_index", 0))
@@ -363,6 +418,7 @@ def main() -> None:
     parser.add_argument("--out-dir", type=str, default=None)
     parser.add_argument("--plot", action="store_true", help="Save a PNG similar to the legacy DeepLIFT class-mean panel")
     parser.add_argument("--plot-top-from", choices=["mean", "samples"], default="mean", help="Circle top windows from the mean map or from per-sample windows")
+    parser.add_argument("--save-raw-pixels", action="store_true", help="Save raw matrix PNGs with no axes/text/resize plus .npy matrices")
     args = parser.parse_args()
 
     config_path = Path(args.config_path).resolve()
@@ -500,6 +556,7 @@ def main() -> None:
         "top_k_windows_per_sample": args.top_k_windows,
         "top_regions_mode": args.top_regions_mode,
         "min_distance_bp": args.min_distance_bp,
+        "save_raw_pixels": args.save_raw_pixels,
     })
     _write_json(out_dir / "samples.json", per_sample_summaries)
     _write_json(out_dir / "aggregate_by_track.json", aggregate_by_track)
@@ -535,6 +592,8 @@ def main() -> None:
             num_samples=n_samples,
             output_path=out_dir / "deeplift_mean.png",
         )
+        if args.save_raw_pixels:
+            _save_raw_pixel_images(mean_input, mean_attr, config, out_dir / "raw_pixels")
 
     console.print(f"[green]DeepLIFT salvo em:[/green] {out_dir}")
 
