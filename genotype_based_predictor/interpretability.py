@@ -25,6 +25,206 @@ from rich.console import Console
 console = Console()
 
 
+MASK_TRACK_NAMES = ("ins_mask", "del_mask", "valid_mask")
+
+
+def _unpack_dataset_item(item: Any) -> Tuple[torch.Tensor, Any, Optional[Any]]:
+    if isinstance(item, (tuple, list)):
+        if len(item) >= 3:
+            return item[0], item[1], item[2]
+        if len(item) == 2:
+            return item[0], item[1], None
+    raise ValueError("Dataset item deve ser (features, target) ou (features, target, metadata/index)")
+
+
+def _target_as_int(target: Any) -> Optional[int]:
+    if isinstance(target, torch.Tensor):
+        if target.numel() != 1:
+            return None
+        return int(target.item())
+    try:
+        return int(target)
+    except Exception:
+        return None
+
+
+def _filter_signal_track_metadata(config: Any, track_metadata: Optional[List[Dict]]) -> Optional[List[Dict]]:
+    if not track_metadata:
+        return None
+    requested = set(config.dataset_input.ontology_terms or [])
+    if not requested:
+        return list(track_metadata)
+    return [m for m in track_metadata if m.get("ontology_curie") in requested]
+
+
+def build_haplotype_track_layout(
+    config: Any,
+    track_metadata: Optional[List[Dict]] = None,
+) -> List[Dict[str, Any]]:
+    """Return row metadata for one haplotype in the canonical tensor layout.
+
+    The genotype-based layout is ``(haplotype, row, position)``. Within each
+    haplotype, rows are ordered as ``gene_1 tracks, gene_2 tracks, ...``. For
+    each gene, signal tracks come first, followed by the INDEL masks. The masks
+    are deliberately returned as normal tracks so downstream ranking treats them
+    exactly like RNA-seq tracks.
+    """
+    di = config.dataset_input
+    genes = list(di.genes_to_use or di.gene_order or [])
+    if not genes:
+        raise ValueError("genes_to_use/gene_order vazio; nao e possivel mapear linhas")
+
+    signal_metadata = _filter_signal_track_metadata(config, track_metadata)
+    signal_count = 2 * len(di.ontology_terms) if di.ontology_terms else 1
+    if signal_metadata and len(signal_metadata) == signal_count:
+        signal_tracks = []
+        for signal_idx, meta in enumerate(signal_metadata):
+            strand = meta.get("strand")
+            ontology = meta.get("ontology_curie")
+            name = meta.get("name") or ontology or f"signal_{signal_idx}"
+            signal_tracks.append({
+                "track_type": "signal",
+                "track_name": name,
+                "signal_index": signal_idx,
+                "ontology_curie": ontology,
+                "strand": strand,
+                "biosample_name": meta.get("biosample_name"),
+                "metadata": meta,
+            })
+    else:
+        ontology_terms = list(di.ontology_terms or [None])
+        signal_tracks = []
+        # AlphaGenome RNA-seq metadata is normally ordered as all + strands,
+        # then all - strands. This is only a fallback when metadata is absent.
+        for strand in (["+", "-"] if di.ontology_terms else [None]):
+            for ontology in ontology_terms:
+                if len(signal_tracks) >= signal_count:
+                    break
+                signal_idx = len(signal_tracks)
+                label = f"{ontology}:{strand}" if ontology and strand else f"signal_{signal_idx}"
+                signal_tracks.append({
+                    "track_type": "signal",
+                    "track_name": label,
+                    "signal_index": signal_idx,
+                    "ontology_curie": ontology,
+                    "strand": strand,
+                    "biosample_name": None,
+                    "metadata": None,
+                })
+
+    per_gene_tracks = list(signal_tracks)
+    for mask_idx, mask_name in enumerate(MASK_TRACK_NAMES):
+        per_gene_tracks.append({
+            "track_type": "mask",
+            "track_name": mask_name,
+            "mask_index": mask_idx,
+            "ontology_curie": None,
+            "strand": None,
+            "biosample_name": None,
+            "metadata": None,
+        })
+
+    layout: List[Dict[str, Any]] = []
+    tracks_per_gene = len(per_gene_tracks)
+    for gene_idx, gene_name in enumerate(genes):
+        for track_idx, track in enumerate(per_gene_tracks):
+            row_index = gene_idx * tracks_per_gene + track_idx
+            layout.append({
+                "row_index": row_index,
+                "gene_index": gene_idx,
+                "gene_name": gene_name,
+                "track_index_in_gene": track_idx,
+                **track,
+            })
+    return layout
+
+
+def summarize_deeplift_by_track(
+    attributions: torch.Tensor,
+    config: Any,
+    track_metadata: Optional[List[Dict]] = None,
+) -> List[Dict[str, Any]]:
+    """Summarize DeepLIFT attribution per haplotype/gene/track.
+
+    Accepts attribution maps with shape ``[2, rows, L]`` (new canonical layout)
+    or ``[rows, L]``. Masks are not filtered or down-weighted; they receive the
+    same statistics as signal tracks.
+    """
+    attrs = attributions.detach().cpu()
+    if attrs.ndim == 2:
+        attrs = attrs.unsqueeze(0)
+    if attrs.ndim != 3:
+        raise ValueError(f"Esperado attributions [hap,row,L] ou [row,L], recebido {tuple(attrs.shape)}")
+
+    layout = build_haplotype_track_layout(config, track_metadata=track_metadata)
+    hap_names = ["H1", "H2"] if attrs.shape[0] == 2 else [f"H{i + 1}" for i in range(attrs.shape[0])]
+    rows: List[Dict[str, Any]] = []
+    for hap_idx, hap_name in enumerate(hap_names):
+        for row_meta in layout[: attrs.shape[1]]:
+            row = attrs[hap_idx, row_meta["row_index"]]
+            abs_row = row.abs()
+            rows.append({
+                "haplotype": hap_name,
+                **row_meta,
+                "mean_abs_attr": float(abs_row.mean().item()),
+                "sum_abs_attr": float(abs_row.sum().item()),
+                "max_abs_attr": float(abs_row.max().item()),
+                "mean_signed_attr": float(row.mean().item()),
+                "sum_signed_attr": float(row.sum().item()),
+            })
+    rows.sort(key=lambda r: r["mean_abs_attr"], reverse=True)
+    return rows
+
+
+def find_top_deeplift_windows(
+    attributions: torch.Tensor,
+    config: Any,
+    track_metadata: Optional[List[Dict]] = None,
+    window_size: int = 512,
+    top_k: int = 20,
+) -> List[Dict[str, Any]]:
+    """Find top attribution windows per haplotype/gene/track.
+
+    Window ranking uses mean absolute attribution. Signal tracks and mask tracks
+    are scanned in the same loop with the same scoring rule.
+    """
+    if window_size < 1:
+        raise ValueError("window_size deve ser >= 1")
+    attrs = attributions.detach().cpu()
+    if attrs.ndim == 2:
+        attrs = attrs.unsqueeze(0)
+    if attrs.ndim != 3:
+        raise ValueError(f"Esperado attributions [hap,row,L] ou [row,L], recebido {tuple(attrs.shape)}")
+
+    layout = build_haplotype_track_layout(config, track_metadata=track_metadata)
+    hap_names = ["H1", "H2"] if attrs.shape[0] == 2 else [f"H{i + 1}" for i in range(attrs.shape[0])]
+    length = attrs.shape[-1]
+    actual_window = min(window_size, length)
+    windows: List[Dict[str, Any]] = []
+
+    for hap_idx, hap_name in enumerate(hap_names):
+        for row_meta in layout[: attrs.shape[1]]:
+            row = attrs[hap_idx, row_meta["row_index"]].abs().view(1, 1, -1)
+            scores = nn.functional.avg_pool1d(row, kernel_size=actual_window, stride=1).view(-1)
+            if scores.numel() == 0:
+                continue
+            take = min(top_k, scores.numel())
+            values, starts = torch.topk(scores, k=take)
+            for value, start in zip(values.tolist(), starts.tolist()):
+                windows.append({
+                    "haplotype": hap_name,
+                    **row_meta,
+                    "window_start": int(start),
+                    "window_end": int(start + actual_window),
+                    "window_center": int(start + actual_window // 2),
+                    "window_size": int(actual_window),
+                    "mean_abs_attr": float(value),
+                })
+
+    windows.sort(key=lambda r: r["mean_abs_attr"], reverse=True)
+    return windows[:top_k]
+
+
 class GradCAM:
     """
     Grad-CAM para CNNs genômicas (CNNAncestryPredictor / CNN2AncestryPredictor).
@@ -149,7 +349,7 @@ class DeepLIFT:
             if dataset is None:
                 return torch.zeros_like(input_tensor)
             console.print("[cyan]Calculando baseline (média do dataset)...[/cyan]")
-            samples = [dataset[i][0] for i in range(min(len(dataset), 10000))]
+            samples = [_unpack_dataset_item(dataset[i])[0] for i in range(min(len(dataset), 10000))]
             self._baseline_cache = torch.stack(samples).mean(dim=0)
             return self._baseline_cache.unsqueeze(0).to(input_tensor.device)
         raise ValueError(f"baseline_type inválido: {baseline_type}")
@@ -162,7 +362,8 @@ class DeepLIFT:
         Returns
         -------
         Tuple[torch.Tensor, int]
-            (atribuições [rows, cols], target_class_idx)
+            (atribuições sem dimensão de batch, target_class_idx). No layout
+            atual isso é [haplotypes, rows, cols].
         """
         was_training = self.model.training
         self.model.eval()
@@ -201,7 +402,11 @@ class DeepLIFT:
             return self._class_mean_cache[target_class_idx], mean_input, n
 
         device = next(self.model.parameters()).device
-        samples = [dataset[i][0] for i in range(len(dataset)) if dataset[i][1] == target_class_idx]
+        samples = []
+        for i in range(len(dataset)):
+            sample, target, _meta = _unpack_dataset_item(dataset[i])
+            if _target_as_int(target) == target_class_idx:
+                samples.append(sample)
         if not samples:
             return None, None, 0
 
