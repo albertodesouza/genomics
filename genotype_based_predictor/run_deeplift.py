@@ -244,9 +244,13 @@ def _collect_indel_markers_from_mean_input(
                 if row_index >= matrix.shape[0]:
                     continue
                 row = matrix[row_index]
-                positions = np.where(np.nan_to_num(row, nan=0.0) >= min_frequency)[0]
+                row_values = np.nan_to_num(row, nan=0.0)
+                if min_frequency <= 0:
+                    positions = np.where(row_values > 0)[0]
+                else:
+                    positions = np.where(row_values >= min_frequency)[0]
                 for x in positions.tolist():
-                    frequency = float(row[x])
+                    frequency = float(row_values[x])
                     markers.append({
                         "gene_name": gene_name,
                         "gene_index": gene_idx,
