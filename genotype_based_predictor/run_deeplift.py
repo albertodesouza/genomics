@@ -226,6 +226,58 @@ def _plot_mean_deeplift(
     plt.close(fig)
 
 
+def _window_too_close(candidate: Dict[str, Any], selected: List[Dict[str, Any]], min_distance_bp: int) -> bool:
+    if min_distance_bp <= 0:
+        return False
+    cand_gene = candidate.get("gene_name")
+    cand_center = int(candidate.get("window_center", 0))
+    for row in selected:
+        if row.get("gene_name") != cand_gene:
+            continue
+        if abs(cand_center - int(row.get("window_center", 0))) < min_distance_bp:
+            return True
+    return False
+
+
+def _select_top_regions(
+    attributions: torch.Tensor,
+    config: Any,
+    window_size: int,
+    top_k: int,
+    mode: str,
+    min_distance_bp: int,
+) -> List[Dict[str, Any]]:
+    if mode == "global":
+        candidates = find_top_deeplift_windows(
+            attributions,
+            config,
+            window_size=window_size,
+            top_k=max(top_k * 50, top_k),
+        )
+        selected: List[Dict[str, Any]] = []
+        for candidate in candidates:
+            if _window_too_close(candidate, selected, min_distance_bp):
+                continue
+            selected.append(candidate)
+            if len(selected) >= top_k:
+                break
+        return selected
+
+    candidates = find_top_deeplift_windows(
+        attributions,
+        config,
+        window_size=window_size,
+        top_k=max(top_k * 50, top_k),
+    )
+    best_by_gene: Dict[str, Dict[str, Any]] = {}
+    for candidate in candidates:
+        gene = str(candidate.get("gene_name"))
+        if gene not in best_by_gene:
+            best_by_gene[gene] = candidate
+    selected = sorted(best_by_gene.values(), key=lambda r: r["mean_abs_attr"], reverse=True)
+    return selected[:top_k]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run DeepLIFT interpretability for genotype_based_predictor")
     parser.add_argument("config_path", type=str, help="Path to the YAML config used for training")
@@ -237,6 +289,8 @@ def main() -> None:
     parser.add_argument("--max-samples", type=int, default=50)
     parser.add_argument("--window-size", type=int, default=512)
     parser.add_argument("--top-k-windows", type=int, default=100)
+    parser.add_argument("--top-regions-mode", choices=["per_gene", "global"], default="global")
+    parser.add_argument("--min-distance-bp", type=int, default=0)
     parser.add_argument("--out-dir", type=str, default=None)
     parser.add_argument("--plot", action="store_true", help="Save a PNG similar to the legacy DeepLIFT class-mean panel")
     parser.add_argument("--plot-top-from", choices=["mean", "samples"], default="mean", help="Circle top windows from the mean map or from per-sample windows")
@@ -323,7 +377,14 @@ def main() -> None:
                 input_sum += features.detach().cpu()
                 attr_sum += attrs.detach().cpu()
             track_rows = summarize_deeplift_by_track(attrs, config)
-            window_rows = find_top_deeplift_windows(attrs, config, window_size=args.window_size, top_k=args.top_k_windows)
+            window_rows = _select_top_regions(
+                attrs,
+                config,
+                window_size=args.window_size,
+                top_k=args.top_k_windows,
+                mode=args.top_regions_mode,
+                min_distance_bp=args.min_distance_bp,
+            )
 
             target_name = class_names[target_idx] if 0 <= target_idx < len(class_names) else str(target_idx)
             if plotted_class_label is None:
@@ -368,6 +429,8 @@ def main() -> None:
         "num_samples": n_samples,
         "window_size": args.window_size,
         "top_k_windows_per_sample": args.top_k_windows,
+        "top_regions_mode": args.top_regions_mode,
+        "min_distance_bp": args.min_distance_bp,
     })
     _write_json(out_dir / "samples.json", per_sample_summaries)
     _write_json(out_dir / "aggregate_by_track.json", aggregate_by_track)
@@ -385,11 +448,13 @@ def main() -> None:
         mean_attr = attr_sum / n_samples
         plot_windows = all_window_rows
         if args.plot_top_from == "mean":
-            plot_windows = find_top_deeplift_windows(
+            plot_windows = _select_top_regions(
                 mean_attr,
                 config,
                 window_size=args.window_size,
                 top_k=min(args.top_k_windows, 100),
+                mode=args.top_regions_mode,
+                min_distance_bp=args.min_distance_bp,
             )
         _plot_mean_deeplift(
             mean_input=mean_input,
