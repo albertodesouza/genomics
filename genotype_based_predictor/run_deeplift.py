@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+import numpy as np
 import torch
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -125,6 +126,85 @@ def _aggregate_metric(rows: Iterable[Dict[str, Any]], key: str) -> List[Dict[str
     return out
 
 
+def _plot_mean_deeplift(
+    mean_input: torch.Tensor,
+    mean_attr: torch.Tensor,
+    top_windows: List[Dict[str, Any]],
+    config: Any,
+    class_label: str,
+    split: str,
+    num_samples: int,
+    output_path: Path,
+) -> None:
+    import matplotlib.pyplot as plt
+
+    def flatten_haps(x: torch.Tensor) -> np.ndarray:
+        arr = x.detach().cpu()
+        if arr.ndim == 3:
+            arr = arr.reshape(arr.shape[0] * arr.shape[1], arr.shape[2])
+        elif arr.ndim != 2:
+            raise ValueError(f"Esperado tensor 2D/3D para plot, recebeu {tuple(arr.shape)}")
+        return arr.numpy()
+
+    input_np = flatten_haps(mean_input)
+    attr_np = flatten_haps(mean_attr)
+    abs_max = float(np.nanmax(np.abs(attr_np))) if attr_np.size else 0.0
+    attr_lim = abs_max if abs_max > 0 else 1.0
+
+    genes = list(config.dataset_input.genes_to_use or config.dataset_input.gene_order or [])
+    tracks_per_gene = 2 * len(config.dataset_input.ontology_terms or []) + 3
+    rows_per_hap = len(genes) * tracks_per_gene
+    yticks = []
+    ylabels = []
+    if genes and input_np.shape[0] >= rows_per_hap:
+        for hap_idx in range(max(input_np.shape[0] // rows_per_hap, 1)):
+            prefix = f"H{hap_idx + 1}:" if input_np.shape[0] > rows_per_hap else ""
+            offset = hap_idx * rows_per_hap
+            for gene_idx, gene in enumerate(genes):
+                yticks.append(offset + gene_idx * tracks_per_gene + (tracks_per_gene - 1) / 2)
+                ylabels.append(f"{prefix}{gene}")
+
+    fig, axes = plt.subplots(2, 1, figsize=(16, 10), constrained_layout=True)
+    im0 = axes[0].imshow(input_np, aspect="auto", cmap="gray", interpolation="nearest", vmin=0)
+    axes[0].set_title(f"{split.upper()} SET | Class {class_label} ({num_samples} samples) | Input 2D Mean ({input_np.shape[0]}x{input_np.shape[1]})", fontsize=16, fontweight="bold")
+    axes[0].set_ylabel("Genes / tracks")
+    axes[0].set_xlabel("Gene Position")
+    if yticks:
+        axes[0].set_yticks(yticks)
+        axes[0].set_yticklabels(ylabels, fontsize=8)
+    fig.colorbar(im0, ax=axes[0], label="Normalized Value")
+
+    im1 = axes[1].imshow(attr_np, aspect="auto", cmap="bwr", interpolation="nearest", vmin=-attr_lim, vmax=attr_lim)
+    axes[1].set_title(f"DeepLIFT: Mean Attribution for Class {class_label} ({num_samples} samples)", fontsize=16, fontweight="bold")
+    axes[1].set_ylabel("Genes / tracks")
+    axes[1].set_xlabel("Gene Position")
+    if yticks:
+        axes[1].set_yticks(yticks)
+        axes[1].set_yticklabels(ylabels, fontsize=8)
+    fig.colorbar(im1, ax=axes[1], label="Attribution (+ class, - not class)")
+
+    for win in top_windows[:10]:
+        row_index = int(win.get("row_index", 0))
+        if str(win.get("haplotype")) == "H2":
+            row_index += rows_per_hap
+        x = int(win.get("window_center", 0))
+        for ax in axes:
+            ax.scatter([x], [row_index], facecolors="none", edgecolors="lime", s=160, linewidths=2)
+
+    top_labels = []
+    for win in top_windows[:5]:
+        gene = win.get("gene_name")
+        track = win.get("track_name")
+        value = float(win.get("mean_abs_attr", 0.0))
+        top_labels.append(f"{gene}/{track}({value:.5f})")
+    if top_labels:
+        fig.text(0.02, 0.01, "Top regions: " + ", ".join(top_labels), fontsize=12)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=160)
+    plt.close(fig)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run DeepLIFT interpretability for genotype_based_predictor")
     parser.add_argument("config_path", type=str, help="Path to the YAML config used for training")
@@ -136,6 +216,7 @@ def main() -> None:
     parser.add_argument("--window-size", type=int, default=512)
     parser.add_argument("--top-k-windows", type=int, default=100)
     parser.add_argument("--out-dir", type=str, default=None)
+    parser.add_argument("--plot", action="store_true", help="Save a PNG similar to the legacy DeepLIFT class-mean panel")
     args = parser.parse_args()
 
     config_path = Path(args.config_path).resolve()
@@ -172,6 +253,9 @@ def main() -> None:
     per_sample_summaries: List[Dict[str, Any]] = []
     all_track_rows: List[Dict[str, Any]] = []
     all_window_rows: List[Dict[str, Any]] = []
+    input_sum: Optional[torch.Tensor] = None
+    attr_sum: Optional[torch.Tensor] = None
+    plotted_class_label: Optional[str] = None
     n_samples = min(args.max_samples, len(dataset)) if args.max_samples and args.max_samples > 0 else len(dataset)
 
     with Progress(
@@ -204,10 +288,18 @@ def main() -> None:
                 target_idx = int(args.target_class)
 
             attrs, _ = deeplift.generate(input_tensor, target_class=target_idx, baseline_type=args.baseline, dataset=dataset)
+            if input_sum is None:
+                input_sum = features.detach().cpu().clone()
+                attr_sum = attrs.detach().cpu().clone()
+            else:
+                input_sum += features.detach().cpu()
+                attr_sum += attrs.detach().cpu()
             track_rows = summarize_deeplift_by_track(attrs, config)
             window_rows = find_top_deeplift_windows(attrs, config, window_size=args.window_size, top_k=args.top_k_windows)
 
             target_name = class_names[target_idx] if 0 <= target_idx < len(class_names) else str(target_idx)
+            if plotted_class_label is None:
+                plotted_class_label = target_name if args.target_class not in {"predicted", "true"} else args.target_class
             pred_name = class_names[predicted_idx] if 0 <= predicted_idx < len(class_names) else str(predicted_idx)
             true_name = class_names[true_idx] if true_idx is not None and 0 <= true_idx < len(class_names) else str(true_idx)
             per_sample_summaries.append({
@@ -254,6 +346,20 @@ def main() -> None:
     _write_csv(out_dir / "aggregate_by_gene.csv", aggregate_by_gene)
     _write_csv(out_dir / "aggregate_by_track_type.csv", aggregate_by_track_type)
     _write_csv(out_dir / "top_windows.csv", all_window_rows)
+
+    if args.plot and input_sum is not None and attr_sum is not None:
+        mean_input = input_sum / max(n_samples, 1)
+        mean_attr = attr_sum / max(n_samples, 1)
+        _plot_mean_deeplift(
+            mean_input=mean_input,
+            mean_attr=mean_attr,
+            top_windows=all_window_rows,
+            config=config,
+            class_label=plotted_class_label or args.target_class,
+            split=args.split,
+            num_samples=n_samples,
+            output_path=out_dir / "deeplift_mean.png",
+        )
 
     console.print(f"[green]DeepLIFT salvo em:[/green] {out_dir}")
 
