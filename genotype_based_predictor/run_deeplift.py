@@ -215,6 +215,7 @@ def _plot_mean_deeplift(
     split: str,
     num_samples: int,
     output_path: Path,
+    show_track_separators: bool = False,
 ) -> None:
     import matplotlib.pyplot as plt
 
@@ -296,12 +297,13 @@ def _plot_mean_deeplift(
     fig.colorbar(im1, cax=cax_attr, label="Ontology/strand attribution")
     fig.colorbar(im1_mask, cax=cax_mask_attr, label="Mask attribution")
 
-    if genes and tracks_per_gene >= 4:
+    if show_track_separators and genes and tracks_per_gene >= 4:
         for ax in axes:
             for gene_idx in range(len(genes)):
                 for block_offset in (gene_idx * 2 * tracks_per_gene, gene_idx * 2 * tracks_per_gene + tracks_per_gene):
                     ax.axhline(block_offset + signal_track_count - 0.5, color="#f6f6f6", linewidth=0.35, alpha=0.7)
                     ax.axhline(block_offset + tracks_per_gene - 0.5, color="#dddddd", linewidth=0.55, alpha=0.7)
+    if genes and tracks_per_gene >= 4:
         legend_text = (
             "Track order per haplotype: "
             f"signals = {', '.join(signal_track_labels)}; masks = "
@@ -405,6 +407,7 @@ def main() -> None:
     parser.add_argument("--plot", action="store_true", help="Save a PNG similar to the legacy DeepLIFT class-mean panel")
     parser.add_argument("--plot-top-from", choices=["mean", "samples"], default="mean", help="Circle top windows from the mean map or from per-sample windows")
     parser.add_argument("--save-raw-pixels", action="store_true", help="Save raw matrix PNGs with no axes/text/resize plus .npy matrices")
+    parser.add_argument("--show-track-separators", action="store_true", help="Draw horizontal separators between signal/mask/gene blocks")
     args = parser.parse_args()
 
     config_path = Path(args.config_path).resolve()
@@ -543,6 +546,7 @@ def main() -> None:
         "top_regions_mode": args.top_regions_mode,
         "min_distance_bp": args.min_distance_bp,
         "save_raw_pixels": args.save_raw_pixels,
+        "show_track_separators": args.show_track_separators,
     })
     _write_json(out_dir / "samples.json", per_sample_summaries)
     _write_json(out_dir / "aggregate_by_track.json", aggregate_by_track)
@@ -577,6 +581,7 @@ def main() -> None:
             split=args.split,
             num_samples=n_samples,
             output_path=out_dir / "deeplift_mean.png",
+            show_track_separators=args.show_track_separators,
         )
         if args.save_raw_pixels:
             _save_raw_pixel_images(mean_input, mean_attr, config, out_dir / "raw_pixels")
