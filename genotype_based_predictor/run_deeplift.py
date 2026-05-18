@@ -10,6 +10,7 @@ import numpy as np
 import torch
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from matplotlib.colors import ListedColormap
 
 from genotype_based_predictor.config import generate_experiment_name, load_config
 from genotype_based_predictor.data_pipeline import prepare_data
@@ -147,6 +148,21 @@ def _plot_mean_deeplift(
     genes = list(config.dataset_input.genes_to_use or config.dataset_input.gene_order or [])
     tracks_per_gene = 2 * len(config.dataset_input.ontology_terms or []) + 3
     rows_per_hap = len(genes) * tracks_per_gene
+    signal_track_count = tracks_per_gene - 3
+    ontology_terms = list(config.dataset_input.ontology_terms or [])
+    signal_track_labels = []
+    if ontology_terms:
+        for strand in ("+", "-"):
+            for ontology in ontology_terms:
+                signal_track_labels.append(f"{len(signal_track_labels)}:{ontology}{strand}")
+    else:
+        signal_track_labels.append("0:signal")
+    mask_track_names = ("ins_mask", "del_mask", "valid_mask")
+    mask_colors = {
+        signal_track_count: "#19a0ff",      # insertion mask
+        signal_track_count + 1: "#ff9f1c",  # deletion mask
+        signal_track_count + 2: "#2ec4b6",  # valid mask
+    }
 
     def flatten_haps(x: torch.Tensor) -> np.ndarray:
         arr = x.detach().cpu()
@@ -167,6 +183,18 @@ def _plot_mean_deeplift(
 
     input_np = flatten_haps(mean_input)
     attr_np = flatten_haps(mean_attr)
+    signal_input_np = input_np.copy()
+    mask_input_np = np.full_like(input_np, np.nan, dtype=np.float32)
+    signal_attr_np = attr_np.copy()
+    mask_attr_np = np.full_like(attr_np, np.nan, dtype=np.float32)
+    if genes and tracks_per_gene >= 4:
+        for row_idx in range(input_np.shape[0]):
+            track_idx = row_idx % tracks_per_gene
+            if track_idx >= signal_track_count:
+                signal_input_np[row_idx, :] = np.nan
+                mask_input_np[row_idx, :] = np.clip(input_np[row_idx, :], 0.0, 1.0)
+                signal_attr_np[row_idx, :] = np.nan
+                mask_attr_np[row_idx, :] = attr_np[row_idx, :]
     abs_max = float(np.nanmax(np.abs(attr_np))) if attr_np.size else 0.0
     attr_lim = abs_max if abs_max > 0 else 1.0
 
@@ -180,17 +208,43 @@ def _plot_mean_deeplift(
             yticks.append(gene_offset + tracks_per_gene + (tracks_per_gene - 1) / 2)
             ylabels.append(f"H2:{gene}")
 
-    fig, axes = plt.subplots(2, 1, figsize=(16, 10), constrained_layout=True)
-    im0 = axes[0].imshow(input_np, aspect="auto", cmap="gray", interpolation="nearest", vmin=0)
+    fig, axes = plt.subplots(2, 1, figsize=(17, 10), constrained_layout=True)
+    gray_cmap = plt.colormaps["gray"].copy()
+    gray_cmap.set_bad(alpha=0.0)
+    bwr_cmap = plt.colormaps["bwr"].copy()
+    bwr_cmap.set_bad(alpha=0.0)
+    mask_cmap = ListedColormap(["none", "#19a0ff", "#ff9f1c", "#2ec4b6"])
+    mask_cmap.set_bad(alpha=0.0)
+
+    im0 = axes[0].imshow(signal_input_np, aspect="auto", cmap=gray_cmap, interpolation="nearest", vmin=0)
+    mask_code = np.full_like(input_np, np.nan, dtype=np.float32)
+    if genes and tracks_per_gene >= 4:
+        for row_idx in range(input_np.shape[0]):
+            track_idx = row_idx % tracks_per_gene
+            if track_idx in mask_colors:
+                mask_code[row_idx, :] = (track_idx - signal_track_count + 1) * mask_input_np[row_idx, :]
+    axes[0].imshow(mask_code, aspect="auto", cmap=mask_cmap, interpolation="nearest", vmin=0, vmax=3, alpha=0.85)
     axes[0].set_title(f"{split.upper()} SET | Class {class_label} ({num_samples} samples) | Input 2D Mean ({input_np.shape[0]}x{input_np.shape[1]})", fontsize=16, fontweight="bold")
     axes[0].set_ylabel("Genes / tracks")
     axes[0].set_xlabel("Gene Position")
     if yticks:
         axes[0].set_yticks(yticks)
         axes[0].set_yticklabels(ylabels, fontsize=8)
-    fig.colorbar(im0, ax=axes[0], label="Normalized Value")
+    fig.colorbar(im0, ax=axes[0], label="Signal normalized value")
 
-    im1 = axes[1].imshow(attr_np, aspect="auto", cmap="bwr", interpolation="nearest", vmin=-attr_lim, vmax=attr_lim)
+    im1 = axes[1].imshow(signal_attr_np, aspect="auto", cmap=bwr_cmap, interpolation="nearest", vmin=-attr_lim, vmax=attr_lim)
+    mask_abs = np.abs(mask_attr_np)
+    mask_attr_max = float(np.nanmax(mask_abs)) if np.isfinite(mask_abs).any() else 0.0
+    mask_alpha = np.zeros_like(mask_attr_np, dtype=np.float32)
+    if mask_attr_max > 0:
+        mask_alpha = np.nan_to_num(np.clip(mask_abs / mask_attr_max, 0.0, 1.0), nan=0.0)
+    mask_attr_code = np.full_like(attr_np, np.nan, dtype=np.float32)
+    if genes and tracks_per_gene >= 4:
+        for row_idx in range(attr_np.shape[0]):
+            track_idx = row_idx % tracks_per_gene
+            if track_idx in mask_colors:
+                mask_attr_code[row_idx, :] = float(track_idx - signal_track_count + 1)
+    axes[1].imshow(mask_attr_code, aspect="auto", cmap=mask_cmap, interpolation="nearest", vmin=0, vmax=3, alpha=0.75 * mask_alpha)
     axes[1].set_title(f"DeepLIFT: Mean Attribution for Class {class_label} ({num_samples} samples)", fontsize=16, fontweight="bold")
     axes[1].set_ylabel("Genes / tracks")
     axes[1].set_xlabel("Gene Position")
@@ -198,6 +252,21 @@ def _plot_mean_deeplift(
         axes[1].set_yticks(yticks)
         axes[1].set_yticklabels(ylabels, fontsize=8)
     fig.colorbar(im1, ax=axes[1], label="Attribution (+ class, - not class)")
+
+    if genes and tracks_per_gene >= 4:
+        for ax in axes:
+            for gene_idx in range(len(genes)):
+                for block_offset in (gene_idx * 2 * tracks_per_gene, gene_idx * 2 * tracks_per_gene + tracks_per_gene):
+                    ax.axhline(block_offset + signal_track_count - 0.5, color="#f6f6f6", linewidth=0.35, alpha=0.7)
+                    ax.axhline(block_offset + tracks_per_gene - 0.5, color="#dddddd", linewidth=0.55, alpha=0.7)
+        legend_text = (
+            "Track order per haplotype: "
+            f"signals = {', '.join(signal_track_labels)}; masks = "
+            f"{signal_track_count}:{mask_track_names[0]} (blue), "
+            f"{signal_track_count + 1}:{mask_track_names[1]} (orange), "
+            f"{signal_track_count + 2}:{mask_track_names[2]} (teal, 0-1 scale)"
+        )
+        fig.text(0.02, 0.035, legend_text, fontsize=10)
 
     for win in top_windows[:10]:
         row_index = int(win.get("row_index", 0))
