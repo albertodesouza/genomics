@@ -19,6 +19,26 @@ from genotype_based_predictor.utils import set_random_seeds
 console = Console()
 
 
+def _init_wandb(config, config_path: Path, experiment_dir: Path):
+    if not config.wandb.use_wandb:
+        return None
+    try:
+        import wandb
+    except ImportError as exc:
+        raise ImportError("W&B habilitado, mas o pacote 'wandb' nao esta instalado") from exc
+
+    run_name = config.wandb.run_name or experiment_dir.name
+    run = wandb.init(
+        project=config.wandb.project_name,
+        name=run_name,
+        config=config.model_dump(mode="python"),
+        dir=str(experiment_dir),
+    )
+    run.config.update({"config_path": str(config_path), "experiment_dir": str(experiment_dir)}, allow_val_change=True)
+    console.print(f"[green]✓ W&B habilitado:[/green] {config.wandb.project_name}/{run_name}")
+    return run
+
+
 def _install_signal_handlers() -> None:
     def _handle_sigint(_signum, _frame):
         interrupt_state.interrupted = True
@@ -68,36 +88,41 @@ def main() -> None:
     experiment_dir = setup_experiment_dir(config, str(config_path))
     full_ds, train_loader, val_loader, test_loader = prepare_data(config, experiment_dir)
     _install_signal_handlers()
+    wandb_run = _init_wandb(config, config_path, experiment_dir)
 
-    if config.model.type.upper() in SKLEARN_BASELINE_TYPES:
-        train_sklearn_baseline(
-            config=config,
-            model_type=config.model.type,
+    try:
+        if config.model.type.upper() in SKLEARN_BASELINE_TYPES:
+            train_sklearn_baseline(
+                config=config,
+                model_type=config.model.type,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                test_loader=test_loader,
+                full_dataset=full_ds,
+                experiment_dir=experiment_dir,
+                wandb_run=wandb_run,
+            )
+            return
+
+        model = _build_model(config, full_ds).to(device)
+        trainer = Trainer(
+            model=model,
             train_loader=train_loader,
             val_loader=val_loader,
-            test_loader=test_loader,
-            full_dataset=full_ds,
+            config=config,
+            device=device,
             experiment_dir=experiment_dir,
-            wandb_run=None,
+            wandb_run=wandb_run,
         )
-        return
+        history = trainer.train()
 
-    model = _build_model(config, full_ds).to(device)
-    trainer = Trainer(
-        model=model,
-        train_loader=train_loader,
-        val_loader=val_loader,
-        config=config,
-        device=device,
-        experiment_dir=experiment_dir,
-        wandb_run=None,
-    )
-    history = trainer.train()
-
-    if history.get("interrupted"):
-        selected_loader, split_name = _select_test_loader(config, train_loader, val_loader, test_loader)
-        console.print(f"[cyan]Executando avaliação pós-interrupção no split '{split_name}'...[/cyan]")
-        run_test_and_save(model, selected_loader, full_ds, config, device, split_name, experiment_dir)
+        if history.get("interrupted"):
+            selected_loader, split_name = _select_test_loader(config, train_loader, val_loader, test_loader)
+            console.print(f"[cyan]Executando avaliação pós-interrupção no split '{split_name}'...[/cyan]")
+            run_test_and_save(model, selected_loader, full_ds, config, device, split_name, experiment_dir, wandb_run)
+    finally:
+        if wandb_run is not None:
+            wandb_run.finish()
 
 
 if __name__ == "__main__":
