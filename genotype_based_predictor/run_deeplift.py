@@ -4,8 +4,9 @@ import argparse
 import csv
 import hashlib
 import json
+import subprocess
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -27,6 +28,7 @@ from genotype_based_predictor.dynamic_indel_alignment import (
     _parse_gt,
     _resolve_ref_index,
     _stream_gene_variants,
+    _stream_gene_variants_from_gzip,
 )
 from genotype_based_predictor.models import CNN2AncestryPredictor, CNNAncestryPredictor, NNAncestryPredictor
 from genotype_based_predictor.utils import set_random_seeds
@@ -220,6 +222,84 @@ def _variant_row_index(gene_idx: int, haplotype: str, track_idx: int, tracks_per
     return gene_idx * 2 * tracks_per_gene + hap_offset + track_idx
 
 
+def _plot_row_index_for_window(win: Dict[str, Any], genes: List[str], rows_per_hap: int, tracks_per_gene: int) -> int:
+    row_index = int(win.get("row_index", 0))
+    if genes and rows_per_hap > 0:
+        gene_idx = int(win.get("gene_index", row_index // tracks_per_gene))
+        track_idx = int(win.get("track_index_in_gene", row_index % tracks_per_gene))
+        hap_offset = tracks_per_gene if str(win.get("haplotype")) == "H2" else 0
+        return gene_idx * 2 * tracks_per_gene + hap_offset + track_idx
+    if str(win.get("haplotype")) == "H2":
+        return row_index + rows_per_hap
+    return row_index
+
+
+def _variant_marker_label(marker: Dict[str, Any]) -> str:
+    variant_id = str(marker.get("id") or marker.get("variant_id") or "").strip()
+    if variant_id and variant_id != ".":
+        return variant_id
+    chrom = str(marker.get("chrom") or "").strip()
+    pos = marker.get("pos_1based")
+    if chrom and pos is not None:
+        return f"{chrom}:{pos}"
+    gene = str(marker.get("gene_name") or "")
+    x = marker.get("x")
+    return f"{gene}:x{x}" if gene else f"x{x}"
+
+
+def _select_variant_markers_near_windows(
+    variant_markers: List[Dict[str, Any]],
+    top_windows: List[Dict[str, Any]],
+    genes: List[str],
+    rows_per_hap: int,
+    tracks_per_gene: int,
+    max_windows: int = 10,
+) -> List[Dict[str, Any]]:
+    drawable = [m for m in variant_markers if "x" in m and "row_index" in m]
+    selected: List[Dict[str, Any]] = []
+    used_keys = set()
+
+    for win in top_windows[:max_windows]:
+        win_gene = win.get("gene_name")
+        win_haplotype = str(win.get("haplotype", ""))
+        win_center = int(win.get("window_center", 0))
+        win_row = _plot_row_index_for_window(win, genes, rows_per_hap, tracks_per_gene)
+        candidates = [
+            marker for marker in drawable
+            if marker.get("gene_name") == win_gene and str(marker.get("haplotype", "")) == win_haplotype
+        ]
+        if not candidates:
+            continue
+
+        marker = min(
+            candidates,
+            key=lambda item: (
+                abs(int(item["x"]) - win_center),
+                abs(int(item["row_index"]) - win_row),
+                -float(item.get("frequency", 0.0) or 0.0),
+            ),
+        )
+        key = (
+            marker.get("gene_name"),
+            marker.get("haplotype"),
+            int(marker["x"]),
+            int(marker["row_index"]),
+            marker.get("variant_type"),
+            marker.get("id"),
+            marker.get("pos_1based"),
+        )
+        if key in used_keys:
+            continue
+        used_keys.add(key)
+        enriched = dict(marker)
+        enriched["nearest_top_window_center"] = win_center
+        enriched["nearest_top_window_row_index"] = win_row
+        enriched["nearest_top_window_distance"] = abs(int(marker["x"]) - win_center)
+        selected.append(enriched)
+
+    return selected
+
+
 def _collect_indel_markers_from_mean_input(
     *,
     mean_input: torch.Tensor,
@@ -279,7 +359,7 @@ def _variant_cache_path(
     genes_filter: Optional[set[str]],
 ) -> Path:
     payload = json.dumps({
-        "cache_version": 2,
+        "cache_version": 3,
         "sample_ids": sorted(sample_ids),
         "variant_types": variant_types,
         "min_frequency": min_frequency,
@@ -288,6 +368,20 @@ def _variant_cache_path(
     }, sort_keys=True)
     digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
     return out_dir / "variant_marker_cache" / f"variant_markers_{digest}.json"
+
+
+def _stream_variants_with_gzip_fallback(vcf_path: str, sample_ids: List[str], region: str):
+    try:
+        yield from _stream_gene_variants(vcf_path, sample_ids, region)
+    except subprocess.CalledProcessError as exc:
+        stderr = str(getattr(exc, "stderr", "") or "")
+        if "BGZF EOF" not in stderr and "may be truncated" not in stderr:
+            raise
+        console.print(
+            "[yellow]bcftools recusou o VCF por EOF BGZF ausente; "
+            f"usando fallback gzip para {Path(vcf_path).name} {region}[/yellow]"
+        )
+        yield from _stream_gene_variants_from_gzip(vcf_path, sample_ids, region)
 
 
 def _collect_vcf_variant_markers(
@@ -346,7 +440,7 @@ def _collect_vcf_variant_markers(
         ref_length = int(axis.get("ref_length", 0))
 
         try:
-            rows = _stream_gene_variants(gene_payload["vcf_path"], sample_ids, gene_payload["region"])
+            rows = _stream_variants_with_gzip_fallback(gene_payload["vcf_path"], sample_ids, gene_payload["region"])
             for row in rows:
                 gene_summary["rows_seen"] += 1
                 ref = str(row["ref"])
@@ -408,6 +502,11 @@ def _collect_vcf_variant_markers(
                                 "gene_index": gene_idx,
                                 "haplotype": haplotype,
                                 "x": x,
+                                "chrom": row.get("chrom"),
+                                "pos_1based": int(row["pos_1based"]),
+                                "id": row.get("id"),
+                                "ref": ref,
+                                "alt": alt,
                                 "variant_type": variant_type,
                                 "count": 0,
                                 "track_idx": track_idx,
@@ -547,35 +646,46 @@ def _plot_mean_deeplift(
         fig.text(0.02, 0.035, legend_text, fontsize=10)
 
     for win in top_windows[:10]:
-        row_index = int(win.get("row_index", 0))
-        if genes and rows_per_hap > 0:
-            gene_idx = int(win.get("gene_index", row_index // tracks_per_gene))
-            track_idx = int(win.get("track_index_in_gene", row_index % tracks_per_gene))
-            hap_offset = tracks_per_gene if str(win.get("haplotype")) == "H2" else 0
-            row_index = gene_idx * 2 * tracks_per_gene + hap_offset + track_idx
-        elif str(win.get("haplotype")) == "H2":
-            row_index += rows_per_hap
+        row_index = _plot_row_index_for_window(win, genes, rows_per_hap, tracks_per_gene)
         x = int(win.get("window_center", 0))
         for ax in axes:
             ax.scatter([x], [row_index], facecolors="none", edgecolors="lime", s=160, linewidths=2)
 
     if variant_markers:
-        drawable_markers = [m for m in variant_markers if "x" in m and "row_index" in m]
+        drawable_markers = _select_variant_markers_near_windows(
+            variant_markers,
+            top_windows,
+            genes,
+            rows_per_hap,
+            tracks_per_gene,
+            max_windows=10,
+        )
         for marker in drawable_markers:
             color = "#ff00ff" if marker.get("variant_type") == "SNP" else "#00e5ff"
+            x = int(marker["x"])
+            y = int(marker["row_index"])
             axes[1].scatter(
-                [int(marker["x"])],
-                [int(marker["row_index"])],
+                [x],
+                [y],
                 facecolors="none",
                 edgecolors=color,
                 s=80,
                 linewidths=1.2,
                 alpha=0.85,
             )
+            axes[1].annotate(
+                _variant_marker_label(marker),
+                xy=(x, y),
+                xytext=(6, 4),
+                textcoords="offset points",
+                fontsize=7,
+                color=color,
+                bbox={"boxstyle": "round,pad=0.15", "fc": "white", "ec": color, "alpha": 0.75, "lw": 0.6},
+            )
         if drawable_markers:
             axes[1].scatter([], [], facecolors="none", edgecolors="#ff00ff", s=80, linewidths=1.2, label="SNP")
             axes[1].scatter([], [], facecolors="none", edgecolors="#00e5ff", s=80, linewidths=1.2, label="INDEL")
-            axes[1].legend(loc="lower right", fontsize=8, frameon=True, title="Variants")
+            axes[1].legend(loc="lower right", fontsize=8, frameon=True, title="Nearest variants")
 
     top_labels = []
     for win in top_windows[:5]:

@@ -116,7 +116,7 @@ def _stream_gene_variants(vcf_path: str, sample_ids: List[str], region: str):
         yield from _stream_gene_variants_from_gzip(vcf_path, sample_ids, region)
         return
 
-    fmt = "%POS\t%REF\t%ALT[\t%GT]\n"
+    fmt = "%CHROM\t%POS\t%ID\t%REF\t%ALT[\t%GT]\n"
     cmd = [
         "bcftools",
         "query",
@@ -134,14 +134,16 @@ def _stream_gene_variants(vcf_path: str, sample_ids: List[str], region: str):
     try:
         for line in proc.stdout:
             fields = line.rstrip("\n").split("\t")
-            if len(fields) < 3:
+            if len(fields) < 5:
                 continue
-            pos, ref, alt = fields[:3]
+            chrom, pos, variant_id, ref, alt = fields[:5]
             yield {
+                "chrom": chrom,
                 "pos_1based": int(pos),
+                "id": variant_id,
                 "ref": ref,
                 "alt": alt,
-                "gts": fields[3:],
+                "gts": fields[5:],
             }
     finally:
         if proc.stdout is not None:
@@ -207,7 +209,9 @@ def _stream_gene_variants_from_gzip(vcf_path: str, sample_ids: List[str], region
                 gts.append(parts[gt_idx] if gt_idx < len(parts) else parts[0])
 
             yield {
+                "chrom": fields[0],
                 "pos_1based": pos,
+                "id": fields[2],
                 "ref": fields[3],
                 "alt": fields[4],
                 "gts": gts,
