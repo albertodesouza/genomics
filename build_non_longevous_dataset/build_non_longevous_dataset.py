@@ -641,6 +641,11 @@ def run_build_window_predict(
     # Add window size
     if params.get('window_size'):
         cmd.extend(["--window-size", str(params['window_size'])])
+
+    # Add variant filter for consensus FASTA construction.
+    variant_filter = params.get('variant_filter', 'all')
+    if variant_filter:
+        cmd.extend(["--variant-filter", str(variant_filter)])
     
     # Add haplotype options
     if params.get('skip_h2'):
@@ -1265,4 +1270,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
