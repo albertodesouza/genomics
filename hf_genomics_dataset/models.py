@@ -15,6 +15,9 @@ class SourceDataset:
 class ConversionOptions:
     chunk_size: int = 0
     include_sequences: bool = True
+    include_vcf: bool = True
+    vcf_pattern: Optional[str] = None
+    include_predictions: bool = False
 
 
 @dataclass
@@ -45,9 +48,9 @@ class GeneWindowRecord:
     end: Optional[int]
     window_size: Optional[int]
     window_type: Optional[str]
-    ref_sequence: Optional[str] = None
     h1_sequence: Optional[str] = None
     h2_sequence: Optional[str] = None
+    vcf_text: Optional[str] = None
     outputs: List[str] = field(default_factory=list)
     ontologies: List[str] = field(default_factory=list)
     predictions_h1: Dict[str, List[List[float]]] = field(default_factory=dict)
@@ -56,6 +59,15 @@ class GeneWindowRecord:
     source_sample_path: str = ""
     source_window_path: str = ""
     source_metadata_path: str = ""
+
+
+@dataclass
+class GeneReferenceRecord:
+    gene_symbol: str
+    chromosome: str
+    start: int
+    end: int
+    ref_sequence: str
 
 
 @dataclass

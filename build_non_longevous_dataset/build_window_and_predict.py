@@ -116,6 +116,30 @@ def detect_chr_prefix(fasta_fai: Path) -> str:
     return 'chr' if first.startswith('chr') else ''
 
 
+def detect_vcf_chr_prefix(vcf_path: Path) -> str:
+    """Detect whether VCF uses 'chr' prefix for contigs in its header."""
+    try:
+        # We use 'bcftools view -h' to get the header
+        proc = subprocess.run(
+            ["bcftools", "view", "-h", str(vcf_path)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True
+        )
+        for line in proc.stdout.splitlines():
+            if line.startswith("##contig=<ID=chr"):
+                return "chr"
+            # If we see a contig without chr, we can be reasonably sure it's naked
+            if line.startswith("##contig=<ID=1,") or line.startswith("##contig=<ID=1>"):
+                return ""
+    except Exception:
+        pass
+    
+    # Fallback: check if the filename itself contains .chr
+    if ".chr" in vcf_path.name:
+        return "chr"
+        
+    return ""
+
+
 def coerce_chromosome_name(chrom: str, desired_prefix: str) -> str:
     """Coerce a chromosome name to match FASTA prefix style."""
     has_chr = chrom.startswith('chr')
@@ -426,6 +450,11 @@ def process_window(
     # Clip coordinates and get actual values
     region, actual_start, actual_end = to_region_1based(chrom, start, end, chrom_size)
     
+    # Also prepare a VCF-specific region string if the VCF prefix is different
+    vcf_prefix = detect_vcf_chr_prefix(vcf_path)
+    vcf_chrom = coerce_chromosome_name(chrom, vcf_prefix)
+    vcf_region = f"{vcf_chrom}:{actual_start}-{actual_end}"
+    
     # Store requested coordinates for later use in adjust_to_target_size
     requested_start = start
     requested_end = end
@@ -457,10 +486,11 @@ def process_window(
         print(f"[INFO] VCF window already exists: {vcf_window}")
     else:
         print("[INFO] Subsetting VCF to sample+region ...")
+        # Use vcf_region instead of reference region to match VCF contig naming
         run([
             "bcftools", "view",
             "-s", sample,
-            "-r", region,
+            "-r", vcf_region,
             "-Oz", "-o", str(vcf_window),
             str(vcf_path)
         ], check=True)
@@ -882,9 +912,23 @@ def main():
         print(f"\n[INFO] Processing target {idx}/{total_targets}: {target_name} ({chrom}:{start}-{end})")
         
         # Resolve VCF path for this chromosome
-        # Replace {chrom} placeholder if present
-        vcf_path_str = vcf_pattern.replace('{chrom}', chrom)
-        vcf_path = Path(vcf_path_str).resolve()
+        # We try to find whether it uses 'chr' or naked numbers by checking for both if {chrom} is present
+        vcf_path_str = vcf_pattern
+        if '{chrom}' in vcf_pattern:
+            # Try naked first
+            path_naked = Path(vcf_pattern.replace('{chrom}', chrom)).resolve()
+            # Try with 'chr'
+            path_chr = Path(vcf_pattern.replace('{chrom}', 'chr' + chrom.replace('chr',''))).resolve()
+            
+            if path_chr.exists():
+                vcf_path = path_chr
+            elif path_naked.exists():
+                vcf_path = path_naked
+            else:
+                # Default to whatever matches the FASTA style if neither exists (will fail later)
+                vcf_path = path_naked
+        else:
+            vcf_path = Path(vcf_pattern).resolve()
         
         # Check if VCF exists for this chromosome
         if not vcf_path.exists():

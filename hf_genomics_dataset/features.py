@@ -3,7 +3,7 @@ from __future__ import annotations
 from datasets import Features, Sequence, Value
 
 
-PREDICTION_MATRIX_FEATURE = Sequence(Sequence(Value("float32")))
+PREDICTION_MATRIX_FEATURE = Value("binary")
 
 
 def sample_features() -> Features:
@@ -38,9 +38,9 @@ def gene_window_features() -> Features:
             "end": Value("int64"),
             "window_size": Value("int64"),
             "window_type": Value("string"),
-            "ref_sequence": Value("string"),
             "h1_sequence": Value("string"),
             "h2_sequence": Value("string"),
+            "vcf_text": Value("string"),
             "outputs": Sequence(Value("string")),
             "ontologies": Sequence(Value("string")),
             "source_path": Value("string"),
@@ -65,5 +65,17 @@ def gene_window_features() -> Features:
                 "dnase": PREDICTION_MATRIX_FEATURE,
                 "procap": PREDICTION_MATRIX_FEATURE,
             },
+        }
+    )
+
+
+def gene_reference_features() -> Features:
+    return Features(
+        {
+            "gene_symbol": Value("string"),
+            "chromosome": Value("string"),
+            "start": Value("int64"),
+            "end": Value("int64"),
+            "ref_sequence": Value("string"),
         }
     )
