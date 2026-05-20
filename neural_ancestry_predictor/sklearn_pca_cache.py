@@ -274,6 +274,7 @@ def fit_streaming_randomized_pca_on_train(
     output_dir: Path,
     *,
     oversampling: int = 32,
+    n_iter: int = 2,
     feature_chunk_size: int = 16384,
     dtype: str = "float32",
     random_state: int = 42,
@@ -302,7 +303,7 @@ def fit_streaming_randomized_pca_on_train(
 
     log(
         f"[cyan]PCA randomizada streaming: k={k}, oversampling={oversampling}, "
-        f"ell={ell}, n_train={n_train}, D={n_features}, dtype={np_dtype.name}[/cyan]"
+        f"n_iter={n_iter}, ell={ell}, n_train={n_train}, D={n_features}, dtype={np_dtype.name}[/cyan]"
     )
 
     Y = np.zeros((n_train, ell), dtype=np_dtype)
@@ -324,6 +325,57 @@ def fit_streaming_randomized_pca_on_train(
     Q, _ = np.linalg.qr(Y.astype(np.float64, copy=False), mode="reduced")
     Q = Q[:, :ell]
     del Y
+
+    for iteration in range(int(n_iter)):
+        Z_path = output_dir / f"randomized_pca_power_Z_iter{iteration}.{np_dtype.name}.memmap"
+        Z = np.memmap(Z_path, mode="w+", dtype=np_dtype, shape=(ell, n_features))
+        Z[:] = 0
+        with _rich_progress_cm(rich_console) as progress:
+            tid = progress.add_task(
+                f"PCA randomizada: power {iteration + 1}/{n_iter} X.T @ Q",
+                total=_dataloader_len(train_loader),
+            )
+            row_start = 0
+            for features, _targets, _idx in train_loader:
+                X = scaler.transform(sklearn_flatten_batch(features)).astype(np_dtype, copy=False)
+                row_end = row_start + X.shape[0]
+                Q_batch = Q[row_start:row_end]
+                for start in range(0, n_features, feature_chunk_size):
+                    end = min(start + feature_chunk_size, n_features)
+                    Z[:, start:end] += (Q_batch.T @ X[:, start:end]).astype(np_dtype, copy=False)
+                row_start = row_end
+                progress.update(tid, advance=1)
+
+        Y_power = np.zeros((n_train, ell), dtype=np_dtype)
+        with _rich_progress_cm(rich_console) as progress:
+            tid = progress.add_task(
+                f"PCA randomizada: power {iteration + 1}/{n_iter} X @ Z.T",
+                total=_dataloader_len(train_loader),
+            )
+            row_start = 0
+            for features, _targets, _idx in train_loader:
+                X = scaler.transform(sklearn_flatten_batch(features)).astype(np_dtype, copy=False)
+                row_end = row_start + X.shape[0]
+                Y_batch = np.zeros((X.shape[0], ell), dtype=np_dtype)
+                for start in range(0, n_features, feature_chunk_size):
+                    end = min(start + feature_chunk_size, n_features)
+                    Y_batch += X[:, start:end] @ np.asarray(Z[:, start:end]).T
+                Y_power[row_start:row_end] = Y_batch
+                row_start = row_end
+                progress.update(tid, advance=1)
+
+        try:
+            Z._mmap.close()
+        except Exception:
+            pass
+        try:
+            Z_path.unlink()
+        except OSError:
+            pass
+
+        Q, _ = np.linalg.qr(Y_power.astype(np.float64, copy=False), mode="reduced")
+        Q = Q[:, :ell]
+        del Y_power
 
     B_path = output_dir / f"randomized_pca_B.{np_dtype.name}.memmap"
     B = np.memmap(B_path, mode="w+", dtype=np_dtype, shape=(ell, n_features))
@@ -497,6 +549,7 @@ def pca_cache_is_valid(
     pca_align_n_train: bool,
     pca_backend: str,
     randomized_pca_oversampling: int,
+    randomized_pca_n_iter: int,
     randomized_pca_feature_chunk_size: int,
     randomized_pca_dtype: str,
 ) -> bool:
@@ -532,6 +585,8 @@ def pca_cache_is_valid(
     if str(pca_backend) == "randomized_streaming":
         if int(meta.get("randomized_pca_oversampling", -1)) != int(randomized_pca_oversampling):
             return False
+        if int(meta.get("randomized_pca_n_iter", -1)) != int(randomized_pca_n_iter):
+            return False
         if int(meta.get("randomized_pca_feature_chunk_size", -1)) != int(randomized_pca_feature_chunk_size):
             return False
         if str(meta.get("randomized_pca_dtype", "")) != str(randomized_pca_dtype):
@@ -562,6 +617,7 @@ def build_sklearn_pca_cache(
     align = bool(sk.get("pca_align_n_train", False))
     pca_backend = str(sk.get("pca_backend", "incremental"))
     randomized_oversampling = int(sk.get("randomized_pca_oversampling", 32))
+    randomized_n_iter = int(sk.get("randomized_pca_n_iter", 2))
     randomized_feature_chunk_size = int(sk.get("randomized_pca_feature_chunk_size", 16384))
     randomized_dtype = str(sk.get("randomized_pca_dtype", "float32"))
 
@@ -592,6 +648,7 @@ def build_sklearn_pca_cache(
             align,
             pca_backend,
             randomized_oversampling,
+            randomized_n_iter,
             randomized_feature_chunk_size,
             randomized_dtype,
         )
@@ -636,6 +693,7 @@ def build_sklearn_pca_cache(
             effective_k,
             out_dir,
             oversampling=randomized_oversampling,
+            n_iter=randomized_n_iter,
             feature_chunk_size=randomized_feature_chunk_size,
             dtype=randomized_dtype,
             random_state=42,
@@ -692,6 +750,7 @@ def build_sklearn_pca_cache(
         "pca_align_n_train": align,
         "pca_backend": pca_backend,
         "randomized_pca_oversampling": randomized_oversampling,
+        "randomized_pca_n_iter": randomized_n_iter,
         "randomized_pca_feature_chunk_size": randomized_feature_chunk_size,
         "randomized_pca_dtype": randomized_dtype,
     }

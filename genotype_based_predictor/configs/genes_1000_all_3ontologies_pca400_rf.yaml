@@ -21,6 +21,7 @@ model:
     pca_components: 400
     pca_backend: "randomized_streaming"
     randomized_pca_oversampling: 32
+    randomized_pca_n_iter: 2
     randomized_pca_feature_chunk_size: 8192
     randomized_pca_dtype: "float32"
     use_pca_cache: true

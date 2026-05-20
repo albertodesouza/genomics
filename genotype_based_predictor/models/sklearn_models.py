@@ -256,6 +256,7 @@ def train_sklearn_baseline(config: PipelineConfig, model_type: str, train_loader
             k,
             models_dir,
             oversampling=sk.randomized_pca_oversampling,
+            n_iter=sk.randomized_pca_n_iter,
             feature_chunk_size=sk.randomized_pca_feature_chunk_size,
             dtype=sk.randomized_pca_dtype,
             random_state=random_seed,
