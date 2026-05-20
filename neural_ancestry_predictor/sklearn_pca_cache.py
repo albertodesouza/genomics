@@ -263,7 +263,7 @@ def _random_omega_chunk(
     random_state: int,
 ) -> np.ndarray:
     # Seed por chunk: reproduzível sem materializar a matriz Omega D x ell.
-    rng = np.random.default_rng(int(random_state) + int(start))
+    rng = np.random.default_rng(np.random.SeedSequence([int(random_state), int(start)]))
     return rng.standard_normal((end - start, ell)).astype(dtype, copy=False)
 
 

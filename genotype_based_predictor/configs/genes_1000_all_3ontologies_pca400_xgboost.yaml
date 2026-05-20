@@ -23,7 +23,7 @@ model:
     randomized_pca_oversampling: 32
     randomized_pca_n_iter: 2
     randomized_pca_feature_chunk_size: 8192
-    randomized_pca_dtype: "float32"
+    randomized_pca_dtype: "float64"
     use_pca_cache: true
     pca_align_n_train: false
     xgboost:

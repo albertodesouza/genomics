@@ -140,6 +140,7 @@ def main() -> None:
     parser.add_argument("--randomized-pca-oversampling", type=int, default=None)
     parser.add_argument("--randomized-pca-n-iter", type=int, default=None)
     parser.add_argument("--randomized-pca-feature-chunk-size", type=int, default=None)
+    parser.add_argument("--randomized-pca-dtype", choices=["float32", "float64"], default=None)
     parser.add_argument("--force", action="store_true", help="Rebuild PCA cache even if it already exists.")
     parser.add_argument("--output", type=Path, required=True, help="PNG output path.")
     parser.add_argument("--json-output", type=Path, required=True, help="JSON output path.")
@@ -156,6 +157,8 @@ def main() -> None:
         config.model.sklearn.randomized_pca_n_iter = int(args.randomized_pca_n_iter)
     if args.randomized_pca_feature_chunk_size is not None:
         config.model.sklearn.randomized_pca_feature_chunk_size = int(args.randomized_pca_feature_chunk_size)
+    if args.randomized_pca_dtype is not None:
+        config.model.sklearn.randomized_pca_dtype = args.randomized_pca_dtype
     if args.force:
         config.debug.force_pca_cache_rebuild = True
 
