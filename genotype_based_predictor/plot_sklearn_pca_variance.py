@@ -53,6 +53,11 @@ def _save_variance_json(
     payload = {
         "source": "sklearn_pca_cache",
         "cache_dir": metadata.get("cache_dir"),
+        "pca_backend": metadata.get("pca_backend", "incremental"),
+        "randomized_pca_oversampling": metadata.get("randomized_pca_oversampling"),
+        "randomized_pca_n_iter": metadata.get("randomized_pca_n_iter"),
+        "randomized_pca_feature_chunk_size": metadata.get("randomized_pca_feature_chunk_size"),
+        "randomized_pca_dtype": metadata.get("randomized_pca_dtype"),
         "effective_k": int(metadata.get("pca_n_components_effective", len(cumulative))),
         "pca_components_requested": int(metadata.get("pca_components_requested", len(cumulative))),
         "n_train": int(metadata.get("n_train", 0)),
@@ -126,6 +131,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build/reuse sklearn PCA cache and plot explained variance.")
     parser.add_argument("config", type=Path, help="Pipeline YAML config.")
     parser.add_argument("--max-components", type=int, default=None, help="Override model.sklearn.pca_components.")
+    parser.add_argument(
+        "--pca-backend",
+        choices=["incremental", "randomized_streaming"],
+        default=None,
+        help="Override model.sklearn.pca_backend.",
+    )
+    parser.add_argument("--randomized-pca-oversampling", type=int, default=None)
+    parser.add_argument("--randomized-pca-n-iter", type=int, default=None)
+    parser.add_argument("--randomized-pca-feature-chunk-size", type=int, default=None)
     parser.add_argument("--force", action="store_true", help="Rebuild PCA cache even if it already exists.")
     parser.add_argument("--output", type=Path, required=True, help="PNG output path.")
     parser.add_argument("--json-output", type=Path, required=True, help="JSON output path.")
@@ -134,6 +148,14 @@ def main() -> None:
     config = load_config(args.config)
     if args.max_components is not None:
         config.model.sklearn.pca_components = int(args.max_components)
+    if args.pca_backend is not None:
+        config.model.sklearn.pca_backend = args.pca_backend
+    if args.randomized_pca_oversampling is not None:
+        config.model.sklearn.randomized_pca_oversampling = int(args.randomized_pca_oversampling)
+    if args.randomized_pca_n_iter is not None:
+        config.model.sklearn.randomized_pca_n_iter = int(args.randomized_pca_n_iter)
+    if args.randomized_pca_feature_chunk_size is not None:
+        config.model.sklearn.randomized_pca_feature_chunk_size = int(args.randomized_pca_feature_chunk_size)
     if args.force:
         config.debug.force_pca_cache_rebuild = True
 
