@@ -43,6 +43,55 @@ COMPLETE_FLAG = ".pca_cache_complete"
 LAPACK_INT32_INDEX_MAX = 2147483647
 
 
+class StreamingRandomizedPCA:
+    """PCA randomizada ajustada em streaming, com componentes em memmap."""
+
+    def __init__(
+        self,
+        *,
+        components_path: str,
+        n_components: int,
+        n_features: int,
+        dtype: str,
+        feature_chunk_size: int,
+        explained_variance: np.ndarray,
+        explained_variance_ratio: np.ndarray,
+        singular_values: np.ndarray,
+    ) -> None:
+        self.components_path = str(components_path)
+        self.n_components = int(n_components)
+        self.n_components_ = int(n_components)
+        self.n_features_in_ = int(n_features)
+        self.dtype = str(dtype)
+        self.feature_chunk_size = int(feature_chunk_size)
+        self.explained_variance_ = np.asarray(explained_variance, dtype=np.float64)
+        self.explained_variance_ratio_ = np.asarray(explained_variance_ratio, dtype=np.float64)
+        self.singular_values_ = np.asarray(singular_values, dtype=np.float64)
+
+    def _components_memmap(self, mode: str = "r") -> np.memmap:
+        return np.memmap(
+            self.components_path,
+            mode=mode,
+            dtype=np.dtype(self.dtype),
+            shape=(self.n_components_, self.n_features_in_),
+        )
+
+    @property
+    def components_(self) -> np.memmap:
+        return self._components_memmap("r")
+
+    def transform(self, X: np.ndarray) -> np.ndarray:
+        if X.shape[1] != self.n_features_in_:
+            raise ValueError(f"X tem {X.shape[1]} features; esperado {self.n_features_in_}")
+        dtype = np.dtype(self.dtype)
+        components = self._components_memmap("r")
+        out = np.zeros((X.shape[0], self.n_components_), dtype=np.float32)
+        for start in range(0, self.n_features_in_, self.feature_chunk_size):
+            end = min(start + self.feature_chunk_size, self.n_features_in_)
+            out += X[:, start:end].astype(dtype, copy=False) @ components[:, start:end].T
+        return out
+
+
 def max_incremental_pca_components_lapack_safe(n_features: int) -> int:
     nf = max(int(n_features), 1)
     max_rows = LAPACK_INT32_INDEX_MAX // nf
@@ -182,7 +231,7 @@ def fit_incremental_pca_on_train(
 def stack_scaled_pca_batches(
     loader: DataLoader,
     scaler: StandardScaler,
-    pca: IncrementalPCA,
+    pca: Any,
     *,
     rich_console: Optional[Any] = None,
     progress_desc: str = "PCA: transform",
@@ -205,7 +254,161 @@ def stack_scaled_pca_batches(
     return np.vstack(xs), np.concatenate(ys)
 
 
-def get_sklearn_pca_cache_dir_path(dataset_cache_dir: Path, pca_components_requested: int) -> Path:
+def _random_omega_chunk(
+    start: int,
+    end: int,
+    ell: int,
+    *,
+    dtype: np.dtype,
+    random_state: int,
+) -> np.ndarray:
+    # Seed por chunk: reproduzível sem materializar a matriz Omega D x ell.
+    rng = np.random.default_rng(int(random_state) + int(start))
+    return rng.standard_normal((end - start, ell)).astype(dtype, copy=False)
+
+
+def fit_streaming_randomized_pca_on_train(
+    train_loader: DataLoader,
+    scaler: StandardScaler,
+    n_components: int,
+    output_dir: Path,
+    *,
+    oversampling: int = 32,
+    feature_chunk_size: int = 16384,
+    dtype: str = "float32",
+    random_state: int = 42,
+    log: Optional[Callable[[str], None]] = None,
+    rich_console: Optional[Any] = None,
+) -> StreamingRandomizedPCA:
+    """
+    Ajusta PCA randomizada sem chamar SVD/LAPACK sobre matrizes n x D grandes.
+
+    A única decomposição densa é em l x l, onde l = k + oversampling. Os vetores
+    de componentes são gravados como memmap para não inflar o scaler_pca.joblib.
+    """
+    log = log or print
+    output_dir = Path(output_dir)
+    np_dtype = np.dtype(dtype)
+    if np_dtype not in (np.dtype("float32"), np.dtype("float64")):
+        raise ValueError("dtype deve ser float32 ou float64")
+
+    first = next(iter(train_loader))
+    n_features = int(np.prod(first[0].shape[1:]))
+    n_train = len(train_loader.dataset)
+    k = int(n_components)
+    ell = min(n_features, n_train, k + int(oversampling))
+    if ell < k:
+        raise ValueError(f"randomized PCA: ell={ell} menor que k={k}")
+
+    log(
+        f"[cyan]PCA randomizada streaming: k={k}, oversampling={oversampling}, "
+        f"ell={ell}, n_train={n_train}, D={n_features}, dtype={np_dtype.name}[/cyan]"
+    )
+
+    Y = np.zeros((n_train, ell), dtype=np_dtype)
+    with _rich_progress_cm(rich_console) as progress:
+        tid = progress.add_task("PCA randomizada: X @ Omega", total=_dataloader_len(train_loader))
+        row_start = 0
+        for features, _targets, _idx in train_loader:
+            X = scaler.transform(sklearn_flatten_batch(features)).astype(np_dtype, copy=False)
+            row_end = row_start + X.shape[0]
+            Y_batch = np.zeros((X.shape[0], ell), dtype=np_dtype)
+            for start in range(0, n_features, feature_chunk_size):
+                end = min(start + feature_chunk_size, n_features)
+                omega = _random_omega_chunk(start, end, ell, dtype=np_dtype, random_state=random_state)
+                Y_batch += X[:, start:end] @ omega
+            Y[row_start:row_end] = Y_batch
+            row_start = row_end
+            progress.update(tid, advance=1)
+
+    Q, _ = np.linalg.qr(Y.astype(np.float64, copy=False), mode="reduced")
+    Q = Q[:, :ell]
+    del Y
+
+    B_path = output_dir / f"randomized_pca_B.{np_dtype.name}.memmap"
+    B = np.memmap(B_path, mode="w+", dtype=np_dtype, shape=(ell, n_features))
+    B[:] = 0
+    total_sum_sq = 0.0
+    with _rich_progress_cm(rich_console) as progress:
+        tid = progress.add_task("PCA randomizada: Q.T @ X", total=_dataloader_len(train_loader))
+        row_start = 0
+        for features, _targets, _idx in train_loader:
+            X = scaler.transform(sklearn_flatten_batch(features)).astype(np_dtype, copy=False)
+            row_end = row_start + X.shape[0]
+            Q_batch = Q[row_start:row_end]
+            total_sum_sq += float(np.square(X.astype(np.float64, copy=False)).sum())
+            for start in range(0, n_features, feature_chunk_size):
+                end = min(start + feature_chunk_size, n_features)
+                B[:, start:end] += (Q_batch.T @ X[:, start:end]).astype(np_dtype, copy=False)
+            row_start = row_end
+            progress.update(tid, advance=1)
+    del Q
+
+    C = np.zeros((ell, ell), dtype=np.float64)
+    total_chunks = (n_features + feature_chunk_size - 1) // feature_chunk_size
+    with _rich_progress_cm(rich_console) as progress:
+        tid = progress.add_task("PCA randomizada: B @ B.T", total=total_chunks)
+        for start in range(0, n_features, feature_chunk_size):
+            end = min(start + feature_chunk_size, n_features)
+            block = np.asarray(B[:, start:end], dtype=np.float64)
+            C += block @ block.T
+            progress.update(tid, advance=1)
+
+    evals, U = np.linalg.eigh(C)
+    order = np.argsort(evals)[::-1]
+    evals = np.maximum(evals[order], 0.0)
+    U = U[:, order]
+    U_k = U[:, :k]
+
+    components_path = output_dir / f"randomized_pca_components.{np_dtype.name}.memmap"
+    components = np.memmap(components_path, mode="w+", dtype=np_dtype, shape=(k, n_features))
+    singular_values = np.sqrt(evals[:k])
+    inv_singular_values = np.zeros_like(singular_values)
+    nonzero = singular_values > np.finfo(np.float64).eps
+    inv_singular_values[nonzero] = 1.0 / singular_values[nonzero]
+    with _rich_progress_cm(rich_console) as progress:
+        tid = progress.add_task("PCA randomizada: componentes", total=total_chunks)
+        for start in range(0, n_features, feature_chunk_size):
+            end = min(start + feature_chunk_size, n_features)
+            block_components = U_k.T @ np.asarray(B[:, start:end], dtype=np.float64)
+            block_components *= inv_singular_values[:, None]
+            components[:, start:end] = block_components.astype(np_dtype)
+            progress.update(tid, advance=1)
+    components.flush()
+
+    denom = max(n_train - 1, 1)
+    explained_variance = (singular_values ** 2) / denom
+    total_variance = total_sum_sq / denom if n_train > 1 else 0.0
+    if total_variance > 0:
+        explained_variance_ratio = explained_variance / total_variance
+    else:
+        explained_variance_ratio = np.zeros_like(explained_variance)
+
+    try:
+        B._mmap.close()
+    except Exception:
+        pass
+    try:
+        B_path.unlink()
+    except OSError:
+        pass
+    return StreamingRandomizedPCA(
+        components_path=str(components_path.resolve()),
+        n_components=k,
+        n_features=n_features,
+        dtype=np_dtype.name,
+        feature_chunk_size=feature_chunk_size,
+        explained_variance=explained_variance,
+        explained_variance_ratio=explained_variance_ratio,
+        singular_values=singular_values,
+    )
+
+
+def get_sklearn_pca_cache_dir_path(
+    dataset_cache_dir: Path,
+    pca_components_requested: int,
+    pca_backend: str = "incremental",
+) -> Path:
     """
     dataset_cache_dir = .../processed_cache/datasets/<dataset_name>
     Retorno: .../processed_cache/pca_cache/<dataset_name>_pca<req>
@@ -213,7 +416,10 @@ def get_sklearn_pca_cache_dir_path(dataset_cache_dir: Path, pca_components_reque
     dataset_cache_dir = Path(dataset_cache_dir)
     base = dataset_cache_dir.parent.parent
     tag = dataset_cache_dir.name
-    return base / SKLEARN_PCA_CACHE_SUBDIR / f"{tag}_pca{int(pca_components_requested)}"
+    suffix = f"_pca{int(pca_components_requested)}"
+    if pca_backend != "incremental":
+        suffix += f"_{pca_backend}"
+    return base / SKLEARN_PCA_CACHE_SUBDIR / f"{tag}{suffix}"
 
 
 def _effective_pca_k(
@@ -252,8 +458,14 @@ def compute_sklearn_pca_effective_k(
     if pca_req is None:
         pca_req = min(500, n_train, n_features)
     pca_req = int(pca_req)
+    backend = str(sk.get("pca_backend", "incremental"))
     align = bool(sk.get("pca_align_n_train", False))
-    k = _effective_pca_k(pca_req, n_train, n_features, log)
+    if backend == "incremental":
+        k = _effective_pca_k(pca_req, n_train, n_features, log)
+    elif backend == "randomized_streaming":
+        k = max(1, min(pca_req, n_train, n_features))
+    else:
+        raise ValueError(f"pca_backend não suportado: {backend}")
     if align:
         k_aligned = largest_k_dividing_n_train(n_train, k)
         if k_aligned != k:
@@ -283,6 +495,10 @@ def pca_cache_is_valid(
     n_test: int,
     prediction_target: str,
     pca_align_n_train: bool,
+    pca_backend: str,
+    randomized_pca_oversampling: int,
+    randomized_pca_feature_chunk_size: int,
+    randomized_pca_dtype: str,
 ) -> bool:
     cache_dir = Path(cache_dir)
     if not (cache_dir / COMPLETE_FLAG).exists():
@@ -311,6 +527,18 @@ def pca_cache_is_valid(
         return False
     if bool(meta.get("pca_align_n_train", False)) != bool(pca_align_n_train):
         return False
+    if str(meta.get("pca_backend", "incremental")) != str(pca_backend):
+        return False
+    if str(pca_backend) == "randomized_streaming":
+        if int(meta.get("randomized_pca_oversampling", -1)) != int(randomized_pca_oversampling):
+            return False
+        if int(meta.get("randomized_pca_feature_chunk_size", -1)) != int(randomized_pca_feature_chunk_size):
+            return False
+        if str(meta.get("randomized_pca_dtype", "")) != str(randomized_pca_dtype):
+            return False
+        components_path = cache_dir / f"randomized_pca_components.{randomized_pca_dtype}.memmap"
+        if not components_path.exists():
+            return False
     return True
 
 
@@ -332,6 +560,10 @@ def build_sklearn_pca_cache(
     dataset_cache_dir = Path(dataset_cache_dir)
     sk = config.get("model", {}).get("sklearn", {})
     align = bool(sk.get("pca_align_n_train", False))
+    pca_backend = str(sk.get("pca_backend", "incremental"))
+    randomized_oversampling = int(sk.get("randomized_pca_oversampling", 32))
+    randomized_feature_chunk_size = int(sk.get("randomized_pca_feature_chunk_size", 16384))
+    randomized_dtype = str(sk.get("randomized_pca_dtype", "float32"))
 
     n_train = len(train_loader.dataset)
     n_val = len(val_loader.dataset)
@@ -343,7 +575,7 @@ def build_sklearn_pca_cache(
         config, n_train=n_train, n_features=n_features, log=log
     )
 
-    out_dir = get_sklearn_pca_cache_dir_path(dataset_cache_dir, pca_req)
+    out_dir = get_sklearn_pca_cache_dir_path(dataset_cache_dir, pca_req, pca_backend)
     pred_target = config.get("output", {}).get("prediction_target", "")
 
     if (
@@ -358,6 +590,10 @@ def build_sklearn_pca_cache(
             n_test,
             pred_target,
             align,
+            pca_backend,
+            randomized_oversampling,
+            randomized_feature_chunk_size,
+            randomized_dtype,
         )
     ):
         log(f"[green]✓ Cache PCA já existe e é válido: {out_dir}[/green]")
@@ -368,7 +604,8 @@ def build_sklearn_pca_cache(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     log(
-        f"[cyan]Construindo cache PCA → {out_dir} | k={effective_k} (pedido={pca_req}, n_train={n_train}, D={n_features})[/cyan]"
+        f"[cyan]Construindo cache PCA → {out_dir} | backend={pca_backend}, "
+        f"k={effective_k} (pedido={pca_req}, n_train={n_train}, D={n_features})[/cyan]"
     )
 
     if rich_console is None:
@@ -378,17 +615,35 @@ def build_sklearn_pca_cache(
         rich_console=rich_console,
         progress_desc="PCA cache: StandardScaler (treino)",
     )
-    if rich_console is None:
-        log("[cyan]PCA cache: IncrementalPCA (treino)...[/cyan]")
-    pca = fit_incremental_pca_on_train(
-        train_loader,
-        scaler,
-        effective_k,
-        log=log,
-        forbid_tail_padding=align,
-        rich_console=rich_console,
-        progress_desc="PCA cache: IncrementalPCA (treino)",
-    )
+    if pca_backend == "incremental":
+        if rich_console is None:
+            log("[cyan]PCA cache: IncrementalPCA (treino)...[/cyan]")
+        pca = fit_incremental_pca_on_train(
+            train_loader,
+            scaler,
+            effective_k,
+            log=log,
+            forbid_tail_padding=align,
+            rich_console=rich_console,
+            progress_desc="PCA cache: IncrementalPCA (treino)",
+        )
+    elif pca_backend == "randomized_streaming":
+        if rich_console is None:
+            log("[cyan]PCA cache: PCA randomizada streaming (treino)...[/cyan]")
+        pca = fit_streaming_randomized_pca_on_train(
+            train_loader,
+            scaler,
+            effective_k,
+            out_dir,
+            oversampling=randomized_oversampling,
+            feature_chunk_size=randomized_feature_chunk_size,
+            dtype=randomized_dtype,
+            random_state=42,
+            log=log,
+            rich_console=rich_console,
+        )
+    else:
+        raise ValueError(f"pca_backend não suportado: {pca_backend}")
 
     if rich_console is None:
         log("[cyan]PCA cache: transformando splits...[/cyan]")
@@ -435,6 +690,10 @@ def build_sklearn_pca_cache(
         "n_test": int(n_test),
         "prediction_target": pred_target,
         "pca_align_n_train": align,
+        "pca_backend": pca_backend,
+        "randomized_pca_oversampling": randomized_oversampling,
+        "randomized_pca_feature_chunk_size": randomized_feature_chunk_size,
+        "randomized_pca_dtype": randomized_dtype,
     }
     with open(out_dir / METADATA_FILENAME, "w") as f:
         json.dump(meta, f, indent=2)

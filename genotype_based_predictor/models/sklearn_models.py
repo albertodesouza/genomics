@@ -86,11 +86,14 @@ def build_sklearn_classifier(config: PipelineConfig, model_type: str, random_see
             raise ImportError("XGBOOST requer 'xgboost'. Instale com: pip install xgboost") from e
         xgb_cfg = sk.xgboost
         return xgb.XGBClassifier(n_estimators=xgb_cfg.n_estimators,
-                                  max_depth=xgb_cfg.max_depth,
-                                  learning_rate=xgb_cfg.learning_rate,
-                                  subsample=xgb_cfg.subsample,
-                                  random_state=xgb_cfg.random_state if xgb_cfg.random_state else random_seed,
-                                  n_jobs=xgb_cfg.n_jobs)
+                                   max_depth=xgb_cfg.max_depth,
+                                   learning_rate=xgb_cfg.learning_rate,
+                                   subsample=xgb_cfg.subsample,
+                                   colsample_bytree=xgb_cfg.colsample_bytree,
+                                   tree_method=xgb_cfg.tree_method,
+                                   eval_metric=xgb_cfg.eval_metric,
+                                   random_state=xgb_cfg.random_state if xgb_cfg.random_state else random_seed,
+                                   n_jobs=xgb_cfg.n_jobs)
 
     raise ValueError(f"Tipo sklearn não suportado: {model_type}. Use SVM, RF ou XGBOOST.")
 
@@ -147,6 +150,12 @@ def run_sklearn_eval_and_save(results: Dict, experiment_dir: Path, dataset_name:
 
 def load_sklearn_baseline_artifact(experiment_dir: Path) -> Dict[str, Any]:
     """Carrega artefato sklearn treinado (.joblib)."""
+    import sys
+
+    predictor_dir = Path(__file__).parent.parent.parent / "neural_ancestry_predictor"
+    if str(predictor_dir) not in sys.path:
+        sys.path.insert(0, str(predictor_dir))
+
     path = experiment_dir / "models" / SKLEARN_ARTIFACT_FILENAME
     if not path.exists():
         raise FileNotFoundError(f"Artefato sklearn não encontrado: {path}")
@@ -181,7 +190,7 @@ def train_sklearn_baseline(config: PipelineConfig, model_type: str, train_loader
     from sklearn_pca_cache import (
         ensure_sklearn_pca_cache, METADATA_FILENAME as SKLEARN_PCA_METADATA_FILENAME,
         fit_standard_scaler_incremental, fit_incremental_pca_on_train,
-        stack_scaled_pca_batches, compute_sklearn_pca_effective_k,
+        fit_streaming_randomized_pca_on_train, stack_scaled_pca_batches, compute_sklearn_pca_effective_k,
     )
 
     from genotype_based_predictor.config import get_dataset_cache_dir
@@ -240,7 +249,21 @@ def train_sklearn_baseline(config: PipelineConfig, model_type: str, train_loader
     # Sem cache: PCA in-memory
     k, _ = compute_sklearn_pca_effective_k(config.model_dump(), n_train=n_train, n_features=n_features, log=console.print)
     scaler = fit_standard_scaler_incremental(train_loader, rich_console=console)
-    pca = fit_incremental_pca_on_train(train_loader, scaler, k, log=console.print, rich_console=console)
+    if sk.pca_backend == "randomized_streaming":
+        pca = fit_streaming_randomized_pca_on_train(
+            train_loader,
+            scaler,
+            k,
+            models_dir,
+            oversampling=sk.randomized_pca_oversampling,
+            feature_chunk_size=sk.randomized_pca_feature_chunk_size,
+            dtype=sk.randomized_pca_dtype,
+            random_state=random_seed,
+            log=console.print,
+            rich_console=console,
+        )
+    else:
+        pca = fit_incremental_pca_on_train(train_loader, scaler, k, log=console.print, rich_console=console)
     X_train, y_train = stack_scaled_pca_batches(train_loader, scaler, pca, rich_console=console)
 
     valid = y_train >= 0

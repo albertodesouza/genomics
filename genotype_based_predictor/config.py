@@ -228,9 +228,20 @@ class SklearnConfig(BaseModel):
     pca_components: Optional[int] = None
     use_pca_cache: bool = True
     pca_align_n_train: bool = False
+    pca_backend: Literal["incremental", "randomized_streaming"] = "incremental"
+    randomized_pca_oversampling: int = 32
+    randomized_pca_feature_chunk_size: int = 16384
+    randomized_pca_dtype: Literal["float32", "float64"] = "float32"
     svm: SVMConfig = Field(default_factory=SVMConfig)
     random_forest: RandomForestConfig = Field(default_factory=RandomForestConfig)
     xgboost: XGBoostConfig = Field(default_factory=XGBoostConfig)
+
+    @field_validator("randomized_pca_oversampling", "randomized_pca_feature_chunk_size")
+    @classmethod
+    def randomized_pca_positive(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("Parâmetros randomized_pca_* devem ser >= 1")
+        return v
 
 
 class ModelConfig(BaseModel):

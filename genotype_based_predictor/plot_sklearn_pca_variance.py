@@ -86,6 +86,8 @@ def _save_plot(path: Path, ratios: np.ndarray, cumulative: np.ndarray, metadata:
 
     k_axis = np.arange(1, len(cumulative) + 1)
     crosses = _first_k_at_threshold(cumulative, [0.8, 0.9, 0.95])
+    backend = metadata.get("pca_backend", "incremental")
+    title_backend = "IncrementalPCA" if backend == "incremental" else str(backend)
 
     fig, axes = plt.subplots(1, 2, figsize=(11, 4), constrained_layout=True)
     axes[0].plot(k_axis, cumulative, color="C0", linewidth=1.5)
@@ -106,7 +108,7 @@ def _save_plot(path: Path, ratios: np.ndarray, cumulative: np.ndarray, metadata:
     axes[1].grid(True, axis="y", alpha=0.3)
 
     fig.suptitle(
-        "IncrementalPCA variance "
+        f"{title_backend} variance "
         f"(k={metadata.get('pca_n_components_effective')}, "
         f"n_train={metadata.get('n_train')}, D={metadata.get('n_features_original')})",
         fontsize=11,

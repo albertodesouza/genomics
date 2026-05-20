@@ -1,0 +1,84 @@
+dataset_input:
+  view_path: "/home/breno/I2CA/genomics/genotype_based_predictor/views/genes_1000_all_3ontologies.view.json"
+  processed_cache_dir: "/dados/GENOMICS_DATA/v1/1kG_high_coverage_runs"
+  cache_processed_tensors: true
+  tensor_layout: "haplotype_channels"
+  selected_track_index: 0
+  indel_include_valid_mask: true
+  alignment_mapping: "bcftools_chain"
+  consensus_dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all"
+  alignment_axis_splits:
+    - train
+    - val
+
+output:
+  prediction_target: "superpopulation"
+  known_classes: ["AFR", "AMR", "EAS", "EUR", "SAS"]
+
+model:
+  type: "XGBOOST"
+  sklearn:
+    pca_components: 400
+    pca_backend: "randomized_streaming"
+    randomized_pca_oversampling: 32
+    randomized_pca_feature_chunk_size: 8192
+    randomized_pca_dtype: "float32"
+    use_pca_cache: true
+    pca_align_n_train: false
+    xgboost:
+      n_estimators: 400
+      max_depth: 6
+      learning_rate: 0.05
+      subsample: 0.8
+      colsample_bytree: 0.8
+      tree_method: "hist"
+      random_state: 13
+      n_jobs: -1
+      eval_metric: "mlogloss"
+
+training:
+  optimizer: "adam"
+  learning_rate: 0.001
+  weight_decay: 0.0
+  loss_function: "cross_entropy"
+  batch_size: 16
+  num_epochs: 1
+  validation_frequency: 1
+  lr_scheduler:
+    enabled: false
+
+data_split:
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  random_seed: 13
+  family_split_mode: "family_aware"
+  balancing_strategy: "shuffle"
+  strict_determinism: true
+
+wandb:
+  use_wandb: false
+  project_name: "genotype-based-predictor-pca400-xgboost"
+  run_name: null
+  log_frequency: 100
+
+checkpointing:
+  checkpoint_dir: "models"
+  save_frequency: 100
+  save_during_training: true
+  load_checkpoint: null
+
+debug:
+  enable_visualization: false
+  force_pca_cache_rebuild: false
+  max_samples_per_epoch: null
+  taint_at_cache_save: false
+  taint_at_runtime: false
+  visualization: {}
+
+data_loading:
+  loading_strategy: "lazy"
+  cache_size: 50
+
+mode: "train"
+test_dataset: "test"
