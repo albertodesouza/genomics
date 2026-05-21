@@ -75,6 +75,7 @@ class ProcessedGenomicDataset(Dataset):
         self.normalization_method = di.normalization_method
         self.normalization_value = di.normalization_value
         self.selected_track_index = di.selected_track_index
+        self.feature_mode = di.feature_mode
         self.genes_to_use = set(di.genes_to_use or [])
         self.indel_neutral_value = di.indel_neutral_value
         self.indel_include_valid_mask = di.indel_include_valid_mask
@@ -196,11 +197,13 @@ class ProcessedGenomicDataset(Dataset):
     # ------------------------------------------------------------------
 
     def _compute_normalization_params(self) -> Dict:
+        if self.feature_mode == "masks_only":
+            return {"method": "none", "per_track": False, "mean": 0.0, "std": 1.0}
+
         if self.normalization_method in {"log", "minmax_keep_zero"} and self.normalization_value not in (0, 0.0, None):
             num_genes = len(self.config.dataset_input.genes_to_use or []) or 1
-            num_ontologies = len(self.ontology_terms) if self.ontology_terms else 1
             num_haplotypes = 2 if self.haplotype_mode == "H1+H2" else 1
-            num_tracks = num_haplotypes * (2 * num_ontologies + 3) * num_genes
+            num_tracks = num_haplotypes * self._rows_per_gene() * num_genes
             if self.normalization_method == "log":
                 track_params = [{"log_max": float(self.normalization_value)} for _ in range(num_tracks)]
             else:
@@ -474,6 +477,8 @@ class ProcessedGenomicDataset(Dataset):
             raise ValueError("tensor_layout='haplotype_channels' nao suporta downsample_factor diferente de 1")
         if self.window_center_size <= 0:
             raise ValueError("tensor_layout='haplotype_channels' requer window_center_size > 0")
+        if self.feature_mode == "masks_only" and not self.indel_include_valid_mask:
+            raise ValueError("feature_mode='masks_only' requer indel_include_valid_mask=true para produzir 3 mascaras")
         if self.bcftools_chain_mapper is not None:
             entry = self.bcftools_chain_mapper.get_haplotype_entry(window_name, sample_id, haplotype)
         else:
@@ -614,8 +619,12 @@ class ProcessedGenomicDataset(Dataset):
 
             h1_signals, h1_masks = h1
             h2_signals, h2_masks = h2
-            h1_rows.append(np.concatenate([h1_signals, h1_masks], axis=0))
-            h2_rows.append(np.concatenate([h2_signals, h2_masks], axis=0))
+            if self.feature_mode == "masks_only":
+                h1_rows.append(h1_masks)
+                h2_rows.append(h2_masks)
+            else:
+                h1_rows.append(np.concatenate([h1_signals, h1_masks], axis=0))
+                h2_rows.append(np.concatenate([h2_signals, h2_masks], axis=0))
 
         if not h1_rows or not h2_rows:
             return np.array([]).reshape(2, 4, 0)
@@ -654,10 +663,13 @@ class ProcessedGenomicDataset(Dataset):
         return input_data, output_data
 
     def _normalize_features_tensor(self, features_tensor: torch.Tensor) -> torch.Tensor:
+        if self.feature_mode == "masks_only":
+            return features_tensor
+
         method = self.normalization_params.get("method", "zscore")
         per_track = self.normalization_params.get("per_track", False)
         mask_channels_per_gene = 3 if self.indel_include_valid_mask else 2
-        signal_channels_per_gene = 2 * len(self.ontology_terms) if self.ontology_terms else 1
+        signal_channels_per_gene = 0 if self.feature_mode == "masks_only" else (2 * len(self.ontology_terms) if self.ontology_terms else 1)
         channels_per_gene = signal_channels_per_gene + mask_channels_per_gene
 
         if features_tensor.ndim != 3:
@@ -789,12 +801,18 @@ class ProcessedGenomicDataset(Dataset):
     def get_class_names(self) -> List[str]:
         return [self.idx_to_target[i] for i in range(len(self.idx_to_target))]
 
+    def _rows_per_gene(self) -> int:
+        mask_channels = 3 if self.indel_include_valid_mask else 2
+        if self.feature_mode == "masks_only":
+            return mask_channels
+        num_ontologies = len(self.ontology_terms) if self.ontology_terms else 1
+        return 2 * num_ontologies + mask_channels
+
     def get_input_shape(self) -> Tuple[int, int]:
         if self.config.dataset_input.tensor_layout == "haplotype_channels":
             effective = self.window_center_size // max(self.downsample_factor, 1)
             num_genes = len(self.config.dataset_input.genes_to_use or []) or 1
-            num_ontologies = len(self.ontology_terms) if self.ontology_terms else 1
-            return ((2 * num_ontologies + 3) * num_genes, effective)
+            return (self._rows_per_gene() * num_genes, effective)
 
         for idx in range(min(64, len(self))):
             try:
@@ -807,8 +825,7 @@ class ProcessedGenomicDataset(Dataset):
                 continue
         effective = self.window_center_size // max(self.downsample_factor, 1)
         num_genes = len(self.config.dataset_input.genes_to_use or []) or 1
-        num_ontologies = len(self.ontology_terms) if self.ontology_terms else 1
-        return ((2 * num_ontologies + 3) * num_genes, effective)
+        return (self._rows_per_gene() * num_genes, effective)
 
     def get_input_size(self) -> int:
         r, c = self.get_input_shape()

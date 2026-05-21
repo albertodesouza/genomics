@@ -78,7 +78,7 @@ def _load_external_normalization_params(config: PipelineConfig) -> Optional[Dict
 
 def _build_view_definition(config: PipelineConfig) -> Dict[str, Any]:
     di = config.dataset_input
-    return {
+    view = {
         "dataset_dir": str(Path(di.dataset_dir).resolve()),
         "sample_ids": di.sample_ids,
         "sample_ids_path": di.sample_ids_path,
@@ -98,6 +98,9 @@ def _build_view_definition(config: PipelineConfig) -> Dict[str, Any]:
         "consensus_dataset_dir": di.consensus_dataset_dir,
         "tensor_layout": di.tensor_layout,
     }
+    if di.feature_mode != "signals_and_masks":
+        view["feature_mode"] = di.feature_mode
+    return view
 
 
 def _build_resolved_view_definition(config: PipelineConfig, processed_dataset: ProcessedGenomicDataset) -> Dict[str, Any]:
@@ -249,6 +252,13 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
             if cached_value != v:
                 console.print(f"[yellow]Cache inválido: {k} mudou ({cached_value} → {v})[/yellow]")
                 return False
+
+        cached_feature_mode = pp.get("feature_mode", requested_view.get("feature_mode", "signals_and_masks"))
+        if cached_feature_mode != config.dataset_input.feature_mode:
+            console.print(
+                f"[yellow]Cache inválido: feature_mode mudou ({cached_feature_mode} → {config.dataset_input.feature_mode})[/yellow]"
+            )
+            return False
 
         if meta.get("splits", {}).get("random_seed") != config.data_split.random_seed:
             console.print("[yellow]Cache inválido: random_seed diferente[/yellow]")
@@ -533,7 +543,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
             "class_names": class_names,
             "dataset_dir": str(dataset_dir.resolve()),
             "gene_order": gene_order,
-            "tracks_per_gene": 2 * (len(config.dataset_input.ontology_terms or []) or 1) + 3,
+            "tracks_per_gene": 3 if config.dataset_input.feature_mode == "masks_only" else 2 * (len(config.dataset_input.ontology_terms or []) or 1) + 3,
             "gene_window_metadata": gene_window_metadata,
             "alignment_cache_signature": _alignment_cache_signature(processed_dataset),
             "processing_params": {
@@ -549,6 +559,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                 "consensus_dataset_dir": config.dataset_input.consensus_dataset_dir,
                 "indel_neutral_value": config.dataset_input.indel_neutral_value,
                 "tensor_layout": config.dataset_input.tensor_layout,
+                "feature_mode": config.dataset_input.feature_mode,
                 "cache_processed_tensors": config.dataset_input.cache_processed_tensors,
                 "runtime_dataset_dir": str(dataset_dir.resolve()),
                 "family_split_mode": config.data_split.family_split_mode,
