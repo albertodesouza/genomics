@@ -267,6 +267,12 @@ def _random_omega_chunk(
     return rng.standard_normal((end - start, ell)).astype(dtype, copy=False)
 
 
+def _batch_indices_array(indices: Any) -> np.ndarray:
+    if hasattr(indices, "detach"):
+        return indices.detach().cpu().numpy().reshape(-1)
+    return np.asarray(indices).reshape(-1)
+
+
 def fit_streaming_randomized_pca_on_train(
     train_loader: DataLoader,
     scaler: StandardScaler,
@@ -307,12 +313,21 @@ def fit_streaming_randomized_pca_on_train(
     )
 
     Y = np.zeros((n_train, ell), dtype=np_dtype)
+    index_to_row: Dict[int, int] = {}
     with _rich_progress_cm(rich_console) as progress:
         tid = progress.add_task("PCA randomizada: X @ Omega", total=_dataloader_len(train_loader))
         row_start = 0
-        for features, _targets, _idx in train_loader:
+        for features, _targets, idx in train_loader:
             X = scaler.transform(sklearn_flatten_batch(features)).astype(np_dtype, copy=False)
             row_end = row_start + X.shape[0]
+            batch_indices = _batch_indices_array(idx)
+            if len(batch_indices) != X.shape[0]:
+                raise RuntimeError("Batch PCA randomizada tem número de índices diferente do número de amostras")
+            for offset, sample_idx in enumerate(batch_indices):
+                sample_idx = int(sample_idx)
+                if sample_idx in index_to_row:
+                    raise RuntimeError(f"Índice de treino duplicado no PCA randomizado: {sample_idx}")
+                index_to_row[sample_idx] = row_start + offset
             Y_batch = np.zeros((X.shape[0], ell), dtype=np_dtype)
             for start in range(0, n_features, feature_chunk_size):
                 end = min(start + feature_chunk_size, n_features)
@@ -325,6 +340,8 @@ def fit_streaming_randomized_pca_on_train(
     Q, _ = np.linalg.qr(Y.astype(np.float64, copy=False), mode="reduced")
     Q = Q[:, :ell]
     del Y
+    if len(index_to_row) != n_train:
+        raise RuntimeError(f"PCA randomizada viu {len(index_to_row)} índices únicos; esperado {n_train}")
 
     for iteration in range(int(n_iter)):
         Z_path = output_dir / f"randomized_pca_power_Z_iter{iteration}.{np_dtype.name}.memmap"
@@ -335,15 +352,13 @@ def fit_streaming_randomized_pca_on_train(
                 f"PCA randomizada: power {iteration + 1}/{n_iter} X.T @ Q",
                 total=_dataloader_len(train_loader),
             )
-            row_start = 0
-            for features, _targets, _idx in train_loader:
+            for features, _targets, idx in train_loader:
                 X = scaler.transform(sklearn_flatten_batch(features)).astype(np_dtype, copy=False)
-                row_end = row_start + X.shape[0]
-                Q_batch = Q[row_start:row_end]
+                batch_rows = [index_to_row[int(i)] for i in _batch_indices_array(idx)]
+                Q_batch = Q[batch_rows]
                 for start in range(0, n_features, feature_chunk_size):
                     end = min(start + feature_chunk_size, n_features)
                     Z[:, start:end] += (Q_batch.T @ X[:, start:end]).astype(np_dtype, copy=False)
-                row_start = row_end
                 progress.update(tid, advance=1)
 
         Y_power = np.zeros((n_train, ell), dtype=np_dtype)
@@ -352,16 +367,14 @@ def fit_streaming_randomized_pca_on_train(
                 f"PCA randomizada: power {iteration + 1}/{n_iter} X @ Z.T",
                 total=_dataloader_len(train_loader),
             )
-            row_start = 0
-            for features, _targets, _idx in train_loader:
+            for features, _targets, idx in train_loader:
                 X = scaler.transform(sklearn_flatten_batch(features)).astype(np_dtype, copy=False)
-                row_end = row_start + X.shape[0]
+                batch_rows = [index_to_row[int(i)] for i in _batch_indices_array(idx)]
                 Y_batch = np.zeros((X.shape[0], ell), dtype=np_dtype)
                 for start in range(0, n_features, feature_chunk_size):
                     end = min(start + feature_chunk_size, n_features)
                     Y_batch += X[:, start:end] @ np.asarray(Z[:, start:end]).T
-                Y_power[row_start:row_end] = Y_batch
-                row_start = row_end
+                Y_power[batch_rows] = Y_batch
                 progress.update(tid, advance=1)
 
         try:
@@ -383,16 +396,14 @@ def fit_streaming_randomized_pca_on_train(
     total_sum_sq = 0.0
     with _rich_progress_cm(rich_console) as progress:
         tid = progress.add_task("PCA randomizada: Q.T @ X", total=_dataloader_len(train_loader))
-        row_start = 0
-        for features, _targets, _idx in train_loader:
+        for features, _targets, idx in train_loader:
             X = scaler.transform(sklearn_flatten_batch(features)).astype(np_dtype, copy=False)
-            row_end = row_start + X.shape[0]
-            Q_batch = Q[row_start:row_end]
+            batch_rows = [index_to_row[int(i)] for i in _batch_indices_array(idx)]
+            Q_batch = Q[batch_rows]
             total_sum_sq += float(np.square(X.astype(np.float64, copy=False)).sum())
             for start in range(0, n_features, feature_chunk_size):
                 end = min(start + feature_chunk_size, n_features)
                 B[:, start:end] += (Q_batch.T @ X[:, start:end]).astype(np_dtype, copy=False)
-            row_start = row_end
             progress.update(tid, advance=1)
     del Q
 
