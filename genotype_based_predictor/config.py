@@ -121,6 +121,9 @@ class DatasetInputConfig(BaseModel):
     indel_include_valid_mask: bool = False
     """Se True, concatena também a máscara de validade além de inserção e deleção."""
 
+    indel_include_snp_mask: bool = False
+    """Se True, concatena uma máscara binária para SNPs em relação à referência."""
+
     alignment_mapping: Literal["dynamic_indel", "bcftools_chain"] = "dynamic_indel"
     """Fonte do mapa predição AlphaGenome -> eixo expandido global."""
 
@@ -558,6 +561,8 @@ def generate_dataset_name(config: PipelineConfig) -> str:
     }
     if di.feature_mode != "signals_and_masks":
         view_payload["feature_mode"] = di.feature_mode
+    if di.indel_include_snp_mask:
+        view_payload["indel_include_snp_mask"] = di.indel_include_snp_mask
     view_hash = hashlib.sha1(json.dumps(view_payload, sort_keys=True).encode("utf-8")).hexdigest()[:12]
     return f"{outputs}_{hap}_{wcs}_ds{ds}_{norm}_{bal}_ont{ont_count}_view{view_hash}"
 

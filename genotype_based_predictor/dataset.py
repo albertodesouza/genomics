@@ -79,6 +79,7 @@ class ProcessedGenomicDataset(Dataset):
         self.genes_to_use = set(di.genes_to_use or [])
         self.indel_neutral_value = di.indel_neutral_value
         self.indel_include_valid_mask = di.indel_include_valid_mask
+        self.indel_include_snp_mask = di.indel_include_snp_mask
         self.alignment_mapping = di.alignment_mapping
         self.consensus_dataset_dir = Path(di.consensus_dataset_dir) if di.consensus_dataset_dir else None
         out = config.output
@@ -511,6 +512,7 @@ class ProcessedGenomicDataset(Dataset):
                     expanded_length=expanded_length,
                     neutral_value=self.indel_neutral_value,
                     include_valid_mask=True,
+                    include_snp_mask=self.indel_include_snp_mask,
                     expanded_slice=expanded_slice,
                 )
                 signal_rows.append(aligned[0:1, :])
@@ -526,6 +528,7 @@ class ProcessedGenomicDataset(Dataset):
                 expanded_length=expanded_length,
                 neutral_value=self.indel_neutral_value,
                 include_valid_mask=True,
+                include_snp_mask=self.indel_include_snp_mask,
                 expanded_slice=expanded_slice,
             )
             signal_rows.append(aligned[0:1, :])
@@ -668,7 +671,7 @@ class ProcessedGenomicDataset(Dataset):
 
         method = self.normalization_params.get("method", "zscore")
         per_track = self.normalization_params.get("per_track", False)
-        mask_channels_per_gene = 3 if self.indel_include_valid_mask else 2
+        mask_channels_per_gene = self._mask_channels_per_gene()
         signal_channels_per_gene = 0 if self.feature_mode == "masks_only" else (2 * len(self.ontology_terms) if self.ontology_terms else 1)
         channels_per_gene = signal_channels_per_gene + mask_channels_per_gene
 
@@ -802,11 +805,14 @@ class ProcessedGenomicDataset(Dataset):
         return [self.idx_to_target[i] for i in range(len(self.idx_to_target))]
 
     def _rows_per_gene(self) -> int:
-        mask_channels = 3 if self.indel_include_valid_mask else 2
+        mask_channels = self._mask_channels_per_gene()
         if self.feature_mode == "masks_only":
             return mask_channels
         num_ontologies = len(self.ontology_terms) if self.ontology_terms else 1
         return 2 * num_ontologies + mask_channels
+
+    def _mask_channels_per_gene(self) -> int:
+        return 2 + (1 if self.indel_include_valid_mask else 0) + (1 if self.indel_include_snp_mask else 0)
 
     def get_input_shape(self) -> Tuple[int, int]:
         if self.config.dataset_input.tensor_layout == "haplotype_channels":

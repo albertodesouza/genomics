@@ -16,7 +16,7 @@ from genotype_based_predictor.dynamic_indel_alignment import DynamicIndelAligner
 DEFAULT_DATASET_DIR = Path("/dados/GENOMICS_DATA/v1/1kG_high_coverage")
 DEFAULT_CONSENSUS_ROOT = Path("/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all")
 DEFAULT_TSV_ROOT = Path("genotype_based_predictor/aligned_dna_genes_1000_all")
-BCFTOOLS_CHAIN_MAPPER_VERSION = "bcftools_chain_mapper_v3"
+BCFTOOLS_CHAIN_MAPPER_VERSION = "bcftools_chain_mapper_v4"
 
 
 @dataclass(frozen=True)
@@ -179,6 +179,8 @@ def build_chain_entry(
     chain_path: Path,
     raw_length: int,
     fixed_length: int,
+    fixed_seq: Optional[str] = None,
+    ref_seq: Optional[str] = None,
 ) -> Dict[str, object]:
     consensus_to_ref, consensus_insertions, deletion_ref_indices = chain_to_fixed_fasta_map(chain_path, raw_length, fixed_length)
     ref_start_offset = int(axis.get("ref_start_offset", 0))
@@ -190,6 +192,7 @@ def build_chain_entry(
     expanded_indices: List[int] = []
     insertion_indices: List[int] = []
     deletion_indices: List[int] = []
+    snp_indices: List[int] = []
     skipped_insertions = 0
     skipped_ref = 0
 
@@ -201,6 +204,11 @@ def build_chain_entry(
             continue
         copy_from_indices.append(int(fasta_idx))
         expanded_indices.append(expanded_idx)
+        if fixed_seq is not None and ref_seq is not None and 0 <= fasta_idx < len(fixed_seq) and 0 <= int(ref_idx_full) < len(ref_seq):
+            ref_base = ref_seq[int(ref_idx_full)].upper()
+            sample_base = fixed_seq[int(fasta_idx)].upper()
+            if ref_base in {"A", "C", "G", "T"} and sample_base in {"A", "C", "G", "T"} and sample_base != ref_base:
+                snp_indices.append(int(expanded_idx))
 
     for fasta_idx, (after_ref_full, order) in sorted(consensus_insertions.items()):
         local_ref_idx = int(after_ref_full) - ref_start_offset
@@ -225,6 +233,7 @@ def build_chain_entry(
         "expanded_indices": [int(b) for _a, b in ordered],
         "insertion_indices": sorted(set(insertion_indices)),
         "deletion_indices": sorted(set(deletion_indices)),
+        "snp_indices": sorted(set(snp_indices)),
         "mapping_method": "bcftools_chain",
         "skipped_ref_positions": skipped_ref,
         "skipped_insertions": skipped_insertions,
@@ -309,6 +318,8 @@ class BcftoolsChainMapper:
             chain_path=chain_path,
             raw_length=len(raw_rebuilt_seq),
             fixed_length=len(fixed_seq),
+            fixed_seq=fixed_seq,
+            ref_seq=ref_seq,
         )
         entry["fasta_path"] = str(fixed_path)
         entry["chain_path"] = str(chain_path)

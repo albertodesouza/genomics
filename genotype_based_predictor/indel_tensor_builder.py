@@ -60,6 +60,7 @@ def build_aligned_haplotype_tensor(
     expanded_length: int,
     neutral_value: float = 0.0,
     include_valid_mask: bool = True,
+    include_snp_mask: bool = False,
     expanded_slice: Optional[Tuple[int, int]] = None,
 ) -> np.ndarray:
     if expanded_slice is None:
@@ -73,6 +74,7 @@ def build_aligned_haplotype_tensor(
     valid_mask = np.zeros(local_length, dtype=np.float32)
     ins_mask = np.zeros(local_length, dtype=np.float32)
     del_mask = np.zeros(local_length, dtype=np.float32)
+    snp_mask = np.zeros(local_length, dtype=np.float32)
 
     copy_from = entry.get("copy_from_indices", [])
     copy_to = entry.get("expanded_indices", [])
@@ -98,9 +100,17 @@ def build_aligned_haplotype_tensor(
         if slice_start <= target_idx < slice_end:
             del_mask[target_idx - slice_start] = 1.0
 
+    if include_snp_mask:
+        for target_idx in entry.get("snp_indices", []):
+            target_idx = int(target_idx)
+            if slice_start <= target_idx < slice_end:
+                snp_mask[target_idx - slice_start] = 1.0
+
     output_rows = [values, ins_mask, del_mask]
     if include_valid_mask:
         output_rows.append(valid_mask)
+    if include_snp_mask:
+        output_rows.append(snp_mask)
     return np.vstack(output_rows)
 
 

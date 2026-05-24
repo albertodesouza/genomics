@@ -100,6 +100,8 @@ def _build_view_definition(config: PipelineConfig) -> Dict[str, Any]:
     }
     if di.feature_mode != "signals_and_masks":
         view["feature_mode"] = di.feature_mode
+    if di.indel_include_snp_mask:
+        view["indel_include_snp_mask"] = di.indel_include_snp_mask
     return view
 
 
@@ -257,6 +259,13 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
         if cached_feature_mode != config.dataset_input.feature_mode:
             console.print(
                 f"[yellow]Cache inválido: feature_mode mudou ({cached_feature_mode} → {config.dataset_input.feature_mode})[/yellow]"
+            )
+            return False
+
+        cached_snp_mask = pp.get("indel_include_snp_mask", requested_view.get("indel_include_snp_mask", False))
+        if cached_snp_mask != config.dataset_input.indel_include_snp_mask:
+            console.print(
+                f"[yellow]Cache inválido: indel_include_snp_mask mudou ({cached_snp_mask} → {config.dataset_input.indel_include_snp_mask})[/yellow]"
             )
             return False
 
@@ -543,7 +552,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
             "class_names": class_names,
             "dataset_dir": str(dataset_dir.resolve()),
             "gene_order": gene_order,
-            "tracks_per_gene": 3 if config.dataset_input.feature_mode == "masks_only" else 2 * (len(config.dataset_input.ontology_terms or []) or 1) + 3,
+            "tracks_per_gene": processed_dataset._rows_per_gene(),
             "gene_window_metadata": gene_window_metadata,
             "alignment_cache_signature": _alignment_cache_signature(processed_dataset),
             "processing_params": {
@@ -554,6 +563,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                 "normalization_method": config.dataset_input.normalization_method,
                 "selected_track_index": config.dataset_input.selected_track_index,
                 "indel_include_valid_mask": config.dataset_input.indel_include_valid_mask,
+                "indel_include_snp_mask": config.dataset_input.indel_include_snp_mask,
                 "alignment_mapping": config.dataset_input.alignment_mapping,
                 "alignment_axis_splits": config.dataset_input.alignment_axis_splits,
                 "consensus_dataset_dir": config.dataset_input.consensus_dataset_dir,

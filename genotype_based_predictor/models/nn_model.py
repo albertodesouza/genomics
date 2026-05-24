@@ -28,7 +28,7 @@ def _resolve_gene_rows(config: PipelineConfig, input_shape: Tuple[int, int]) -> 
         genes_to_use = list(config.dataset_input.genes_to_use or [])
         if not genes_to_use:
             raise ValueError("tensor_layout='haplotype_channels' requer ao menos um gene em genes_to_use")
-        mask_channels = 3 if config.dataset_input.indel_include_valid_mask else 2
+        mask_channels = 2 + int(config.dataset_input.indel_include_valid_mask) + int(config.dataset_input.indel_include_snp_mask)
         if config.dataset_input.feature_mode == "masks_only":
             rows_per_gene = mask_channels
         else:
