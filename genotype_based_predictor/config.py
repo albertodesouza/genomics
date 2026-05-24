@@ -64,6 +64,9 @@ class DatasetInputConfig(BaseModel):
     feature_mode: Literal["signals_and_masks", "masks_only"] = "signals_and_masks"
     """Quais canais entram no tensor: sinais AlphaGenome + máscaras, ou apenas máscaras INDEL."""
 
+    alphagenome_signal_variant_mask: bool = False
+    """Se True, zera sinais AlphaGenome em posições sem SNP/INDEL em nenhum indivíduo selecionado."""
+
     window_center_size: int = 32768
     """Número de bases do trecho central de cada janela."""
 
@@ -561,6 +564,8 @@ def generate_dataset_name(config: PipelineConfig) -> str:
     }
     if di.feature_mode != "signals_and_masks":
         view_payload["feature_mode"] = di.feature_mode
+    if di.alphagenome_signal_variant_mask:
+        view_payload["alphagenome_signal_variant_mask"] = di.alphagenome_signal_variant_mask
     if di.indel_include_snp_mask:
         view_payload["indel_include_snp_mask"] = di.indel_include_snp_mask
     view_hash = hashlib.sha1(json.dumps(view_payload, sort_keys=True).encode("utf-8")).hexdigest()[:12]

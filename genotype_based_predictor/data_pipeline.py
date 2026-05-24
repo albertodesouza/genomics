@@ -100,6 +100,8 @@ def _build_view_definition(config: PipelineConfig) -> Dict[str, Any]:
     }
     if di.feature_mode != "signals_and_masks":
         view["feature_mode"] = di.feature_mode
+    if di.alphagenome_signal_variant_mask:
+        view["alphagenome_signal_variant_mask"] = di.alphagenome_signal_variant_mask
     if di.indel_include_snp_mask:
         view["indel_include_snp_mask"] = di.indel_include_snp_mask
     return view
@@ -109,8 +111,9 @@ def _build_resolved_view_definition(config: PipelineConfig, processed_dataset: P
     view = _build_view_definition(config)
     sample_ids = []
     for base_idx in processed_dataset.valid_sample_indices:
-        if base_idx < len(processed_dataset.individuals):
-            sample_ids.append(processed_dataset.individuals[base_idx])
+        sample_id = processed_dataset._sample_id_for_base_index(base_idx)
+        if sample_id:
+            sample_ids.append(sample_id)
     view["resolved_sample_ids"] = sample_ids
     view["resolved_genes"] = sorted(processed_dataset.genes_to_use) if processed_dataset.genes_to_use else None
     return view
@@ -121,8 +124,9 @@ def _sample_ids_for_processed_indices(processed_dataset: ProcessedGenomicDataset
     for proc_idx in indices:
         if 0 <= proc_idx < len(processed_dataset.valid_sample_indices):
             base_idx = processed_dataset.valid_sample_indices[proc_idx]
-            if base_idx < len(processed_dataset.individuals):
-                sample_ids.append(str(processed_dataset.individuals[base_idx]))
+            sample_id = processed_dataset._sample_id_for_base_index(base_idx)
+            if sample_id:
+                sample_ids.append(sample_id)
     return sample_ids
 
 
@@ -259,6 +263,16 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
         if cached_feature_mode != config.dataset_input.feature_mode:
             console.print(
                 f"[yellow]Cache inválido: feature_mode mudou ({cached_feature_mode} → {config.dataset_input.feature_mode})[/yellow]"
+            )
+            return False
+
+        cached_variant_mask = pp.get(
+            "alphagenome_signal_variant_mask",
+            requested_view.get("alphagenome_signal_variant_mask", False),
+        )
+        if cached_variant_mask != config.dataset_input.alphagenome_signal_variant_mask:
+            console.print(
+                f"[yellow]Cache inválido: alphagenome_signal_variant_mask mudou ({cached_variant_mask} → {config.dataset_input.alphagenome_signal_variant_mask})[/yellow]"
             )
             return False
 
@@ -483,7 +497,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
 
                             for idx in batch_indices:
                                 base_idx = processed_dataset.valid_sample_indices[idx]
-                                sid = individuals[base_idx] if base_idx < len(individuals) else f"sample_{base_idx}"
+                                sid = processed_dataset._sample_id_for_base_index(base_idx) or f"sample_{base_idx}"
                                 ped = pedigree.get(sid, {})
                                 split_sample_meta.append({
                                     "sample_id": sid,
@@ -495,7 +509,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                     for batch_id, batch_indices in enumerate(batches):
                         for idx in batch_indices:
                             base_idx = processed_dataset.valid_sample_indices[idx]
-                            sid = individuals[base_idx] if base_idx < len(individuals) else f"sample_{base_idx}"
+                            sid = processed_dataset._sample_id_for_base_index(base_idx) or f"sample_{base_idx}"
                             ped = pedigree.get(sid, {})
                             split_sample_meta.append({
                                 "sample_id": sid,
@@ -570,6 +584,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                 "indel_neutral_value": config.dataset_input.indel_neutral_value,
                 "tensor_layout": config.dataset_input.tensor_layout,
                 "feature_mode": config.dataset_input.feature_mode,
+                "alphagenome_signal_variant_mask": config.dataset_input.alphagenome_signal_variant_mask,
                 "cache_processed_tensors": config.dataset_input.cache_processed_tensors,
                 "runtime_dataset_dir": str(dataset_dir.resolve()),
                 "family_split_mode": config.data_split.family_split_mode,
@@ -678,12 +693,11 @@ def _make_runtime_processed_datasets(runtime_dataset_dir: Path, cache_dir: Path,
     )
 
     split_index = _load_split_index(cache_dir)
-    dataset_metadata = getattr(base_dataset, "dataset_metadata", {}) or {}
-    individuals = dataset_metadata.get("individuals", [])
     sample_to_processed_idx = {}
     for proc_idx, base_idx in enumerate(processed_ds.valid_sample_indices):
-        if base_idx < len(individuals):
-            sample_to_processed_idx[individuals[base_idx]] = proc_idx
+        sample_id = processed_ds._sample_id_for_base_index(base_idx)
+        if sample_id:
+            sample_to_processed_idx[sample_id] = proc_idx
 
     train_indices = [sample_to_processed_idx[sid] for sid in split_index.get("train", []) if sid in sample_to_processed_idx]
     val_indices = [sample_to_processed_idx[sid] for sid in split_index.get("val", []) if sid in sample_to_processed_idx]

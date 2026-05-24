@@ -8,7 +8,7 @@ import math
 import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import torch
@@ -76,6 +76,7 @@ class ProcessedGenomicDataset(Dataset):
         self.normalization_value = di.normalization_value
         self.selected_track_index = di.selected_track_index
         self.feature_mode = di.feature_mode
+        self.alphagenome_signal_variant_mask = di.alphagenome_signal_variant_mask
         self.genes_to_use = set(di.genes_to_use or [])
         self.indel_neutral_value = di.indel_neutral_value
         self.indel_include_valid_mask = di.indel_include_valid_mask
@@ -87,6 +88,8 @@ class ProcessedGenomicDataset(Dataset):
         self.derived_targets = out.derived_targets
         self._derived_target_config = self.derived_targets.get(self.prediction_target)
         self.dataset_metadata = getattr(self.base_dataset, "dataset_metadata", {}) or {}
+        if not self.dataset_metadata and hasattr(self.base_dataset, "dataset"):
+            self.dataset_metadata = getattr(self.base_dataset.dataset, "dataset_metadata", {}) or {}
         self.dataset_dir = Path(di.dataset_dir)
         self.individuals = self.dataset_metadata.get("individuals", [])
         self.selected_sample_ids = self._resolve_selected_sample_ids()
@@ -108,6 +111,7 @@ class ProcessedGenomicDataset(Dataset):
         self._base_item_cache_limit = 4
         self._processed_item_cache: OrderedDict[int, Tuple[torch.Tensor, torch.Tensor]] = OrderedDict()
         self._processed_item_cache_limit = 8
+        self._global_variation_mask_cache: Dict[str, np.ndarray] = {}
         self.profile_stats = {
             "base_fetch_s": 0.0,
             "window_process_s": 0.0,
@@ -129,7 +133,7 @@ class ProcessedGenomicDataset(Dataset):
 
         self._create_target_mappings()
 
-    def _resolve_selected_sample_ids(self) -> Optional[set[str]]:
+    def _resolve_selected_sample_ids(self) -> Optional[Set[str]]:
         di = self.config.dataset_input
         selected = set(di.sample_ids or [])
 
@@ -149,6 +153,39 @@ class ProcessedGenomicDataset(Dataset):
             return None
         return selected
 
+    def _source_index_for_base_index(self, base_idx: int) -> int:
+        indices = getattr(self.base_dataset, "indices", None)
+        if indices is not None and 0 <= base_idx < len(indices):
+            return int(indices[base_idx])
+        return int(base_idx)
+
+    def _sample_id_for_base_index(self, base_idx: int) -> Optional[str]:
+        source_idx = self._source_index_for_base_index(base_idx)
+        if 0 <= source_idx < len(self.individuals):
+            return str(self.individuals[source_idx])
+        return None
+
+    def _global_variation_sample_ids(self) -> List[str]:
+        if self.selected_sample_ids:
+            return sorted(str(sample_id) for sample_id in self.selected_sample_ids)
+
+        di = self.config.dataset_input
+        superpops = set(di.superpopulations_to_use or [])
+        pops = set(di.populations_to_use or [])
+        pedigree = self.dataset_metadata.get("individuals_pedigree", {}) or {}
+        if superpops or pops:
+            sample_ids = []
+            for sample_id in self.individuals:
+                ped = pedigree.get(sample_id, {})
+                if superpops and ped.get("superpopulation") not in superpops:
+                    continue
+                if pops and ped.get("population") not in pops:
+                    continue
+                sample_ids.append(str(sample_id))
+            return sample_ids
+
+        return [str(sample_id) for sample_id in self.individuals]
+
     def prepare_alignment_cache(
         self,
         sample_ids: Optional[List[str]] = None,
@@ -157,9 +194,12 @@ class ProcessedGenomicDataset(Dataset):
         if sample_ids is None:
             sample_ids = []
             for base_idx in self.valid_sample_indices:
-                if base_idx < len(self.individuals):
-                    sample_ids.append(str(self.individuals[base_idx]))
+                sample_id = self._sample_id_for_base_index(base_idx)
+                if sample_id:
+                    sample_ids.append(sample_id)
         sample_ids = [str(sample_id) for sample_id in sample_ids if sample_id]
+        if self.alphagenome_signal_variant_mask:
+            sample_ids = list(dict.fromkeys(sample_ids + self._global_variation_sample_ids()))
         if not sample_ids:
             return
         if entry_sample_ids is None:
@@ -200,6 +240,9 @@ class ProcessedGenomicDataset(Dataset):
     def _compute_normalization_params(self) -> Dict:
         if self.feature_mode == "masks_only":
             return {"method": "none", "per_track": False, "mean": 0.0, "std": 1.0}
+
+        if self.alphagenome_signal_variant_mask:
+            self.prepare_alignment_cache(self._global_variation_sample_ids(), entry_sample_ids=[])
 
         if self.normalization_method in {"log", "minmax_keep_zero"} and self.normalization_value not in (0, 0.0, None):
             num_genes = len(self.config.dataset_input.genes_to_use or []) or 1
@@ -540,6 +583,36 @@ class ProcessedGenomicDataset(Dataset):
         signals = np.concatenate(signal_rows, axis=0)
         return signals, shared_masks
 
+    def _entry_variation_mask(self, entry: Dict[str, object], expanded_slice: Tuple[int, int]) -> np.ndarray:
+        slice_start, slice_end = expanded_slice
+        variation = np.zeros(max(int(slice_end) - int(slice_start), 0), dtype=bool)
+        for key in ("insertion_indices", "deletion_indices", "snp_indices"):
+            for target_idx in entry.get(key, []):
+                target_idx = int(target_idx)
+                if slice_start <= target_idx < slice_end:
+                    variation[target_idx - slice_start] = True
+        return variation
+
+    def _global_variation_mask_for_gene(self, gene_name: str, expanded_slice: Tuple[int, int]) -> np.ndarray:
+        cached = self._global_variation_mask_cache.get(gene_name)
+        if cached is not None and cached.shape[0] == max(int(expanded_slice[1]) - int(expanded_slice[0]), 0):
+            return cached
+
+        sample_ids = self._global_variation_sample_ids()
+
+        variation = np.zeros(max(int(expanded_slice[1]) - int(expanded_slice[0]), 0), dtype=bool)
+        for sample_id in sample_ids:
+            for haplotype in ("H1", "H2"):
+                if self.bcftools_chain_mapper is not None:
+                    entry = self.bcftools_chain_mapper.get_haplotype_entry(gene_name, sample_id, haplotype)
+                else:
+                    entry = self.dynamic_indel_aligner.get_haplotype_entry(gene_name, sample_id, haplotype)
+                if entry is not None:
+                    variation |= self._entry_variation_mask(entry, expanded_slice)
+
+        self._global_variation_mask_cache[gene_name] = variation
+        return variation
+
     def _filter_track_indices(self, output_type: str, track_metadata: List[Dict]) -> List[int]:
         if not self.ontology_terms:
             return list(range(len(track_metadata)))
@@ -622,6 +695,19 @@ class ProcessedGenomicDataset(Dataset):
 
             h1_signals, h1_masks = h1
             h2_signals, h2_masks = h2
+            if self.alphagenome_signal_variant_mask and self.feature_mode != "masks_only":
+                center_slice = self.dynamic_indel_aligner.get_reference_centered_expanded_slice(gene_name, self.window_center_size)
+                expanded_slice = (int(center_slice["expanded_start"]), int(center_slice["expanded_end"]))
+                variant_positions = self._global_variation_mask_for_gene(gene_name, expanded_slice)
+                if variant_positions.shape[0] != h1_signals.shape[1]:
+                    raise ValueError(
+                        f"Mascara global de variacao para {gene_name} tem tamanho {variant_positions.shape[0]}, "
+                        f"mas sinais AlphaGenome tem tamanho {h1_signals.shape[1]}"
+                    )
+                h1_signals = h1_signals.copy()
+                h2_signals = h2_signals.copy()
+                h1_signals[:, ~variant_positions] = 0.0
+                h2_signals[:, ~variant_positions] = 0.0
             if self.feature_mode == "masks_only":
                 h1_rows.append(h1_masks)
                 h2_rows.append(h2_masks)
@@ -743,8 +829,9 @@ class ProcessedGenomicDataset(Dataset):
         input_data, output_data = self._load_base_item(base_idx)
 
         sample_id = self._infer_sample_id_from_input(input_data)
-        if sample_id is None and base_idx < len(self.individuals):
-            sample_id = self.individuals[base_idx]
+        if sample_id is None:
+            sample_id = self._sample_id_for_base_index(base_idx)
+        if sample_id is not None:
             self._inject_sample_id_into_windows(input_data, sample_id)
 
         t0 = time.perf_counter()
