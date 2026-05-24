@@ -67,6 +67,15 @@ class DatasetInputConfig(BaseModel):
     alphagenome_signal_variant_mask: bool = False
     """Se True, zera sinais AlphaGenome em posições sem SNP/INDEL em nenhum indivíduo selecionado."""
 
+    alphagenome_signal_transform: Literal["absolute", "delta_reference"] = "absolute"
+    """Transformação dos sinais AlphaGenome antes da normalização."""
+
+    reference_predictions_dataset_dir: Optional[str] = None
+    """Dataset gerado com reference-only contendo as predições AlphaGenome da referência."""
+
+    reference_predictions_sample_id: Optional[str] = None
+    """ID do indivíduo/pasta dentro do dataset reference-only; se omitido usa o primeiro disponível."""
+
     window_center_size: int = 32768
     """Número de bases do trecho central de cada janela."""
 
@@ -149,6 +158,12 @@ class DatasetInputConfig(BaseModel):
         if not v:
             raise ValueError("alignment_axis_splits deve conter pelo menos um split")
         return list(dict.fromkeys(v))
+
+    @model_validator(mode="after")
+    def validate_reference_signal_transform(self):
+        if self.alphagenome_signal_transform == "delta_reference" and not self.reference_predictions_dataset_dir:
+            raise ValueError("reference_predictions_dataset_dir é obrigatório quando alphagenome_signal_transform='delta_reference'")
+        return self
 
 class DerivedTargetConfig(BaseModel):
     """Configuração de um target derivado a partir de outro campo."""
@@ -566,6 +581,10 @@ def generate_dataset_name(config: PipelineConfig) -> str:
         view_payload["feature_mode"] = di.feature_mode
     if di.alphagenome_signal_variant_mask:
         view_payload["alphagenome_signal_variant_mask"] = di.alphagenome_signal_variant_mask
+    if di.alphagenome_signal_transform != "absolute":
+        view_payload["alphagenome_signal_transform"] = di.alphagenome_signal_transform
+        view_payload["reference_predictions_dataset_dir"] = str(Path(di.reference_predictions_dataset_dir).resolve()) if di.reference_predictions_dataset_dir else None
+        view_payload["reference_predictions_sample_id"] = di.reference_predictions_sample_id
     if di.indel_include_snp_mask:
         view_payload["indel_include_snp_mask"] = di.indel_include_snp_mask
     view_hash = hashlib.sha1(json.dumps(view_payload, sort_keys=True).encode("utf-8")).hexdigest()[:12]

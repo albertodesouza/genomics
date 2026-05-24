@@ -102,6 +102,10 @@ def _build_view_definition(config: PipelineConfig) -> Dict[str, Any]:
         view["feature_mode"] = di.feature_mode
     if di.alphagenome_signal_variant_mask:
         view["alphagenome_signal_variant_mask"] = di.alphagenome_signal_variant_mask
+    if di.alphagenome_signal_transform != "absolute":
+        view["alphagenome_signal_transform"] = di.alphagenome_signal_transform
+        view["reference_predictions_dataset_dir"] = str(Path(di.reference_predictions_dataset_dir).resolve()) if di.reference_predictions_dataset_dir else None
+        view["reference_predictions_sample_id"] = di.reference_predictions_sample_id
     if di.indel_include_snp_mask:
         view["indel_include_snp_mask"] = di.indel_include_snp_mask
     return view
@@ -274,6 +278,22 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
             console.print(
                 f"[yellow]Cache inválido: alphagenome_signal_variant_mask mudou ({cached_variant_mask} → {config.dataset_input.alphagenome_signal_variant_mask})[/yellow]"
             )
+            return False
+
+        requested_ref_dir = (
+            str(Path(config.dataset_input.reference_predictions_dataset_dir).resolve())
+            if config.dataset_input.reference_predictions_dataset_dir
+            else None
+        )
+        cached_signal_transform = pp.get("alphagenome_signal_transform", requested_view.get("alphagenome_signal_transform", "absolute"))
+        cached_ref_dir = pp.get("reference_predictions_dataset_dir", requested_view.get("reference_predictions_dataset_dir"))
+        cached_ref_sample = pp.get("reference_predictions_sample_id", requested_view.get("reference_predictions_sample_id"))
+        if (
+            cached_signal_transform != config.dataset_input.alphagenome_signal_transform
+            or cached_ref_dir != requested_ref_dir
+            or cached_ref_sample != config.dataset_input.reference_predictions_sample_id
+        ):
+            console.print("[yellow]Cache inválido: transformação AlphaGenome/reference dataset mudou[/yellow]")
             return False
 
         cached_snp_mask = pp.get("indel_include_snp_mask", requested_view.get("indel_include_snp_mask", False))
@@ -585,6 +605,9 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                 "tensor_layout": config.dataset_input.tensor_layout,
                 "feature_mode": config.dataset_input.feature_mode,
                 "alphagenome_signal_variant_mask": config.dataset_input.alphagenome_signal_variant_mask,
+                "alphagenome_signal_transform": config.dataset_input.alphagenome_signal_transform,
+                "reference_predictions_dataset_dir": str(Path(config.dataset_input.reference_predictions_dataset_dir).resolve()) if config.dataset_input.reference_predictions_dataset_dir else None,
+                "reference_predictions_sample_id": config.dataset_input.reference_predictions_sample_id,
                 "cache_processed_tensors": config.dataset_input.cache_processed_tensors,
                 "runtime_dataset_dir": str(dataset_dir.resolve()),
                 "family_split_mode": config.data_split.family_split_mode,
