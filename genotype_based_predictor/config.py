@@ -163,6 +163,8 @@ class DatasetInputConfig(BaseModel):
     def validate_reference_signal_transform(self):
         if self.alphagenome_signal_transform == "delta_reference" and not self.reference_predictions_dataset_dir:
             raise ValueError("reference_predictions_dataset_dir é obrigatório quando alphagenome_signal_transform='delta_reference'")
+        if self.alphagenome_signal_transform == "delta_reference" and self.normalization_method == "log":
+            raise ValueError("alphagenome_signal_transform='delta_reference' gera valores negativos; use normalization_method='zscore'")
         return self
 
 class DerivedTargetConfig(BaseModel):

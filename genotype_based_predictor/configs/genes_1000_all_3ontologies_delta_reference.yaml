@@ -7,6 +7,7 @@ dataset_input:
   indel_include_valid_mask: true
   indel_include_snp_mask: true
   alphagenome_signal_transform: "delta_reference"
+  normalization_method: "zscore"
   reference_predictions_dataset_dir: "/dados/GENOMICS_DATA/top3/reference_only_results_genes_1000_all_3ontologies"
   reference_predictions_sample_id: null
   alignment_mapping: "bcftools_chain"
