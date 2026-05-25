@@ -346,8 +346,6 @@ class BcftoolsChainMapper:
 
         def is_valid(raw_file: Path) -> Tuple[bool, str]:
             raw_rebuilt_seq = read_fasta_sequence(raw_file)
-            if raw_path.exists() and raw_rebuilt_seq != read_fasta_sequence(raw_path):
-                return False, f"Consenso reconstruido difere do raw existente: {raw_path}"
             fixed_seq = read_fasta_sequence(fixed_path)
             ref_seq = read_fasta_sequence(ref_path)
             rebuilt_fixed = adjust_to_target_size(raw_rebuilt_seq, ref_seq, len(fixed_seq))

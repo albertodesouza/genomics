@@ -4,6 +4,7 @@ import argparse
 import csv
 import hashlib
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -216,6 +217,311 @@ def _save_raw_pixel_images(mean_input: torch.Tensor, mean_attr: torch.Tensor, co
 
     np.save(out_dir / "raw_input_matrix.npy", input_np)
     np.save(out_dir / "raw_deeplift_matrix.npy", attr_np)
+
+
+def _to_scalar_int(value: Any) -> Optional[int]:
+    if isinstance(value, torch.Tensor):
+        if value.numel() != 1:
+            return None
+        return int(value.item())
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    return None
+
+
+def _metadata_for_dataset_item(dataset: Any, idx: int, meta_idx: Any) -> Dict[str, Any]:
+    item_idx = _to_scalar_int(meta_idx)
+    if item_idx is None:
+        item_idx = idx
+
+    metadata: Dict[str, Any] = {}
+    if hasattr(dataset, "get_sample_metadata"):
+        try:
+            metadata.update(dict(dataset.get_sample_metadata(item_idx) or {}))
+        except Exception:
+            pass
+
+    if hasattr(dataset, "indices") and hasattr(dataset, "dataset"):
+        try:
+            inner_idx = int(dataset.indices[idx])
+            nested = _metadata_for_dataset_item(dataset.dataset, inner_idx, inner_idx)
+            nested.update(metadata)
+            metadata = nested
+        except Exception:
+            pass
+
+    if not metadata.get("superpopulation") and hasattr(dataset, "valid_sample_indices") and hasattr(dataset, "_sample_id_for_base_index"):
+        try:
+            base_idx = int(dataset.valid_sample_indices[item_idx])
+            sample_id = dataset._sample_id_for_base_index(base_idx)
+            if sample_id:
+                metadata["sample_id"] = sample_id
+                pedigree = getattr(dataset, "dataset_metadata", {}).get("individuals_pedigree", {}) or {}
+                metadata.update(pedigree.get(sample_id, {}) or {})
+        except Exception:
+            pass
+
+    if "sample_id" not in metadata:
+        metadata["sample_id"] = _sample_id_for(dataset, idx, meta_idx)
+    if not metadata.get("superpopulation"):
+        sample_id = metadata.get("sample_id")
+        try:
+            split_metadata_cache = getattr(dataset, "_opencode_split_metadata_by_sample", None)
+            if split_metadata_cache is None:
+                split_metadata_cache = {}
+                data_file = getattr(dataset, "data_file", None)
+                split_name = getattr(dataset, "split_name", None)
+                if data_file is not None and split_name is not None:
+                    splits_file = Path(data_file).parent / "splits_metadata.json"
+                    if splits_file.exists():
+                        with open(splits_file) as f:
+                            splits = json.load(f)
+                        for item in splits.get(str(split_name), []) or []:
+                            sid = item.get("sample_id")
+                            if sid:
+                                split_metadata_cache[str(sid)] = item
+                setattr(dataset, "_opencode_split_metadata_by_sample", split_metadata_cache)
+            if sample_id and str(sample_id) in split_metadata_cache:
+                metadata.update(split_metadata_cache[str(sample_id)] or {})
+        except Exception:
+            pass
+    if not metadata.get("superpopulation"):
+        sample_id = metadata.get("sample_id")
+        try:
+            pedigree_cache = getattr(dataset, "_opencode_pedigree_by_sample", None)
+            if pedigree_cache is None:
+                pedigree_cache = {}
+                config = getattr(dataset, "config", None)
+                dataset_dir = Path(config.dataset_input.dataset_dir) if config is not None else None
+                if dataset_dir is not None:
+                    metadata_file = dataset_dir / "dataset_metadata.json"
+                    if metadata_file.exists():
+                        with open(metadata_file) as f:
+                            payload = json.load(f)
+                        pedigree_cache = payload.get("individuals_pedigree", {}) or {}
+                setattr(dataset, "_opencode_pedigree_by_sample", pedigree_cache)
+            if sample_id and str(sample_id) in pedigree_cache:
+                metadata.update(pedigree_cache[str(sample_id)] or {})
+                metadata.setdefault("sample_id", sample_id)
+        except Exception:
+            pass
+    return metadata
+
+
+def _ordered_superpopulations(superpops: Iterable[str]) -> List[str]:
+    preferred = ["AFR", "AMR", "EAS", "EUR", "SAS"]
+    seen = {str(s) for s in superpops if str(s)}
+    ordered = [s for s in preferred if s in seen]
+    ordered.extend(sorted(seen - set(ordered)))
+    return ordered
+
+
+def _collect_superpopulation_mean_inputs(dataset: Any, split: str) -> Tuple[Dict[str, torch.Tensor], Dict[str, int], List[Dict[str, Any]]]:
+    sums: Dict[str, torch.Tensor] = {}
+    counts: Dict[str, int] = {}
+    samples: List[Dict[str, Any]] = []
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task(f"Calculando medias RNA-Seq por superpopulacao ({split})...", total=len(dataset))
+        for idx in range(len(dataset)):
+            features, target, meta_idx = _unpack_item(dataset[idx])
+            metadata = _metadata_for_dataset_item(dataset, idx, meta_idx)
+            superpop = str(metadata.get("superpopulation") or metadata.get("super_population") or "UNK")
+            tensor = features.detach().cpu().to(torch.float64)
+            if superpop not in sums:
+                sums[superpop] = tensor.clone()
+                counts[superpop] = 1
+            else:
+                sums[superpop] += tensor
+                counts[superpop] += 1
+            samples.append({
+                "dataset_index": idx,
+                "sample_id": metadata.get("sample_id", _sample_id_for(dataset, idx, meta_idx)),
+                "superpopulation": superpop,
+                "population": metadata.get("population", "UNK"),
+                "target": _target_to_int(target),
+            })
+            progress.update(task, advance=1)
+
+    means = {superpop: (sums[superpop] / max(counts[superpop], 1)).to(torch.float32) for superpop in sums}
+    return means, counts, samples
+
+
+def _signal_descriptors_for_tensor(config: Any, tensor: torch.Tensor) -> List[Dict[str, Any]]:
+    arr = tensor.detach().cpu()
+    if arr.ndim == 2:
+        arr = arr.unsqueeze(0)
+    if arr.ndim != 3:
+        raise ValueError(f"Esperado tensor [hap,row,L] ou [row,L], recebido {tuple(tensor.shape)}")
+
+    genes = list(config.dataset_input.genes_to_use or config.dataset_input.gene_order or [])
+    if not genes:
+        raise ValueError("genes_to_use/gene_order vazio; nao e possivel nomear as linhas de RNA-Seq")
+    tracks_per_gene = arr.shape[1] // len(genes)
+    if tracks_per_gene <= 0:
+        raise ValueError(f"Tensor com {arr.shape[1]} linhas nao comporta {len(genes)} genes")
+
+    ontology_terms = list(config.dataset_input.ontology_terms or [])
+    if ontology_terms:
+        signal_tracks = []
+        for strand in ("+", "-"):
+            for ontology in ontology_terms:
+                signal_tracks.append({"ontology_curie": ontology, "strand": strand})
+    else:
+        signal_tracks = [{"ontology_curie": "signal", "strand": None}]
+    signal_tracks = signal_tracks[:tracks_per_gene]
+
+    haplotypes = ["H1", "H2"] if arr.shape[0] == 2 else [f"H{i + 1}" for i in range(arr.shape[0])]
+    descriptors: List[Dict[str, Any]] = []
+    for gene_idx, gene_name in enumerate(genes):
+        for hap_idx, haplotype in enumerate(haplotypes):
+            for signal_idx, signal_meta in enumerate(signal_tracks):
+                descriptors.append({
+                    "gene_index": gene_idx,
+                    "gene_name": gene_name,
+                    "haplotype_index": hap_idx,
+                    "haplotype": haplotype,
+                    "signal_index": signal_idx,
+                    "row_index": gene_idx * tracks_per_gene + signal_idx,
+                    "ontology_curie": signal_meta["ontology_curie"],
+                    "strand": signal_meta["strand"],
+                })
+    return descriptors
+
+
+def _safe_filename(value: str, max_len: int = 180) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.+-]+", "_", value).strip("_")
+    if not safe:
+        safe = "track"
+    return safe[:max_len]
+
+
+def _save_superpopulation_rnaseq_visualizations(
+    means_by_superpop: Dict[str, torch.Tensor],
+    counts_by_superpop: Dict[str, int],
+    config: Any,
+    split: str,
+    out_dir: Path,
+) -> None:
+    import matplotlib as mpl
+    import matplotlib.pyplot as plt
+
+    if not means_by_superpop:
+        return
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    line_dir = out_dir / "line_plots"
+    line_dir.mkdir(parents=True, exist_ok=True)
+
+    superpops = _ordered_superpopulations(means_by_superpop.keys())
+    reference_tensor = means_by_superpop[superpops[0]]
+    descriptors = _signal_descriptors_for_tensor(config, reference_tensor)
+    length = int(reference_tensor.shape[-1])
+
+    rows = []
+    row_metadata = []
+    for descriptor_idx, descriptor in enumerate(descriptors):
+        hap_idx = int(descriptor["haplotype_index"])
+        row_idx = int(descriptor["row_index"])
+        for superpop in superpops:
+            tensor = means_by_superpop[superpop]
+            arr = tensor.detach().cpu()
+            if arr.ndim == 2:
+                arr = arr.unsqueeze(0)
+            if hap_idx >= arr.shape[0] or row_idx >= arr.shape[1]:
+                values = np.full(length, np.nan, dtype=np.float32)
+            else:
+                values = arr[hap_idx, row_idx, :].numpy().astype(np.float32, copy=False)
+            rows.append(values)
+            row_metadata.append({
+                "matrix_row": len(row_metadata),
+                "descriptor_index": descriptor_idx,
+                "superpopulation": superpop,
+                "num_samples": counts_by_superpop.get(superpop, 0),
+                **{k: v for k, v in descriptor.items() if k != "haplotype_index"},
+            })
+
+    matrix = np.stack(rows, axis=0) if rows else np.zeros((0, length), dtype=np.float32)
+    finite = matrix[np.isfinite(matrix)]
+    vmin = float(finite.min()) if finite.size else 0.0
+    vmax = float(finite.max()) if finite.size else 1.0
+    if vmin == vmax:
+        vmax = vmin + 1.0
+
+    plt.imsave(
+        out_dir / "superpopulation_rnaseq_grayscale.png",
+        matrix,
+        cmap="gray",
+        vmin=vmin,
+        vmax=vmax,
+        pil_kwargs={"compress_level": 0},
+    )
+    np.save(out_dir / "superpopulation_rnaseq_grayscale.npy", matrix)
+    _write_json(out_dir / "superpopulation_rnaseq_rows.json", row_metadata)
+    _write_json(out_dir / "superpopulation_rnaseq_metadata.json", {
+        "split": split,
+        "superpopulation_order": superpops,
+        "counts_by_superpopulation": counts_by_superpop,
+        "matrix_shape": list(matrix.shape),
+        "grayscale_vmin": vmin,
+        "grayscale_vmax": vmax,
+        "row_grouping": "For each ontology/strand/gene/haplotype descriptor, rows are consecutive superpopulations in superpopulation_order.",
+        "image_policy": "No interpolation, no positional downsampling, PNG compress_level=0; raw values are also saved as .npy.",
+    })
+
+    previous_simplify = mpl.rcParams.get("path.simplify", False)
+    mpl.rcParams["path.simplify"] = False
+    dpi = 100
+    try:
+        for descriptor_idx, descriptor in enumerate(descriptors):
+            hap_idx = int(descriptor["haplotype_index"])
+            row_idx = int(descriptor["row_index"])
+            series = []
+            for superpop in superpops:
+                tensor = means_by_superpop[superpop]
+                arr = tensor.detach().cpu()
+                if arr.ndim == 2:
+                    arr = arr.unsqueeze(0)
+                if hap_idx >= arr.shape[0] or row_idx >= arr.shape[1]:
+                    values = np.full(length, np.nan, dtype=np.float32)
+                else:
+                    values = arr[hap_idx, row_idx, :].numpy().astype(np.float32, copy=False)
+                series.append((superpop, values))
+
+            finite_values = np.concatenate([values[np.isfinite(values)] for _, values in series if np.isfinite(values).any()])
+            ymin = float(finite_values.min()) if finite_values.size else 0.0
+            ymax = float(finite_values.max()) if finite_values.size else 1.0
+            if ymin == ymax:
+                ymin -= 0.5
+                ymax += 0.5
+
+            fig_width = max(length / dpi, 8.0)
+            fig_height = max(1.8 * len(superpops), 3.0)
+            fig, axes = plt.subplots(len(superpops), 1, figsize=(fig_width, fig_height), sharex=True, squeeze=False)
+            x = np.arange(length, dtype=np.int32)
+            for ax, (superpop, values) in zip(axes[:, 0], series):
+                ax.plot(x, values, color="black", linewidth=0.7, antialiased=False)
+                ax.set_ylim(ymin, ymax)
+                ax.set_ylabel(f"{superpop}\nn={counts_by_superpop.get(superpop, 0)}", rotation=0, ha="right", va="center", fontsize=8)
+                ax.grid(False)
+            axes[-1, 0].set_xlabel("Aligned gene position")
+            title = f"{descriptor['gene_name']} | {descriptor['haplotype']} | {descriptor['ontology_curie']} | strand={descriptor['strand']}"
+            fig.suptitle(title, fontsize=10)
+            fig.tight_layout(rect=(0, 0, 1, 0.96))
+            filename_stem = _safe_filename(
+                f"{descriptor_idx:05d}_{descriptor['gene_name']}_{descriptor['haplotype']}_{descriptor['ontology_curie']}_{descriptor['strand']}"
+            )
+            fig.savefig(line_dir / f"{filename_stem}.png", dpi=dpi, pil_kwargs={"compress_level": 0})
+            plt.close(fig)
+    finally:
+        mpl.rcParams["path.simplify"] = previous_simplify
 
 
 def _variant_row_index(gene_idx: int, haplotype: str, track_idx: int, tracks_per_gene: int) -> int:
@@ -791,6 +1097,7 @@ def main() -> None:
     parser.add_argument("--min-distance-bp", type=int, default=0)
     parser.add_argument("--out-dir", type=str, default=None)
     parser.add_argument("--plot", action="store_true", help="Save a PNG similar to the legacy DeepLIFT class-mean panel")
+    parser.add_argument("--plot-superpopulation-rnaseq", action="store_true", help="Save grayscale and line-plot RNA-Seq means for each superpopulation in the selected split")
     parser.add_argument("--plot-top-from", choices=["mean", "samples"], default="mean", help="Circle top windows from the mean map or from per-sample windows")
     parser.add_argument("--save-raw-pixels", action="store_true", help="Save raw matrix PNGs with no axes/text/resize plus .npy matrices")
     parser.add_argument("--show-track-separators", action="store_true", help="Draw horizontal separators between signal/mask/gene blocks")
@@ -944,6 +1251,7 @@ def main() -> None:
         "min_distance_bp": args.min_distance_bp,
         "save_raw_pixels": args.save_raw_pixels,
         "show_track_separators": args.show_track_separators,
+        "plot_superpopulation_rnaseq": args.plot_superpopulation_rnaseq,
         "show_variant_markers": args.show_variant_markers,
         "variant_types": args.variant_types,
         "variant_marker_min_frequency": args.variant_marker_min_frequency,
@@ -1029,6 +1337,18 @@ def main() -> None:
         )
         if args.save_raw_pixels:
             _save_raw_pixel_images(mean_input, mean_attr, config, out_dir / "raw_pixels")
+
+    if args.plot_superpopulation_rnaseq:
+        means_by_superpop, counts_by_superpop, superpop_samples = _collect_superpopulation_mean_inputs(dataset, args.split)
+        superpop_out_dir = out_dir / "superpopulation_rnaseq"
+        _save_superpopulation_rnaseq_visualizations(
+            means_by_superpop=means_by_superpop,
+            counts_by_superpop=counts_by_superpop,
+            config=config,
+            split=args.split,
+            out_dir=superpop_out_dir,
+        )
+        _write_json(superpop_out_dir / "samples.json", superpop_samples)
 
     console.print(f"[green]DeepLIFT salvo em:[/green] {out_dir}")
 
