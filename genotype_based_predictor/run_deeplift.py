@@ -1119,6 +1119,30 @@ def main() -> None:
     full_ds, train_loader, val_loader, test_loader = prepare_data(config, experiment_dir)
     dataset = _select_dataset(args.split, train_loader, val_loader, test_loader)
 
+    if args.plot_superpopulation_rnaseq:
+        out_dir = Path(args.out_dir) if args.out_dir else experiment_dir / "interpretability" / f"superpopulation_rnaseq_{args.split}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        means_by_superpop, counts_by_superpop, superpop_samples = _collect_superpopulation_mean_inputs(dataset, args.split)
+        _save_superpopulation_rnaseq_visualizations(
+            means_by_superpop=means_by_superpop,
+            counts_by_superpop=counts_by_superpop,
+            config=config,
+            split=args.split,
+            out_dir=out_dir,
+        )
+        _write_json(out_dir / "samples.json", superpop_samples)
+        _write_json(out_dir / "run_metadata.json", {
+            "config_path": str(config_path),
+            "experiment_dir": str(experiment_dir),
+            "split": args.split,
+            "mode": "superpopulation_rnaseq",
+            "num_samples": len(superpop_samples),
+            "counts_by_superpopulation": counts_by_superpop,
+            "deeplift_computed": False,
+        })
+        console.print(f"[green]Visualizacoes RNA-Seq por superpopulacao salvas em:[/green] {out_dir}")
+        return
+
     checkpoint_path = Path(args.checkpoint)
     if not checkpoint_path.is_absolute():
         checkpoint_path = experiment_dir / "models" / args.checkpoint
@@ -1337,18 +1361,6 @@ def main() -> None:
         )
         if args.save_raw_pixels:
             _save_raw_pixel_images(mean_input, mean_attr, config, out_dir / "raw_pixels")
-
-    if args.plot_superpopulation_rnaseq:
-        means_by_superpop, counts_by_superpop, superpop_samples = _collect_superpopulation_mean_inputs(dataset, args.split)
-        superpop_out_dir = out_dir / "superpopulation_rnaseq"
-        _save_superpopulation_rnaseq_visualizations(
-            means_by_superpop=means_by_superpop,
-            counts_by_superpop=counts_by_superpop,
-            config=config,
-            split=args.split,
-            out_dir=superpop_out_dir,
-        )
-        _write_json(superpop_out_dir / "samples.json", superpop_samples)
 
     console.print(f"[green]DeepLIFT salvo em:[/green] {out_dir}")
 
