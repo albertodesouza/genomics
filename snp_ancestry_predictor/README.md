@@ -224,6 +224,11 @@ The YAML configuration file has five sections. All paths can be absolute or rela
 | `individuals_dir` | string | Directory with per-individual subdirectories |
 | `vcf_pattern` | string | VCF file pattern; `{chrom}` is replaced by chromosome name |
 | `chromosomes` | list | Chromosome names to process (default: chr1–chr22 + chrX) |
+| `region_bed` | string/null | Optional BED file restricting analysis to genomic windows |
+| `genotype_cache_dir` | string/null | Optional `genotype_based_predictor` processed cache directory; uses `metadata.json/gene_window_metadata` as the region source |
+| `genotype_config` / `genotype_view` | string/null | Optional genotype predictor config or view used to derive the same centered gene windows from `dataset_metadata.json` |
+| `genotype_dataset_dir` | string/null | Dataset containing `dataset_metadata.json` when deriving regions from `genotype_config`/`genotype_view` |
+| `window_center_size` | int | Centered window size used when deriving regions from genotype metadata (default: 32768) |
 
 ### `conversion`
 
@@ -236,6 +241,8 @@ The YAML configuration file has five sections. All paths can be absolute or rela
 | `filter_by_chip_panel` | bool | `false` | Auto-download and apply the Illumina chip panel matching `format_version` |
 | `ref_dir` | string | `"refs"` | Directory where downloaded reference files (dbSNP, chip panel) are cached |
 | `snp_panel` | string/null | `null` | Path to custom SNP panel file (one rsID per line); overrides `filter_by_chip_panel` |
+| `variant_types` | list | `["snp"]` | Biallelic variant classes to extract. Use `["snp", "indel"]` to use all SNPs and Indels in the selected windows |
+| `genotype_encoding` | string | auto | `"alleles"` for SNP-only output, `"gt"` for SNP/Indel output. Numeric GT encoding stores REF as tracked allele `0` and preserves phased haplotypes |
 | `parallel_chroms` | int/string | `"auto"` | Step 1: parallel worker processes for chromosome partitions (`"auto"` = `os.cpu_count()`, `1` = sequential) |
 | `output_filename` | string | `"{sample_id}_23andme.txt"` | Filename template for output files |
 
@@ -248,6 +255,8 @@ The YAML configuration file has five sections. All paths can be absolute or rela
 | `min_maf` | float | `0.01` | Minimum minor allele frequency |
 | `max_snps` | int/null | `500000` | Maximum SNPs (top by Fst); null = keep all |
 | `snp_panel` | string/null | `null` | Optional SNP panel filter for statistics |
+| `variant_types` | list | `["snp"]` | Included in the statistics filename to separate SNP-only from SNP/Indel runs |
+| `genotype_encoding` | string | auto | Must match Step 1 output (`"alleles"` or `"gt"`) |
 
 ### `prediction`
 
@@ -262,6 +271,29 @@ The YAML configuration file has five sections. All paths can be absolute or rela
 | `admixture_em.max_iter` | int | `1000` | Maximum EM iterations per individual |
 | `admixture_em.tol` | float | `1e-7` | Convergence tolerance on proportions |
 | `admixture_mle.n_restarts` | int | `20` | Random restarts for the L-BFGS-B optimiser |
+
+### Running Without a Mutation Panel
+
+To compare directly with `genotype_based_predictor`, use `configs/genotype_windows_all_variants_mle.yaml`. This configuration disables chip/SNP panels, restricts `bcftools` to the same centered 32 kb gene windows, and extracts all biallelic SNPs and Indels in those regions:
+
+```yaml
+conversion:
+  filter_by_chip_panel: false
+  snp_panel: null
+  skip_no_rsid: false
+  variant_types: ["snp", "indel"]
+  genotype_encoding: "gt"
+
+statistics:
+  snp_panel: null
+  max_snps: null
+  variant_types: ["snp", "indel"]
+  genotype_encoding: "gt"
+```
+
+For exact comparison with `DynamicIndelAligner`, prefer `genotype_cache_dir`. The processed cache stores `alignment_cache_signature` and each gene's `axis.json`; the SNP predictor uses the same `get_reference_centered_expanded_slice` policy and maps the selected expanded-axis slice back to reference intervals. This can produce fewer than 32,768 reference bases when insertion slots fall inside the expanded slice.
+
+`region_bed`, `genotype_config`, and `genotype_view` remain useful fallbacks, but they only reproduce the centered reference window (`center = start + (window_size + 1) // 2`, then `center +/- window_center_size // 2`). They cannot account for the effective shrinkage caused by the expanded global axis unless an existing genotype cache with `axis.json` is provided.
 
 ### `pipeline`
 

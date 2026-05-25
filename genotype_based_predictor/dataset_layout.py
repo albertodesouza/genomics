@@ -6,7 +6,7 @@ import json
 import os
 import shutil
 from pathlib import Path
-from typing import Dict, Iterable
+from typing import Dict, Iterable, Optional
 
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -44,6 +44,89 @@ def _copy_file(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     if not dst.exists():
         shutil.copy2(src, dst)
+
+
+def _format_vcf_pattern(vcf_pattern: str, chromosome: str) -> str:
+    try:
+        return vcf_pattern.format(chrom=chromosome)
+    except (KeyError, IndexError, ValueError):
+        return vcf_pattern.replace("{chrom}", chromosome)
+
+
+def _candidate_chromosomes(chromosome: str) -> Iterable[str]:
+    chromosome = str(chromosome)
+    yield chromosome
+    if chromosome.startswith("chr"):
+        yield chromosome[3:]
+    else:
+        yield f"chr{chromosome}"
+
+
+def _resolve_vcf_path(raw_variant_sources: Dict, chromosome: str) -> Optional[str]:
+    vcf_pattern = raw_variant_sources.get("vcf_pattern") or os.environ.get("KG1000_VCF_PATTERN")
+    if vcf_pattern:
+        candidates = [_format_vcf_pattern(str(vcf_pattern), chrom) for chrom in _candidate_chromosomes(chromosome)]
+        for candidate in candidates:
+            if Path(candidate).exists():
+                return candidate
+        return candidates[0]
+
+    vcf_root_dir = raw_variant_sources.get("vcf_root_dir") or os.environ.get("KG1000_VCF_ROOT_DIR")
+    if not vcf_root_dir:
+        return None
+
+    root = Path(vcf_root_dir)
+    for chrom in _candidate_chromosomes(chromosome):
+        candidates = [
+            root / f"1kGP_high_coverage_Illumina.{chrom}.filtered.SNV_INDEL_SV_phased_panel.vcf.gz",
+            root / f"{chrom}.vcf.gz",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate)
+    return None
+
+
+def update_window_variant_sources(dataset_dir: Path, vcf_pattern: Optional[str] = None, vcf_root_dir: Optional[str] = None) -> None:
+    """Adds per-window VCF paths required by the indel alignment code."""
+    dataset_dir = Path(dataset_dir)
+    dataset_meta_path = dataset_dir / "dataset_metadata.json"
+    dataset_meta = _load_json(dataset_meta_path)
+    raw_variant_sources = dict(dataset_meta.get("raw_variant_sources", {}) or {})
+    if vcf_pattern:
+        raw_variant_sources["vcf_pattern"] = vcf_pattern
+    else:
+        raw_variant_sources.setdefault("vcf_pattern", os.environ.get("KG1000_VCF_PATTERN"))
+    if vcf_root_dir:
+        raw_variant_sources["vcf_root_dir"] = vcf_root_dir
+    else:
+        raw_variant_sources.setdefault("vcf_root_dir", os.environ.get("KG1000_VCF_ROOT_DIR"))
+    raw_variant_sources.setdefault(
+        "notes",
+        "Set KG1000_VCF_PATTERN or KG1000_VCF_ROOT_DIR to preserve the chromosome-level 1000G VCF source used to generate consensus FASTAs.",
+    )
+    dataset_meta["raw_variant_sources"] = raw_variant_sources
+
+    window_catalog = dict(dataset_meta.get("window_catalog", {}) or {})
+    ref_windows_dir = dataset_dir / "references" / "windows"
+    if not window_catalog and ref_windows_dir.exists():
+        for meta_path in sorted(ref_windows_dir.glob("*/window_metadata.json")):
+            window_catalog[meta_path.parent.name] = _load_json(meta_path)
+
+    for window_name, meta in window_catalog.items():
+        chromosome = str(meta.get("chromosome", ""))
+        raw_variant_source = dict(meta.get("raw_variant_source", {}) or {})
+        raw_variant_source["chromosome"] = chromosome
+        raw_variant_source["vcf_pattern"] = raw_variant_sources.get("vcf_pattern")
+        raw_variant_source["vcf_root_dir"] = raw_variant_sources.get("vcf_root_dir")
+        vcf_path = _resolve_vcf_path(raw_variant_sources, chromosome) if chromosome else None
+        if vcf_path:
+            raw_variant_source["vcf_path"] = vcf_path
+        meta["raw_variant_source"] = raw_variant_source
+        _write_json(ref_windows_dir / window_name / "window_metadata.json", meta)
+
+    dataset_meta["window_catalog"] = window_catalog
+    _write_json(dataset_meta_path, dataset_meta)
 
 
 def _iter_individual_dirs(dataset_dir: Path) -> Iterable[Path]:
@@ -169,12 +252,16 @@ def materialize_dataset(source_dir: Path, target_dir: Path) -> Path:
         chromosome = str(meta.get("chromosome", ""))
         chrom_token = chromosome.replace("chr", "") if chromosome else None
         if chrom_token:
-            meta.setdefault("raw_variant_source", {
-                "chromosome": chromosome,
-                "vcf_pattern": out_meta.get("raw_variant_sources", {}).get("vcf_pattern"),
-                "vcf_root_dir": out_meta.get("raw_variant_sources", {}).get("vcf_root_dir"),
-                "vcf_pattern_example": None if not out_meta.get("raw_variant_sources", {}).get("vcf_pattern") else out_meta["raw_variant_sources"]["vcf_pattern"].replace("{chrom}", chrom_token),
-            })
+            raw_variant_source = dict(meta.get("raw_variant_source", {}) or {})
+            raw_variant_source.setdefault("chromosome", chromosome)
+            raw_variant_source.setdefault("vcf_pattern", out_meta.get("raw_variant_sources", {}).get("vcf_pattern"))
+            raw_variant_source.setdefault("vcf_root_dir", out_meta.get("raw_variant_sources", {}).get("vcf_root_dir"))
+            raw_variant_source.setdefault("vcf_pattern_example", None if not out_meta.get("raw_variant_sources", {}).get("vcf_pattern") else _format_vcf_pattern(out_meta["raw_variant_sources"]["vcf_pattern"], chrom_token))
+            vcf_path = _resolve_vcf_path(out_meta.get("raw_variant_sources", {}), chromosome)
+            if vcf_path:
+                raw_variant_source.setdefault("vcf_path", vcf_path)
+            meta["raw_variant_source"] = raw_variant_source
+            _write_json(ref_windows_dir / window_name / "window_metadata.json", meta)
     _write_json(target_dir / "dataset_metadata.json", out_meta)
     _write_json(layout_marker, {
         "layout_version": LAYOUT_VERSION,

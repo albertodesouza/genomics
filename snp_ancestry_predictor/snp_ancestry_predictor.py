@@ -20,6 +20,7 @@ Author: Alberto F. De Souza
 import argparse
 import concurrent.futures
 import glob as glob_module
+import hashlib
 import json
 import math
 import multiprocessing
@@ -31,7 +32,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 import numpy as np
 import yaml
@@ -78,13 +79,50 @@ GT_DOSE = {
 def load_config(path: Path) -> dict:
     """Load YAML configuration file."""
     with open(path, "r") as f:
-        return yaml.safe_load(f)
+        cfg = yaml.safe_load(f)
+    cfg["__config_dir"] = str(path.resolve().parent)
+    return cfg
 
 
 def load_splits(path: str) -> dict:
     """Load splits_metadata.json."""
     with open(path, "r") as f:
         return json.load(f)
+
+
+def load_split_index(path: str, individuals_dir: str) -> dict:
+    """Build split metadata from genotype_based_predictor split_index.json."""
+    with open(path, "r") as f:
+        split_index = json.load(f)
+    ind_root = Path(individuals_dir)
+    out = {"train": [], "val": [], "test": []}
+    for split_name in ("train", "val", "test"):
+        for sample_id in split_index.get(split_name, []):
+            meta_path = ind_root / sample_id / "individual_metadata.json"
+            if not meta_path.exists():
+                continue
+            with open(meta_path) as f:
+                ind_meta = json.load(f)
+            out[split_name].append({
+                "sample_id": sample_id,
+                "superpopulation": ind_meta.get("superpopulation"),
+                "population": ind_meta.get("population"),
+                "sex": ind_meta.get("sex", 0),
+                "family_id": ind_meta.get("family_id", sample_id),
+            })
+    return out
+
+
+def load_configured_splits(config: dict) -> dict:
+    """Load either legacy splits_metadata or genotype cache split_index."""
+    inp = config["input"]
+    if inp.get("split_index"):
+        return load_split_index(inp["split_index"], inp["individuals_dir"])
+    if inp.get("genotype_cache_dir"):
+        split_index = Path(inp["genotype_cache_dir"]) / "split_index.json"
+        if split_index.exists():
+            return load_split_index(str(split_index), inp["individuals_dir"])
+    return load_splits(inp["splits_metadata"])
 
 
 def _resolve_derived_target(source_value: Optional[str], dt_cfg: dict) -> Optional[str]:
@@ -157,6 +195,349 @@ def load_snp_panel(path: str) -> Set[str]:
     return panel
 
 
+def _resolve_path(path: Optional[str], config: dict) -> Optional[Path]:
+    """Resolve config paths relative to the YAML file directory."""
+    if not path:
+        return None
+    p = Path(path).expanduser()
+    if p.is_absolute():
+        return p
+    base = Path(config.get("__config_dir", "."))
+    return (base / p).resolve()
+
+
+def _as_list(value, default: Optional[List[str]] = None) -> List[str]:
+    if value is None:
+        return list(default or [])
+    if isinstance(value, str):
+        return [value]
+    return list(value)
+
+
+def _region_source_cfg(config: dict, section: dict) -> dict:
+    """Merge global input region settings with a step-specific section."""
+    inp = config.get("input", {})
+    merged = {
+        k: inp.get(k)
+        for k in (
+            "region_bed",
+            "genotype_dataset_dir",
+            "genotype_cache_dir",
+            "genotype_config",
+            "genotype_view",
+            "window_center_size",
+            "genes_to_use",
+        )
+        if inp.get(k) is not None
+    }
+    for key, value in section.items():
+        if key in (
+            "region_bed",
+            "genotype_dataset_dir",
+            "genotype_cache_dir",
+            "genotype_config",
+            "genotype_view",
+            "window_center_size",
+            "genes_to_use",
+        ):
+            merged[key] = value
+    return merged
+
+
+def _load_genotype_dataset_input(genotype_config: Path) -> dict:
+    """Load dataset_input from a genotype_based_predictor YAML/view pair."""
+    with open(genotype_config) as f:
+        raw = yaml.safe_load(f) or {}
+    dataset_input = dict(raw.get("dataset_input", {}) or {})
+    view_path = dataset_input.get("view_path")
+    if view_path:
+        view_file = Path(view_path).expanduser()
+        if not view_file.is_absolute():
+            view_file = (genotype_config.parent / view_file).resolve()
+        with open(view_file) as f:
+            view_payload = json.load(f)
+        merged = dict(view_payload)
+        for key, value in dataset_input.items():
+            if key != "view_path":
+                merged[key] = value
+        dataset_input = merged
+    return dataset_input
+
+
+def _regions_from_genotype_metadata(
+    dataset_dir: Path,
+    genes_to_use: Optional[Iterable[str]],
+    window_center_size: int,
+) -> List[Tuple[str, int, int, str]]:
+    """Replicate genotype_based_predictor's centered 32k window calculation."""
+    meta_path = dataset_dir / "dataset_metadata.json"
+    if not meta_path.exists():
+        raise FileNotFoundError(f"dataset_metadata.json not found: {meta_path}")
+    with open(meta_path) as f:
+        dataset_meta = json.load(f)
+
+    catalog = dataset_meta.get("window_catalog") or {}
+    gene_order = list(genes_to_use or dataset_meta.get("genes", []) or catalog.keys())
+    half = int(window_center_size) // 2
+    regions: List[Tuple[str, int, int, str]] = []
+
+    for gene in gene_order:
+        gm = catalog.get(gene)
+        if not gm:
+            continue
+        chrom = str(gm.get("chromosome", ""))
+        orig_start = int(gm.get("start", 0))
+        orig_size = int(gm.get("window_size", 0))
+        if not chrom or orig_size <= 0:
+            continue
+        center = orig_start + (orig_size + 1) // 2
+        start = max(0, center - half)
+        end_inclusive = center + half - 1
+        regions.append((chrom, start, end_inclusive + 1, str(gene)))
+
+    if not regions:
+        raise ValueError(f"No genotype windows found in {meta_path}")
+    return regions
+
+
+def _json_key_dict_to_int(payload: Dict) -> Dict[int, object]:
+    return {int(key): value for key, value in payload.items()}
+
+
+def _expanded_center_slice(axis: Dict[str, object], window_size: int) -> Tuple[int, int]:
+    """Mirror DynamicIndelAligner.get_reference_centered_expanded_slice."""
+    ref_length = int(axis.get("ref_length", 0))
+    expanded_length = int(axis.get("expanded_length", ref_length))
+    expanded_index_map = _json_key_dict_to_int(axis.get("expanded_index_map", {}))
+    center_ref_idx = ref_length // 2
+    center_expanded_idx = int(expanded_index_map.get(center_ref_idx, center_ref_idx))
+    size = max(int(window_size), 1)
+    if expanded_length <= size:
+        return 0, expanded_length
+    half = size // 2
+    start = center_expanded_idx - half
+    end = start + size
+    if start < 0:
+        end -= start
+        start = 0
+    if end > expanded_length:
+        start = max(0, start - (end - expanded_length))
+        end = expanded_length
+    return start, end
+
+
+def _axis_effective_reference_intervals(
+    axis: Dict[str, object],
+    genomic_start: int,
+    window_size: int,
+) -> List[Tuple[int, int]]:
+    """Map the expanded-axis center slice back to BED-like reference intervals."""
+    expanded_start, expanded_end = _expanded_center_slice(axis, window_size)
+    expanded_index_map = _json_key_dict_to_int(axis.get("expanded_index_map", {}))
+    selected = sorted(
+        int(ref_idx)
+        for ref_idx, expanded_idx in expanded_index_map.items()
+        if expanded_start <= int(expanded_idx) < expanded_end
+    )
+    if not selected:
+        return []
+
+    intervals: List[Tuple[int, int]] = []
+    run_start = selected[0]
+    prev = selected[0]
+    for ref_idx in selected[1:]:
+        if ref_idx == prev + 1:
+            prev = ref_idx
+            continue
+        intervals.append((genomic_start + run_start, genomic_start + prev + 1))
+        run_start = prev = ref_idx
+    intervals.append((genomic_start + run_start, genomic_start + prev + 1))
+    return intervals
+
+
+def _regions_from_genotype_cache(cache_dir: Path) -> List[Tuple[str, int, int, str]]:
+    """Load effective expanded-axis windows from a genotype_based_predictor cache."""
+    meta_path = cache_dir / "metadata.json"
+    if not meta_path.exists():
+        raise FileNotFoundError(f"metadata.json not found in genotype cache: {meta_path}")
+    with open(meta_path) as f:
+        meta = json.load(f)
+    window_meta = meta.get("gene_window_metadata") or {}
+    gene_order = list(meta.get("gene_order") or window_meta.keys())
+    processing = meta.get("processing_params") or {}
+    window_size = int(processing.get("window_center_size", 32768))
+    alignment_signature = meta.get("alignment_cache_signature") or {}
+    regions: List[Tuple[str, int, int, str]] = []
+    for gene in gene_order:
+        gm = window_meta.get(gene)
+        if not gm:
+            continue
+        chrom = str(gm.get("chromosome", ""))
+        start = int(gm.get("start", 0))
+        end_value = int(gm.get("end", 0))
+        if not chrom or end_value <= start:
+            continue
+
+        axis_path = None
+        axis_cache_dir = (alignment_signature.get(gene) or {}).get("cache_dir")
+        if axis_cache_dir:
+            axis_path = Path(axis_cache_dir) / "axis.json"
+
+        if axis_path and axis_path.exists():
+            with open(axis_path) as f:
+                axis_payload = json.load(f)
+            axis = axis_payload.get("axis", {})
+            effective_intervals = _axis_effective_reference_intervals(axis, max(0, start), window_size)
+            for idx, (interval_start, interval_end) in enumerate(effective_intervals):
+                suffix = f"#{idx + 1}" if len(effective_intervals) > 1 else ""
+                regions.append((chrom, interval_start, interval_end, f"{gene}{suffix}"))
+            continue
+
+        regions.append((chrom, max(0, start), end_value + 1, str(gene)))
+    if not regions:
+        raise ValueError(f"No gene_window_metadata found in {meta_path}")
+    return regions
+
+
+def _write_regions_bed(regions: List[Tuple[str, int, int, str]], tag_payload: dict) -> Path:
+    digest = hashlib.sha1(
+        json.dumps(tag_payload, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:12]
+    out_dir = SCRIPT_DIR / "refs" / "generated_regions"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    prefix = str(tag_payload.get("prefix", "genotype_windows"))
+    bed_path = out_dir / f"{prefix}_{digest}.bed"
+    if not bed_path.exists():
+        tmp = bed_path.with_suffix(bed_path.suffix + f".tmp.{os.getpid()}")
+        with open(tmp, "w") as f:
+            for chrom, start, end, name in regions:
+                f.write(f"{chrom}\t{start}\t{end}\t{name}\n")
+        os.replace(tmp, bed_path)
+    return bed_path
+
+
+def prepare_region_bed(config: dict, section: dict, console: Optional[Console] = None) -> Optional[Path]:
+    """Return a BED with analysis windows, if configured."""
+    region_cfg = _region_source_cfg(config, section)
+    genotype_config = _resolve_path(region_cfg.get("genotype_config"), config)
+    genotype_view = _resolve_path(region_cfg.get("genotype_view"), config)
+    genotype_cache_dir = _resolve_path(region_cfg.get("genotype_cache_dir"), config)
+    if genotype_cache_dir:
+        regions = _regions_from_genotype_cache(genotype_cache_dir)
+        bed_path = _write_regions_bed(
+            regions,
+            {
+                "prefix": "genotype_effective_windows",
+                "genotype_cache_dir": str(genotype_cache_dir),
+            },
+        )
+        if console:
+            console.print(
+                f"  Genotype cache windows: {len(regions):,} regions from {genotype_cache_dir}"
+            )
+        return bed_path
+
+    bed = _resolve_path(region_cfg.get("region_bed"), config)
+    if bed:
+        if not bed.exists():
+            raise FileNotFoundError(f"Region BED not found: {bed}")
+        return bed
+
+    dataset_input: Dict = {}
+    if genotype_config:
+        dataset_input = _load_genotype_dataset_input(genotype_config)
+    elif genotype_view:
+        with open(genotype_view) as f:
+            dataset_input = json.load(f)
+
+    dataset_dir_value = region_cfg.get("genotype_dataset_dir") or dataset_input.get("dataset_dir")
+    if not dataset_dir_value:
+        return None
+
+    dataset_dir = Path(str(dataset_dir_value)).expanduser()
+    if not dataset_dir.is_absolute():
+        base = genotype_config.parent if genotype_config else Path(config.get("__config_dir", "."))
+        dataset_dir = (base / dataset_dir).resolve()
+
+    genes_to_use = region_cfg.get("genes_to_use", dataset_input.get("genes_to_use"))
+    window_center_size = int(region_cfg.get(
+        "window_center_size",
+        dataset_input.get("window_center_size", 32768),
+    ))
+    regions = _regions_from_genotype_metadata(dataset_dir, genes_to_use, window_center_size)
+    bed_path = _write_regions_bed(
+        regions,
+        {
+            "dataset_dir": str(dataset_dir),
+            "genes_to_use": list(genes_to_use or []),
+            "window_center_size": window_center_size,
+        },
+    )
+    if console:
+        console.print(
+            f"  Genotype windows: {len(regions):,} regions from {dataset_dir} "
+            f"(w={window_center_size:,})"
+        )
+    return bed_path
+
+
+def _load_region_intervals(region_bed: Optional[Path]) -> Dict[str, List[Tuple[int, int]]]:
+    intervals: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
+    if not region_bed:
+        return intervals
+    with open(region_bed) as f:
+        for line in f:
+            if not line.strip() or line.startswith("#"):
+                continue
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) < 3:
+                continue
+            chrom = normalize_chrom(parts[0])
+            intervals[chrom].append((int(parts[1]), int(parts[2])))
+    for chrom in intervals:
+        intervals[chrom].sort()
+    return intervals
+
+
+def _position_in_regions(chrom: str, pos_1based: int, intervals: Dict[str, List[Tuple[int, int]]]) -> bool:
+    if not intervals:
+        return True
+    pos0 = int(pos_1based) - 1
+    for start, end in intervals.get(normalize_chrom(chrom), []):
+        if start <= pos0 < end:
+            return True
+        if start > pos0:
+            break
+    return False
+
+
+def _region_chromosomes(region_bed: Optional[Path]) -> Optional[Set[str]]:
+    if not region_bed:
+        return None
+    return set(_load_region_intervals(region_bed).keys())
+
+
+def _build_variant_include_expr(section: dict) -> str:
+    """Build bcftools include expression for biallelic variant classes."""
+    variant_types = [str(v).lower() for v in _as_list(section.get("variant_types"), ["snp"])]
+    type_exprs = []
+    if "snp" in variant_types or "snv" in variant_types:
+        type_exprs.append('TYPE="snp"')
+    if "indel" in variant_types or "indels" in variant_types:
+        type_exprs.append('TYPE="indel"')
+    if not type_exprs:
+        raise ValueError(f"Unsupported variant_types: {variant_types}")
+    inc_parts = ["(" + " || ".join(type_exprs) + ")", "N_ALT=1"]
+    if section.get("skip_no_rsid", True):
+        inc_parts.append('ID~"^rs"')
+    return " && ".join(inc_parts)
+
+
+def _default_genotype_encoding(section: dict) -> str:
+    variant_types = [str(v).lower() for v in _as_list(section.get("variant_types"), ["snp"])]
+    return "gt" if any(v not in ("snp", "snv") for v in variant_types) else "alleles"
+
+
 def _ensure_fd_limit(needed: int, console: Console) -> int:
     """Raise the soft file-descriptor limit; return usable batch size."""
     try:
@@ -195,6 +576,14 @@ def _gt_to_23andme(gt_str: str, ref: str, alt: str) -> str:
         return "--"
 
 
+def _gt_to_numeric(gt_str: str) -> str:
+    """Return the biallelic genotype code (0/1) without phasing payload."""
+    gt = gt_str.split(":", 1)[0]
+    if gt in GT_DOSE:
+        return gt
+    return "--"
+
+
 # ═══════════════════════════════════════════════════════════════
 # Step 1 — Generate 23andMe files
 # ═══════════════════════════════════════════════════════════════
@@ -205,6 +594,7 @@ def _start_bcftools_query(
     sample_csv: str,
     inc_expr: str,
     dbsnp_vcf: Optional[str] = None,
+    region_bed: Optional[str] = None,
 ) -> Tuple[subprocess.Popen, Optional[subprocess.Popen]]:
     """Start a bcftools query pipeline.
 
@@ -218,15 +608,19 @@ def _start_bcftools_query(
         ann_cmd = [
             "bcftools", "annotate",
             "-a", dbsnp_vcf, "-c", "ID",
-            vcf_path,
         ]
+        if region_bed:
+            ann_cmd.extend(["-R", region_bed])
+        ann_cmd.append(vcf_path)
         q_cmd = [
             "bcftools", "query",
             "-s", sample_csv,
             "-i", inc_expr,
             "-f", fmt,
-            "-",
         ]
+        q_cmd.extend([
+            "-",
+        ])
         p_ann = subprocess.Popen(ann_cmd, stdout=subprocess.PIPE)
         proc = subprocess.Popen(
             q_cmd, stdin=p_ann.stdout,
@@ -240,8 +634,10 @@ def _start_bcftools_query(
         "-s", sample_csv,
         "-i", inc_expr,
         "-f", fmt,
-        vcf_path,
     ]
+    if region_bed:
+        cmd.extend(["-R", region_bed])
+    cmd.append(vcf_path)
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, text=True, bufsize=1 << 20,
     )
@@ -344,6 +740,8 @@ def _process_chromosome_batch(
     panel: Optional[Set[str]],
     chrom_label: str,
     dbsnp_vcf: Optional[str] = None,
+    region_bed: Optional[str] = None,
+    genotype_encoding: str = "alleles",
 ) -> Dict[str, int]:
     """Run bcftools query for *batch_ids* on one chromosome.
 
@@ -361,7 +759,7 @@ def _process_chromosome_batch(
     sample_csv = ",".join(batch_ids)
 
     proc, p_ann = _start_bcftools_query(
-        vcf_path, sample_csv, inc_expr, dbsnp_vcf,
+        vcf_path, sample_csv, inc_expr, dbsnp_vcf, region_bed,
     )
 
     fhs: Dict[str, "IO"] = {}
@@ -380,16 +778,21 @@ def _process_chromosome_batch(
             if len(parts) < 5 + n:
                 continue
 
-            rsid = parts[2]
-            if panel is not None and rsid not in panel:
-                continue
-
+            var_id = parts[2]
             ref, alt = parts[3], parts[4]
             nc = normalize_chrom(parts[0])
-            prefix = f"{rsid}\t{nc}\t{parts[1]}\t"
+            if not var_id or var_id == ".":
+                var_id = f"{nc}:{parts[1]}:{ref}:{alt}"
+            if panel is not None and var_id not in panel:
+                continue
+
+            prefix = f"{var_id}\t{nc}\t{parts[1]}\t"
 
             for i in range(n):
-                geno = _gt_to_23andme(parts[5 + i], ref, alt)
+                if genotype_encoding == "gt":
+                    geno = _gt_to_numeric(parts[5 + i])
+                else:
+                    geno = _gt_to_23andme(parts[5 + i], ref, alt)
                 fhs[batch_ids[i]].write(prefix + geno + "\n")
                 counts[batch_ids[i]] += 1
 
@@ -419,13 +822,22 @@ def _process_chromosome_batch(
 
 _WORKER_PANEL: Optional[Set[str]] = None
 _WORKER_INC_EXPR: str = ""
+_WORKER_REGION_BED: Optional[str] = None
+_WORKER_GENOTYPE_ENCODING: str = "alleles"
 
 
-def _worker_init(panel_path: Optional[str], inc_expr: str) -> None:
+def _worker_init(
+    panel_path: Optional[str],
+    inc_expr: str,
+    region_bed: Optional[str],
+    genotype_encoding: str,
+) -> None:
     """Load SNP panel once per worker process for parallel Step 1."""
-    global _WORKER_PANEL, _WORKER_INC_EXPR
+    global _WORKER_PANEL, _WORKER_INC_EXPR, _WORKER_REGION_BED, _WORKER_GENOTYPE_ENCODING
     _WORKER_PANEL = load_snp_panel(panel_path) if panel_path else None
     _WORKER_INC_EXPR = inc_expr
+    _WORKER_REGION_BED = region_bed
+    _WORKER_GENOTYPE_ENCODING = genotype_encoding
 
 
 def _worker_run_chrom(
@@ -446,6 +858,8 @@ def _worker_run_chrom(
         _WORKER_PANEL,
         chrom_label=chrom_label,
         dbsnp_vcf=dbsnp_vcf,
+        region_bed=_WORKER_REGION_BED,
+        genotype_encoding=_WORKER_GENOTYPE_ENCODING,
     )
     return chrom_label, counts
 
@@ -455,7 +869,7 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
     inp = config["input"]
     conv = config.get("conversion", {})
 
-    splits = load_splits(inp["splits_metadata"])
+    splits = load_configured_splits(config)
     meta = sample_metadata(splits, config)
     all_ids = list(meta.keys())
     ind_dir = Path(inp["individuals_dir"])
@@ -490,6 +904,14 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
 
     chroms = inp.get("chromosomes", DEFAULT_CHROMS)
     vcf_pat = inp["vcf_pattern"]
+    region_bed = prepare_region_bed(config, conv, console)
+    if region_bed:
+        region_chroms = _region_chromosomes(region_bed)
+        chroms = [c for c in chroms if normalize_chrom(c) in region_chroms]
+        console.print(f"  Region filter: {region_bed} ({len(chroms)} chromosome(s))")
+    genotype_encoding = conv.get("genotype_encoding", _default_genotype_encoding(conv))
+    if genotype_encoding not in ("alleles", "gt"):
+        raise ValueError("conversion.genotype_encoding must be 'alleles' or 'gt'")
 
     first_vcf = next(
         (find_vcf(vcf_pat, c) for c in chroms if find_vcf(vcf_pat, c)), None
@@ -548,11 +970,7 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
             f"({100.0 * n_partials / total_chr_jobs:.1f}%)[/yellow]"
         )
 
-    skip_rsid = conv.get("skip_no_rsid", True)
-    inc_parts = ['TYPE="snp"', "N_ALT=1"]
-    if skip_rsid:
-        inc_parts.append('ID~"^rs"')
-    inc_expr = " && ".join(inc_parts)
+    inc_expr = _build_variant_include_expr(conv)
 
     batch_size = _ensure_fd_limit(len(valid) + 256, console)
 
@@ -640,7 +1058,12 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
                 max_workers=n_workers_parallel,
                 mp_context=mp_ctx,
                 initializer=_worker_init,
-                initargs=(panel_path_for_workers, inc_expr),
+                initargs=(
+                    panel_path_for_workers,
+                    inc_expr,
+                    str(region_bed) if region_bed else None,
+                    genotype_encoding,
+                ),
             ) as ex:
                 futures = {
                     ex.submit(_worker_run_chrom, t): t[4] for t in tasks
@@ -672,6 +1095,8 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
                     panel,
                     chrom_label=t[4],
                     dbsnp_vcf=t[5],
+                    region_bed=str(region_bed) if region_bed else None,
+                    genotype_encoding=genotype_encoding,
                 )
                 for sid, cnt in batch_counts.items():
                     per_ind_snps[sid] += cnt
@@ -763,19 +1188,52 @@ def _build_statistics_path(config: dict) -> str:
     min_maf = stat_cfg.get("min_maf", 0.01)
     max_snps = stat_cfg.get("max_snps", None)
     haplotype_mode = pred_cfg.get("haplotype_mode", "H1+H2")
+    split_source = config.get("input", {}).get("split_index") or config.get("input", {}).get("splits_metadata")
+    split_tag = "splits" + hashlib.sha1(str(split_source).encode("utf-8")).hexdigest()[:8]
 
     panel_tag = "nopanel"
     snp_panel = stat_cfg.get("snp_panel")
     if snp_panel:
         panel_tag = Path(snp_panel).stem
 
+    region_tag = "allregions"
+    region_cfg = _region_source_cfg(config, stat_cfg)
+    region_source = (
+        region_cfg.get("region_bed")
+        or region_cfg.get("genotype_cache_dir")
+        or region_cfg.get("genotype_dataset_dir")
+        or region_cfg.get("genotype_config")
+        or region_cfg.get("genotype_view")
+    )
+    if region_source:
+        payload = {
+            "region_source": str(region_source),
+            "window_center_size": region_cfg.get("window_center_size"),
+            "genes_to_use": region_cfg.get("genes_to_use"),
+        }
+        region_tag = "regions" + hashlib.sha1(
+            json.dumps(payload, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:8]
+
+    variant_tag = "+".join(sorted(
+        str(v).lower() for v in _as_list(stat_cfg.get("variant_types"), ["snp"])
+    ))
+    genotype_encoding = stat_cfg.get(
+        "genotype_encoding",
+        config.get("conversion", {}).get("genotype_encoding", _default_genotype_encoding(stat_cfg)),
+    )
+
     parts = [
         "snp_ancestry_statistics",
         "+".join(ref_subsets),
         level,
+        split_tag,
         f"maf{min_maf}",
         f"max{max_snps}" if max_snps else "maxall",
         panel_tag,
+        region_tag,
+        variant_tag,
+        genotype_encoding,
     ]
     if haplotype_mode != "H1+H2":
         parts.append(haplotype_mode)
@@ -795,7 +1253,7 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
         console.print("  Reusing. Delete the file to force recomputation.")
         return
 
-    splits = load_splits(inp["splits_metadata"])
+    splits = load_configured_splits(config)
     meta = sample_metadata(splits, config)
 
     level = pred_cfg.get("level", "superpopulation")
@@ -830,8 +1288,19 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
     min_maf = stat_cfg.get("min_maf", 0.01)
     max_snps = stat_cfg.get("max_snps", None)
     haplotype_mode = pred_cfg.get("haplotype_mode", "H1+H2")
+    genotype_encoding = stat_cfg.get(
+        "genotype_encoding",
+        config.get("conversion", {}).get("genotype_encoding", _default_genotype_encoding(stat_cfg)),
+    )
+    if genotype_encoding not in ("alleles", "gt"):
+        raise ValueError("statistics.genotype_encoding must be 'alleles' or 'gt'")
+    region_bed = prepare_region_bed(config, stat_cfg, console)
+    region_intervals = _load_region_intervals(region_bed)
 
     console.print(f"  Haplotype mode: {haplotype_mode}")
+    console.print(f"  Genotype encoding: {genotype_encoding}")
+    if region_bed:
+        console.print(f"  Region filter: {region_bed}")
 
     ind_dir = Path(inp["individuals_dir"])
     fname_tpl = config.get("conversion", {}).get(
@@ -876,30 +1345,25 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
                     rsid = parts[0]
                     geno = parts[3]
 
-                    if geno == "--" or len(geno) != 2:
+                    if geno == "--":
                         continue
                     if stat_panel is not None and rsid not in stat_panel:
                         continue
+                    if not _position_in_regions(parts[1], int(parts[2]), region_intervals):
+                        continue
 
                     if rsid not in tracked_allele:
-                        tracked_allele[rsid] = geno[0]
+                        tracked_allele[rsid] = "0" if genotype_encoding == "gt" else geno[0]
                         snp_chrom_pos[rsid] = (parts[1], parts[2])
                         snp_count[rsid] = [0] * K
                         snp_total[rsid] = [0] * K
 
                     ref = tracked_allele[rsid]
-                    if haplotype_mode == "H1":
-                        dose = 1 if geno[0] == ref else 0
-                        snp_count[rsid][pidx] += dose
-                        snp_total[rsid][pidx] += 1
-                    elif haplotype_mode == "H2":
-                        dose = 1 if geno[1] == ref else 0
-                        snp_count[rsid][pidx] += dose
-                        snp_total[rsid][pidx] += 1
-                    else:
-                        dose = sum(1 for c in geno if c == ref)
-                        snp_count[rsid][pidx] += dose
-                        snp_total[rsid][pidx] += 2
+                    dose = _genotype_dose(geno, ref, haplotype_mode)
+                    if dose is None:
+                        continue
+                    snp_count[rsid][pidx] += dose
+                    snp_total[rsid][pidx] += 1 if haplotype_mode in ("H1", "H2") else 2
 
             prog.advance(task)
 
@@ -975,6 +1439,9 @@ def step2_compute_statistics(config: dict, console: Console) -> None:
             "n_snps": len(freq_data),
             "min_maf": min_maf,
             "max_snps": max_snps,
+            "region_bed": str(region_bed) if region_bed else None,
+            "variant_types": _as_list(stat_cfg.get("variant_types"), ["snp"]),
+            "genotype_encoding": genotype_encoding,
             "created_at": datetime.now().isoformat(),
         },
         "ref_alleles": {r: snp_ref_allele[r] for r in freq_data},
@@ -1021,7 +1488,21 @@ def _genotype_dose(
       "H2"    — only genotype[1]  (dose 0 or 1)
       "H1+H2" — both alleles      (dose 0, 1, or 2)
     """
-    if genotype == "--" or len(genotype) != 2:
+    if genotype == "--":
+        return None
+
+    if "/" in genotype or "|" in genotype:
+        sep = "|" if "|" in genotype else "/"
+        alleles = genotype.split(sep)
+        if len(alleles) != 2 or "." in alleles:
+            return None
+        if haplotype_mode == "H1":
+            return 1 if alleles[0] == ref_allele else 0
+        if haplotype_mode == "H2":
+            return 1 if alleles[1] == ref_allele else 0
+        return sum(1 for a in alleles if a == ref_allele)
+
+    if len(genotype) != 2:
         return None
     if haplotype_mode == "H1":
         return 1 if genotype[0] == ref_allele else 0
@@ -1439,7 +1920,7 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
         f"{len(populations)} {stats['metadata']['level']} classes"
     )
 
-    splits = load_splits(inp["splits_metadata"])
+    splits = load_configured_splits(config)
     meta = sample_metadata(splits, config)
     level = pred_cfg.get("level", "superpopulation")
     eval_subsets = pred_cfg.get("evaluation_subsets", ["test"])

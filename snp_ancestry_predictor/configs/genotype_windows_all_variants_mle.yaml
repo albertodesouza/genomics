@@ -1,0 +1,78 @@
+# Superpopulation MLE restricted to the same 32 kb windows used by
+# genotype_based_predictor/configs/genes_1000_all_3ontologies.yaml.
+
+input:
+  splits_metadata: "/dados/GENOMICS_DATA/top3/non_longevous_results_runs_genes_1000_all/datasets/rna_seq_H1_32768_ds1_log_shuf_split0.7-0.15-0.15_seed13/splits_metadata.json"
+  split_index: "/dados/GENOMICS_DATA/v1/1kG_high_coverage_runs/datasets/rna_seq_H1+H2_32768_ds1_log_shuf_ont3_view9d9f894aa231/split_index.json"
+  individuals_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all/individuals"
+  vcf_pattern: "/dados/GENOMICS_DATA/top3/longevity_dataset/vcf_chromosomes/1kGP_high_coverage_Illumina.{chrom}.filtered.SNV_INDEL_SV_phased_panel.vcf.gz"
+  chromosomes:
+    - "chr1"
+    - "chr2"
+    - "chr5"
+    - "chr9"
+    - "chr11"
+    - "chr15"
+    - "chr16"
+    - "chr19"
+  validate_family_aware_splits: false
+
+  # Exact mode: point this to the processed genotype_based_predictor cache used
+  # in the comparison. The SNP predictor will read alignment_cache_signature and
+  # axis.json, then map the same 32k expanded-axis slice back to reference bases.
+  genotype_cache_dir: "/dados/GENOMICS_DATA/v1/1kG_high_coverage_runs/datasets/rna_seq_H1+H2_32768_ds1_log_shuf_ont3_view9d9f894aa231"
+  # If set, genotype_cache_dir takes precedence over region_bed below.
+
+  # Fallback only: static centered 32k reference BED. This is not exact when the
+  # DynamicIndelAligner expanded axis contains insertions inside the window.
+  region_bed: "genes_1000_all_w32768.bed"
+  # genotype_config: "../../genotype_based_predictor/configs/genes_1000_all_3ontologies.yaml"
+  # genotype_dataset_dir: "/dados/GENOMICS_DATA/v1/1kG_high_coverage"
+  window_center_size: 32768
+
+conversion:
+  output_filename: "{sample_id}_genes_1000_all_w32768_all_variants_gt.txt"
+  skip_no_rsid: false
+  filter_by_chip_panel: false
+  snp_panel: null
+  variant_types:
+    - "snp"
+    - "indel"
+  genotype_encoding: "gt"
+  annotate_dbsnp: false
+  genome_build: "GRCh38"
+  ref_dir: "/dados/GENOMICS_DATA/top3/refs"
+  parallel_chroms: "auto"
+
+statistics:
+  output_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all"
+  reference_subsets:
+    - "train"
+  min_maf: 0.001
+  max_snps: null
+  snp_panel: null
+  variant_types:
+    - "snp"
+    - "indel"
+  genotype_encoding: "gt"
+
+prediction:
+  level: "superpopulation"
+  haplotype_mode: "H1+H2"
+  method: "mle"
+  evaluation_subsets:
+    - "train"
+    - "val"
+    - "test"
+  results_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all/ancestry_results_genotype_windows_all_variants"
+  admixture_em:
+    max_iter: 1000
+    tol: 1.0e-7
+  admixture_mle:
+    n_restarts: 20
+
+pipeline:
+  steps:
+    generate_23andme: true
+    compute_statistics: true
+    predict_ancestry: true
