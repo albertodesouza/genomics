@@ -130,26 +130,26 @@ def materialize_dataset(source_dir: Path, target_dir: Path) -> Path:
                     if src.exists():
                         _copy_file(src, dst_window_dir / file_name)
 
-            for pred_dir_name in ("predictions_H1", "predictions_H2"):
-                src_pred_dir = src_window_dir / pred_dir_name
-                dst_pred_dir = dst_window_dir / pred_dir_name
-                if not src_pred_dir.exists():
-                    continue
-                dst_pred_dir.mkdir(parents=True, exist_ok=True)
-                for pred_file in src_pred_dir.iterdir():
-                    if pred_file.is_file():
-                        _copy_file(pred_file, dst_pred_dir / pred_file.name)
+                for pred_dir_name in ("predictions_H1", "predictions_H2"):
+                    src_pred_dir = src_window_dir / pred_dir_name
+                    dst_pred_dir = dst_window_dir / pred_dir_name
+                    if not src_pred_dir.exists():
+                        continue
+                    dst_pred_dir.mkdir(parents=True, exist_ok=True)
+                    for pred_file in src_pred_dir.iterdir():
+                        if pred_file.is_file():
+                            _copy_file(pred_file, dst_pred_dir / pred_file.name)
 
-            # Preserve raw per-window VCF artefacts when available.
-            for suffix in (
-                f"{sample_id}.window.vcf.gz",
-                f"{sample_id}.window.vcf.gz.tbi",
-                f"{sample_id}.window.consensus_ready.vcf.gz",
-                f"{sample_id}.window.consensus_ready.vcf.gz.tbi",
-            ):
-                src_variant = src_window_dir / suffix
-                if src_variant.exists():
-                    _copy_file(src_variant, dst_window_dir / suffix)
+                # Preserve raw per-window VCF artefacts when available.
+                for suffix in (
+                    f"{sample_id}.window.vcf.gz",
+                    f"{sample_id}.window.vcf.gz.tbi",
+                    f"{sample_id}.window.consensus_ready.vcf.gz",
+                    f"{sample_id}.window.consensus_ready.vcf.gz.tbi",
+                ):
+                    src_variant = src_window_dir / suffix
+                    if src_variant.exists():
+                        _copy_file(src_variant, dst_window_dir / suffix)
 
             progress.update(task, advance=1)
 
