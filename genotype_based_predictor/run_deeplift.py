@@ -409,9 +409,12 @@ def _save_superpopulation_rnaseq_visualizations(
     config: Any,
     split: str,
     out_dir: Path,
+    delta_reference: bool = False,
+    top_abs_markers: int = 20,
 ) -> None:
     import matplotlib as mpl
     import matplotlib.pyplot as plt
+    from PIL import Image, ImageDraw
 
     if not means_by_superpop:
         return
@@ -475,6 +478,114 @@ def _save_superpopulation_rnaseq_visualizations(
         "row_grouping": "For each ontology/strand/gene/haplotype descriptor, rows are consecutive superpopulations in superpopulation_order.",
         "image_policy": "No interpolation, no positional downsampling, PNG compress_level=0; raw values are also saved as .npy.",
     })
+
+    dark_cyan = (3, 18, 18)
+    separator_height = 2
+    if delta_reference:
+        abs_max = float(np.nanmax(np.abs(matrix))) if np.isfinite(matrix).any() else 1.0
+        if abs_max <= 0:
+            abs_max = 1.0
+        centered = np.clip((matrix + abs_max) / (2.0 * abs_max), 0.0, 1.0)
+        centered = np.nan_to_num(centered, nan=0.5, posinf=1.0, neginf=0.0)
+        gray_u8 = (centered * 255.0 + 0.5).astype(np.uint8)
+
+        rendered = []
+        rendered_rows = []
+        separators = []
+        matrix_to_rendered_row: Dict[int, int] = {}
+        height_so_far = 0
+        for idx, row_meta in enumerate(row_metadata):
+            data_rgb = np.repeat(gray_u8[idx:idx + 1, :, None], 3, axis=2)
+            rendered.append(data_rgb)
+            rendered_rows.append({**row_meta, "rendered_data_row": height_so_far})
+            matrix_to_rendered_row[int(row_meta["matrix_row"])] = height_so_far
+            height_so_far += 1
+
+            is_last = idx == len(row_metadata) - 1
+            next_meta = None if is_last else row_metadata[idx + 1]
+            descriptor_changed = is_last or next_meta.get("descriptor_index") != row_meta.get("descriptor_index")
+            if not descriptor_changed:
+                continue
+
+            rendered.append(np.full((separator_height, gray_u8.shape[1], 3), dark_cyan, dtype=np.uint8))
+            separators.append({
+                "after_matrix_row": int(row_meta["matrix_row"]),
+                "rendered_separator_start_row": height_so_far,
+                "height": separator_height,
+                "color_rgb": dark_cyan,
+                "reason": "ontology_strand_boundary",
+                "gene_name": row_meta.get("gene_name"),
+                "haplotype": row_meta.get("haplotype"),
+                "ontology_curie": row_meta.get("ontology_curie"),
+                "strand": row_meta.get("strand"),
+            })
+            height_so_far += separator_height
+
+        image = np.concatenate(rendered, axis=0)
+        pil = Image.fromarray(image, mode="RGB")
+        draw = ImageDraw.Draw(pil)
+        abs_matrix = np.nan_to_num(np.abs(matrix), nan=-1.0, posinf=-1.0, neginf=-1.0)
+        flat = abs_matrix.ravel()
+        top_k = min(max(int(top_abs_markers), 0), flat.size)
+        if top_k > 0:
+            top_indices = np.argpartition(flat, -top_k)[-top_k:]
+            top_indices = top_indices[np.argsort(flat[top_indices])[::-1]]
+        else:
+            top_indices = np.array([], dtype=np.int64)
+
+        markers = []
+        green = (0, 255, 0)
+        radius = 7
+        for rank, flat_idx in enumerate(top_indices.tolist(), start=1):
+            row_idx, x = np.unravel_index(flat_idx, matrix.shape)
+            y = matrix_to_rendered_row.get(int(row_idx))
+            if y is None:
+                continue
+            draw.ellipse(
+                [(int(x) - radius, int(y) - radius), (int(x) + radius, int(y) + radius)],
+                outline=green,
+                width=2,
+            )
+            row_meta = row_metadata[int(row_idx)]
+            markers.append({
+                "rank": rank,
+                "matrix_row": int(row_idx),
+                "x": int(x),
+                "rendered_y": int(y),
+                "value": float(matrix[row_idx, x]),
+                "abs_value": float(abs_matrix[row_idx, x]),
+                "gene_name": row_meta.get("gene_name"),
+                "haplotype": row_meta.get("haplotype"),
+                "ontology_curie": row_meta.get("ontology_curie"),
+                "strand": row_meta.get("strand"),
+                "superpopulation": row_meta.get("superpopulation"),
+                "num_samples": row_meta.get("num_samples"),
+            })
+
+        image_path = out_dir / "superpopulation_rnaseq_delta_reference_dark_cyan_top_abs_deviation.png"
+        pil.save(image_path, compress_level=0)
+        _write_json(out_dir / "superpopulation_rnaseq_delta_reference_top_abs_deviation_markers.json", markers)
+        _write_json(out_dir / "superpopulation_rnaseq_delta_reference_dark_cyan_separators.json", separators)
+        _write_json(out_dir / "superpopulation_rnaseq_delta_reference_rows_with_rendered_indices.json", rendered_rows)
+        _write_json(out_dir / "superpopulation_rnaseq_delta_reference_dark_cyan_top_abs_deviation_legend.json", {
+            "split": split,
+            "source_matrix": str(out_dir / "superpopulation_rnaseq_grayscale.npy"),
+            "source_rows": str(out_dir / "superpopulation_rnaseq_rows.json"),
+            "output_image": str(image_path),
+            "image_shape": list(np.asarray(pil).shape),
+            "value_encoding": {
+                "black": -abs_max,
+                "middle_gray": 0.0,
+                "white": abs_max,
+                "abs_max": abs_max,
+            },
+            "separator_color_rgb": dark_cyan,
+            "separator_height_px": separator_height,
+            "marker_color_rgb": green,
+            "marker_count": len(markers),
+            "top_abs_markers_requested": top_abs_markers,
+            "policy": "All data rows are grayscale and centered at zero. No data row is resampled or interpolated. Dark-cyan separator rows are inserted after ontology/strand blocks. Green circles mark the largest absolute deviations. PNG compress_level=0.",
+        })
 
     previous_simplify = mpl.rcParams.get("path.simplify", False)
     mpl.rcParams["path.simplify"] = False
@@ -1098,6 +1209,11 @@ def main() -> None:
     parser.add_argument("--out-dir", type=str, default=None)
     parser.add_argument("--plot", action="store_true", help="Save a PNG similar to the legacy DeepLIFT class-mean panel")
     parser.add_argument("--plot-superpopulation-rnaseq", action="store_true", help="Save grayscale and line-plot RNA-Seq means for each superpopulation in the selected split")
+    parser.add_argument("--superpopulation-rnaseq-delta-reference", action="store_true", help="Treat superpopulation RNA-Seq values as sample-reference deltas; save centered grayscale map with top absolute deviations")
+    parser.add_argument("--reference-predictions-dataset-dir", type=str, default=None, help="Override dataset_input.reference_predictions_dataset_dir for delta-reference cache lookup")
+    parser.add_argument("--reference-predictions-sample-id", type=str, default=None, help="Override dataset_input.reference_predictions_sample_id for delta-reference cache lookup")
+    parser.add_argument("--superpopulation-rnaseq-normalization-method", choices=["zscore", "minmax_keep_zero", "none"], default=None, help="Override dataset_input.normalization_method for superpopulation RNA-Seq cache lookup")
+    parser.add_argument("--superpopulation-rnaseq-top-abs-markers", type=int, default=20, help="Number of green circles for largest absolute delta-reference deviations")
     parser.add_argument("--plot-top-from", choices=["mean", "samples"], default="mean", help="Circle top windows from the mean map or from per-sample windows")
     parser.add_argument("--save-raw-pixels", action="store_true", help="Save raw matrix PNGs with no axes/text/resize plus .npy matrices")
     parser.add_argument("--show-track-separators", action="store_true", help="Draw horizontal separators between signal/mask/gene blocks")
@@ -1111,6 +1227,19 @@ def main() -> None:
 
     config_path = Path(args.config_path).resolve()
     config = load_config(config_path)
+    if args.superpopulation_rnaseq_normalization_method:
+        config.dataset_input.normalization_method = args.superpopulation_rnaseq_normalization_method
+    if args.superpopulation_rnaseq_delta_reference:
+        config.dataset_input.alphagenome_signal_transform = "delta_reference"
+        if args.reference_predictions_dataset_dir:
+            config.dataset_input.reference_predictions_dataset_dir = str(Path(args.reference_predictions_dataset_dir).resolve())
+        if args.reference_predictions_sample_id is not None:
+            config.dataset_input.reference_predictions_sample_id = args.reference_predictions_sample_id
+        if not config.dataset_input.reference_predictions_dataset_dir:
+            raise ValueError(
+                "--superpopulation-rnaseq-delta-reference requer --reference-predictions-dataset-dir "
+                "quando a config nao define reference_predictions_dataset_dir"
+            )
     if config.data_split.random_seed is not None and config.data_split.random_seed != -1:
         set_random_seeds(config.data_split.random_seed, config.data_split.strict_determinism)
 
@@ -1129,6 +1258,8 @@ def main() -> None:
             config=config,
             split=args.split,
             out_dir=out_dir,
+            delta_reference=args.superpopulation_rnaseq_delta_reference,
+            top_abs_markers=args.superpopulation_rnaseq_top_abs_markers,
         )
         _write_json(out_dir / "samples.json", superpop_samples)
         _write_json(out_dir / "run_metadata.json", {
@@ -1136,6 +1267,10 @@ def main() -> None:
             "experiment_dir": str(experiment_dir),
             "split": args.split,
             "mode": "superpopulation_rnaseq",
+            "superpopulation_rnaseq_delta_reference": args.superpopulation_rnaseq_delta_reference,
+            "reference_predictions_dataset_dir": config.dataset_input.reference_predictions_dataset_dir,
+            "reference_predictions_sample_id": config.dataset_input.reference_predictions_sample_id,
+            "superpopulation_rnaseq_top_abs_markers": args.superpopulation_rnaseq_top_abs_markers,
             "num_samples": len(superpop_samples),
             "counts_by_superpopulation": counts_by_superpop,
             "deeplift_computed": False,
