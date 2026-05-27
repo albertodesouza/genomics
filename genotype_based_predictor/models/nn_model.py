@@ -31,6 +31,9 @@ def _resolve_gene_rows(config: PipelineConfig, input_shape: Tuple[int, int]) -> 
         mask_channels = 2 + int(config.dataset_input.indel_include_valid_mask) + int(config.dataset_input.indel_include_snp_mask)
         if config.dataset_input.feature_mode == "masks_only":
             rows_per_gene = mask_channels
+        elif config.dataset_input.feature_mode == "signals_only":
+            num_ontologies = len(config.dataset_input.ontology_terms or []) or 1
+            rows_per_gene = 2 * num_ontologies
         else:
             num_ontologies = len(config.dataset_input.ontology_terms or []) or 1
             rows_per_gene = 2 * num_ontologies + mask_channels

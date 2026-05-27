@@ -61,8 +61,8 @@ class DatasetInputConfig(BaseModel):
     tensor_layout: Literal["haplotype_channels"] = "haplotype_channels"
     """Layout canônico do tensor por amostra: (2, 4, L)."""
 
-    feature_mode: Literal["signals_and_masks", "masks_only"] = "signals_and_masks"
-    """Quais canais entram no tensor: sinais AlphaGenome + máscaras, ou apenas máscaras INDEL."""
+    feature_mode: Literal["signals_and_masks", "signals_only", "masks_only"] = "signals_and_masks"
+    """Quais canais entram no tensor: sinais AlphaGenome + máscaras, apenas sinais alinhados, ou apenas máscaras INDEL."""
 
     alphagenome_signal_variant_mask: bool = False
     """Se True, zera sinais AlphaGenome em posições sem SNP/INDEL em nenhum indivíduo selecionado."""

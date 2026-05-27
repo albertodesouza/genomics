@@ -886,6 +886,9 @@ class ProcessedGenomicDataset(Dataset):
             if self.feature_mode == "masks_only":
                 h1_rows.append(h1_masks)
                 h2_rows.append(h2_masks)
+            elif self.feature_mode == "signals_only":
+                h1_rows.append(h1_signals)
+                h2_rows.append(h2_signals)
             else:
                 h1_rows.append(np.concatenate([h1_signals, h1_masks], axis=0))
                 h2_rows.append(np.concatenate([h2_signals, h2_masks], axis=0))
@@ -934,6 +937,8 @@ class ProcessedGenomicDataset(Dataset):
         per_track = self.normalization_params.get("per_track", False)
         mask_channels_per_gene = self._mask_channels_per_gene()
         signal_channels_per_gene = 0 if self.feature_mode == "masks_only" else (2 * len(self.ontology_terms) if self.ontology_terms else 1)
+        if self.feature_mode == "signals_only":
+            mask_channels_per_gene = 0
         channels_per_gene = signal_channels_per_gene + mask_channels_per_gene
 
         if features_tensor.ndim != 3:
@@ -1067,10 +1072,12 @@ class ProcessedGenomicDataset(Dataset):
         return [self.idx_to_target[i] for i in range(len(self.idx_to_target))]
 
     def _rows_per_gene(self) -> int:
-        mask_channels = self._mask_channels_per_gene()
         if self.feature_mode == "masks_only":
-            return mask_channels
+            return self._mask_channels_per_gene()
         num_ontologies = len(self.ontology_terms) if self.ontology_terms else 1
+        if self.feature_mode == "signals_only":
+            return 2 * num_ontologies
+        mask_channels = self._mask_channels_per_gene()
         return 2 * num_ontologies + mask_channels
 
     def _mask_channels_per_gene(self) -> int:
