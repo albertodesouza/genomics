@@ -121,10 +121,14 @@ class Trainer:
         }
         self.best_val_loss = float("inf")
         self.best_val_accuracy = 0.0
+        self.start_epoch = 1
 
         models_dir = experiment_dir / "models"
         models_dir.mkdir(parents=True, exist_ok=True)
         self.models_dir = models_dir
+
+        if config.checkpointing.load_checkpoint:
+            self._load_checkpoint(config.checkpointing.load_checkpoint)
 
         if config.training.weight_decay > 0:
             console.print(f"[green]✓ Weight decay (L2): {config.training.weight_decay}[/green]")
@@ -198,13 +202,56 @@ class Trainer:
         accuracy = total_correct / max(total_samples, 1) if self.is_classification else 0.0
         return {"loss": avg_loss, "accuracy": accuracy, "samples": total_samples}
 
+    def _resolve_checkpoint_path(self, checkpoint: str) -> Path:
+        path = Path(checkpoint)
+        if path.is_absolute() or path.exists():
+            return path
+        if path.suffix != ".pt":
+            path = path.with_suffix(".pt")
+        return self.models_dir / path
+
+    def _load_checkpoint(self, checkpoint: str) -> None:
+        checkpoint_path = self._resolve_checkpoint_path(checkpoint)
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"Checkpoint nao encontrado: {checkpoint_path}")
+
+        state = torch.load(checkpoint_path, map_location=self.device)
+        self.model.load_state_dict(state.get("model_state_dict", state))
+
+        optimizer_state = state.get("optimizer_state_dict")
+        if optimizer_state is not None:
+            self.optimizer.load_state_dict(optimizer_state)
+
+        scheduler_state = state.get("scheduler_state_dict")
+        if scheduler_state is not None and self.scheduler is not None:
+            self.scheduler.load_state_dict(scheduler_state)
+
+        self.start_epoch = int(state.get("epoch", 0)) + 1
+        self.best_val_loss = float(state.get("best_val_loss", state.get("loss", self.best_val_loss)))
+        self.best_val_accuracy = float(state.get("best_val_accuracy", state.get("accuracy", self.best_val_accuracy)))
+        if "best_val_loss" not in state:
+            best_loss_path = self.models_dir / "best_loss.pt"
+            if best_loss_path.exists():
+                best_loss_state = torch.load(best_loss_path, map_location="cpu")
+                self.best_val_loss = float(best_loss_state.get("loss", self.best_val_loss))
+        if "best_val_accuracy" not in state:
+            best_accuracy_path = self.models_dir / "best_accuracy.pt"
+            if best_accuracy_path.exists():
+                best_accuracy_state = torch.load(best_accuracy_path, map_location="cpu")
+                self.best_val_accuracy = float(best_accuracy_state.get("accuracy", self.best_val_accuracy))
+        console.print(f"[green]✓ Checkpoint carregado:[/green] {checkpoint_path} (retomando em E{self.start_epoch:03d})")
+
     def _save_checkpoint(self, filename: str, epoch: int, metrics: Dict[str, float]):
-        torch.save({
+        checkpoint = {
             "epoch": epoch,
             "model_state_dict": self.model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
+            "scheduler_state_dict": self.scheduler.state_dict() if self.scheduler is not None else None,
+            "best_val_loss": self.best_val_loss,
+            "best_val_accuracy": self.best_val_accuracy,
             **metrics,
-        }, self.models_dir / filename)
+        }
+        torch.save(checkpoint, self.models_dir / filename)
 
     # ------------------------------------------------------------------
     # Public interface
@@ -223,7 +270,7 @@ class Trainer:
 
         console.print(
             f"\n[bold cyan]🚀 Iniciando treinamento "
-            f"({self.num_epochs} épocas | "
+            f"({self.start_epoch}-{self.num_epochs} épocas | "
             f"lr={self.config.training.learning_rate} | "
             f"opt={self.config.training.optimizer})[/bold cyan]"
         )
@@ -232,7 +279,7 @@ class Trainer:
         no_improve = 0
         epoch = 0
 
-        for epoch in range(1, self.num_epochs + 1):
+        for epoch in range(self.start_epoch, self.num_epochs + 1):
             if interrupt_state.interrupted:
                 console.print("[yellow]⚠ Treinamento interrompido (CTRL+C)[/yellow]")
                 break
