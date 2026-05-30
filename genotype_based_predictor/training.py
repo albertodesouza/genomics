@@ -278,6 +278,7 @@ class Trainer:
         val_metrics: Dict[str, float] = {"loss": float("inf"), "accuracy": 0.0}
         no_improve = 0
         epoch = 0
+        val_frequency = max(1, int(self.config.training.validation_frequency))
 
         for epoch in range(self.start_epoch, self.num_epochs + 1):
             if interrupt_state.interrupted:
@@ -285,15 +286,20 @@ class Trainer:
                 break
 
             train_metrics = self._run_epoch(self.train_loader, train=True)
-            if len(self.val_loader.dataset) > 0:
+            should_validate = (
+                len(self.val_loader.dataset) > 0
+                and (epoch % val_frequency == 0 or epoch == self.num_epochs)
+            )
+            if should_validate:
                 val_metrics = self._run_epoch(self.val_loader, train=False)
-            else:
+            elif len(self.val_loader.dataset) == 0:
                 val_metrics = {"loss": train_metrics["loss"], "accuracy": train_metrics["accuracy"], "samples": 0}
 
             # Scheduler step
             if self.scheduler is not None:
                 if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
-                    self.scheduler.step(val_metrics["loss"])
+                    if should_validate or len(self.val_loader.dataset) == 0:
+                        self.scheduler.step(val_metrics["loss"])
                 else:
                     self.scheduler.step()
 
@@ -304,39 +310,57 @@ class Trainer:
             self.history["val_loss"].append(val_metrics["loss"])
             self.history["val_accuracy"].append(val_metrics["accuracy"])
 
-            improved_acc = val_metrics["accuracy"] > self.best_val_accuracy
-            improved_loss = val_metrics["loss"] < self.best_val_loss
+            can_update_best = should_validate or len(self.val_loader.dataset) == 0
+            improved_acc = can_update_best and val_metrics["accuracy"] > self.best_val_accuracy
+            improved_loss = can_update_best and val_metrics["loss"] < self.best_val_loss
 
             if improved_acc:
                 self.best_val_accuracy = val_metrics["accuracy"]
-                self._save_checkpoint("best_accuracy.pt", epoch, val_metrics)
+                if self.config.checkpointing.save_during_training:
+                    self._save_checkpoint("best_accuracy.pt", epoch, val_metrics)
 
             if improved_loss:
                 self.best_val_loss = val_metrics["loss"]
-                self._save_checkpoint("best_loss.pt", epoch, val_metrics)
+                if self.config.checkpointing.save_during_training:
+                    self._save_checkpoint("best_loss.pt", epoch, val_metrics)
                 no_improve = 0
-            else:
+            elif can_update_best:
                 no_improve += 1
+
+            if (
+                self.config.checkpointing.save_during_training
+                and self.config.checkpointing.save_frequency > 0
+                and epoch % self.config.checkpointing.save_frequency == 0
+            ):
+                self._save_checkpoint(f"epoch_{epoch}.pt", epoch, val_metrics)
 
             lr_now = self.optimizer.param_groups[0]["lr"]
             acc_tag = " [green]✓best_acc[/green]" if improved_acc else ""
             loss_tag = " [cyan]✓best_loss[/cyan]" if improved_loss else ""
+            val_text = (
+                f"val loss={val_metrics['loss']:.4f} acc={val_metrics['accuracy']:.4f}"
+                if can_update_best else f"val skipped (freq={val_frequency})"
+            )
             console.print(
                 f"[E{epoch:03d}] "
                 f"train loss={train_metrics['loss']:.4f} acc={train_metrics['accuracy']:.4f} | "
-                f"val loss={val_metrics['loss']:.4f} acc={val_metrics['accuracy']:.4f} | "
+                f"{val_text} | "
                 f"lr={lr_now:.2e}{acc_tag}{loss_tag}"
             )
 
             if self.wandb_run:
-                self.wandb_run.log({
+                log_payload = {
                     "epoch": epoch,
                     "train/loss": train_metrics["loss"],
                     "train/accuracy": train_metrics["accuracy"],
-                    "val/loss": val_metrics["loss"],
-                    "val/accuracy": val_metrics["accuracy"],
                     "lr": lr_now,
-                })
+                }
+                if can_update_best:
+                    log_payload.update({
+                        "val/loss": val_metrics["loss"],
+                        "val/accuracy": val_metrics["accuracy"],
+                    })
+                self.wandb_run.log(log_payload)
 
             if self.early_stop_patience and no_improve >= self.early_stop_patience:
                 console.print(f"[yellow]Early stopping após {no_improve} épocas sem melhora[/yellow]")

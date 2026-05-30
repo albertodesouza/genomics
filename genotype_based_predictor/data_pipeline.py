@@ -111,6 +111,17 @@ def _build_view_definition(config: PipelineConfig) -> Dict[str, Any]:
     return view
 
 
+def _target_definition(config: PipelineConfig) -> Dict[str, Any]:
+    return {
+        "prediction_target": config.output.prediction_target,
+        "known_classes": config.output.known_classes,
+        "derived_targets": {
+            name: target.model_dump(mode="python")
+            for name, target in config.output.derived_targets.items()
+        },
+    }
+
+
 def _build_resolved_view_definition(config: PipelineConfig, processed_dataset: ProcessedGenomicDataset) -> Dict[str, Any]:
     view = _build_view_definition(config)
     sample_ids = []
@@ -248,6 +259,8 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
             "consensus_dataset_dir": config.dataset_input.consensus_dataset_dir,
             "tensor_layout": config.dataset_input.tensor_layout,
             "prediction_target": config.output.prediction_target,
+            "known_classes": config.output.known_classes,
+            "derived_targets": _target_definition(config)["derived_targets"],
             "input_shape": "3D_haplotype_channels",
             "center_window_policy": "reference_center_to_expanded_axis",
             "mask_normalization_policy": "preserve_binary_masks_v1",
@@ -259,6 +272,8 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
             cached_value = pp.get(k)
             if cached_value is None and k in view_fallback_keys:
                 cached_value = requested_view.get(k)
+            if cached_value is None and k == "derived_targets":
+                cached_value = {}
             if cached_value != v:
                 console.print(f"[yellow]Cache inválido: {k} mudou ({cached_value} → {v})[/yellow]")
                 return False
@@ -574,6 +589,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
         with open(temp_dir / "view_definition.json", "w") as f:
             json.dump({
                 "requested_view": _build_view_definition(config),
+                "target_definition": _target_definition(config),
                 "resolved_view": _build_resolved_view_definition(config, processed_dataset),
             }, f, indent=2)
 
@@ -614,6 +630,8 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                 "balancing_strategy": config.data_split.balancing_strategy,
                 "dataset_dir": str(dataset_dir.resolve()),
                 "prediction_target": config.output.prediction_target,
+                "known_classes": config.output.known_classes,
+                "derived_targets": _target_definition(config)["derived_targets"],
                 "input_shape": "3D_haplotype_channels",
                 "center_window_policy": "reference_center_to_expanded_axis",
                 "mask_normalization_policy": "preserve_binary_masks_v1",
@@ -670,7 +688,10 @@ def _make_data_loaders(train_ds, val_ds, test_ds, config: PipelineConfig):
         train_w = val_w = 0
         persistent = False
     else:
-        train_w, val_w = 4, 2
+        train_w = config.data_loading.train_num_workers
+        val_w = config.data_loading.val_num_workers
+        train_w = 4 if train_w is None else train_w
+        val_w = 2 if val_w is None else val_w
         persistent = True
 
     seed = config.data_split.random_seed
@@ -679,19 +700,35 @@ def _make_data_loaders(train_ds, val_ds, test_ds, config: PipelineConfig):
         gen = torch.Generator()
         gen.manual_seed(seed)
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                              num_workers=train_w, pin_memory=pin_mem, collate_fn=_collate_fn,
-                              persistent_workers=persistent and train_w > 0,
-                              generator=gen,
-                              worker_init_fn=worker_init_fn if train_w > 0 else None)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
-                            num_workers=val_w, pin_memory=pin_mem, collate_fn=_collate_fn,
-                            persistent_workers=persistent and val_w > 0,
-                            worker_init_fn=worker_init_fn if val_w > 0 else None)
-    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False,
-                             num_workers=val_w, pin_memory=pin_mem, collate_fn=_collate_fn,
-                             persistent_workers=persistent and val_w > 0,
-                             worker_init_fn=worker_init_fn if val_w > 0 else None)
+    train_kwargs = {
+        "batch_size": batch_size,
+        "shuffle": True,
+        "num_workers": train_w,
+        "pin_memory": pin_mem,
+        "collate_fn": _collate_fn,
+        "persistent_workers": persistent and train_w > 0,
+        "generator": gen,
+        "worker_init_fn": worker_init_fn if train_w > 0 else None,
+    }
+    val_kwargs = {
+        "batch_size": batch_size,
+        "shuffle": False,
+        "num_workers": val_w,
+        "pin_memory": pin_mem,
+        "collate_fn": _collate_fn,
+        "persistent_workers": persistent and val_w > 0,
+        "worker_init_fn": worker_init_fn if val_w > 0 else None,
+    }
+    prefetch = config.data_loading.prefetch_factor
+    if prefetch is not None:
+        if train_w > 0:
+            train_kwargs["prefetch_factor"] = prefetch
+        if val_w > 0:
+            val_kwargs["prefetch_factor"] = prefetch
+
+    train_loader = DataLoader(train_ds, **train_kwargs)
+    val_loader = DataLoader(val_ds, **val_kwargs)
+    test_loader = DataLoader(test_ds, **val_kwargs)
     return train_loader, val_loader, test_loader
 
 
@@ -812,7 +849,7 @@ def prepare_data(config: PipelineConfig, experiment_dir: Path):
     proc_idx_by_base = {bi: pi for pi, bi in enumerate(valid_base_indices)}
 
     all_groups, fam_info = build_family_aware_sample_groups(base_dataset, config)
-    sample_groups = [[bi for bi in g if bi in valid_set] for g in all_groups]
+    sample_groups = [[base_idx for base_idx in group if base_idx in valid_set] for group in all_groups]
     sample_groups = [g for g in sample_groups if g]
 
     n_groups = len(sample_groups)

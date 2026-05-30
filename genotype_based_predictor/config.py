@@ -406,6 +406,9 @@ class DataLoadingConfig(BaseModel):
 
     loading_strategy: Literal["preload", "lazy"] = "preload"
     cache_size: int = 100
+    train_num_workers: Optional[int] = None
+    val_num_workers: Optional[int] = None
+    prefetch_factor: Optional[int] = None
 
 
 # ===========================================================================
@@ -579,6 +582,13 @@ def generate_dataset_name(config: PipelineConfig) -> str:
         "balancing_strategy": config.data_split.balancing_strategy,
         "family_split_mode": config.data_split.family_split_mode,
     }
+    if config.output.known_classes is not None:
+        view_payload["known_classes"] = config.output.known_classes
+    if config.output.derived_targets:
+        view_payload["derived_targets"] = {
+            name: target.model_dump(mode="python")
+            for name, target in config.output.derived_targets.items()
+        }
     if di.feature_mode != "signals_and_masks":
         view_payload["feature_mode"] = di.feature_mode
     if di.alphagenome_signal_variant_mask:

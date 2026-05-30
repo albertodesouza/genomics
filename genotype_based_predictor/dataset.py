@@ -1161,13 +1161,13 @@ class CachedProcessedDataset(Dataset):
             self._data_loaded = True
             console.print(f"[green]✓ {self._length} samples (preload)[/green]")
         elif self.loading_strategy == "preload" and self._shard_index is not None:
-            self._length = self._determine_length()
-            self._data_loaded = False
-            self.data = None
+            self.data = self._load_all_shards()
+            self._length = len(self.data)
+            self._data_loaded = True
             self._cache = {}
             self._cache_order = []
             self._loaded_shard_path = None
-            console.print(f"[green]✓ {self._length} samples (sharded preload-lazy)[/green]")
+            console.print(f"[green]✓ {self._length} samples (sharded preload)[/green]")
         elif self.loading_strategy == "lazy":
             self._length = self._determine_length()
             self._data_loaded = False
@@ -1335,6 +1335,23 @@ class CachedProcessedDataset(Dataset):
             self._loaded_shard_path = shard_path
 
         return self.data[item_offset]
+
+    def _load_all_shards(self) -> List[Tuple[torch.Tensor, torch.Tensor]]:
+        if self._shard_index is None:
+            raise RuntimeError("Shard index ausente")
+
+        items: List[Tuple[torch.Tensor, torch.Tensor]] = []
+        for shard_name in self._shard_index["shards"]:
+            shard_path = self.data_file.parent / shard_name
+            items.extend(torch.load(shard_path))
+
+        expected = self._determine_length()
+        if len(items) != expected:
+            raise RuntimeError(
+                f"Cache sharded inconsistente para {self.split_name}: "
+                f"esperado {expected}, carregado {len(items)}"
+            )
+        return items
 
     def get_input_size(self) -> int:
         r, c = self.get_input_shape()
