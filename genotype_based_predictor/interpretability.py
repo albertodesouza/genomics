@@ -28,6 +28,16 @@ console = Console()
 MASK_TRACK_NAMES = ("ins_mask", "del_mask", "valid_mask")
 
 
+def _mask_track_names(config: Any) -> List[str]:
+    di = config.dataset_input
+    names = ["ins_mask", "del_mask"]
+    if getattr(di, "indel_include_valid_mask", False):
+        names.append("valid_mask")
+    if getattr(di, "indel_include_snp_mask", False):
+        names.append("snp_mask")
+    return names
+
+
 def _unpack_dataset_item(item: Any) -> Tuple[torch.Tensor, Any, Optional[Any]]:
     if isinstance(item, (tuple, list)):
         if len(item) >= 3:
@@ -112,17 +122,23 @@ def build_haplotype_track_layout(
                     "metadata": None,
                 })
 
-    per_gene_tracks = list(signal_tracks)
-    for mask_idx, mask_name in enumerate(MASK_TRACK_NAMES):
-        per_gene_tracks.append({
-            "track_type": "mask",
-            "track_name": mask_name,
-            "mask_index": mask_idx,
-            "ontology_curie": None,
-            "strand": None,
-            "biosample_name": None,
-            "metadata": None,
-        })
+    feature_mode = getattr(di, "feature_mode", "signals_and_masks")
+    if feature_mode == "masks_only":
+        per_gene_tracks = []
+    else:
+        per_gene_tracks = list(signal_tracks)
+
+    if feature_mode != "signals_only":
+        for mask_idx, mask_name in enumerate(_mask_track_names(config)):
+            per_gene_tracks.append({
+                "track_type": "mask",
+                "track_name": mask_name,
+                "mask_index": mask_idx,
+                "ontology_curie": None,
+                "strand": None,
+                "biosample_name": None,
+                "metadata": None,
+            })
 
     layout: List[Dict[str, Any]] = []
     tracks_per_gene = len(per_gene_tracks)

@@ -148,12 +148,24 @@ def _aggregate_metric(rows: Iterable[Dict[str, Any]], key: str) -> List[Dict[str
 
 def _plot_layout(config: Any) -> Dict[str, Any]:
     genes = list(config.dataset_input.genes_to_use or config.dataset_input.gene_order or [])
-    tracks_per_gene = 2 * len(config.dataset_input.ontology_terms or []) + 3
+    signal_track_count = 2 * len(config.dataset_input.ontology_terms or []) if config.dataset_input.ontology_terms else 1
+    mask_track_count = 2
+    if config.dataset_input.indel_include_valid_mask:
+        mask_track_count += 1
+    if config.dataset_input.indel_include_snp_mask:
+        mask_track_count += 1
+    feature_mode = getattr(config.dataset_input, "feature_mode", "signals_and_masks")
+    if feature_mode == "signals_only":
+        mask_track_count = 0
+    elif feature_mode == "masks_only":
+        signal_track_count = 0
+    tracks_per_gene = signal_track_count + mask_track_count
     return {
         "genes": genes,
         "tracks_per_gene": tracks_per_gene,
         "rows_per_hap": len(genes) * tracks_per_gene,
-        "signal_track_count": tracks_per_gene - 3,
+        "signal_track_count": signal_track_count,
+        "mask_track_count": mask_track_count,
     }
 
 
@@ -183,9 +195,10 @@ def _split_signal_and_masks(matrix: np.ndarray, config: Any) -> Tuple[np.ndarray
     layout = _plot_layout(config)
     tracks_per_gene = layout["tracks_per_gene"]
     signal_track_count = layout["signal_track_count"]
+    mask_track_count = layout["mask_track_count"]
     signal = matrix.copy()
     masks = np.full_like(matrix, np.nan, dtype=np.float32)
-    if tracks_per_gene >= 4:
+    if mask_track_count > 0 and tracks_per_gene > 0:
         for row_idx in range(matrix.shape[0]):
             if row_idx % tracks_per_gene >= signal_track_count:
                 signal[row_idx, :] = np.nan
@@ -201,6 +214,7 @@ def _save_raw_pixel_images(mean_input: torch.Tensor, mean_attr: torch.Tensor, co
     attr_np = _flatten_haps_for_plot(mean_attr, config)
     signal_input, mask_input = _split_signal_and_masks(input_np, config)
     signal_attr, mask_attr = _split_signal_and_masks(attr_np, config)
+    has_masks = _plot_layout(config)["mask_track_count"] > 0
 
     attr_lim = float(np.nanmax(np.abs(signal_attr))) if np.isfinite(signal_attr).any() else 1.0
     mask_attr_lim = float(np.nanmax(np.abs(mask_attr))) if np.isfinite(mask_attr).any() else 1.0
@@ -211,9 +225,10 @@ def _save_raw_pixel_images(mean_input: torch.Tensor, mean_attr: torch.Tensor, co
     mask_cmap = LinearSegmentedColormap.from_list("mask_red_to_blue", ["#d73027", "#f7f7f7", "#2166ac"])
 
     plt.imsave(out_dir / "raw_input_signal_gray.png", signal_input, cmap="gray", vmin=0)
-    plt.imsave(out_dir / "raw_input_masks_0_1.png", np.clip(mask_input, 0.0, 1.0), cmap=mask_cmap, vmin=0, vmax=1)
     plt.imsave(out_dir / "raw_deeplift_signal_bwr.png", signal_attr, cmap="bwr", vmin=-attr_lim, vmax=attr_lim)
-    plt.imsave(out_dir / "raw_deeplift_masks_bwr.png", mask_attr, cmap="bwr", vmin=-mask_attr_lim, vmax=mask_attr_lim)
+    if has_masks:
+        plt.imsave(out_dir / "raw_input_masks_0_1.png", np.clip(mask_input, 0.0, 1.0), cmap=mask_cmap, vmin=0, vmax=1)
+        plt.imsave(out_dir / "raw_deeplift_masks_bwr.png", mask_attr, cmap="bwr", vmin=-mask_attr_lim, vmax=mask_attr_lim)
 
     np.save(out_dir / "raw_input_matrix.npy", input_np)
     np.save(out_dir / "raw_deeplift_matrix.npy", attr_np)
@@ -316,6 +331,20 @@ def _ordered_superpopulations(superpops: Iterable[str]) -> List[str]:
     return ordered
 
 
+def _ordered_class_groups(groups: Iterable[str], class_names: List[str]) -> List[str]:
+    seen = {str(group) for group in groups if str(group)}
+    ordered = [name for name in class_names if name in seen]
+    ordered.extend(sorted(seen - set(ordered)))
+    return ordered
+
+
+def _class_name_for_target(target: Any, class_names: List[str]) -> str:
+    target_idx = _target_to_int(target)
+    if target_idx is not None and 0 <= target_idx < len(class_names):
+        return class_names[target_idx]
+    return "UNK" if target_idx is None else str(target_idx)
+
+
 def _collect_superpopulation_mean_inputs(dataset: Any, split: str) -> Tuple[Dict[str, torch.Tensor], Dict[str, int], List[Dict[str, Any]]]:
     sums: Dict[str, torch.Tensor] = {}
     counts: Dict[str, int] = {}
@@ -344,13 +373,52 @@ def _collect_superpopulation_mean_inputs(dataset: Any, split: str) -> Tuple[Dict
             samples.append({
                 "dataset_index": idx,
                 "sample_id": metadata.get("sample_id", _sample_id_for(dataset, idx, meta_idx)),
-                "superpopulation": superpop,
+                group_label: superpop,
                 "population": metadata.get("population", "UNK"),
                 "target": _target_to_int(target),
             })
             progress.update(task, advance=1)
 
     means = {superpop: (sums[superpop] / max(counts[superpop], 1)).to(torch.float32) for superpop in sums}
+    return means, counts, samples
+
+
+def _collect_class_mean_inputs(dataset: Any, split: str, class_names: List[str]) -> Tuple[Dict[str, torch.Tensor], Dict[str, int], List[Dict[str, Any]]]:
+    sums: Dict[str, torch.Tensor] = {}
+    counts: Dict[str, int] = {}
+    samples: List[Dict[str, Any]] = []
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task(f"Calculando medias RNA-Seq por classe ({split})...", total=len(dataset))
+        for idx in range(len(dataset)):
+            features, target, meta_idx = _unpack_item(dataset[idx])
+            metadata = _metadata_for_dataset_item(dataset, idx, meta_idx)
+            class_name = _class_name_for_target(target, class_names)
+            tensor = features.detach().cpu().to(torch.float64)
+            if class_name not in sums:
+                sums[class_name] = tensor.clone()
+                counts[class_name] = 1
+            else:
+                sums[class_name] += tensor
+                counts[class_name] += 1
+            samples.append({
+                "dataset_index": idx,
+                "sample_id": metadata.get("sample_id", _sample_id_for(dataset, idx, meta_idx)),
+                "class_name": class_name,
+                "superpopulation": metadata.get("superpopulation", metadata.get("super_population", "UNK")),
+                "population": metadata.get("population", "UNK"),
+                "target": _target_to_int(target),
+            })
+            progress.update(task, advance=1)
+
+    means = {class_name: (sums[class_name] / max(counts[class_name], 1)).to(torch.float32) for class_name in sums}
     return means, counts, samples
 
 
@@ -411,6 +479,8 @@ def _save_superpopulation_rnaseq_visualizations(
     out_dir: Path,
     delta_reference: bool = False,
     top_abs_markers: int = 20,
+    group_label: str = "superpopulation",
+    group_order: Optional[List[str]] = None,
 ) -> None:
     import matplotlib as mpl
     import matplotlib.pyplot as plt
@@ -423,7 +493,7 @@ def _save_superpopulation_rnaseq_visualizations(
     line_dir = out_dir / "line_plots"
     line_dir.mkdir(parents=True, exist_ok=True)
 
-    superpops = _ordered_superpopulations(means_by_superpop.keys())
+    superpops = group_order or _ordered_superpopulations(means_by_superpop.keys())
     reference_tensor = means_by_superpop[superpops[0]]
     descriptors = _signal_descriptors_for_tensor(config, reference_tensor)
     length = int(reference_tensor.shape[-1])
@@ -470,8 +540,8 @@ def _save_superpopulation_rnaseq_visualizations(
     _write_json(out_dir / "superpopulation_rnaseq_rows.json", row_metadata)
     _write_json(out_dir / "superpopulation_rnaseq_metadata.json", {
         "split": split,
-        "superpopulation_order": superpops,
-        "counts_by_superpopulation": counts_by_superpop,
+        f"{group_label}_order": superpops,
+        f"counts_by_{group_label}": counts_by_superpop,
         "matrix_shape": list(matrix.shape),
         "grayscale_vmin": vmin,
         "grayscale_vmax": vmax,
@@ -558,7 +628,7 @@ def _save_superpopulation_rnaseq_visualizations(
                 "haplotype": row_meta.get("haplotype"),
                 "ontology_curie": row_meta.get("ontology_curie"),
                 "strand": row_meta.get("strand"),
-                "superpopulation": row_meta.get("superpopulation"),
+                group_label: row_meta.get(group_label),
                 "num_samples": row_meta.get("num_samples"),
             })
 
@@ -968,6 +1038,7 @@ def _plot_mean_deeplift(
     output_path: Path,
     show_track_separators: bool = False,
     variant_markers: Optional[List[Dict[str, Any]]] = None,
+    deeplift_cmap: str = "bwr",
 ) -> None:
     import matplotlib.pyplot as plt
 
@@ -976,6 +1047,7 @@ def _plot_mean_deeplift(
     tracks_per_gene = layout["tracks_per_gene"]
     rows_per_hap = layout["rows_per_hap"]
     signal_track_count = layout["signal_track_count"]
+    mask_track_count = layout["mask_track_count"]
     ontology_terms = list(config.dataset_input.ontology_terms or [])
     signal_track_labels = []
     if ontology_terms:
@@ -996,11 +1068,13 @@ def _plot_mean_deeplift(
     yticks = []
     ylabels = []
     if genes and input_np.shape[0] >= rows_per_hap:
-        track_labels = list(signal_track_labels) + [
-            f"{signal_track_count}:ins",
-            f"{signal_track_count + 1}:del",
-            f"{signal_track_count + 2}:valid",
-        ]
+        track_labels = list(signal_track_labels)
+        mask_labels = ["ins", "del"]
+        if config.dataset_input.indel_include_valid_mask:
+            mask_labels.append("valid")
+        if config.dataset_input.indel_include_snp_mask:
+            mask_labels.append("snp")
+        track_labels.extend(f"{signal_track_count + idx}:{name}" for idx, name in enumerate(mask_labels[:mask_track_count]))
         for gene_idx, gene in enumerate(genes):
             gene_offset = gene_idx * 2 * tracks_per_gene
             for hap_idx, hap in enumerate(("H1", "H2")):
@@ -1009,13 +1083,14 @@ def _plot_mean_deeplift(
                     yticks.append(hap_offset + track_idx)
                     ylabels.append(f"{hap}:{gene}:{label}")
 
+    has_masks = mask_track_count > 0
     fig = plt.figure(figsize=(20, 18), constrained_layout=True)
-    gs = fig.add_gridspec(2, 3, width_ratios=[40, 1.4, 1.4])
+    gs = fig.add_gridspec(2, 3 if has_masks else 2, width_ratios=[40, 1.4, 1.4] if has_masks else [40, 1.4])
     axes = [fig.add_subplot(gs[0, 0]), fig.add_subplot(gs[1, 0])]
     cax_signal = fig.add_subplot(gs[0, 1])
-    cax_mask = fig.add_subplot(gs[0, 2])
     cax_attr = fig.add_subplot(gs[1, 1])
-    cax_mask_attr = fig.add_subplot(gs[1, 2])
+    cax_mask = fig.add_subplot(gs[0, 2]) if has_masks else None
+    cax_mask_attr = fig.add_subplot(gs[1, 2]) if has_masks else None
     gray_cmap = plt.colormaps["gray"].copy()
     gray_cmap.set_bad(alpha=0.0)
     bwr_cmap = plt.colormaps["bwr"].copy()
@@ -1024,7 +1099,8 @@ def _plot_mean_deeplift(
     mask_cmap.set_bad(alpha=0.0)
 
     im0 = axes[0].imshow(signal_input_np, aspect="auto", cmap=gray_cmap, interpolation="nearest", vmin=0)
-    im0_mask = axes[0].imshow(mask_input_np, aspect="auto", cmap=mask_cmap, interpolation="nearest", vmin=0, vmax=1)
+    if has_masks:
+        im0_mask = axes[0].imshow(mask_input_np, aspect="auto", cmap=mask_cmap, interpolation="nearest", vmin=0, vmax=1)
     axes[0].set_title(f"{split.upper()} SET | Class {class_label} ({num_samples} samples) | Input 2D Mean ({input_np.shape[0]}x{input_np.shape[1]})", fontsize=16, fontweight="bold")
     axes[0].set_ylabel("Tracks")
     axes[0].set_xlabel("Gene Position")
@@ -1032,35 +1108,50 @@ def _plot_mean_deeplift(
         axes[0].set_yticks(yticks)
         axes[0].set_yticklabels(ylabels, fontsize=4.5)
     fig.colorbar(im0, cax=cax_signal, label="Ontology/strand tracks (gray)")
-    fig.colorbar(im0_mask, cax=cax_mask, label="Mask tracks (0 red -> 1 blue)")
+    if has_masks and cax_mask is not None:
+        fig.colorbar(im0_mask, cax=cax_mask, label="Mask tracks (0 red -> 1 blue)")
 
-    im1 = axes[1].imshow(signal_attr_np, aspect="auto", cmap=bwr_cmap, interpolation="nearest", vmin=-attr_lim, vmax=attr_lim)
+    if deeplift_cmap == "gray_abs":
+        attr_to_plot = np.abs(signal_attr_np)
+        im1 = axes[1].imshow(attr_to_plot, aspect="auto", cmap=gray_cmap, interpolation="nearest", vmin=0, vmax=attr_lim)
+        attr_colorbar_label = "Ontology/strand attribution magnitude"
+    else:
+        im1 = axes[1].imshow(signal_attr_np, aspect="auto", cmap=bwr_cmap, interpolation="nearest", vmin=-attr_lim, vmax=attr_lim)
+        attr_colorbar_label = "Ontology/strand signed attribution"
     mask_attr_abs = np.abs(mask_attr_np)
     mask_attr_max = float(np.nanmax(mask_attr_abs)) if np.isfinite(mask_attr_abs).any() else 1.0
     if mask_attr_max <= 0:
         mask_attr_max = 1.0
-    im1_mask = axes[1].imshow(mask_attr_np, aspect="auto", cmap=bwr_cmap, interpolation="nearest", vmin=-mask_attr_max, vmax=mask_attr_max)
+    if has_masks:
+        im1_mask = axes[1].imshow(mask_attr_np, aspect="auto", cmap=bwr_cmap, interpolation="nearest", vmin=-mask_attr_max, vmax=mask_attr_max)
     axes[1].set_title(f"DeepLIFT: Mean Attribution for Class {class_label} ({num_samples} samples)", fontsize=16, fontweight="bold")
     axes[1].set_ylabel("Tracks")
     axes[1].set_xlabel("Gene Position")
     if yticks:
         axes[1].set_yticks(yticks)
         axes[1].set_yticklabels(ylabels, fontsize=4.5)
-    fig.colorbar(im1, cax=cax_attr, label="Ontology/strand attribution")
-    fig.colorbar(im1_mask, cax=cax_mask_attr, label="Mask attribution")
+    fig.colorbar(im1, cax=cax_attr, label=attr_colorbar_label)
+    if has_masks and cax_mask_attr is not None:
+        fig.colorbar(im1_mask, cax=cax_mask_attr, label="Mask attribution")
 
-    if show_track_separators and genes and tracks_per_gene >= 4:
+    if show_track_separators and genes and tracks_per_gene > 0:
         for ax in axes:
             for gene_idx in range(len(genes)):
                 for block_offset in (gene_idx * 2 * tracks_per_gene, gene_idx * 2 * tracks_per_gene + tracks_per_gene):
-                    ax.axhline(block_offset + signal_track_count - 0.5, color="#f6f6f6", linewidth=0.35, alpha=0.7)
+                    if has_masks and signal_track_count > 0:
+                        ax.axhline(block_offset + signal_track_count - 0.5, color="#f6f6f6", linewidth=0.35, alpha=0.7)
                     ax.axhline(block_offset + tracks_per_gene - 0.5, color="#dddddd", linewidth=0.55, alpha=0.7)
-    if genes and tracks_per_gene >= 4:
-        legend_text = (
-            "Track order per haplotype: "
-            f"signals = {', '.join(signal_track_labels)}; masks = "
-            f"{signal_track_count}:ins, {signal_track_count + 1}:del, {signal_track_count + 2}:valid"
-        )
+    if genes and tracks_per_gene > 0:
+        legend_text = "Track order per haplotype: signals = " + ", ".join(signal_track_labels)
+        if has_masks:
+            mask_labels = ["ins", "del"]
+            if config.dataset_input.indel_include_valid_mask:
+                mask_labels.append("valid")
+            if config.dataset_input.indel_include_snp_mask:
+                mask_labels.append("snp")
+            legend_text += "; masks = " + ", ".join(
+                f"{signal_track_count + idx}:{name}" for idx, name in enumerate(mask_labels[:mask_track_count])
+            )
         fig.text(0.02, 0.035, legend_text, fontsize=10)
 
     for win in top_windows[:10]:
@@ -1208,7 +1299,9 @@ def main() -> None:
     parser.add_argument("--min-distance-bp", type=int, default=0)
     parser.add_argument("--out-dir", type=str, default=None)
     parser.add_argument("--plot", action="store_true", help="Save a PNG similar to the legacy DeepLIFT class-mean panel")
+    parser.add_argument("--deeplift-cmap", choices=["bwr", "gray_abs"], default="bwr", help="Colormap for DeepLIFT panel: signed red/blue or absolute grayscale")
     parser.add_argument("--plot-superpopulation-rnaseq", action="store_true", help="Save grayscale and line-plot RNA-Seq means for each superpopulation in the selected split")
+    parser.add_argument("--plot-class-rnaseq", action="store_true", help="Save grayscale and line-plot RNA-Seq means for each target class in the selected split")
     parser.add_argument("--superpopulation-rnaseq-delta-reference", action="store_true", help="Treat superpopulation RNA-Seq values as sample-reference deltas; save centered grayscale map with top absolute deviations")
     parser.add_argument("--reference-predictions-dataset-dir", type=str, default=None, help="Override dataset_input.reference_predictions_dataset_dir for delta-reference cache lookup")
     parser.add_argument("--reference-predictions-sample-id", type=str, default=None, help="Override dataset_input.reference_predictions_sample_id for delta-reference cache lookup")
@@ -1272,10 +1365,40 @@ def main() -> None:
             "reference_predictions_sample_id": config.dataset_input.reference_predictions_sample_id,
             "superpopulation_rnaseq_top_abs_markers": args.superpopulation_rnaseq_top_abs_markers,
             "num_samples": len(superpop_samples),
-            "counts_by_superpopulation": counts_by_superpop,
+                f"counts_by_{group_label}": counts_by_superpop,
             "deeplift_computed": False,
         })
         console.print(f"[green]Visualizacoes RNA-Seq por superpopulacao salvas em:[/green] {out_dir}")
+        return
+
+    if args.plot_class_rnaseq:
+        out_dir = Path(args.out_dir) if args.out_dir else experiment_dir / "interpretability" / f"class_rnaseq_{args.split}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        class_names = full_ds.get_class_names() if hasattr(full_ds, "get_class_names") else []
+        means_by_class, counts_by_class, class_samples = _collect_class_mean_inputs(dataset, args.split, class_names)
+        _save_superpopulation_rnaseq_visualizations(
+            means_by_superpop=means_by_class,
+            counts_by_superpop=counts_by_class,
+            config=config,
+            split=args.split,
+            out_dir=out_dir,
+            delta_reference=args.superpopulation_rnaseq_delta_reference,
+            top_abs_markers=args.superpopulation_rnaseq_top_abs_markers,
+            group_label="class_name",
+            group_order=_ordered_class_groups(means_by_class.keys(), class_names),
+        )
+        _write_json(out_dir / "samples.json", class_samples)
+        _write_json(out_dir / "run_metadata.json", {
+            "config_path": str(config_path),
+            "experiment_dir": str(experiment_dir),
+            "split": args.split,
+            "mode": "class_rnaseq",
+            "class_names": class_names,
+            "num_samples": len(class_samples),
+            "counts_by_class_name": counts_by_class,
+            "deeplift_computed": False,
+        })
+        console.print(f"[green]Visualizacoes RNA-Seq por classe salvas em:[/green] {out_dir}")
         return
 
     checkpoint_path = Path(args.checkpoint)
@@ -1435,6 +1558,11 @@ def main() -> None:
         variant_markers = None
         if args.show_variant_markers:
             if args.variant_types == "indel":
+                if getattr(config.dataset_input, "feature_mode", "signals_and_masks") == "signals_only":
+                    raise ValueError(
+                        "--variant-types indel usa tracks de mascara no tensor, mas feature_mode='signals_only'. "
+                        "Use --variant-types snp ou --variant-types all para coletar variantes via VCF."
+                    )
                 variant_markers = _collect_indel_markers_from_mean_input(
                     mean_input=mean_input,
                     config=config,
@@ -1493,6 +1621,7 @@ def main() -> None:
             output_path=out_dir / "deeplift_mean.png",
             show_track_separators=args.show_track_separators,
             variant_markers=variant_markers,
+            deeplift_cmap=args.deeplift_cmap,
         )
         if args.save_raw_pixels:
             _save_raw_pixel_images(mean_input, mean_attr, config, out_dir / "raw_pixels")

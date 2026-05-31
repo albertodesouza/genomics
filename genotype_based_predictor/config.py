@@ -642,6 +642,7 @@ def generate_experiment_name(config: PipelineConfig) -> str:
     tensor_layout = di.tensor_layout
     wcs = di.window_center_size
     norm = di.normalization_method
+    target = config.output.prediction_target
     hl = "L" + "-".join(str(h) for h in m.hidden_layers)
     act = m.activation
     dr = m.dropout_rate
@@ -653,13 +654,13 @@ def generate_experiment_name(config: PipelineConfig) -> str:
         st = f"s{c.stride[0]}x{c.stride[1]}" if isinstance(c.stride, list) else f"s{c.stride}"
         pad = f"p{c.padding[0]}x{c.padding[1]}" if isinstance(c.padding, list) else f"p{c.padding}"
         pool = f"pool{c.pool_size[0]}x{c.pool_size[1]}_" if c.pool_size else ""
-        return f"cnn_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{ks}_f{c.num_filters}_{st}_{pad}_{pool}{hl}_{act}_{dr}_{opt}"
+        return f"cnn_{target}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{ks}_f{c.num_filters}_{st}_{pad}_{pool}{hl}_{act}_{dr}_{opt}"
 
     elif model_type == "cnn2":
         c2 = m.cnn2
         ks1 = c2.kernel_stage1
         return (
-            f"cnn2_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_"
+            f"cnn2_{target}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_"
             f"s1k{ks1[0]}x{ks1[1]}f{c2.num_filters_stage1}_"
             f"s2f{c2.num_filters_stage2}_s3f{c2.num_filters_stage3}_"
             f"gp{c2.global_pool_type}_fc{c2.fc_hidden_size}_"
@@ -680,8 +681,8 @@ def generate_experiment_name(config: PipelineConfig) -> str:
             xgb = sk.xgboost
             lr = str(xgb.learning_rate).replace(".", "p")
             tag = f"xgb_nt{xgb.n_estimators}_md{xgb.max_depth}_lr{lr}"
-        return f"{model_type}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{pca}_{tag}"
+        return f"{model_type}_{target}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{pca}_{tag}"
 
     else:
         # NN (default)
-        return f"nn_{outputs}_{hap}_{wcs}_{norm}{indel_suffix}_{hl}_{act}_{dr}_{opt}"
+        return f"nn_{target}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{hl}_{act}_{dr}_{opt}"
