@@ -4,3 +4,4 @@ runs/
 snp_ancestry_predictor/refs/
 genotype_based_predictor/aligned_dna_genes_1000_all/
 .vscode/
+results/
