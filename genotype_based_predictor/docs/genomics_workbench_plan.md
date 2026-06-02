@@ -55,7 +55,7 @@ O arquivo `genotype_based_predictor/genomics_workbench.py` inicia as visualizaco
 Comando recomendado:
 
 ```bash
-source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.genomics_workbench
+source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.apps.genomics_workbench
 ```
 
 Depois abra:
@@ -87,7 +87,7 @@ Essas portas internas sao detalhes de implementacao. A pagina principal atua com
 Parametros uteis:
 
 ```bash
-python3 -m genotype_based_predictor.genomics_workbench \
+python3 -m genotype_based_predictor.apps.genomics_workbench \
   --dataset-dir /dados/GENOMICS_DATA/v1/1kG_high_coverage \
   --runs-root /dados/GENOMICS_DATA/v1/1kG_high_coverage_runs \
   --aligned-tsv-root genotype_based_predictor/aligned_dna_genes_1000_all \
@@ -388,7 +388,7 @@ Escopo:
 Smoke test sugerido:
 
 ```bash
-python3 -m genotype_based_predictor.dataset_browser /dados/GENOMICS_DATA/v1/1kG_high_coverage --port 8770
+python3 -m genotype_based_predictor.apps.dataset_browser /dados/GENOMICS_DATA/v1/1kG_high_coverage --port 8770
 ```
 
 ### Agente B: View Builder
@@ -403,7 +403,7 @@ Escopo:
 Smoke test sugerido:
 
 ```bash
-python3 -m genotype_based_predictor.view_builder /dados/GENOMICS_DATA/v1/1kG_high_coverage --port 8771
+python3 -m genotype_based_predictor.apps.view_builder /dados/GENOMICS_DATA/v1/1kG_high_coverage --port 8771
 ```
 
 ### Agente C: Experiment Dashboard
@@ -417,7 +417,7 @@ Escopo:
 Smoke test sugerido:
 
 ```bash
-python3 -m genotype_based_predictor.experiment_dashboard /dados/GENOMICS_DATA/v1/1kG_high_coverage_runs --port 8772
+python3 -m genotype_based_predictor.apps.experiment_dashboard /dados/GENOMICS_DATA/v1/1kG_high_coverage_runs --port 8772
 ```
 
 ### Agente D: Pipeline Runner
@@ -446,7 +446,7 @@ Escopo:
 Smoke test sugerido:
 
 ```bash
-python3 -m genotype_based_predictor.alphagenome_track_viewer /dados/GENOMICS_DATA/v1/1kG_high_coverage --port 8774
+python3 -m genotype_based_predictor.apps.alphagenome_track_viewer /dados/GENOMICS_DATA/v1/1kG_high_coverage --port 8774
 ```
 
 ### Agente F: Tensor Viewer

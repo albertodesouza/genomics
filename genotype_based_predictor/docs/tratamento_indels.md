@@ -435,7 +435,7 @@ Também é possível prefixar cada comando com `source scripts/start_genomics_un
 Exemplo para o gene `MC1R` e os 5 primeiros indivíduos da view `one_gene_10_individuals`:
 
 ```bash
-source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.export_aligned_dna genotype_based_predictor/configs/one_gene_10_individuals.yaml genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.tsv --sample-limit 5
+source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.alignment.export_aligned_dna genotype_based_predictor/configs/one_gene_10_individuals.yaml genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.tsv --sample-limit 5
 ```
 
 O formato gerado é:
@@ -456,7 +456,7 @@ O caractere `X` indica uma coluna do eixo expandido que não possui base naquele
 Para converter o TSV para uma visualização comparável com `more` ou `less`:
 
 ```bash
-source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.aligned_dna_columns genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.tsv genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.columns.txt
+source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.alignment.aligned_dna_columns genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.tsv genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.columns.txt
 ```
 
 O formato fica:
@@ -475,7 +475,7 @@ pos    REF    HG00096_H1    HG00096_H2    HG00097_H1    HG00097_H2
 Para destacar diferenças em relação à referência e posições `X`, use `--color`:
 
 ```bash
-source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.aligned_dna_columns genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.tsv genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.color.columns.txt --color
+source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.alignment.aligned_dna_columns genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.tsv genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.color.columns.txt --color
 ```
 
 Convenção de cores:
@@ -495,7 +495,7 @@ less -R genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.color.columns.txt
 Para usar todos os indivíduos definidos pela view ou, se a view não define amostras explicitamente, todos os indivíduos de `dataset_metadata.json`, use `--all-samples`:
 
 ```bash
-source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.export_aligned_dna genotype_based_predictor/configs/one_gene_10_individuals.yaml genotype_based_predictor/aligned_dna_MC1R_all.tsv --gene MC1R --all-samples --batch-size 4
+source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.alignment.export_aligned_dna genotype_based_predictor/configs/one_gene_10_individuals.yaml genotype_based_predictor/aligned_dna_MC1R_all.tsv --gene MC1R --all-samples --batch-size 4
 ```
 
 O argumento `--batch-size` controla quantos individuos sao processados por vez. Em maquinas com 16 GB RAM, recomenda-se `--batch-size 2` ou `--batch-size 4` para evitar uso excessivo de memoria.
@@ -515,7 +515,7 @@ source scripts/start_genomics_universal.sh
 mkdir -p genotype_based_predictor/aligned_dna_genes_1000_all
 
 for gene in MC1R TYRP1 TYR SLC45A2 DDB1 EDAR MFSD12 OCA2 HERC2 SLC24A5 TCHH; do
-  nice -n 10 python3 -m genotype_based_predictor.export_aligned_dna \
+  nice -n 10 python3 -m genotype_based_predictor.alignment.export_aligned_dna \
     genotype_based_predictor/configs/genes_1000_all.yaml \
     "genotype_based_predictor/aligned_dna_genes_1000_all/${gene}.tsv" \
     --gene "$gene" \
@@ -529,7 +529,7 @@ Se o computador ficar lento, interrompa e reduza para `--batch-size 2`.
 Para gerar uma visualizacao colorida em texto de um gene ja exportado:
 
 ```bash
-python3 -m genotype_based_predictor.aligned_dna_columns \
+python3 -m genotype_based_predictor.alignment.aligned_dna_columns \
   genotype_based_predictor/aligned_dna_genes_1000_all/MC1R.tsv \
   genotype_based_predictor/aligned_dna_genes_1000_all/MC1R.color.columns.txt \
   --color
@@ -562,7 +562,7 @@ Ela lê arquivos `.tsv` gerados por `export_aligned_dna.py`, cria um índice peq
 Para iniciar a interface usando um diretório com um `.tsv` por gene:
 
 ```bash
-source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.aligned_dna_viewer genotype_based_predictor/aligned_dna_genes_1000_all --host 127.0.0.1 --port 8765
+source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.apps.aligned_dna_viewer genotype_based_predictor/aligned_dna_genes_1000_all --host 127.0.0.1 --port 8765
 ```
 
 Depois abra no navegador:
@@ -590,7 +590,7 @@ Funcionalidades:
 Por padrão, a API limita a renderização a 200.000 células por requisição. Isso protege máquinas com pouca memória e evita travar o navegador. Para alterar o limite:
 
 ```bash
-source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.aligned_dna_viewer genotype_based_predictor/aligned_dna_genes_1000_all --host 127.0.0.1 --port 8765 --max-cells 300000
+source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.apps.aligned_dna_viewer genotype_based_predictor/aligned_dna_genes_1000_all --host 127.0.0.1 --port 8765 --max-cells 300000
 ```
 
 Evite selecionar todos os indivíduos com janelas muito grandes. Para uma análise ampla, use janelas menores ou ative a opção de mostrar apenas variantes.

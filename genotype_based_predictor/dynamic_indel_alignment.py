@@ -1,1 +1,0 @@
-from genotype_based_predictor.alignment.dynamic_indel_alignment import *

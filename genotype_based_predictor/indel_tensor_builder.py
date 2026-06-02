@@ -1,1 +1,0 @@
-from genotype_based_predictor.alignment.indel_tensor_builder import *

@@ -58,7 +58,7 @@ Inicie tudo com:
 
 ```bash
 source scripts/start_genomics_universal.sh
-python3 -m genotype_based_predictor.genomics_workbench
+python3 -m genotype_based_predictor.apps.genomics_workbench
 ```
 
 Abra no navegador:
@@ -80,7 +80,7 @@ http://127.0.0.1:8780/apps/alignment/
 Com paths explicitos:
 
 ```bash
-python3 -m genotype_based_predictor.genomics_workbench \
+python3 -m genotype_based_predictor.apps.genomics_workbench \
   --dataset-dir /dados/GENOMICS_DATA/v1/1kG_high_coverage \
   --runs-root results/genotype_based_predictor/runs \
   --aligned-tsv-root genotype_based_predictor/aligned_dna_genes_1000_all \
@@ -91,7 +91,7 @@ python3 -m genotype_based_predictor.genomics_workbench \
 Para acessar de outra maquina na rede local:
 
 ```bash
-python3 -m genotype_based_predictor.genomics_workbench --host 0.0.0.0 --port 8780
+python3 -m genotype_based_predictor.apps.genomics_workbench --host 0.0.0.0 --port 8780
 ```
 
 Logs dos subprocessos ficam em:
@@ -113,7 +113,7 @@ dataset_browser.py
 Uso direto:
 
 ```bash
-python3 -m genotype_based_predictor.dataset_browser \
+python3 -m genotype_based_predictor.apps.dataset_browser \
   /dados/GENOMICS_DATA/v1/1kG_high_coverage \
   --host 127.0.0.1 \
   --port 8770
@@ -132,7 +132,7 @@ view_builder.py
 Uso direto:
 
 ```bash
-python3 -m genotype_based_predictor.view_builder \
+python3 -m genotype_based_predictor.apps.view_builder \
   /dados/GENOMICS_DATA/v1/1kG_high_coverage \
   --host 127.0.0.1 \
   --port 8771
@@ -151,7 +151,7 @@ experiment_dashboard.py
 Uso direto:
 
 ```bash
-python3 -m genotype_based_predictor.experiment_dashboard \
+python3 -m genotype_based_predictor.apps.experiment_dashboard \
   results/genotype_based_predictor/runs \
   --host 127.0.0.1 \
   --port 8772
@@ -170,7 +170,7 @@ alphagenome_track_viewer.py
 Uso direto:
 
 ```bash
-python3 -m genotype_based_predictor.alphagenome_track_viewer \
+python3 -m genotype_based_predictor.apps.alphagenome_track_viewer \
   /dados/GENOMICS_DATA/v1/1kG_high_coverage \
   --host 127.0.0.1 \
   --port 8774
@@ -189,7 +189,7 @@ aligned_dna_viewer.py
 Uso direto:
 
 ```bash
-python3 -m genotype_based_predictor.aligned_dna_viewer \
+python3 -m genotype_based_predictor.apps.aligned_dna_viewer \
   genotype_based_predictor/aligned_dna_genes_1000_all \
   --dataset-dir /dados/GENOMICS_DATA/v1/1kG_high_coverage \
   --alignment-mapping bcftools_chain \
@@ -225,7 +225,7 @@ Limite padrao:
 Para alterar:
 
 ```bash
-python3 -m genotype_based_predictor.aligned_dna_viewer \
+python3 -m genotype_based_predictor.apps.aligned_dna_viewer \
   genotype_based_predictor/aligned_dna_genes_1000_all \
   --dataset-dir /dados/GENOMICS_DATA/v1/1kG_high_coverage \
   --alignment-mapping bcftools_chain \
@@ -279,7 +279,7 @@ Exemplo pequeno:
 
 ```bash
 source scripts/start_genomics_universal.sh
-python3 -m genotype_based_predictor.export_aligned_dna \
+python3 -m genotype_based_predictor.alignment.export_aligned_dna \
   genotype_based_predictor/configs/genes_1000_all.yaml \
   /tmp/aligned_dna_MC1R_check.tsv \
   --gene MC1R \
@@ -292,7 +292,7 @@ Por padrao, o export alinha apenas a regiao central usada pelo modelo, com `--ce
 Para voltar ao comportamento antigo e alinhar a janela completa:
 
 ```bash
-python3 -m genotype_based_predictor.export_aligned_dna \
+python3 -m genotype_based_predictor.alignment.export_aligned_dna \
   genotype_based_predictor/configs/genes_1000_all.yaml \
   /tmp/aligned_dna_MC1R_full.tsv \
   --gene MC1R \
@@ -328,7 +328,7 @@ Exemplo seguro para um gene:
 source scripts/start_genomics_universal.sh
 mkdir -p genotype_based_predictor/aligned_dna_genes_1000_all
 
-nice -n 10 python3 -m genotype_based_predictor.export_aligned_dna \
+nice -n 10 python3 -m genotype_based_predictor.alignment.export_aligned_dna \
   genotype_based_predictor/configs/genes_1000_all.yaml \
   genotype_based_predictor/aligned_dna_genes_1000_all/MC1R.tsv \
   --gene MC1R \
@@ -343,7 +343,7 @@ source scripts/start_genomics_universal.sh
 mkdir -p genotype_based_predictor/aligned_dna_genes_1000_all
 
 for gene in MC1R TYRP1 TYR SLC45A2 DDB1 EDAR MFSD12 OCA2 HERC2 SLC24A5 TCHH; do
-  nice -n 10 python3 -m genotype_based_predictor.export_aligned_dna \
+  nice -n 10 python3 -m genotype_based_predictor.alignment.export_aligned_dna \
     genotype_based_predictor/configs/genes_1000_all.yaml \
     "genotype_based_predictor/aligned_dna_genes_1000_all/${gene}.tsv" \
     --gene "$gene" \
@@ -369,7 +369,7 @@ aligned_dna_columns.py
 Uso:
 
 ```bash
-python3 -m genotype_based_predictor.aligned_dna_columns \
+python3 -m genotype_based_predictor.alignment.aligned_dna_columns \
   genotype_based_predictor/aligned_dna_genes_1000_all/MC1R.tsv \
   genotype_based_predictor/aligned_dna_genes_1000_all/MC1R.color.columns.txt \
   --color
@@ -547,7 +547,7 @@ Antes de treinar, valide a entrada do pipeline `bcftools_chain`:
 
 ```bash
 source scripts/start_genomics_universal.sh
-python3 -m genotype_based_predictor.validate_training_input \
+python3 -m genotype_based_predictor.alignment.validate_training_input \
   genotype_based_predictor/configs/genes_1000_all_3ontologies.yaml \
   --sample-limit 5 \
   --max-tensor-items 3
@@ -563,7 +563,7 @@ Para acelerar a primeira execução, precompute a cache `bcftools_chain` em para
 
 ```bash
 source scripts/start_genomics_universal.sh
-python3 -m genotype_based_predictor.precompute_bcftools_chain_cache \
+python3 -m genotype_based_predictor.alignment.precompute_bcftools_chain_cache \
   genotype_based_predictor/configs/genes_1000_all_3ontologies.yaml \
   --workers 6 \
   --chunk-size 25
@@ -574,7 +574,7 @@ Esse comando e retomavel: entradas ja geradas sao reaproveitadas. Se uma reconst
 Se quiser processar em blocos retomáveis:
 
 ```bash
-python3 -m genotype_based_predictor.precompute_bcftools_chain_cache \
+python3 -m genotype_based_predictor.alignment.precompute_bcftools_chain_cache \
   genotype_based_predictor/configs/genes_1000_all_3ontologies.yaml \
   --workers 6 \
   --start 0 \
@@ -613,7 +613,7 @@ python3 -m genomics_cli genotype single-gene-screen genotype_based_predictor/con
 Durante a materializacao da cache processada, e util conferir rapidamente se os sinais dos shards estao alinhados. O script abaixo e uma versao versionada do `plot.py` usado manualmente dentro do diretorio temporario da cache:
 
 ```bash
-python3 -m genotype_based_predictor.plot_processed_cache_shards \
+python3 -m genotype_based_predictor.analysis.plot_processed_cache_shards \
   results/cache/genotype_based_predictor/datasets/rna_seq_H1+H2_32768_ds1_log_shuf_ont3_view9d9f894aa231 \
   --split train \
   --max-shards 5 \

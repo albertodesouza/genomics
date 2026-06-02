@@ -18,15 +18,15 @@ def test_genotype_subpackages_import():
         importlib.import_module(module_name)
 
 
-def test_legacy_module_wrappers_still_export_symbols():
-    legacy_dataset = importlib.import_module("genotype_based_predictor.dataset")
-    new_dataset = importlib.import_module("genotype_based_predictor.data.processed_dataset")
-    assert legacy_dataset.ProcessedGenomicDataset is new_dataset.ProcessedGenomicDataset
-
-    legacy_pipeline = importlib.import_module("genotype_based_predictor.data_pipeline")
-    new_pipeline = importlib.import_module("genotype_based_predictor.data.pipeline")
-    assert legacy_pipeline.prepare_data is new_pipeline.prepare_data
-
-    legacy_training = importlib.import_module("genotype_based_predictor.training")
-    new_training = importlib.import_module("genotype_based_predictor.experiments.training")
-    assert legacy_training.Trainer is new_training.Trainer
+def test_root_wrappers_were_removed():
+    for module_name in [
+        "genotype_based_predictor.dataset",
+        "genotype_based_predictor.data_pipeline",
+        "genotype_based_predictor.training",
+    ]:
+        try:
+            importlib.import_module(module_name)
+        except ModuleNotFoundError:
+            pass
+        else:
+            raise AssertionError(f"legacy wrapper should not import: {module_name}")

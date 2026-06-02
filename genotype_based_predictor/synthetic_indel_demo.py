@@ -1,1 +1,0 @@
-from genotype_based_predictor.analysis.synthetic_indel_demo import *
