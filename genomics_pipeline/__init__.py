@@ -9,12 +9,13 @@ from .splitting import SampleRecord, SplitSpec
 from .targets import build_class_maps, target_value
 from .torch_collate import pad_1d, pad_2d
 from .torch_utils import move_to_device
-from .training_utils import append_history_epoch, make_lr_scheduler, new_training_history, step_lr_scheduler, write_training_history
+from .training_utils import EpochTrainer, append_history_epoch, make_lr_scheduler, new_training_history, step_lr_scheduler, write_training_history
 from .wandb_utils import finish_wandb, init_wandb_if_enabled
 
 __all__ = [
     "DatasetRef",
     "ExperimentRun",
+    "EpochTrainer",
     "build_class_maps",
     "classification_metrics",
     "dataloader_kwargs",

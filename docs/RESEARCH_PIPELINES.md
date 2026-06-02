@@ -52,6 +52,7 @@ Os pipelines ativos integrados a essa estrutura sao `genotype_based_predictor` e
 - `genomics_pipeline.run_utils`: selecao de device, split loader e campos comuns de manifest.
 - `genomics_pipeline.data_loading`: kwargs padronizados de `DataLoader` e geradores deterministas.
 - `genomics_pipeline.torch_collate`: padding tensorial para batches variaveis.
+- `genomics_pipeline.training_utils`: `EpochTrainer` generico, schedulers e historico de treino compartilhados.
 - `genomics_pipeline.wandb_utils`: inicializacao/finalizacao opcional de W&B.
 
 `neural_ancestry_predictor_deprecated/sklearn_pca_cache.py` é apenas um wrapper temporário de compatibilidade. Código novo deve importar `genomics_pipeline.sklearn_pca_cache`.

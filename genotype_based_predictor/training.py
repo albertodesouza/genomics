@@ -19,7 +19,7 @@ from genomics_pipeline.checkpointing import load_checkpoint as load_torch_checkp
 from genomics_pipeline.checkpointing import resolve_checkpoint_path, save_checkpoint as save_torch_checkpoint
 from genomics_pipeline.optim import make_optimizer_from_config
 from genomics_pipeline.torch_utils import move_to_device
-from genomics_pipeline.training_utils import append_history_epoch, make_lr_scheduler, new_training_history, step_lr_scheduler, write_training_history
+from genomics_pipeline.training_utils import EpochTrainer, make_lr_scheduler
 
 console = Console()
 
@@ -36,7 +36,7 @@ def _make_scheduler(optimizer: optim.Optimizer, config: PipelineConfig):
         return None
 
 
-class Trainer:
+class Trainer(EpochTrainer):
     """
     Gerencia o loop completo de treinamento com validação por época.
 
@@ -88,11 +88,7 @@ class Trainer:
             raise ValueError(f"Loss não suportada: {lf}")
 
         self.is_classification = config.output.prediction_target != "frog_likelihood"
-        self.num_epochs = config.training.num_epochs
-        self.early_stop_patience = config.training.early_stopping_patience
         self.max_samples_per_epoch = config.debug.max_samples_per_epoch
-
-        self.history: Dict[str, list] = new_training_history()
         self.best_val_loss = float("inf")
         self.best_val_accuracy = 0.0
         self.start_epoch = 1
@@ -101,13 +97,30 @@ class Trainer:
         models_dir.mkdir(parents=True, exist_ok=True)
         self.models_dir = models_dir
 
-        if config.checkpointing.load_checkpoint:
-            self._load_checkpoint(config.checkpointing.load_checkpoint)
-
         if config.training.weight_decay > 0:
             console.print(f"[green]✓ Weight decay (L2): {config.training.weight_decay}[/green]")
         if config.training.lr_scheduler.enabled:
             console.print(f"[green]✓ LR Scheduler: {config.training.lr_scheduler.type}[/green]")
+        from genotype_based_predictor.experiment import interrupt_state
+
+        super().__init__(
+            num_epochs=config.training.num_epochs,
+            start_epoch=self.start_epoch,
+            validation_frequency=config.training.validation_frequency,
+            early_stopping_patience=config.training.early_stopping_patience,
+            save_frequency=config.checkpointing.save_frequency,
+            save_during_training=config.checkpointing.save_during_training,
+            scheduler=self.scheduler,
+            optimizer=self.optimizer,
+            wandb_run=wandb_run,
+            history_path=self.models_dir / "training_history.json",
+            console=console,
+            interrupt_check=lambda: bool(interrupt_state.interrupted),
+            no_validation_uses_train_metrics=True,
+            log_learning_rate=True,
+        )
+        if config.checkpointing.load_checkpoint:
+            self._load_checkpoint(config.checkpointing.load_checkpoint)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -220,11 +233,23 @@ class Trainer:
             extra={"best_val_loss": self.best_val_loss, "best_val_accuracy": self.best_val_accuracy},
         )
 
+    def save_checkpoint(self, name: str, epoch: int, metrics: Dict[str, float]) -> None:
+        self._save_checkpoint(name, epoch, metrics)
+
+    def run_train_epoch(self) -> Dict[str, float]:
+        return self._run_epoch(self.train_loader, train=True)
+
+    def run_val_epoch(self) -> Dict[str, float]:
+        return self._run_epoch(self.val_loader, train=False)
+
+    def has_validation_data(self) -> bool:
+        return len(self.val_loader.dataset) > 0
+
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------
 
-    def train(self) -> Dict[str, list]:
+    def train(self) -> Dict[str, Any]:
         """
         Executa o loop de treinamento completo.
 
@@ -233,103 +258,16 @@ class Trainer:
         Dict
             Histórico de métricas por época.
         """
-        from genotype_based_predictor.experiment import interrupt_state
-
         console.print(
             f"\n[bold cyan]🚀 Iniciando treinamento "
             f"({self.start_epoch}-{self.num_epochs} épocas | "
             f"lr={self.config.training.learning_rate} | "
             f"opt={self.config.training.optimizer})[/bold cyan]"
         )
-
-        val_metrics: Dict[str, float] = {"loss": float("inf"), "accuracy": 0.0}
-        no_improve = 0
-        epoch = 0
-        val_frequency = max(1, int(self.config.training.validation_frequency))
-
-        for epoch in range(self.start_epoch, self.num_epochs + 1):
-            if interrupt_state.interrupted:
-                console.print("[yellow]⚠ Treinamento interrompido (CTRL+C)[/yellow]")
-                break
-
-            train_metrics = self._run_epoch(self.train_loader, train=True)
-            should_validate = (
-                len(self.val_loader.dataset) > 0
-                and (epoch % val_frequency == 0 or epoch == self.num_epochs)
-            )
-            if should_validate:
-                val_metrics = self._run_epoch(self.val_loader, train=False)
-            elif len(self.val_loader.dataset) == 0:
-                val_metrics = {"loss": train_metrics["loss"], "accuracy": train_metrics["accuracy"], "samples": 0}
-
-            step_lr_scheduler(self.scheduler, val_metrics["loss"], metric_available=should_validate or len(self.val_loader.dataset) == 0)
-
-            # Histórico
-            append_history_epoch(self.history, epoch, train_metrics, val_metrics)
-
-            can_update_best = should_validate or len(self.val_loader.dataset) == 0
-            improved_acc = can_update_best and val_metrics["accuracy"] > self.best_val_accuracy
-            improved_loss = can_update_best and val_metrics["loss"] < self.best_val_loss
-
-            if improved_acc:
-                self.best_val_accuracy = val_metrics["accuracy"]
-                if self.config.checkpointing.save_during_training:
-                    self._save_checkpoint("best_accuracy.pt", epoch, val_metrics)
-
-            if improved_loss:
-                self.best_val_loss = val_metrics["loss"]
-                if self.config.checkpointing.save_during_training:
-                    self._save_checkpoint("best_loss.pt", epoch, val_metrics)
-                no_improve = 0
-            elif can_update_best:
-                no_improve += 1
-
-            if (
-                self.config.checkpointing.save_during_training
-                and self.config.checkpointing.save_frequency > 0
-                and epoch % self.config.checkpointing.save_frequency == 0
-            ):
-                self._save_checkpoint(f"epoch_{epoch}.pt", epoch, val_metrics)
-
-            lr_now = self.optimizer.param_groups[0]["lr"]
-            acc_tag = " [green]✓best_acc[/green]" if improved_acc else ""
-            loss_tag = " [cyan]✓best_loss[/cyan]" if improved_loss else ""
-            val_text = (
-                f"val loss={val_metrics['loss']:.4f} acc={val_metrics['accuracy']:.4f}"
-                if can_update_best else f"val skipped (freq={val_frequency})"
-            )
-            console.print(
-                f"[E{epoch:03d}] "
-                f"train loss={train_metrics['loss']:.4f} acc={train_metrics['accuracy']:.4f} | "
-                f"{val_text} | "
-                f"lr={lr_now:.2e}{acc_tag}{loss_tag}"
-            )
-
-            if self.wandb_run:
-                log_payload = {
-                    "epoch": epoch,
-                    "train/loss": train_metrics["loss"],
-                    "train/accuracy": train_metrics["accuracy"],
-                    "lr": lr_now,
-                }
-                if can_update_best:
-                    log_payload.update({
-                        "val/loss": val_metrics["loss"],
-                        "val/accuracy": val_metrics["accuracy"],
-                    })
-                self.wandb_run.log(log_payload)
-
-            if self.early_stop_patience and no_improve >= self.early_stop_patience:
-                console.print(f"[yellow]Early stopping após {no_improve} épocas sem melhora[/yellow]")
-                break
-
-        self._save_checkpoint("final.pt", epoch, val_metrics)
+        history = super().train()
         console.print(
             f"\n[bold green]✓ Treinamento concluído! "
             f"best_val_acc={self.best_val_accuracy:.4f} | "
             f"best_val_loss={self.best_val_loss:.4f}[/bold green]"
         )
-        self.history["interrupted"] = interrupt_state.interrupted
-        self.history["last_epoch"] = epoch
-        write_training_history(self.models_dir / "training_history.json", self.history)
-        return self.history
+        return history

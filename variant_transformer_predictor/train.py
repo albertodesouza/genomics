@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 from rich.console import Console
@@ -72,8 +71,6 @@ def main() -> int:
     try:
         trainer = Trainer(model, train_loader, val_loader, config, device, experiment_dir, full_ds.get_class_names(), wandb_run)
         history = trainer.train()
-        with open(experiment_dir / "models" / "training_history.json", "w") as f:
-            json.dump(history, f, indent=2)
         ckpt_path = experiment_dir / "models" / "best_accuracy.pt"
         if ckpt_path.exists():
             load_checkpoint(ckpt_path, model, device=device, weights_only=True)
