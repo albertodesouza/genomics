@@ -17,6 +17,7 @@ O root dos datasets pode ser sobrescrito com `GENOMICS_DATA_ROOT`. O root de res
 ```bash
 python3 -m genomics_cli --help
 python3 -m genomics_cli audit-configs
+python3 -m genomics_cli audit-data --dataset-id 1kg_high_coverage
 ```
 
 ## Estrutura de cada run
@@ -89,6 +90,13 @@ O antigo diretório `/dados/GENOMICS_DATA/top3` foi movido para quarentena em `/
 python3 -m genomics_cli audit-configs --legacy-only
 python3 -m genomics_cli audit-configs --fail-on-legacy
 python3 -m genomics_cli audit-configs --fail-on-active-legacy
+```
+
+Use o audit fisico para validar datasets registrados e artefatos esperados:
+
+```bash
+python3 -m genomics_cli audit-data --dataset-id 1kg_high_coverage --fail-on-missing
+python3 -m genomics_cli audit-data --dataset-id 1kg_high_coverage --check-bcftools-chain --sample-limit 3 --fail-on-missing
 ```
 
 O segundo comando retorna código diferente de zero enquanto houver qualquer config com path `legacy-top3`. O terceiro comando falha apenas para configs ativos.

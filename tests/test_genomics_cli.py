@@ -1,5 +1,6 @@
 import subprocess
 import sys
+import json
 from pathlib import Path
 
 import yaml
@@ -106,3 +107,57 @@ def test_audit_configs_has_no_active_legacy_references():
     )
 
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_audit_data_reports_dataset_status(monkeypatch, tmp_path, capsys):
+    data_root = tmp_path / "data"
+    dataset_dir = data_root / "v1" / "1kG_high_coverage"
+    dataset_dir.mkdir(parents=True)
+    (dataset_dir / "dataset_metadata.json").write_text(
+        json.dumps({"individuals": ["HG00096"], "genes": ["DDB1"], "window_catalog": {"DDB1": {}}}),
+        encoding="utf-8",
+    )
+    (dataset_dir / "layout_metadata.json").write_text(json.dumps({"layout_version": 1}), encoding="utf-8")
+    (dataset_dir / "individuals" / "HG00096" / "windows" / "DDB1").mkdir(parents=True)
+    (dataset_dir / "references" / "windows" / "DDB1").mkdir(parents=True)
+    monkeypatch.setenv("GENOMICS_DATA_ROOT", str(data_root))
+
+    rc = genomics_cli.main(["audit-data", "--dataset-id", "1kg_high_coverage", "--json", "--fail-on-missing"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert rc == 0
+    assert payload[0]["status"] == "ok"
+    assert payload[0]["individual_count"] == 1
+    assert payload[0]["gene_count"] == 1
+
+
+def test_audit_data_detects_missing_bcftools_chain_artifacts(monkeypatch, tmp_path, capsys):
+    data_root = tmp_path / "data"
+    dataset_dir = data_root / "v1" / "1kG_high_coverage"
+    window_dir = dataset_dir / "individuals" / "HG00096" / "windows" / "DDB1"
+    window_dir.mkdir(parents=True)
+    (dataset_dir / "references" / "windows" / "DDB1").mkdir(parents=True)
+    (dataset_dir / "dataset_metadata.json").write_text(
+        json.dumps({"individuals": ["HG00096"], "genes": ["DDB1"], "window_catalog": {"DDB1": {}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GENOMICS_DATA_ROOT", str(data_root))
+
+    rc = genomics_cli.main([
+        "audit-data",
+        "--dataset-id",
+        "1kg_high_coverage",
+        "--check-bcftools-chain",
+        "--sample-limit",
+        "1",
+        "--json",
+        "--fail-on-missing",
+    ])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert rc == 2
+    assert payload[0]["status"] == "error"
+    assert payload[0]["bcftools_chain"]["missing"] == len(genomics_cli.BCFTOOLS_CHAIN_REQUIRED_TEMPLATES)
+    assert str(window_dir) in payload[0]["bcftools_chain"]["examples"][0]

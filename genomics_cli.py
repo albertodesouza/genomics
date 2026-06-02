@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, Optional, Union
 
 import yaml
 
-from genomics_pipeline.data_registry import classify_dataset_path, resolve_dataset
+from genomics_pipeline.data_registry import classify_dataset_path, registered_dataset_ids, resolve_dataset
 from genomics_workspace import (
     DEFAULT_CONSENSUS_DATASET_DIR,
     DEFAULT_DATASET_DIR,
@@ -409,6 +409,151 @@ def cmd_audit_configs(args: argparse.Namespace) -> int:
     return 0
 
 
+BCFTOOLS_CHAIN_REQUIRED_TEMPLATES = (
+    "{sample}.H1.window.raw.fa",
+    "{sample}.H2.window.raw.fa",
+    "{sample}.window.consensus_ready.vcf.gz",
+    "{sample}.window.consensus_ready.vcf.gz.tbi",
+    "{sample}.window.vcf.gz",
+    "{sample}.window.vcf.gz.tbi",
+)
+
+
+def _load_json_file(path: Path) -> Dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _audit_dataset(dataset_id: str, *, check_bcftools_chain: bool, sample_limit: int, genes: Optional[list[str]]) -> Dict[str, Any]:
+    ref = resolve_dataset(dataset_id)
+    path = ref.path
+    row: Dict[str, Any] = {
+        "dataset_id": dataset_id,
+        "role": ref.role,
+        "path": str(path),
+        "exists": path.exists(),
+        "metadata_exists": ref.metadata_path.exists(),
+        "layout_metadata_exists": (path / "layout_metadata.json").exists(),
+        "individuals_dir_exists": (path / "individuals").exists(),
+        "references_dir_exists": (path / "references").exists(),
+        "status": "ok",
+        "errors": [],
+        "warnings": [],
+    }
+    if not row["exists"]:
+        row["status"] = "error"
+        row["errors"].append("dataset directory missing")
+        return row
+    if not row["metadata_exists"]:
+        row["status"] = "error"
+        row["errors"].append("dataset_metadata.json missing")
+        return row
+
+    metadata = _load_json_file(ref.metadata_path)
+    individuals = [str(x) for x in metadata.get("individuals", [])]
+    metadata_genes = [str(x) for x in metadata.get("genes", [])]
+    catalog = metadata.get("window_catalog", {}) or {}
+    if not catalog:
+        ref_windows = path / "references" / "windows"
+        catalog = {p.parent.name: {} for p in sorted(ref_windows.glob("*/window_metadata.json"))}
+    row.update(
+        {
+            "individual_count": len(individuals),
+            "gene_count": len(metadata_genes),
+            "window_catalog_count": len(catalog),
+        }
+    )
+    if not individuals:
+        row["warnings"].append("metadata has no individuals")
+    if not metadata_genes:
+        row["warnings"].append("metadata has no genes")
+    if not catalog:
+        row["warnings"].append("no window_catalog and no reference window metadata found")
+
+    if check_bcftools_chain:
+        row["bcftools_chain"] = _audit_bcftools_chain_artifacts(path, individuals, metadata_genes, catalog, sample_limit, genes)
+        if row["bcftools_chain"]["missing"]:
+            row["status"] = "error"
+            row["errors"].append("bcftools_chain artifacts missing")
+    if row["status"] == "ok" and row["warnings"]:
+        row["status"] = "warning"
+    return row
+
+
+def _audit_bcftools_chain_artifacts(
+    dataset_dir: Path,
+    individuals: list[str],
+    metadata_genes: list[str],
+    catalog: Dict[str, Any],
+    sample_limit: int,
+    genes: Optional[list[str]],
+) -> Dict[str, Any]:
+    selected_samples = individuals[:sample_limit] if sample_limit > 0 else individuals
+    selected_genes = genes or metadata_genes or sorted(catalog)
+    stats: Dict[str, Any] = {
+        "sample_limit": sample_limit,
+        "samples_checked": len(selected_samples),
+        "genes_checked": len(selected_genes),
+        "required": 0,
+        "present": 0,
+        "missing": 0,
+        "examples": [],
+    }
+    for sample_id in selected_samples:
+        for gene in selected_genes:
+            window_dir = dataset_dir / "individuals" / sample_id / "windows" / gene
+            for template in BCFTOOLS_CHAIN_REQUIRED_TEMPLATES:
+                stats["required"] += 1
+                path = window_dir / template.format(sample=sample_id)
+                if path.exists():
+                    stats["present"] += 1
+                else:
+                    stats["missing"] += 1
+                    if len(stats["examples"]) < 20:
+                        stats["examples"].append(str(path))
+    return stats
+
+
+def cmd_audit_data(args: argparse.Namespace) -> int:
+    dataset_ids = args.dataset_id or list(registered_dataset_ids())
+    rows = [
+        _audit_dataset(
+            dataset_id,
+            check_bcftools_chain=args.check_bcftools_chain,
+            sample_limit=args.sample_limit,
+            genes=args.genes,
+        )
+        for dataset_id in dataset_ids
+    ]
+    if args.json:
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+    else:
+        for row in rows:
+            flags = [row["status"], row["role"]]
+            flags.append(f"exists={row['exists']}")
+            flags.append(f"metadata={row['metadata_exists']}")
+            if "individual_count" in row:
+                flags.append(f"individuals={row['individual_count']}")
+                flags.append(f"genes={row['gene_count']}")
+                flags.append(f"windows={row['window_catalog_count']}")
+            if row.get("bcftools_chain"):
+                bc = row["bcftools_chain"]
+                flags.append(f"bcftools_missing={bc['missing']}/{bc['required']}")
+            print(f"{row['dataset_id']}: {', '.join(flags)}")
+            for message in row.get("errors", []):
+                print(f"  ERROR: {message}")
+            for message in row.get("warnings", []):
+                print(f"  WARN: {message}")
+            if row.get("bcftools_chain", {}).get("examples"):
+                print("  Missing examples:")
+                for example in row["bcftools_chain"]["examples"][:5]:
+                    print(f"    {example}")
+    if args.fail_on_missing and any(row["status"] == "error" for row in rows):
+        return 2
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="CLI comum para pipelines de pesquisa genômica")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -419,6 +564,15 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--fail-on-legacy", action="store_true")
     audit.add_argument("--fail-on-active-legacy", action="store_true")
     audit.set_defaults(func=cmd_audit_configs)
+
+    audit_data = subparsers.add_parser("audit-data", help="Valida existencia fisica dos datasets registrados")
+    audit_data.add_argument("--dataset-id", action="append", choices=registered_dataset_ids(), default=None)
+    audit_data.add_argument("--check-bcftools-chain", action="store_true")
+    audit_data.add_argument("--sample-limit", type=int, default=3)
+    audit_data.add_argument("--genes", nargs="*", default=None)
+    audit_data.add_argument("--json", action="store_true")
+    audit_data.add_argument("--fail-on-missing", action="store_true")
+    audit_data.set_defaults(func=cmd_audit_data)
 
     genotype = subparsers.add_parser("genotype", help="Pipeline genotype_based_predictor")
     genotype_sub = genotype.add_subparsers(dest="genotype_command", required=True)
