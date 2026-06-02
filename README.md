@@ -2,7 +2,7 @@
 
 _A technical-scientific guide to `genomes_analyzer.py`_
 
-For the research model pipelines (`neural_ancestry_predictor_deprecated`, `genotype_based_predictor`, and `variant_transformer_predictor`), see [docs/RESEARCH_PIPELINES.md](docs/RESEARCH_PIPELINES.md).
+For the research model pipelines (`neural_ancestry_predictor_deprecated`, `genotype_based_predictor`, and `variant_transformer_predictor`), see [docs/RESEARCH_PIPELINES.md](docs/RESEARCH_PIPELINES.md). For consolidated reference experiments and historical benchmark results, see [docs/IMPORTANT_EXPERIMENTS.md](docs/IMPORTANT_EXPERIMENTS.md).
 
 ## Index
 - [Abstract](#abstract)
