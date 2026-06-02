@@ -14,13 +14,12 @@ from urllib.parse import parse_qs, urlparse
 
 from genotype_based_predictor.bcftools_chain_mapper import BcftoolsChainMapper
 from genotype_based_predictor.dynamic_indel_alignment import DynamicIndelAligner
+from genomics_workspace import DEFAULT_CONSENSUS_DATASET_DIR, DEFAULT_DATASET_DIR
 
 DEFAULT_MAX_CELLS = 200_000
 DEFAULT_MAX_VARIANTS = 1_000
 DEFAULT_MODEL_WINDOW_SIZE = 32_768
 DEFAULT_VCF_TIMEOUT_SECONDS = 20
-DEFAULT_DATASET_DIR = Path("/dados/GENOMICS_DATA/v1/1kG_high_coverage")
-DEFAULT_CONSENSUS_DATASET_DIR = Path("/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all")
 
 
 def _parse_region(region: str) -> Tuple[str, int, int]:

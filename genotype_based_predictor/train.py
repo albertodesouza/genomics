@@ -4,7 +4,6 @@ import argparse
 import signal
 from pathlib import Path
 
-import torch
 from rich.console import Console
 
 from genotype_based_predictor.config import load_config
@@ -12,31 +11,13 @@ from genotype_based_predictor.data_pipeline import prepare_data
 from genotype_based_predictor.evaluation import run_test_and_save
 from genotype_based_predictor.experiment import interrupt_state, setup_experiment_dir
 from genotype_based_predictor.models import CNN2AncestryPredictor, CNNAncestryPredictor, NNAncestryPredictor, SKLEARN_BASELINE_TYPES
-from genotype_based_predictor.models.sklearn_models import train_sklearn_baseline
 from genotype_based_predictor.training import Trainer
 from genotype_based_predictor.utils import set_random_seeds
+from genomics_pipeline import update_manifest
+from genomics_pipeline.run_utils import select_device, select_split_loader, training_manifest_fields
+from genomics_pipeline.wandb_utils import finish_wandb, init_wandb_if_enabled
 
 console = Console()
-
-
-def _init_wandb(config, config_path: Path, experiment_dir: Path):
-    if not config.wandb.use_wandb:
-        return None
-    try:
-        import wandb
-    except ImportError as exc:
-        raise ImportError("W&B habilitado, mas o pacote 'wandb' nao esta instalado") from exc
-
-    run_name = config.wandb.run_name or experiment_dir.name
-    run = wandb.init(
-        project=config.wandb.project_name,
-        name=run_name,
-        config=config.model_dump(mode="python"),
-        dir=str(experiment_dir),
-    )
-    run.config.update({"config_path": str(config_path), "experiment_dir": str(experiment_dir)}, allow_val_change=True)
-    console.print(f"[green]✓ W&B habilitado:[/green] {config.wandb.project_name}/{run_name}")
-    return run
 
 
 def _install_signal_handlers() -> None:
@@ -45,15 +26,6 @@ def _install_signal_handlers() -> None:
         console.print("[yellow]\n⚠ Interrupção solicitada. Encerrando época atual e avaliando teste...[/yellow]")
 
     signal.signal(signal.SIGINT, _handle_sigint)
-
-
-def _select_test_loader(config, train_loader, val_loader, test_loader):
-    choice = config.test_dataset.lower()
-    if choice == "train":
-        return train_loader, "train"
-    if choice == "val":
-        return val_loader, "val"
-    return test_loader, "test"
 
 
 def _build_model(config, dataset):
@@ -82,16 +54,18 @@ def main() -> None:
     if config.data_split.random_seed is not None and config.data_split.random_seed != -1:
         set_random_seeds(config.data_split.random_seed, config.data_split.strict_determinism)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = select_device()
     console.print(f"[green]Device:[/green] {device}")
 
     experiment_dir = setup_experiment_dir(config, str(config_path))
     full_ds, train_loader, val_loader, test_loader = prepare_data(config, experiment_dir)
     _install_signal_handlers()
-    wandb_run = _init_wandb(config, config_path, experiment_dir)
+    wandb_run = init_wandb_if_enabled(config.wandb, config, experiment_dir, config_path, console)
 
     try:
         if config.model.type.upper() in SKLEARN_BASELINE_TYPES:
+            from genotype_based_predictor.models.sklearn_models import train_sklearn_baseline
+
             train_sklearn_baseline(
                 config=config,
                 model_type=config.model.type,
@@ -115,14 +89,20 @@ def main() -> None:
             wandb_run=wandb_run,
         )
         history = trainer.train()
+        update_manifest(
+            experiment_dir,
+            status="interrupted" if history.get("interrupted") else "completed",
+            **training_manifest_fields(history),
+        )
 
         if history.get("interrupted"):
-            selected_loader, split_name = _select_test_loader(config, train_loader, val_loader, test_loader)
+            selected_loader, split_name = select_split_loader(config.test_dataset, train_loader, val_loader, test_loader)
             console.print(f"[cyan]Executando avaliação pós-interrupção no split '{split_name}'...[/cyan]")
             run_test_and_save(model, selected_loader, full_ds, config, device, split_name, experiment_dir, wandb_run)
     finally:
-        if wandb_run is not None:
-            wandb_run.finish()
+        if "experiment_dir" in locals():
+            update_manifest(experiment_dir, wandb_enabled=wandb_run is not None)
+        finish_wandb(wandb_run)
 
 
 if __name__ == "__main__":

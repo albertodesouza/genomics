@@ -17,11 +17,11 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
+from genomics_workspace import DEFAULT_CONSENSUS_DATASET_DIR, DEFAULT_DATASET_DIR, DEFAULT_GENOTYPE_RUNS_ROOT
 
-DEFAULT_DATASET_DIR = Path("/dados/GENOMICS_DATA/v1/1kG_high_coverage")
-DEFAULT_RUNS_ROOT = Path("/dados/GENOMICS_DATA/v1/1kG_high_coverage_runs")
+
+DEFAULT_RUNS_ROOT = DEFAULT_GENOTYPE_RUNS_ROOT
 DEFAULT_ALIGNED_TSV_ROOT = Path("genotype_based_predictor/aligned_dna_genes_1000_all")
-DEFAULT_CONSENSUS_DATASET_DIR = Path("/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all")
 
 
 @dataclass
@@ -284,7 +284,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
         if body is not None:
             headers["Content-Length"] = str(len(body))
 
-        conn = http.client.HTTPConnection("127.0.0.1", viewer.spec.port, timeout=30)
+        conn = http.client.HTTPConnection("127.0.0.1", viewer.spec.port, timeout=300)
         try:
             conn.request(method, upstream_path, body=body, headers=headers)
             response = conn.getresponse()

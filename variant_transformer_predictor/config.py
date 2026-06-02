@@ -1,21 +1,33 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from pathlib import Path
 from typing import Dict, List, Literal, Optional
 
-import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+from genomics_pipeline.config_io import load_yaml, stable_hash
+from genomics_pipeline.data_registry import resolve_dataset
+from genomics_workspace import DEFAULT_VARIANT_TRANSFORMER_RUNS_ROOT
 
 
 class DatasetConfig(BaseModel):
     processed_dir: str
+    source_dataset_id: Optional[str] = "1kg_high_coverage"
+    source_dataset_dir: Optional[str] = None
+    results_dir: str = str(DEFAULT_VARIANT_TRANSFORMER_RUNS_ROOT)
     target: str = "superpopulation"
     classes: List[str] = Field(default_factory=lambda: ["AFR", "AMR", "EAS", "EUR", "SAS"])
     max_sequence_length: Optional[int] = None
     truncate_policy: Literal["error", "keep_first", "keep_last"] = "error"
     loading_strategy: Literal["lazy", "preload"] = "lazy"
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_source_dataset_id(cls, values):
+        if isinstance(values, dict) and not values.get("source_dataset_dir") and values.get("source_dataset_id"):
+            values = dict(values)
+            values["source_dataset_dir"] = str(resolve_dataset(str(values["source_dataset_id"])).path)
+        return values
 
 
 class VariantConfig(BaseModel):
@@ -97,9 +109,7 @@ class PipelineConfig(BaseModel):
 
 
 def load_config(config_path: Path) -> PipelineConfig:
-    config_path = Path(config_path)
-    with open(config_path) as f:
-        payload = yaml.safe_load(f)
+    payload = load_yaml(Path(config_path))
     return PipelineConfig.model_validate(payload)
 
 
@@ -120,9 +130,9 @@ def generate_experiment_name(config: PipelineConfig) -> str:
             "weight_decay": config.training.weight_decay,
         },
     }
-    digest = hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:10]
+    digest = stable_hash(payload, length=10)
     return f"variant_transformer_{config.dataset.target}_d{config.model.d_model}_l{config.model.layers}_h{config.model.heads}_{digest}"
 
 
 def get_experiment_dir(config: PipelineConfig) -> Path:
-    return Path(config.dataset.processed_dir) / "runs" / generate_experiment_name(config)
+    return Path(config.dataset.results_dir) / generate_experiment_name(config)

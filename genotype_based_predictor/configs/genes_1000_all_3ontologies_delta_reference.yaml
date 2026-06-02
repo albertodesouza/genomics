@@ -1,6 +1,11 @@
+metadata:
+  active: false
+  deprecation_reason: "Depends on legacy reference_predictions_dataset_dir that is not materialized in the canonical dataset yet."
+
 dataset_input:
   view_path: "/home/breno/I2CA/genomics/genotype_based_predictor/views/genes_1000_all_3ontologies.view.json"
-  processed_cache_dir: "/dados/GENOMICS_DATA/v1/1kG_high_coverage_runs"
+  processed_cache_dir: "results/cache/genotype_based_predictor"
+  results_dir: "results/genotype_based_predictor/runs"
   cache_processed_tensors: true
   tensor_layout: "haplotype_channels"
   selected_track_index: 0
@@ -11,7 +16,7 @@ dataset_input:
   reference_predictions_dataset_dir: "/dados/GENOMICS_DATA/top3/reference_only_results_genes_1000_all_3ontologies"
   reference_predictions_sample_id: null
   alignment_mapping: "bcftools_chain"
-  consensus_dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all"
+  consensus_dataset_dir: "/dados/GENOMICS_DATA/v1/1kG_high_coverage"
   alignment_axis_splits:
     - train
     - val

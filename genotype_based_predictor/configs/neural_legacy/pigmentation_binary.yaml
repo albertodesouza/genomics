@@ -1,0 +1,138 @@
+metadata:
+  migrated_from: "neural_ancestry_predictor/configs/pigmentation_binary.yaml"
+  migration_mode: "raw_center_crop"
+  note: "Replicates the historical neural_ancestry_predictor pigmentation experiment without genotype alignment."
+
+dataset_input:
+  dataset_id: "1kg_high_coverage"
+  processed_cache_dir: "results/cache/genotype_based_predictor/neural_legacy"
+  results_dir: "results/genotype_based_predictor/runs"
+  cache_processed_tensors: true
+  tensor_layout: "raw_center_crop"
+  feature_mode: "signals_only"
+  alphagenome_outputs:
+    - "rna_seq"
+  haplotype_mode: "H1"
+  window_center_size: 32768
+  downsample_factor: 1
+  genes_to_use:
+    - "MC1R"
+    - "TYRP1"
+    - "TYR"
+    - "SLC45A2"
+    - "DDB1"
+    - "EDAR"
+    - "MFSD12"
+    - "OCA2"
+    - "HERC2"
+    - "SLC24A5"
+    - "TCHH"
+  normalization_method: "log"
+  normalization_value: 0.0
+
+output:
+  prediction_target: "pigmentation"
+  known_classes:
+    - "strong pigmentation"
+    - "weak pigmentation"
+  derived_targets:
+    pigmentation:
+      source_field: "population"
+      exclude_unmapped: true
+      class_map:
+        strong pigmentation: ["YRI", "ESN", "LWK", "MSL", "GWD"]
+        weak pigmentation: ["FIN", "CEU", "GBR"]
+
+model:
+  type: "CNN2"
+  hidden_layers: [100, 40]
+  activation: "relu"
+  dropout_rate: 0.5
+  cnn:
+    kernel_size: [6, 32]
+    num_filters: 5
+    stride: [6, 32]
+    padding: 0
+    pool_size: null
+  cnn2:
+    num_filters_stage1: 16
+    kernel_stage1: [6, 32]
+    stride_stage1: [6, 32]
+    num_filters_stage2: 32
+    num_filters_stage3: 64
+    kernel_stages23: [1, 5]
+    stride_stages23: [1, 2]
+    padding_stages23: [0, 2]
+    fc_hidden_size: 256
+    global_pool_type: "avg"
+  sklearn:
+    pca_components: 300
+    use_pca_cache: true
+    pca_align_n_train: false
+    xgboost:
+      n_estimators: 200
+      max_depth: 4
+      learning_rate: 0.1
+      subsample: 0.8
+      colsample_bytree: 0.8
+      tree_method: "hist"
+      random_state: 42
+      n_jobs: -1
+      eval_metric: "logloss"
+
+training:
+  optimizer: "adam"
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  loss_function: "cross_entropy"
+  batch_size: 128
+  num_epochs: 400
+  validation_frequency: 3
+  lr_scheduler:
+    enabled: true
+    type: "cosine_warm_restarts"
+    mode: "min"
+    factor: 0.5
+    patience: 30
+    min_lr: 0.0000001
+    step_size: 30
+    T_max: 300
+    eta_min: 0.0000001
+    T_0: 50
+    T_mult: 1
+
+data_split:
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  random_seed: 13
+  family_split_mode: "family_aware"
+  balancing_strategy: "shuffle"
+  strict_determinism: true
+
+wandb:
+  use_wandb: false
+  project_name: "genotype-based-predictor-neural-legacy"
+  run_name: "pigmentation-binary"
+  log_frequency: 100
+
+checkpointing:
+  checkpoint_dir: "models"
+  save_frequency: 100
+  save_during_training: true
+  load_checkpoint: null
+
+debug:
+  enable_visualization: false
+  force_pca_cache_rebuild: false
+  max_samples_per_epoch: null
+  taint_at_cache_save: false
+  taint_at_runtime: false
+  visualization: {}
+
+data_loading:
+  loading_strategy: "lazy"
+  cache_size: 50
+
+mode: "train"
+test_dataset: "test"

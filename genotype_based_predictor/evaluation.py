@@ -3,24 +3,18 @@
 evaluation.py — Tester, run_test_and_save, summarize_experiments.
 """
 
-import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
 import torch.nn as nn
-from sklearn.metrics import (
-    accuracy_score,
-    classification_report,
-    confusion_matrix,
-    precision_recall_fscore_support,
-)
 from rich.console import Console
 from rich.table import Table
 from torch.utils.data import DataLoader
 
 from genotype_based_predictor.config import PipelineConfig
+from genomics_pipeline.metrics import classification_metrics, print_classification_metrics, save_results_json
 
 console = Console()
 
@@ -103,36 +97,8 @@ class Tester:
             labels = list(range(num_classes))
             target_names = [self.full_dataset.idx_to_target[i] for i in labels]
 
-            p, r, f1, _ = precision_recall_fscore_support(
-                all_targets, all_preds, average="weighted", zero_division=0
-            )
-            acc = accuracy_score(all_targets, all_preds)
-            cm = confusion_matrix(all_targets, all_preds, labels=labels)
-            cr = classification_report(
-                all_targets, all_preds, labels=labels,
-                target_names=target_names, zero_division=0,
-            )
-
-            results: Dict[str, Any] = {
-                "accuracy": acc,
-                "precision": float(p),
-                "recall": float(r),
-                "f1": float(f1),
-                "confusion_matrix": cm.tolist(),
-                "classification_report": cr,
-                "num_samples": len(all_targets),
-            }
-
-            table = Table(title=f"📊 {self.description}", show_header=True)
-            table.add_column("Métrica")
-            table.add_column("Valor", justify="right")
-            table.add_row("Accuracy", f"{acc:.4f}")
-            table.add_row("Precision (weighted)", f"{float(p):.4f}")
-            table.add_row("Recall (weighted)", f"{float(r):.4f}")
-            table.add_row("F1 (weighted)", f"{float(f1):.4f}")
-            table.add_row("Amostras", str(len(all_targets)))
-            console.print(table)
-            console.print(cr)
+            results = classification_metrics(all_targets, all_preds, target_names)
+            print_classification_metrics(results, f"📊 {self.description}", console)
 
             if self.wandb_run:
                 prefix = (
@@ -140,10 +106,10 @@ class Tester:
                     .replace(" ", "_").replace("(", "").replace(")", "")
                 )
                 self.wandb_run.log({
-                    f"{prefix}/accuracy": acc,
-                    f"{prefix}/precision": float(p),
-                    f"{prefix}/recall": float(r),
-                    f"{prefix}/f1": float(f1),
+                    f"{prefix}/accuracy": results["accuracy"],
+                    f"{prefix}/precision": results["precision"],
+                    f"{prefix}/recall": results["recall"],
+                    f"{prefix}/f1": results["f1"],
                 })
 
             return results
@@ -183,17 +149,8 @@ def run_test_and_save(
     results = tester.test()
 
     if results:
-        serializable: Dict[str, Any] = {}
-        for k, v in results.items():
-            if isinstance(v, np.ndarray):
-                serializable[k] = v.tolist()
-            else:
-                serializable[k] = v
-
         out_path = experiment_dir / f"{split_name}_results.json"
-        with open(out_path, "w") as f:
-            json.dump(serializable, f, indent=2)
-        console.print(f"[green]✓ Resultados salvos: {out_path}[/green]")
+        save_results_json(results, out_path, console)
 
     return results
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import gzip
+import hashlib
 import json
 import math
 from http import HTTPStatus
@@ -13,12 +15,27 @@ import numpy as np
 
 from genotype_based_predictor.bcftools_chain_mapper import BcftoolsChainMapper
 from genotype_based_predictor.dynamic_indel_alignment import DynamicIndelAligner
+from genomics_workspace import DEFAULT_CONSENSUS_DATASET_DIR
 
 
 DEFAULT_POINTS = 1000
 MAX_POINTS = 20_000
 MAX_SERIES = 24
+DEFAULT_HEATMAP_TRACKS = 128
+MAX_HEATMAP_TRACKS = 512
+MAX_HEATMAP_SAMPLES = 120
 DEFAULT_VIEW_LENGTH = 32768
+
+PIGMENTATION_BY_POPULATION = {
+    "YRI": "strong pigmentation",
+    "ESN": "strong pigmentation",
+    "LWK": "strong pigmentation",
+    "MSL": "strong pigmentation",
+    "GWD": "strong pigmentation",
+    "FIN": "weak pigmentation",
+    "CEU": "weak pigmentation",
+    "GBR": "weak pigmentation",
+}
 
 
 def _load_json(path: Path) -> Dict[str, Any]:
@@ -106,6 +123,43 @@ def _extract_full_signal(array: np.ndarray, track: int) -> np.ndarray:
     return np.asarray(array.reshape((-1, tracks))[:, track], dtype=np.float32)
 
 
+def _extract_matrix(array: np.ndarray, start: int, length: int, track_start: int, track_count: int) -> np.ndarray:
+    if array.ndim == 0:
+        matrix = array.reshape((1, 1))
+    elif array.ndim == 1:
+        matrix = array.reshape((-1, 1))
+    else:
+        tracks = array.shape[-1]
+        matrix = array.reshape((-1, tracks))
+
+    left_track = max(0, track_start)
+    right_track = min(matrix.shape[1], left_track + max(1, track_count))
+    if left_track >= matrix.shape[1] or right_track <= left_track:
+        raise ValueError(f"track_start={track_start} out of range for array shape {tuple(array.shape)}")
+
+    start_index = max(0, start - 1)
+    end_index = min(matrix.shape[0], start_index + length)
+    if start_index >= matrix.shape[0] or end_index <= start_index:
+        return np.empty((0, right_track - left_track), dtype=np.float32)
+    return np.asarray(matrix[start_index:end_index, left_track:right_track], dtype=np.float32)
+
+
+def _extract_full_matrix(array: np.ndarray, track_start: int, track_count: int) -> np.ndarray:
+    if array.ndim == 0:
+        matrix = array.reshape((1, 1))
+    elif array.ndim == 1:
+        matrix = array.reshape((-1, 1))
+    else:
+        tracks = array.shape[-1]
+        matrix = array.reshape((-1, tracks))
+
+    left_track = max(0, track_start)
+    right_track = min(matrix.shape[1], left_track + max(1, track_count))
+    if left_track >= matrix.shape[1] or right_track <= left_track:
+        raise ValueError(f"track_start={track_start} out of range for array shape {tuple(array.shape)}")
+    return np.asarray(matrix[:, left_track:right_track], dtype=np.float32)
+
+
 def _align_signal_window(
     signal: np.ndarray,
     entry: Dict[str, Any],
@@ -126,6 +180,29 @@ def _align_signal_window(
         target = int(target_raw)
         if start <= target + 1 <= end and 0 <= source < signal.size:
             window[target + 1 - start] = signal[source]
+    return window
+
+
+def _align_matrix_window(
+    matrix: np.ndarray,
+    entry: Dict[str, Any],
+    expanded_length: int,
+    start: int,
+    length: int,
+) -> np.ndarray:
+    end = min(expanded_length, start + length - 1)
+    if end < start:
+        return np.empty((0, matrix.shape[1]), dtype=np.float32)
+    window = np.full((end - start + 1, matrix.shape[1]), np.nan, dtype=np.float32)
+    copy_from = entry.get("copy_from_indices", [])
+    copy_to = entry.get("expanded_indices", [])
+    source_start = int(entry.get("source_start_idx", 0))
+    absolute_source = str(entry.get("mapping_method")) == "bcftools_chain"
+    for source_raw, target_raw in zip(copy_from, copy_to):
+        source = int(source_raw) if absolute_source else source_start + int(source_raw)
+        target = int(target_raw)
+        if start <= target + 1 <= end and 0 <= source < matrix.shape[0]:
+            window[target + 1 - start, :] = matrix[source, :]
     return window
 
 
@@ -155,10 +232,41 @@ def _downsample(signal: np.ndarray, start: int, points: int) -> Tuple[List[int],
     return xs, ys, "mean"
 
 
+def _downsample_matrix(matrix: np.ndarray, start: int, points: int) -> Tuple[List[int], np.ndarray, str]:
+    if matrix.size == 0 or matrix.shape[0] == 0:
+        return [], np.empty((matrix.shape[1] if matrix.ndim == 2 else 0, 0), dtype=np.float32), "empty"
+    if matrix.shape[0] <= points:
+        x = list(range(start, start + int(matrix.shape[0])))
+        return x, matrix.T.astype(np.float32, copy=False), "none"
+
+    bucket_count = max(1, points)
+    edges = np.linspace(0, matrix.shape[0], num=bucket_count + 1, dtype=np.int64)
+    xs: List[int] = []
+    values = np.full((matrix.shape[1], bucket_count), np.nan, dtype=np.float32)
+    used = 0
+    for i in range(bucket_count):
+        left = int(edges[i])
+        right = int(edges[i + 1])
+        if right <= left:
+            continue
+        bucket = matrix[left:right, :]
+        if bucket.size == 0:
+            continue
+        xs.append(start + (left + right - 1) // 2)
+        with np.errstate(invalid="ignore"):
+            finite_count = np.sum(np.isfinite(bucket), axis=0)
+            sums = np.nansum(bucket, axis=0)
+            means = np.divide(sums, finite_count, out=np.full(bucket.shape[1], np.nan, dtype=np.float32), where=finite_count > 0)
+        values[:, used] = means.astype(np.float32)
+        used += 1
+    return xs, values[:, :used], "mean"
+
+
 class AlphaGenomeRepository:
     def __init__(self, dataset_dir: Path, consensus_dataset_dir: Optional[Path] = None):
         self.dataset_dir = Path(dataset_dir).resolve()
-        self.consensus_dataset_dir = Path(consensus_dataset_dir).resolve() if consensus_dataset_dir else Path("/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all")
+        self.consensus_dataset_dir = Path(consensus_dataset_dir).resolve() if consensus_dataset_dir else DEFAULT_CONSENSUS_DATASET_DIR
+        self.cache_dir = self.dataset_dir / ".alphagenome_track_viewer_cache"
         metadata_path = self.dataset_dir / "dataset_metadata.json"
         if not metadata_path.exists():
             raise FileNotFoundError(f"dataset_metadata.json not found: {metadata_path}")
@@ -169,6 +277,33 @@ class AlphaGenomeRepository:
         self.outputs = self._load_outputs()
         self._aligner: Optional[DynamicIndelAligner] = None
         self._chain_mapper: Optional[BcftoolsChainMapper] = None
+
+    def _cache_path(self, namespace: str, payload: Dict[str, Any]) -> Path:
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        digest = hashlib.sha256(encoded).hexdigest()
+        return self.cache_dir / namespace / f"{digest}.json.gz"
+
+    def _load_cache(self, path: Path) -> Optional[Dict[str, Any]]:
+        if not path.exists():
+            return None
+        try:
+            with gzip.open(path, "rt", encoding="utf-8") as f:
+                payload = json.load(f)
+            if isinstance(payload, dict):
+                payload["cache"] = {"hit": True, "path": str(path)}
+                return payload
+        except Exception:
+            return None
+        return None
+
+    def _save_cache(self, path: Path, payload: Dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        cache_payload = dict(payload)
+        cache_payload["cache"] = {"hit": False, "path": str(path)}
+        with gzip.open(tmp_path, "wt", encoding="utf-8") as f:
+            json.dump(cache_payload, f, allow_nan=False, separators=(",", ":"))
+        tmp_path.replace(path)
 
     def _load_individuals(self) -> List[str]:
         raw = self.metadata.get("individuals", [])
@@ -191,6 +326,7 @@ class AlphaGenomeRepository:
                 "sample_id": sample_id,
                 "population": str(meta.get("population", "")),
                 "superpopulation": str(meta.get("superpopulation", "")),
+                "pigmentation": str(meta.get("pigmentation", "")),
                 "sex": meta.get("sex_label", meta.get("sex", "")),
                 "family_id": str(meta.get("family_id", "")),
             })
@@ -233,6 +369,30 @@ class AlphaGenomeRepository:
             counts[key] = counts.get(key, 0) + 1
         return dict(sorted(counts.items()))
 
+    def _class_label_for_row(self, row: Dict[str, Any], class_field: str) -> str:
+        if class_field == "pigmentation":
+            explicit = str(row.get("pigmentation") or "")
+            if explicit:
+                return explicit
+            return PIGMENTATION_BY_POPULATION.get(str(row.get("population") or ""), "")
+        return str(row.get(class_field) or "")
+
+    def _class_distribution(self, class_field: str) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        for row in self.individual_rows:
+            key = self._class_label_for_row(row, class_field)
+            if not key:
+                continue
+            counts[key] = counts.get(key, 0) + 1
+        return dict(sorted(counts.items()))
+
+    def _samples_for_class(self, class_field: str, class_value: str) -> List[str]:
+        return [
+            str(row["sample_id"])
+            for row in self.individual_rows
+            if self._class_label_for_row(row, class_field) == class_value
+        ]
+
     def options_payload(self) -> Dict[str, Any]:
         default_window = self._default_view_window()
         return {
@@ -242,6 +402,7 @@ class AlphaGenomeRepository:
             "individuals": self.individual_rows,
             "populations": self._distribution("population"),
             "superpopulations": self._distribution("superpopulation"),
+            "pigmentations": self._class_distribution("pigmentation"),
             "genes": self.genes,
             "haplotypes": ["H1", "H2"],
             "outputs": self.outputs,
@@ -335,6 +496,47 @@ class AlphaGenomeRepository:
             )
         return self._chain_mapper
 
+    def model_window_payload(self, gene: str, align: bool) -> Dict[str, Any]:
+        if not align:
+            default_window = self._default_view_window()
+            return {
+                "gene": gene,
+                "align": False,
+                "start": default_window["start"],
+                "length": default_window["length"],
+                "x_axis": "sample_sequence",
+                "model_window": None,
+            }
+        aligner = self._get_aligner()
+        aligner.build_alignment_axis_for_gene(gene, self.individuals)
+        center_slice = aligner.get_reference_centered_expanded_slice(gene, DEFAULT_VIEW_LENGTH)
+        return {
+            "gene": gene,
+            "align": True,
+            "start": int(center_slice["expanded_start"]) + 1,
+            "length": int(center_slice["expanded_end"]) - int(center_slice["expanded_start"]),
+            "x_axis": "bcftools_chain_expanded_alignment",
+            "model_window": center_slice,
+        }
+
+    def _effective_window(
+        self,
+        gene: str,
+        start: int,
+        length: int,
+        aligner: Optional[DynamicIndelAligner],
+        expanded_length: Optional[int],
+    ) -> Tuple[int, int, Optional[Dict[str, int]]]:
+        if aligner is None:
+            return start, length, None
+        center_slice = aligner.get_reference_centered_expanded_slice(gene, DEFAULT_VIEW_LENGTH)
+        effective_start = int(center_slice["expanded_start"]) + 1
+        effective_length = int(center_slice["expanded_end"]) - int(center_slice["expanded_start"])
+        if expanded_length is not None:
+            effective_start = max(1, min(effective_start, int(expanded_length or 1)))
+            effective_length = max(1, min(effective_length, int(expanded_length or 1) - effective_start + 1))
+        return effective_start, effective_length, center_slice
+
     def track_payload(
         self,
         sample: str,
@@ -407,15 +609,7 @@ class AlphaGenomeRepository:
         if aligner is not None:
             aligner.build_alignment_axis_for_gene(gene, self.individuals)
         expanded_length = aligner.get_expanded_length(gene) if aligner else None
-        axis = aligner.get_alignment_axis(gene) if aligner else None
-        effective_start = start
-        effective_length = length
-        if axis is not None:
-            ref_start_offset = int(axis.get("ref_start_offset", 0))
-            if start > int(expanded_length or 0) and ref_start_offset > 0:
-                effective_start = max(1, start - ref_start_offset)
-            effective_start = max(1, min(effective_start, int(expanded_length or 1)))
-            effective_length = max(1, min(length, int(expanded_length or 1) - effective_start + 1))
+        effective_start, effective_length, model_window = self._effective_window(gene, start, length, aligner, expanded_length)
         series = []
         array_shape: Optional[List[int]] = None
         array_dtype: Optional[str] = None
@@ -472,11 +666,180 @@ class AlphaGenomeRepository:
             "array_dtype": array_dtype,
             "requested": {"start": start, "length": length, "points": points, "align": align},
             "effective_window": {"start": effective_start, "length": effective_length},
+            "model_window": model_window,
             "x_axis": "bcftools_chain_expanded_alignment" if align else "sample_sequence",
             "expanded_length": expanded_length,
             "individuals": individual_summaries,
             "series": series,
         }
+
+    def heatmap_payload(
+        self,
+        mode: str,
+        sample: str,
+        class_field: str,
+        class_value: str,
+        gene: str,
+        haplotypes: List[str],
+        output: str,
+        start: int,
+        length: int,
+        points: int,
+        track_start: int,
+        track_count: int,
+        align: bool,
+        max_samples: int,
+    ) -> Dict[str, Any]:
+        mode = mode if mode in {"sample", "class_mean"} else "sample"
+        haplotypes = [hap for hap in haplotypes if hap in {"H1", "H2"}]
+        if not haplotypes:
+            raise ValueError("Select at least one haplotype")
+        if track_count < 1:
+            raise ValueError("track_count must be positive")
+
+        samples = [sample] if mode == "sample" else self._samples_for_class(class_field, class_value)
+        samples = [s for s in samples if s]
+        if not samples:
+            raise ValueError("No samples found for heatmap selection")
+        truncated_samples = False
+        if mode != "class_mean":
+            max_samples = max(1, min(MAX_HEATMAP_SAMPLES, max_samples))
+            truncated_samples = len(samples) > max_samples
+            samples = samples[:max_samples]
+
+        aligner = self._get_aligner() if align else None
+        chain_mapper = self._get_chain_mapper() if align else None
+        if aligner is not None:
+            aligner.build_alignment_axis_for_gene(gene, self.individuals)
+        expanded_length = aligner.get_expanded_length(gene) if aligner else None
+        effective_start, effective_length, model_window = self._effective_window(gene, start, length, aligner, expanded_length)
+
+        cache_path: Optional[Path] = None
+        if mode == "class_mean":
+            cache_key = {
+                "version": 3,
+                "dataset_dir": str(self.dataset_dir),
+                "consensus_dataset_dir": str(self.consensus_dataset_dir),
+                "mode": mode,
+                "class_field": class_field,
+                "class_value": class_value,
+                "gene": gene,
+                "haplotypes": haplotypes,
+                "output": output,
+                "effective_start": effective_start,
+                "effective_length": effective_length,
+                "model_window": model_window,
+                "points": points,
+                "track_start": track_start,
+                "track_count": track_count,
+                "align": align,
+                "samples": samples,
+            }
+            cache_path = self._cache_path("heatmap_class_mean", cache_key)
+            cached = self._load_cache(cache_path)
+            if cached is not None:
+                return cached
+
+        matrices: List[np.ndarray] = []
+        x_values: List[int] = []
+        array_shape: Optional[List[int]] = None
+        array_dtype: Optional[str] = None
+        track_count_total: Optional[int] = None
+        track_meta: List[Dict[str, Any]] = []
+        missing: List[str] = []
+
+        for current_sample in samples:
+            for haplotype in haplotypes:
+                pred_dir = self._prediction_dir(current_sample, gene, haplotype)
+                npz_path = pred_dir / f"{output}.npz"
+                try:
+                    array, _array_key, _npz_keys = _load_prediction_array(npz_path)
+                    metadata = self._load_track_metadata(pred_dir, output)
+                    full_matrix = _extract_full_matrix(array, track_start=track_start, track_count=track_count)
+                    if aligner is not None:
+                        entry = chain_mapper.get_haplotype_entry(gene, current_sample, haplotype) if chain_mapper is not None else None
+                        if entry is None:
+                            missing.append(f"{current_sample}_{haplotype}: missing alignment")
+                            continue
+                        matrix = _align_matrix_window(full_matrix, entry, int(expanded_length), effective_start, effective_length)
+                        x_start = effective_start
+                    else:
+                        matrix = _extract_matrix(array, start=start, length=length, track_start=track_start, track_count=track_count)
+                        x_start = max(1, start)
+                    current_x, sampled, _method = _downsample_matrix(matrix, start=x_start, points=points)
+                    if not x_values:
+                        x_values = current_x
+                    matrices.append(sampled)
+                    array_shape = list(array.shape)
+                    array_dtype = str(array.dtype)
+                    track_count_total = 1 if array.ndim <= 1 else int(array.shape[-1])
+                    if metadata and not track_meta:
+                        end_track = min(len(metadata), track_start + sampled.shape[0])
+                        track_meta = metadata[track_start:end_track]
+                except Exception as exc:
+                    missing.append(f"{current_sample}_{haplotype}: {exc}")
+
+        if not matrices:
+            raise RuntimeError("No heatmap matrix could be loaded")
+
+        min_rows = min(matrix.shape[0] for matrix in matrices)
+        min_cols = min(matrix.shape[1] for matrix in matrices)
+        stack = np.stack([matrix[:min_rows, :min_cols] for matrix in matrices], axis=0)
+        with np.errstate(invalid="ignore"):
+            finite_count = np.sum(np.isfinite(stack), axis=0)
+            sums = np.nansum(stack, axis=0)
+            heatmap = np.divide(sums, finite_count, out=np.full((min_rows, min_cols), np.nan, dtype=np.float32), where=finite_count > 0)
+        finite = heatmap[np.isfinite(heatmap)]
+        if finite.size:
+            p99 = float(np.nanpercentile(finite, 99))
+            vmax = p99 if p99 > 0 else float(np.nanmax(finite))
+        else:
+            vmax = 1.0
+        if not math.isfinite(vmax) or vmax <= 0:
+            vmax = 1.0
+
+        track_labels = []
+        for offset in range(min_rows):
+            meta = track_meta[offset] if offset < len(track_meta) else {}
+            track_labels.append(self._track_label(track_start + offset, meta))
+
+        result = {
+            "mode": mode,
+            "class_field": class_field,
+            "class_value": class_value,
+            "sample": sample,
+            "samples_used": samples,
+            "samples_requested": len(self._samples_for_class(class_field, class_value)) if mode == "class_mean" else len(samples),
+            "samples_truncated": truncated_samples,
+            "haplotypes": haplotypes,
+            "gene": gene,
+            "output": output,
+            "track_start": track_start,
+            "track_rows": min_rows,
+            "track_count_total": track_count_total,
+            "track_labels": track_labels,
+            "array_shape": array_shape or [],
+            "array_dtype": array_dtype,
+            "requested": {"start": start, "length": length, "points": points, "align": align, "track_count": track_count, "max_samples": None if mode == "class_mean" else max_samples},
+            "effective_window": {"start": effective_start, "length": effective_length},
+            "model_window": model_window,
+            "x_axis": "bcftools_chain_expanded_alignment" if align else "sample_sequence",
+            "expanded_length": expanded_length,
+            "x": x_values[:min_cols],
+            "matrix": [[_json_scalar(v) for v in row] for row in heatmap],
+            "stats": {
+                "min": None if finite.size == 0 else _json_scalar(np.nanmin(finite)),
+                "max": None if finite.size == 0 else _json_scalar(np.nanmax(finite)),
+                "mean": None if finite.size == 0 else _json_scalar(np.nanmean(finite)),
+                "vmax": _json_scalar(vmax),
+            },
+            "missing": missing[:50],
+            "missing_count": len(missing),
+            "cache": {"hit": False, "path": str(cache_path) if cache_path else None},
+        }
+        if cache_path is not None:
+            self._save_cache(cache_path, result)
+        return result
 
 
 class AlphaGenomeTrackViewerHandler(BaseHTTPRequestHandler):
@@ -512,6 +875,10 @@ class AlphaGenomeTrackViewerHandler(BaseHTTPRequestHandler):
                 self._handle_tracks(parsed.query)
             elif parsed.path == "/api/track-options":
                 self._handle_track_options(parsed.query)
+            elif parsed.path == "/api/heatmap":
+                self._handle_heatmap(parsed.query)
+            elif parsed.path == "/api/model-window":
+                self._handle_model_window(parsed.query)
             else:
                 self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
         except Exception as exc:
@@ -541,6 +908,48 @@ class AlphaGenomeTrackViewerHandler(BaseHTTPRequestHandler):
         haplotype = qs.get("haplotype", ["H1"])[0]
         output = qs.get("output", [defaults["output"] or "rna_seq"])[0]
         self._send_json(self.repository.track_options_payload(sample, gene, haplotype, output))
+
+    def _handle_model_window(self, query: str) -> None:
+        qs = parse_qs(query)
+        defaults = self.repository.options_payload()["defaults"]
+        gene = qs.get("gene", [defaults["gene"] or ""])[0]
+        align = qs.get("align", ["false"])[0].lower() in {"1", "true", "yes", "on"}
+        self._send_json(self.repository.model_window_payload(gene, align))
+
+    def _handle_heatmap(self, query: str) -> None:
+        qs = parse_qs(query)
+        defaults = self.repository.options_payload()["defaults"]
+        sample = qs.get("sample", [defaults["sample"] or ""])[0]
+        gene = qs.get("gene", [defaults["gene"] or ""])[0]
+        haplotype = qs.get("haplotype", ["H1"])[0]
+        haplotypes = [item for raw in qs.get("haplotypes", []) for item in raw.split(",") if item] or [haplotype]
+        output = qs.get("output", [defaults["output"] or "rna_seq"])[0]
+        mode = qs.get("mode", ["sample"])[0]
+        class_field = qs.get("class_field", ["superpopulation"])[0]
+        class_value = qs.get("class_value", [""])[0]
+        start = _safe_int(qs.get("start", ["1"])[0], 1, 1, 1_000_000_000)
+        length = _safe_int(qs.get("length", ["2000"])[0], 2000, 1, 50_000_000)
+        points = _safe_int(qs.get("points", [str(DEFAULT_POINTS)])[0], DEFAULT_POINTS, 1, MAX_POINTS)
+        track_start = _safe_int(qs.get("track_start", ["0"])[0], 0, 0, 1_000_000)
+        track_count = _safe_int(qs.get("track_count", [str(DEFAULT_HEATMAP_TRACKS)])[0], DEFAULT_HEATMAP_TRACKS, 1, MAX_HEATMAP_TRACKS)
+        max_samples = _safe_int(qs.get("max_samples", ["60"])[0], 60, 1, MAX_HEATMAP_SAMPLES)
+        align = qs.get("align", ["false"])[0].lower() in {"1", "true", "yes", "on"}
+        self._send_json(self.repository.heatmap_payload(
+            mode=mode,
+            sample=sample,
+            class_field=class_field,
+            class_value=class_value,
+            gene=gene,
+            haplotypes=haplotypes,
+            output=output,
+            start=start,
+            length=length,
+            points=points,
+            track_start=track_start,
+            track_count=track_count,
+            align=align,
+            max_samples=max_samples,
+        ))
 
 
 INDEX_HTML = """<!doctype html>
@@ -584,6 +993,17 @@ INDEX_HTML = """<!doctype html>
     .stat span { display: block; margin-top: 4px; overflow-wrap: anywhere; }
     .viz-grid { display:grid; grid-template-columns:minmax(900px,1fr) 420px; gap:12px; align-items:stretch; }
     .plot-wrap { height: min(68vh, 760px); min-height: 460px; background: #080d17; border: 1px solid #273854; border-radius: 16px; overflow: hidden; }
+    .heatmap-wrap { margin-top:12px; background:#080d17; border:1px solid #273854; border-radius:16px; padding:12px; }
+    .heatmap-controls { display:grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap:10px; align-items:end; margin-bottom:10px; }
+    .heatmap-canvas-wrap { height:min(62vh, 720px); min-height:420px; overflow:auto; border-radius:12px; border:1px solid #1d2c45; background:#02050a; }
+    .heatmap-panels { display:grid; grid-template-columns: repeat(auto-fit, minmax(520px, 1fr)); gap:12px; margin-top:10px; }
+    .heatmap-panel { background:#050914; border:1px solid #1d2c45; border-radius:14px; padding:10px; min-width:0; }
+    .heatmap-panel h3 { margin:0 0 8px; font-size:.92rem; color:#dce8fb; overflow-wrap:anywhere; }
+    canvas { display:block; image-rendering:pixelated; }
+    .tabs { display:flex; gap:8px; margin:14px 0 10px; }
+    .tab { width:auto; padding:9px 14px; background:#22324a; border:1px solid #344869; }
+    .tab.active { background:linear-gradient(135deg, #1878ff, #21b6d7); border:0; }
+    .hidden { display:none; }
     .side-panel { background:#0c1220; border:1px solid #273854; border-radius:16px; padding:12px; overflow:auto; max-height:min(68vh,760px); }
     .person { border-bottom:1px solid #273854; padding:8px 0; }
     .person b { color:#ffd166; }
@@ -592,7 +1012,7 @@ INDEX_HTML = """<!doctype html>
     svg { display: block; width: 100%; height: 100%; }
     .meta { color: var(--muted); font-size: .88rem; margin-top: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
     @media (max-width: 1000px) { .viz-grid { grid-template-columns:1fr; } }
-    @media (max-width: 900px) { form { grid-template-columns: repeat(2, 1fr); } .wide { grid-column: span 2; } .stats { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 900px) { form, .heatmap-controls { grid-template-columns: repeat(2, 1fr); } .wide { grid-column: span 2; } .stats { grid-template-columns: repeat(2, 1fr); } }
   </style>
 </head>
 <body>
@@ -626,8 +1046,8 @@ INDEX_HTML = """<!doctype html>
       <label>Haplotypes<div class="checks"><label><input id="hapH1" type="checkbox" checked> H1</label><label><input id="hapH2" type="checkbox"> H2</label></div></label>
       <label>Output<select id="output"></select></label>
       <label class="wide">Track<select id="track"></select></label>
-      <label>Start<input id="start" type="number" value="1" min="1"></label>
-      <label>Length<input id="length" type="number" value="2000" min="1"></label>
+      <label>Start<input id="start" type="number" value="1" min="1" title="When aligned, this is set automatically to the model's global aligned window"></label>
+      <label>Length<input id="length" type="number" value="2000" min="1" title="When aligned, this is the model window size"></label>
       <label>Points<input id="points" type="number" value="1000" min="1" max="20000"></label>
       <label>Alignment<div class="checks"><label><input id="align" type="checkbox"> align with bcftools_chain</label></div></label>
       <button type="submit">Refresh now</button>
@@ -645,12 +1065,34 @@ INDEX_HTML = """<!doctype html>
       <div class="stat"><b>Shape</b><span id="shape">-</span></div>
       <div class="stat"><b>Returned</b><span id="returned">-</span></div>
     </div>
-    <div class="viz-grid">
+    <div class="tabs">
+      <button type="button" class="tab active" id="lineTab">Line plot</button>
+      <button type="button" class="tab" id="heatmapTab">RNA-seq grayscale heatmap</button>
+    </div>
+    <div class="viz-grid" id="lineSection">
       <div class="plot-wrap"><svg id="plot" role="img" aria-label="Signal plot"></svg></div>
       <aside class="side-panel">
         <h2 style="margin-top:0">Selected individuals</h2>
         <div id="individualPanel">No data loaded.</div>
       </aside>
+    </div>
+    <div class="heatmap-wrap hidden" id="heatmapSection">
+      <div class="heatmap-controls">
+        <label>Source<select id="heatmapMode"><option value="sample">Selected individual</option><option value="class_mean">Class mean</option></select></label>
+        <label>Class field<select id="heatmapClassField"><option value="superpopulation">Superpopulation</option><option value="pigmentation">Pigmentation</option></select></label>
+        <label class="wide">Classes<select id="heatmapClassValue" multiple size="4"></select></label>
+        <label>First track<input id="heatmapTrackStart" type="number" value="0" min="0"></label>
+        <label>Track rows<input id="heatmapTrackCount" type="number" value="128" min="1" max="512"></label>
+        <label>Max samples<input id="heatmapMaxSamples" type="number" value="60" min="1" max="120"></label>
+        <button type="button" id="loadHeatmap">Render heatmap</button>
+      </div>
+      <div class="sample-note" id="heatmapInfo">Use output rna_seq to visualize intensity across tracks. In class mean mode, selected individuals are ignored. The plot scrolls horizontally at pixel level.</div>
+      <div class="heatmap-panels" id="heatmapPanels">
+        <div class="heatmap-panel">
+          <h3>Heatmap</h3>
+          <div class="heatmap-canvas-wrap"><canvas id="heatmap" role="img" aria-label="RNA-seq grayscale heatmap"></canvas></div>
+        </div>
+      </div>
     </div>
     <div class="meta" id="meta"></div>
   </section>
@@ -662,6 +1104,7 @@ let allSamples = [];
 let allIndividuals = [];
 let populationRows = [];
 let superpopulationRows = [];
+let pigmentationRows = [];
 let defaultWindow = {start: 1, length: 32768};
 let autoLoadTimer = null;
 
@@ -682,6 +1125,10 @@ function fillSelect(select, values) {
   }
 }
 
+function selectedSelectValues(select) {
+  return Array.from(select.selectedOptions || []).map(option => option.value).filter(Boolean);
+}
+
 function fillTrackSelect(tracks) {
   const previous = $('track').value;
   $('track').innerHTML = '';
@@ -694,6 +1141,41 @@ function fillTrackSelect(tracks) {
   }
   if (previous) $('track').value = previous;
   if (!$('track').value && $('track').options.length) $('track').selectedIndex = 0;
+}
+
+function fillClassValues() {
+  const field = $('heatmapClassField').value;
+  const rows = field === 'pigmentation' ? pigmentationRows : superpopulationRows;
+  fillSelect($('heatmapClassValue'), rows.map(row => row.id));
+  Array.from($('heatmapClassValue').options).slice(0, 2).forEach(option => { option.selected = true; });
+}
+
+function updateHeatmapModeControls() {
+  const classMean = $('heatmapMode').value === 'class_mean';
+  $('heatmapMaxSamples').disabled = classMean;
+  $('heatmapMaxSamples').title = classMean ? 'Class mean uses all individuals in the selected class' : '';
+}
+
+function updateWindowControlsState() {
+  const aligned = $('align').checked;
+  $('start').disabled = aligned;
+  $('length').disabled = aligned;
+  ['prevWindow','nextWindow','zoomIn','zoomOut','centerWindow'].forEach(id => { $(id).disabled = aligned; });
+  $('start').title = aligned ? 'Automatically set to the training model global aligned window for the selected gene' : '';
+  $('length').title = aligned ? 'Automatically set to the training model window size (32768 or shorter at boundaries)' : '';
+}
+
+async function syncModelWindow() {
+  updateWindowControlsState();
+  if (!$('gene').value) return;
+  const params = new URLSearchParams({gene: $('gene').value, align: $('align').checked ? 'true' : 'false'});
+  const response = await fetch(apiUrl('/api/model-window?' + params.toString()));
+  const data = await response.json();
+  if (!response.ok || data.error) throw new Error(data.error || response.statusText);
+  $('start').value = data.start;
+  $('length').value = data.length;
+  defaultWindow = {start: data.start || 1, length: data.length || 32768};
+  return data;
 }
 
 function checkedValues(id) { return Array.from(document.querySelectorAll(`#${id} input:checked`)).map(el => el.value); }
@@ -778,7 +1260,10 @@ const formatAxis = (v) => Math.round(Number(v)).toLocaleString('en-US', {useGrou
 
 function scheduleLoad(delay = 350) {
   clearTimeout(autoLoadTimer);
-  autoLoadTimer = setTimeout(() => loadTrack().catch(showError), delay);
+  autoLoadTimer = setTimeout(() => {
+    if (!$('heatmapSection').classList.contains('hidden')) loadHeatmap().catch(showError);
+    else loadTrack().catch(showError);
+  }, delay);
 }
 
 function drawPlot(series) {
@@ -867,6 +1352,136 @@ function drawPlot(series) {
   });
 }
 
+function setTab(tab) {
+  const heatmap = tab === 'heatmap';
+  $('lineTab').classList.toggle('active', !heatmap);
+  $('heatmapTab').classList.toggle('active', heatmap);
+  $('lineSection').classList.toggle('hidden', heatmap);
+  $('heatmapSection').classList.toggle('hidden', !heatmap);
+  if (heatmap) loadHeatmap().catch(showError);
+  else loadTrack().catch(showError);
+}
+
+function drawHeatmap(data, canvas) {
+  const matrix = data.matrix || [];
+  const rows = matrix.length;
+  const cols = rows ? matrix[0].length : 0;
+  const wrap = canvas.parentElement;
+  if (!rows || !cols) {
+    wrap.innerHTML = '<div style="display:grid;place-items:center;height:100%;color:#9ca9bf">No heatmap values</div>';
+    return;
+  }
+  const left = 170;
+  const top = 18;
+  const bottom = 34;
+  const right = 120;
+  const cellW = 4;
+  const cellH = Math.max(8, Math.floor((wrap.clientHeight - top - bottom) / Math.max(rows, 1)));
+  const cssWidth = left + cols * cellW + right;
+  const cssHeight = Math.max(220, top + rows * cellH + bottom);
+  const vmin = 0;
+  const vmax = Math.max(Number(data.stats && data.stats.max) || 0, 1e-12);
+
+  wrap.innerHTML = '';
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${cssWidth} ${cssHeight}`);
+  svg.style.width = `${cssWidth}px`;
+  svg.style.height = `${cssHeight}px`;
+  svg.style.display = 'block';
+  svg.style.background = '#02050a';
+  const cells = document.createElementNS(ns, 'g');
+  cells.setAttribute('shape-rendering', 'crispEdges');
+  const fragment = document.createDocumentFragment();
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const v = Number(matrix[r][c]);
+      const rect = document.createElementNS(ns, 'rect');
+      rect.setAttribute('x', left + c * cellW);
+      rect.setAttribute('y', top + r * cellH);
+      rect.setAttribute('width', cellW);
+      rect.setAttribute('height', cellH);
+      if (!Number.isFinite(v)) {
+        rect.setAttribute('fill', '#122033');
+      } else {
+        const g = Math.max(0, Math.min(255, Math.round(255 * (v / vmax))));
+        rect.setAttribute('fill', `rgb(${g},${g},${g})`);
+        rect.setAttribute('data-value', String(v));
+      }
+      rect.setAttribute('data-track-row', String(r));
+      rect.setAttribute('data-position-index', String(c));
+      rect.appendChild(document.createElementNS(ns, 'title')).textContent = `${(data.track_labels && data.track_labels[r]) || 'track ' + r}\nposition=${(data.x || [])[c] ?? c}\nvalue=${Number.isFinite(v) ? v : 'NA'}`;
+      fragment.appendChild(rect);
+    }
+  }
+  cells.appendChild(fragment);
+  svg.appendChild(cells);
+
+  const step = Math.max(1, Math.ceil(rows / 28));
+  for (let r = 0; r < rows; r += step) {
+    const label = (data.track_labels && data.track_labels[r]) || `Track ${Number(data.track_start || 0) + r}`;
+    const text = document.createElementNS(ns, 'text');
+    text.setAttribute('x', 8);
+    text.setAttribute('y', top + r * cellH + cellH / 2 + 4);
+    text.setAttribute('fill', '#9ca9bf');
+    text.setAttribute('font-size', '12');
+    text.textContent = label.length > 24 ? label.slice(0, 24) + '...' : label;
+    svg.appendChild(text);
+  }
+  const x = data.x || [];
+  if (x.length) {
+    const startText = document.createElementNS(ns, 'text');
+    startText.setAttribute('x', left);
+    startText.setAttribute('y', cssHeight - 10);
+    startText.setAttribute('fill', '#9ca9bf');
+    startText.setAttribute('font-size', '12');
+    startText.textContent = formatAxis(x[0]);
+    svg.appendChild(startText);
+    const endText = document.createElementNS(ns, 'text');
+    endText.setAttribute('x', cssWidth - 18);
+    endText.setAttribute('y', cssHeight - 10);
+    endText.setAttribute('text-anchor', 'end');
+    endText.setAttribute('fill', '#9ca9bf');
+    endText.setAttribute('font-size', '12');
+    endText.textContent = formatAxis(x[x.length - 1]);
+    svg.appendChild(endText);
+  }
+  const barX = cssWidth - 86;
+  const barY = 12;
+  const barW = 70;
+  const barH = 8;
+  const defs = document.createElementNS(ns, 'defs');
+  const grad = document.createElementNS(ns, 'linearGradient');
+  grad.setAttribute('id', `gray_${Math.random().toString(36).slice(2)}`);
+  grad.setAttribute('x1', '0%');
+  grad.setAttribute('x2', '100%');
+  const stop0 = document.createElementNS(ns, 'stop');
+  stop0.setAttribute('offset', '0%');
+  stop0.setAttribute('stop-color', '#000');
+  const stop1 = document.createElementNS(ns, 'stop');
+  stop1.setAttribute('offset', '100%');
+  stop1.setAttribute('stop-color', '#fff');
+  grad.appendChild(stop0);
+  grad.appendChild(stop1);
+  defs.appendChild(grad);
+  svg.appendChild(defs);
+  const bar = document.createElementNS(ns, 'rect');
+  bar.setAttribute('x', barX);
+  bar.setAttribute('y', barY);
+  bar.setAttribute('width', barW);
+  bar.setAttribute('height', barH);
+  bar.setAttribute('fill', `url(#${grad.getAttribute('id')})`);
+  svg.appendChild(bar);
+  const scaleText = document.createElementNS(ns, 'text');
+  scaleText.setAttribute('x', barX);
+  scaleText.setAttribute('y', barY + 24);
+  scaleText.setAttribute('fill', '#9ca9bf');
+  scaleText.setAttribute('font-size', '12');
+  scaleText.textContent = `${fmt(vmin)}..${fmt(vmax)}`;
+  svg.appendChild(scaleText);
+  wrap.appendChild(svg);
+}
+
 function highlightSeries(index) {
   document.querySelectorAll('#plot .series-path').forEach(path => {
     const active = Number(path.dataset.seriesIndex) === index;
@@ -925,7 +1540,8 @@ function moveWindow(direction) {
   const start = Math.max(1, Number($('start').value || 1));
   const length = Math.max(1, Number($('length').value || 1));
   $('start').value = Math.max(1, start + direction * length);
-  loadTrack().catch(showError);
+  if (!$('heatmapSection').classList.contains('hidden')) loadHeatmap().catch(showError);
+  else loadTrack().catch(showError);
 }
 
 function zoom(factor) {
@@ -935,13 +1551,15 @@ function zoom(factor) {
   const nextLength = Math.max(10, Math.round(length * factor));
   $('length').value = nextLength;
   $('start').value = Math.max(1, center - Math.floor(nextLength / 2));
-  loadTrack().catch(showError);
+  if (!$('heatmapSection').classList.contains('hidden')) loadHeatmap().catch(showError);
+  else loadTrack().catch(showError);
 }
 
 function centerDefaultWindow() {
   $('start').value = defaultWindow.start;
   $('length').value = defaultWindow.length;
-  loadTrack().catch(showError);
+  if (!$('heatmapSection').classList.contains('hidden')) loadHeatmap().catch(showError);
+  else loadTrack().catch(showError);
 }
 
 async function loadTrack() {
@@ -976,6 +1594,134 @@ async function loadTrack() {
   $('status').textContent = 'Loaded.';
 }
 
+function heatmapParamsFor(classValue = '') {
+  const samples = selectedSamples();
+  const haplotypes = selectedHaplotypes();
+  return new URLSearchParams({
+    mode: $('heatmapMode').value,
+    sample: samples[0] || '',
+    class_field: $('heatmapClassField').value,
+    class_value: classValue,
+    gene: $('gene').value,
+    haplotypes: haplotypes.join(','),
+    output: $('output').value,
+    start: $('start').value,
+    length: $('length').value,
+    points: $('points').value,
+    track_start: $('heatmapTrackStart').value,
+    track_count: $('heatmapTrackCount').value,
+    max_samples: $('heatmapMaxSamples').value,
+    align: $('align').checked ? 'true' : 'false',
+  });
+}
+
+function renderHeatmapPanels(count, titles) {
+  $('heatmapPanels').innerHTML = '';
+  const canvases = [];
+  for (let i = 0; i < count; i++) {
+    const panel = document.createElement('div');
+    panel.className = 'heatmap-panel';
+    const title = document.createElement('h3');
+    title.textContent = titles[i] || `Heatmap ${i + 1}`;
+    const wrap = document.createElement('div');
+    wrap.className = 'heatmap-canvas-wrap';
+    const canvas = document.createElement('div');
+    canvas.setAttribute('role', 'img');
+    canvas.setAttribute('aria-label', title.textContent);
+    wrap.appendChild(canvas);
+    panel.appendChild(title);
+    panel.appendChild(wrap);
+    $('heatmapPanels').appendChild(panel);
+    canvases.push(canvas);
+  }
+  return canvases;
+}
+
+function interleaveHeatmaps(payloads) {
+  if (!payloads.length) return null;
+  const minRows = Math.min(...payloads.map(item => (item.matrix || []).length));
+  const minCols = Math.min(...payloads.map(item => (item.x || []).length));
+  const matrix = [];
+  const trackLabels = [];
+  const values = [];
+  for (let row = 0; row < minRows; row++) {
+    for (const item of payloads) {
+      const sourceRow = (item.matrix && item.matrix[row]) || [];
+      const clipped = sourceRow.slice(0, minCols);
+      matrix.push(clipped);
+      const baseLabel = (item.track_labels && item.track_labels[row]) || `Track ${Number(item.track_start || 0) + row}`;
+      trackLabels.push(`${item.class_value || item.sample}: ${baseLabel}`);
+      for (const v of clipped) if (Number.isFinite(Number(v))) values.push(Number(v));
+    }
+  }
+  const sorted = values.slice().sort((a, b) => a - b);
+  const p99Index = sorted.length ? Math.min(sorted.length - 1, Math.floor(sorted.length * 0.99)) : 0;
+  const vmax = sorted.length ? Math.max(sorted[p99Index], 1e-12) : 1;
+  const mean = values.length ? values.reduce((acc, v) => acc + v, 0) / values.length : null;
+  return {
+    ...payloads[0],
+    mode: 'class_mean_interleaved',
+    class_value: payloads.map(item => item.class_value).join(' + '),
+    samples_used: payloads.flatMap(item => item.samples_used || []),
+    samples_requested: payloads.reduce((acc, item) => acc + Number(item.samples_requested || 0), 0),
+    samples_truncated: payloads.some(item => item.samples_truncated),
+    track_rows: matrix.length,
+    track_labels: trackLabels,
+    x: (payloads[0].x || []).slice(0, minCols),
+    matrix,
+    stats: {
+      min: sorted.length ? sorted[0] : null,
+      max: sorted.length ? sorted[sorted.length - 1] : null,
+      mean,
+      vmax,
+    },
+    missing_count: payloads.reduce((acc, item) => acc + Number(item.missing_count || 0), 0),
+    cache: null,
+  };
+}
+
+async function fetchHeatmap(classValue = '') {
+  const response = await fetch(apiUrl('/api/heatmap?' + heatmapParamsFor(classValue).toString()));
+  const data = await response.json();
+  if (!response.ok || data.error) throw new Error(data.error || response.statusText);
+  return data;
+}
+
+async function loadHeatmap() {
+  $('status').className = '';
+  $('status').textContent = 'Loading RNA-seq heatmap...';
+  const samples = selectedSamples();
+  const haplotypes = selectedHaplotypes();
+  if (!haplotypes.length) throw new Error('Select at least one haplotype');
+  const mode = $('heatmapMode').value;
+  updateHeatmapModeControls();
+  if (mode === 'sample' && !samples.length) throw new Error('Select one sample for sample heatmap');
+  const classValues = mode === 'class_mean' ? selectedSelectValues($('heatmapClassValue')) : [''];
+  if (mode === 'class_mean' && !classValues.length) throw new Error('Select at least one class for class mean heatmap');
+  const titles = mode === 'class_mean' ? classValues : [`${samples[0]}, ${haplotypes.join('+')}`];
+  const canvases = renderHeatmapPanels(mode === 'class_mean' ? 1 : titles.length, mode === 'class_mean' ? [`Interleaved: ${titles.join(' | ')}`] : titles);
+  const payloads = [];
+  for (let idx = 0; idx < classValues.length; idx++) {
+    $('status').textContent = `Loading RNA-seq heatmap ${idx + 1}/${classValues.length}...`;
+    const data = await fetchHeatmap(classValues[idx]);
+    payloads.push(data);
+  }
+  const data = mode === 'class_mean' ? interleaveHeatmaps(payloads) : payloads[0];
+  if (mode === 'class_mean') drawHeatmap(data, canvases[0]);
+  else payloads.forEach((item, idx) => drawHeatmap(item, canvases[idx]));
+  const source = mode === 'class_mean'
+    ? payloads.map(item => `${item.class_value}: ${item.samples_used.length}/${item.samples_requested}${item.cache && item.cache.path ? ` ${item.cache.hit ? 'hit' : 'miss'}` : ''}`).join(' | ')
+    : `${data.sample}, haplotypes ${data.haplotypes.join('+')}`;
+  const cacheInfo = data.cache && data.cache.path ? ` | cache=${data.cache.hit ? 'hit' : 'miss'}` : '';
+  const win = data.effective_window ? `window=${data.effective_window.start}+${data.effective_window.length - 1}` : 'window=-';
+  $('heatmapInfo').textContent = `Heatmap ${data.track_rows} tracks x ${data.x.length} positions | ${source} | axis=${data.x_axis} | ${win} | grayscale=absolute 0..max | SVG rect plot, horizontal scroll, 4px/position | stats min=${fmt(data.stats.min)} max=${fmt(data.stats.max)} mean=${fmt(data.stats.mean)} | missing=${payloads.map(item => item.missing_count).join(',')}${mode === 'class_mean' ? '' : cacheInfo}`;
+  $('returned').textContent = `${data.track_rows}x${data.x.length}`;
+  $('axis').textContent = data.x_axis;
+  $('trackCount').textContent = data.track_count_total;
+  $('shape').textContent = `[${data.array_shape.join(', ')}] ${data.array_dtype}`;
+  $('status').textContent = 'Heatmap loaded.';
+}
+
 async function init() {
   const response = await fetch(apiUrl('/api/options'));
   const options = await response.json();
@@ -994,13 +1740,25 @@ async function init() {
   allIndividuals = options.individuals || (options.samples || []).map(sample => ({sample_id: sample, population: '', superpopulation: ''}));
   populationRows = Object.entries(options.populations || {}).map(([id, count]) => ({id, count}));
   superpopulationRows = Object.entries(options.superpopulations || {}).map(([id, count]) => ({id, count}));
+  pigmentationRows = Object.entries(options.pigmentations || {}).map(([id, count]) => ({id, count}));
   renderCheckList('superpopChecks', superpopulationRows, 'superpopSearch', 'superpopCount', row => `${row.id} (${row.count})`);
   renderPopulations();
+  fillClassValues();
+  updateHeatmapModeControls();
+  updateWindowControlsState();
+  await syncModelWindow();
   await loadTrackOptions();
   if (selectedSamples().length && $('gene').value) await loadTrack();
 }
 
 $('controls').addEventListener('submit', (event) => { event.preventDefault(); loadTrack().catch(showError); });
+$('lineTab').addEventListener('click', () => setTab('line'));
+$('heatmapTab').addEventListener('click', () => setTab('heatmap'));
+$('heatmapClassField').addEventListener('change', () => { fillClassValues(); loadHeatmap().catch(showError); });
+$('heatmapMode').addEventListener('change', () => { updateHeatmapModeControls(); loadHeatmap().catch(showError); });
+$('heatmapClassValue').addEventListener('change', () => loadHeatmap().catch(showError));
+$('loadHeatmap').addEventListener('click', () => loadHeatmap().catch(showError));
+['heatmapTrackStart','heatmapTrackCount','heatmapMaxSamples'].forEach(id => $(id).addEventListener('change', () => loadHeatmap().catch(showError)));
 $('superpopSearch').addEventListener('input', () => { renderCheckList('superpopChecks', superpopulationRows, 'superpopSearch', 'superpopCount', row => `${row.id} (${row.count})`); renderPopulations(); });
 $('populationSearch').addEventListener('input', renderPopulations);
 $('sampleFilter').addEventListener('input', renderSamples);
@@ -1016,10 +1774,12 @@ $('nextWindow').addEventListener('click', () => moveWindow(1));
 $('zoomIn').addEventListener('click', () => zoom(0.5));
 $('zoomOut').addEventListener('click', () => zoom(2));
 $('centerWindow').addEventListener('click', centerDefaultWindow);
-['gene','output','hapH1','hapH2'].forEach(id => {
+$('gene').addEventListener('change', () => syncModelWindow().then(() => loadTrackOptions()).then(() => scheduleLoad()).catch(showError));
+$('align').addEventListener('change', () => syncModelWindow().then(() => scheduleLoad()).catch(showError));
+['output','hapH1','hapH2'].forEach(id => {
   $(id).addEventListener('change', () => loadTrackOptions().then(() => scheduleLoad()).catch(showError));
 });
-['track','start','length','points','align'].forEach(id => {
+['track','start','length','points'].forEach(id => {
   $(id).addEventListener('change', () => scheduleLoad());
 });
 function showError(err) { $('status').className = 'error'; $('status').textContent = err.message || String(err); }
@@ -1050,7 +1810,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("dataset_dir", type=Path, help="Dataset directory containing dataset_metadata.json")
     parser.add_argument("--host", default="127.0.0.1", help="Bind host")
     parser.add_argument("--port", type=int, default=8774, help="Bind port")
-    parser.add_argument("--consensus-dataset-dir", type=Path, default=Path("/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all"))
+    parser.add_argument("--consensus-dataset-dir", type=Path, default=DEFAULT_CONSENSUS_DATASET_DIR)
     args = parser.parse_args(argv)
     serve(args.dataset_dir, args.host, args.port, args.consensus_dataset_dir)
 

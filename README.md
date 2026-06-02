@@ -2,6 +2,8 @@
 
 _A technical-scientific guide to `genomes_analyzer.py`_
 
+For the research model pipelines (`neural_ancestry_predictor_deprecated`, `genotype_based_predictor`, and `variant_transformer_predictor`), see [docs/RESEARCH_PIPELINES.md](docs/RESEARCH_PIPELINES.md).
+
 ## Index
 - [Abstract](#abstract)
 - [Introduction](#introduction)
@@ -779,7 +781,7 @@ Additional guides:
 
 ### Neural Ancestry Predictor
 
-> **📁 Location**: This module is in `neural_ancestry_predictor/`
+> **📁 Location**: This module is in `neural_ancestry_predictor_deprecated/`
 
 **Neural Ancestry Predictor** is a PyTorch-based neural network that predicts genetic ancestry (superpopulation, population, or FROG likelihood) from AlphaGenome predictions stored in PyTorch datasets. The module is fully configurable via YAML and integrates with Weights & Biases for experiment tracking and visualization.
 
@@ -804,13 +806,13 @@ The network consists of:
 #### Quick Usage
 
 ```bash
-cd neural_ancestry_predictor
+cd neural_ancestry_predictor_deprecated
 
 # Train model
-python3 neural_ancestry_predictor.py --config configs/default.yaml
+python3 neural_ancestry_predictor_deprecated.py --config configs/default.yaml
 
 # Test model
-python3 neural_ancestry_predictor.py --config configs/default.yaml --mode test
+python3 neural_ancestry_predictor_deprecated.py --config configs/default.yaml --mode test
 ```
 
 #### Configuration Highlights
@@ -859,8 +861,8 @@ Neural Ancestry Predictor is designed to work seamlessly with PyTorch datasets g
 # Step 1: Build dataset (from build_non_longevous_dataset/)
 python3 build_non_longevous_dataset.py --config configs/small.yaml
 
-# Step 2: Train ancestry predictor (from neural_ancestry_predictor/)
-python3 neural_ancestry_predictor.py --config configs/default.yaml
+# Step 2: Train ancestry predictor (from neural_ancestry_predictor_deprecated/)
+python3 neural_ancestry_predictor_deprecated.py --config configs/default.yaml
 ```
 
 The dataset provides:
@@ -871,7 +873,7 @@ The dataset provides:
 
 #### Documentation
 
-📚 **Complete Documentation**: [neural_ancestry_predictor/README.md](neural_ancestry_predictor/README.md)
+📚 **Complete Documentation**: [neural_ancestry_predictor_deprecated/README.md](neural_ancestry_predictor_deprecated/README.md)
 
 Key topics covered:
 - 📥 Installation and dependencies
@@ -1089,4 +1091,3 @@ Includes:
 - 📊 Output format and evaluation metrics
 - 🧬 dbSNP annotation and chip panel filtering details
 - ❓ FAQ and performance guidelines
-

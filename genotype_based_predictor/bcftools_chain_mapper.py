@@ -14,7 +14,7 @@ from genotype_based_predictor.dynamic_indel_alignment import DynamicIndelAligner
 
 
 DEFAULT_DATASET_DIR = Path("/dados/GENOMICS_DATA/v1/1kG_high_coverage")
-DEFAULT_CONSENSUS_ROOT = Path("/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all")
+DEFAULT_CONSENSUS_ROOT = Path("/dados/GENOMICS_DATA/v1/1kG_high_coverage")
 DEFAULT_TSV_ROOT = Path("genotype_based_predictor/aligned_dna_genes_1000_all")
 BCFTOOLS_CHAIN_MAPPER_VERSION = "bcftools_chain_mapper_v4"
 

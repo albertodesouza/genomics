@@ -27,6 +27,7 @@ from genotype_based_predictor.data_splitting import (
     build_valid_sample_index_map,
 )
 from genotype_based_predictor.utils import worker_init_fn
+from genomics_pipeline.data_loading import dataloader_kwargs, make_data_loader_generator
 
 console = Console()
 SHARD_SIZE = 16
@@ -53,7 +54,8 @@ def _materialize_cache_chunk(
         compute_normalization=False,
     )
     shard_sample_ids = _sample_ids_for_processed_indices(processed_dataset, split_indices)
-    processed_dataset.prepare_alignment_cache(alignment_sample_ids, entry_sample_ids=shard_sample_ids)
+    if config.dataset_input.tensor_layout == "haplotype_channels":
+        processed_dataset.prepare_alignment_cache(alignment_sample_ids, entry_sample_ids=shard_sample_ids)
 
     items = processed_dataset.get_items_bulk(split_indices)
     torch.save(items, shard_path)
@@ -165,6 +167,8 @@ def _alignment_indices_from_splits(config: PipelineConfig, train_indices, val_in
 
 
 def _alignment_cache_signature(processed_dataset: ProcessedGenomicDataset) -> Dict[str, Any]:
+    if processed_dataset.config.dataset_input.tensor_layout == "raw_center_crop":
+        return {"layout": "raw_center_crop", "alignment": "not_used"}
     signature = {}
     for gene_name in sorted(processed_dataset.genes_to_use):
         try:
@@ -263,8 +267,8 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
             "prediction_target": config.output.prediction_target,
             "known_classes": config.output.known_classes,
             "derived_targets": _target_definition(config)["derived_targets"],
-            "input_shape": "3D_haplotype_channels",
-            "center_window_policy": "reference_center_to_expanded_axis",
+            "input_shape": "2D_raw_center_crop" if config.dataset_input.tensor_layout == "raw_center_crop" else "3D_haplotype_channels",
+            "center_window_policy": "raw_array_center_crop" if config.dataset_input.tensor_layout == "raw_center_crop" else "reference_center_to_expanded_axis",
             "mask_normalization_policy": "preserve_binary_masks_v1",
             "strand_track_policy": "include_both_strands_v1",
             "normalization_track_policy": "haplotype_rows_v1",
@@ -424,8 +428,11 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
 
     individuals = src_meta.get("individuals", [])
     pedigree = src_meta.get("individuals_pedigree", {})
-    alignment_indices = _alignment_indices_from_splits(config, train_indices, val_indices, test_indices)
-    alignment_sample_ids = _sample_ids_for_processed_indices(processed_dataset, alignment_indices)
+    if config.dataset_input.tensor_layout == "haplotype_channels":
+        alignment_indices = _alignment_indices_from_splits(config, train_indices, val_indices, test_indices)
+        alignment_sample_ids = _sample_ids_for_processed_indices(processed_dataset, alignment_indices)
+    else:
+        alignment_sample_ids = []
 
     # Desativar taint_at_runtime durante o salvamento
     original_taint = processed_dataset.config.debug.taint_at_runtime
@@ -634,8 +641,8 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                 "prediction_target": config.output.prediction_target,
                 "known_classes": config.output.known_classes,
                 "derived_targets": _target_definition(config)["derived_targets"],
-                "input_shape": "3D_haplotype_channels",
-                "center_window_policy": "reference_center_to_expanded_axis",
+                "input_shape": "2D_raw_center_crop" if config.dataset_input.tensor_layout == "raw_center_crop" else "3D_haplotype_channels",
+                "center_window_policy": "raw_array_center_crop" if config.dataset_input.tensor_layout == "raw_center_crop" else "reference_center_to_expanded_axis",
                 "mask_normalization_policy": "preserve_binary_masks_v1",
                 "strand_track_policy": "include_both_strands_v1",
                 "normalization_track_policy": "haplotype_rows_v1",
@@ -696,37 +703,29 @@ def _make_data_loaders(train_ds, val_ds, test_ds, config: PipelineConfig):
         val_w = 2 if val_w is None else val_w
         persistent = True
 
-    seed = config.data_split.random_seed
-    gen = None
-    if seed is not None:
-        gen = torch.Generator()
-        gen.manual_seed(seed)
-
-    train_kwargs = {
-        "batch_size": batch_size,
-        "shuffle": True,
-        "num_workers": train_w,
-        "pin_memory": pin_mem,
-        "collate_fn": _collate_fn,
-        "persistent_workers": persistent and train_w > 0,
-        "generator": gen,
-        "worker_init_fn": worker_init_fn if train_w > 0 else None,
-    }
-    val_kwargs = {
-        "batch_size": batch_size,
-        "shuffle": False,
-        "num_workers": val_w,
-        "pin_memory": pin_mem,
-        "collate_fn": _collate_fn,
-        "persistent_workers": persistent and val_w > 0,
-        "worker_init_fn": worker_init_fn if val_w > 0 else None,
-    }
+    gen = make_data_loader_generator(config.data_split.random_seed)
     prefetch = config.data_loading.prefetch_factor
-    if prefetch is not None:
-        if train_w > 0:
-            train_kwargs["prefetch_factor"] = prefetch
-        if val_w > 0:
-            val_kwargs["prefetch_factor"] = prefetch
+    train_kwargs = dataloader_kwargs(
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=train_w,
+        pin_memory=pin_mem,
+        collate_fn=_collate_fn,
+        persistent_workers=persistent,
+        generator=gen,
+        worker_init_fn=worker_init_fn,
+        prefetch_factor=prefetch,
+    )
+    val_kwargs = dataloader_kwargs(
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=val_w,
+        pin_memory=pin_mem,
+        collate_fn=_collate_fn,
+        persistent_workers=persistent,
+        worker_init_fn=worker_init_fn,
+        prefetch_factor=prefetch,
+    )
 
     train_loader = DataLoader(train_ds, **train_kwargs)
     val_loader = DataLoader(val_ds, **val_kwargs)
@@ -764,9 +763,10 @@ def _make_runtime_processed_datasets(runtime_dataset_dir: Path, cache_dir: Path,
     train_indices = [sample_to_processed_idx[sid] for sid in split_index.get("train", []) if sid in sample_to_processed_idx]
     val_indices = [sample_to_processed_idx[sid] for sid in split_index.get("val", []) if sid in sample_to_processed_idx]
     test_indices = [sample_to_processed_idx[sid] for sid in split_index.get("test", []) if sid in sample_to_processed_idx]
-    alignment_indices = _alignment_indices_from_splits(config, train_indices, val_indices, test_indices)
-    alignment_sample_ids = _sample_ids_for_processed_indices(processed_ds, alignment_indices)
-    processed_ds.prepare_alignment_cache(alignment_sample_ids, entry_sample_ids=[])
+    if config.dataset_input.tensor_layout == "haplotype_channels":
+        alignment_indices = _alignment_indices_from_splits(config, train_indices, val_indices, test_indices)
+        alignment_sample_ids = _sample_ids_for_processed_indices(processed_ds, alignment_indices)
+        processed_ds.prepare_alignment_cache(alignment_sample_ids, entry_sample_ids=[])
 
     train_ds = Subset(processed_ds, train_indices)
     val_ds = Subset(processed_ds, val_indices)
@@ -882,9 +882,10 @@ def prepare_data(config: PipelineConfig, experiment_dir: Path):
         norm_params = temp_ds.normalization_params
 
     processed_ds = ProcessedGenomicDataset(base_dataset, config, normalization_params=norm_params, compute_normalization=False)
-    alignment_idx = _alignment_indices_from_splits(config, train_idx, val_idx, test_idx)
-    alignment_sample_ids = _sample_ids_for_processed_indices(processed_ds, alignment_idx)
-    processed_ds.prepare_alignment_cache(alignment_sample_ids, entry_sample_ids=[])
+    if config.dataset_input.tensor_layout == "haplotype_channels":
+        alignment_idx = _alignment_indices_from_splits(config, train_idx, val_idx, test_idx)
+        alignment_sample_ids = _sample_ids_for_processed_indices(processed_ds, alignment_idx)
+        processed_ds.prepare_alignment_cache(alignment_sample_ids, entry_sample_ids=[])
 
     norm_path = experiment_dir / "models" / "normalization_params.json"
     norm_path.parent.mkdir(parents=True, exist_ok=True)

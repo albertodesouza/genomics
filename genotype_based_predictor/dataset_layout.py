@@ -6,7 +6,7 @@ import json
 import os
 import shutil
 from pathlib import Path
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, Optional, Sequence
 
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -44,6 +44,26 @@ def _copy_file(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     if not dst.exists():
         shutil.copy2(src, dst)
+
+
+def _materialize_file(src: Path, dst: Path, *, link_mode: str, dry_run: bool) -> str:
+    if dst.exists():
+        return "exists"
+    if dry_run:
+        return "missing"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if link_mode == "hardlink":
+        try:
+            os.link(src, dst)
+            return "linked"
+        except OSError:
+            shutil.copy2(src, dst)
+            return "copied"
+    if link_mode == "symlink":
+        dst.symlink_to(src)
+        return "linked"
+    shutil.copy2(src, dst)
+    return "copied"
 
 
 def _format_vcf_pattern(vcf_pattern: str, chromosome: str) -> str:
@@ -271,3 +291,94 @@ def materialize_dataset(source_dir: Path, target_dir: Path) -> Path:
 
     console.print(f"[green]Dataset materializado em[/green] {target_dir}")
     return target_dir
+
+
+def sync_bcftools_chain_artifacts(
+    source_dir: Path,
+    target_dir: Path,
+    *,
+    link_mode: str = "hardlink",
+    dry_run: bool = True,
+    sample_limit: Optional[int] = None,
+    genes: Optional[Sequence[str]] = None,
+) -> Dict[str, int]:
+    """Populate target dataset with legacy artifacts required by bcftools_chain.
+
+    The canonical v1 layout stores reference windows under ``references/`` and
+    omits per-sample raw FASTA/VCF intermediates. ``bcftools_chain`` still needs
+    the per-sample raw FASTAs and consensus-ready VCFs. This helper links or
+    copies only those missing artifacts from a legacy source dataset.
+    """
+    source_dir = Path(source_dir)
+    target_dir = Path(target_dir)
+    if link_mode not in {"hardlink", "symlink", "copy"}:
+        raise ValueError("link_mode deve ser 'hardlink', 'symlink' ou 'copy'")
+    if not (source_dir / "individuals").exists():
+        raise FileNotFoundError(f"Diretorio de individuos ausente no source: {source_dir}")
+    if not (target_dir / "individuals").exists():
+        raise FileNotFoundError(f"Diretorio de individuos ausente no target: {target_dir}")
+
+    selected_genes = set(genes or [])
+    stats = {
+        "samples": 0,
+        "windows": 0,
+        "exists": 0,
+        "missing": 0,
+        "linked": 0,
+        "copied": 0,
+        "source_missing": 0,
+    }
+    suffix_templates = (
+        "{sample}.H1.window.raw.fa",
+        "{sample}.H2.window.raw.fa",
+        "{sample}.window.consensus_ready.vcf.gz",
+        "{sample}.window.consensus_ready.vcf.gz.tbi",
+        "{sample}.window.vcf.gz",
+        "{sample}.window.vcf.gz.tbi",
+    )
+
+    sample_dirs = list(_iter_individual_dirs(source_dir))
+    if sample_limit is not None:
+        sample_dirs = sample_dirs[:sample_limit]
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Sincronizando artefatos bcftools_chain...", total=len(sample_dirs))
+        for source_sample_dir in sample_dirs:
+            sample_id = source_sample_dir.name
+            source_windows_dir = source_sample_dir / "windows"
+            target_windows_dir = target_dir / "individuals" / sample_id / "windows"
+            if not source_windows_dir.exists() or not target_windows_dir.exists():
+                progress.update(task, advance=1)
+                continue
+            stats["samples"] += 1
+            for source_window_dir in sorted(p for p in source_windows_dir.iterdir() if p.is_dir()):
+                gene = source_window_dir.name
+                if selected_genes and gene not in selected_genes:
+                    continue
+                target_window_dir = target_windows_dir / gene
+                if not target_window_dir.exists():
+                    continue
+                stats["windows"] += 1
+                for template in suffix_templates:
+                    filename = template.format(sample=sample_id)
+                    src = source_window_dir / filename
+                    dst = target_window_dir / filename
+                    if not src.exists():
+                        stats["source_missing"] += 1
+                        continue
+                    result = _materialize_file(src, dst, link_mode=link_mode, dry_run=dry_run)
+                    stats[result] += 1
+            progress.update(task, advance=1)
+
+    console.print(
+        "[green]bcftools_chain artifact sync[/green] "
+        f"dry_run={dry_run} link_mode={link_mode} stats={stats}"
+    )
+    return stats

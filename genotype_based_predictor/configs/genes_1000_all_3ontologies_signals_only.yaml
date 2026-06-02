@@ -1,6 +1,7 @@
 dataset_input:
   view_path: "/home/breno/I2CA/genomics/genotype_based_predictor/views/genes_1000_all_3ontologies.view.json"
-  processed_cache_dir: "/dados/GENOMICS_DATA/v1/1kG_high_coverage_runs"
+  processed_cache_dir: "results/cache/genotype_based_predictor"
+  results_dir: "results/genotype_based_predictor/runs"
   cache_processed_tensors: true
   tensor_layout: "haplotype_channels"
   feature_mode: "signals_only"
@@ -8,7 +9,7 @@ dataset_input:
   indel_include_valid_mask: false
   indel_include_snp_mask: false
   alignment_mapping: "bcftools_chain"
-  consensus_dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all"
+  consensus_dataset_dir: "/dados/GENOMICS_DATA/v1/1kG_high_coverage"
   alignment_axis_splits:
     - train
     - val

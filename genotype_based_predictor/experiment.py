@@ -3,12 +3,12 @@
 experiment.py — Setup de diretório de experimento e estado de interrupção.
 """
 
-import shutil
 from pathlib import Path
 
 from rich.console import Console
 
-from genotype_based_predictor.config import PipelineConfig, generate_experiment_name
+from genotype_based_predictor.config import PipelineConfig, generate_experiment_name, get_experiment_runs_dir
+from genomics_pipeline import setup_experiment_run
 
 console = Console()
 
@@ -37,7 +37,7 @@ def setup_experiment_dir(config: PipelineConfig, config_path: str) -> Path:
     ----------------
     ::
 
-        <processed_cache_dir>/
+        <results_dir>/
         └── <experiment_name>/
             ├── config.yaml   ← cópia do YAML usado
             └── models/       ← checkpoints e artefatos
@@ -55,14 +55,15 @@ def setup_experiment_dir(config: PipelineConfig, config_path: str) -> Path:
         Caminho do diretório do experimento criado.
     """
     experiment_name = generate_experiment_name(config)
-    base_cache_dir = Path(config.dataset_input.processed_cache_dir)
-    experiment_dir = base_cache_dir / experiment_name
-
-    experiment_dir.mkdir(parents=True, exist_ok=True)
-    (experiment_dir / "models").mkdir(exist_ok=True)
-
-    config_copy_path = experiment_dir / "config.yaml"
-    shutil.copyfile(config_path, config_copy_path)
+    run = setup_experiment_run(
+        pipeline="genotype_based_predictor",
+        run_name=experiment_name,
+        runs_root=get_experiment_runs_dir(config),
+        config_path=Path(config_path),
+        resolved_config=config.model_dump(mode="python"),
+        extra={"dataset_cache_root": str(Path(config.dataset_input.processed_cache_dir))},
+    )
+    experiment_dir = run.run_dir
 
     console.print(f"[green]📁 Experimento:[/green] {experiment_dir}")
     console.print(f"[green]   Nome:[/green] {experiment_name}")

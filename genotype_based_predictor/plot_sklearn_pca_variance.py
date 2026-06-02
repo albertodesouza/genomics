@@ -6,26 +6,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 from typing import Dict, List, Optional
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 import joblib
 import numpy as np
 from rich.console import Console
 
 from genotype_based_predictor.config import get_dataset_cache_dir, load_config
+from genomics_workspace import cache_path
 from genotype_based_predictor.data_pipeline import prepare_data
-
-NEURAL_PREDICTOR_DIR = ROOT / "neural_ancestry_predictor"
-if str(NEURAL_PREDICTOR_DIR) not in sys.path:
-    sys.path.insert(0, str(NEURAL_PREDICTOR_DIR))
-
-from sklearn_pca_cache import (  # noqa: E402
+from genomics_pipeline.sklearn_pca_cache import (
     METADATA_FILENAME,
     SCALER_PCA_FILENAME,
     ensure_sklearn_pca_cache,
@@ -162,7 +153,7 @@ def main() -> None:
     if args.force:
         config.debug.force_pca_cache_rebuild = True
 
-    experiment_dir = Path(config.dataset_input.processed_cache_dir) / "_pca_variance_plot"
+    experiment_dir = cache_path("genotype_based_predictor", "_pca_variance_plot")
     experiment_dir.mkdir(parents=True, exist_ok=True)
     _full_ds, train_loader, val_loader, test_loader = prepare_data(config, experiment_dir)
 

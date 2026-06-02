@@ -4,6 +4,7 @@ training.py — Trainer: loop de treinamento, validação, checkpoints e W&B.
 """
 
 import time
+import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -15,21 +16,16 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeEl
 from torch.utils.data import DataLoader
 
 from genotype_based_predictor.config import PipelineConfig
+from genomics_pipeline.checkpointing import load_checkpoint as load_torch_checkpoint
+from genomics_pipeline.checkpointing import resolve_checkpoint_path, save_checkpoint as save_torch_checkpoint
+from genomics_pipeline.optim import make_optimizer_from_config
+from genomics_pipeline.torch_utils import move_to_device
 
 console = Console()
 
 
 def _make_optimizer(model: nn.Module, config: PipelineConfig) -> optim.Optimizer:
-    t = config.training.optimizer.lower()
-    lr = config.training.learning_rate
-    wd = config.training.weight_decay
-    if t == "adam":
-        return optim.Adam(model.parameters(), lr=lr, weight_decay=wd, foreach=False)
-    elif t == "adamw":
-        return optim.AdamW(model.parameters(), lr=lr, weight_decay=wd, foreach=False)
-    elif t == "sgd":
-        return optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=wd, foreach=False)
-    raise ValueError(f"Otimizador não suportado: {t}")
+    return make_optimizer_from_config(model, config.training, foreach=False)
 
 
 def _make_scheduler(optimizer: optim.Optimizer, config: PipelineConfig):
@@ -114,6 +110,7 @@ class Trainer:
         self.is_classification = config.output.prediction_target != "frog_likelihood"
         self.num_epochs = config.training.num_epochs
         self.early_stop_patience = config.training.early_stopping_patience
+        self.max_samples_per_epoch = config.debug.max_samples_per_epoch
 
         self.history: Dict[str, list] = {
             "train_loss": [], "train_accuracy": [],
@@ -170,8 +167,8 @@ class Trainer:
                         features, targets, _idx = batch
                     else:
                         features, targets = batch
-                    features = features.to(self.device, non_blocking=True)
-                    targets = targets.to(self.device, non_blocking=True)
+                    features = move_to_device(features, self.device)
+                    targets = move_to_device(targets, self.device)
 
                     outputs = self.model(features)
 
@@ -197,34 +194,28 @@ class Trainer:
                     avg_loss = total_loss / max(total_samples, 1)
                     accuracy = total_correct / max(total_samples, 1) if self.is_classification else 0.0
                     progress.update(task, advance=1, loss=avg_loss, acc=accuracy, samples=total_samples)
+                    if self.max_samples_per_epoch is not None and total_samples >= self.max_samples_per_epoch:
+                        break
 
         avg_loss = total_loss / max(total_samples, 1)
         accuracy = total_correct / max(total_samples, 1) if self.is_classification else 0.0
         return {"loss": avg_loss, "accuracy": accuracy, "samples": total_samples}
 
     def _resolve_checkpoint_path(self, checkpoint: str) -> Path:
-        path = Path(checkpoint)
-        if path.is_absolute() or path.exists():
-            return path
-        if path.suffix != ".pt":
-            path = path.with_suffix(".pt")
-        return self.models_dir / path
+        return resolve_checkpoint_path(self.models_dir, checkpoint)
 
     def _load_checkpoint(self, checkpoint: str) -> None:
         checkpoint_path = self._resolve_checkpoint_path(checkpoint)
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint nao encontrado: {checkpoint_path}")
 
-        state = torch.load(checkpoint_path, map_location=self.device)
-        self.model.load_state_dict(state.get("model_state_dict", state))
-
-        optimizer_state = state.get("optimizer_state_dict")
-        if optimizer_state is not None:
-            self.optimizer.load_state_dict(optimizer_state)
-
-        scheduler_state = state.get("scheduler_state_dict")
-        if scheduler_state is not None and self.scheduler is not None:
-            self.scheduler.load_state_dict(scheduler_state)
+        state = load_torch_checkpoint(
+            checkpoint_path,
+            self.model,
+            optimizer=self.optimizer,
+            scheduler=self.scheduler,
+            device=self.device,
+        )
 
         self.start_epoch = int(state.get("epoch", 0)) + 1
         self.best_val_loss = float(state.get("best_val_loss", state.get("loss", self.best_val_loss)))
@@ -242,16 +233,15 @@ class Trainer:
         console.print(f"[green]✓ Checkpoint carregado:[/green] {checkpoint_path} (retomando em E{self.start_epoch:03d})")
 
     def _save_checkpoint(self, filename: str, epoch: int, metrics: Dict[str, float]):
-        checkpoint = {
-            "epoch": epoch,
-            "model_state_dict": self.model.state_dict(),
-            "optimizer_state_dict": self.optimizer.state_dict(),
-            "scheduler_state_dict": self.scheduler.state_dict() if self.scheduler is not None else None,
-            "best_val_loss": self.best_val_loss,
-            "best_val_accuracy": self.best_val_accuracy,
-            **metrics,
-        }
-        torch.save(checkpoint, self.models_dir / filename)
+        save_torch_checkpoint(
+            self.models_dir / filename,
+            self.model,
+            self.optimizer,
+            epoch,
+            metrics,
+            scheduler=self.scheduler,
+            extra={"best_val_loss": self.best_val_loss, "best_val_accuracy": self.best_val_accuracy},
+        )
 
     # ------------------------------------------------------------------
     # Public interface
@@ -374,4 +364,6 @@ class Trainer:
         )
         self.history["interrupted"] = interrupt_state.interrupted
         self.history["last_epoch"] = epoch
+        with open(self.models_dir / "training_history.json", "w", encoding="utf-8") as f:
+            json.dump(self.history, f, indent=2)
         return self.history

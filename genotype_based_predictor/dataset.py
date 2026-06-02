@@ -28,6 +28,13 @@ from genotype_based_predictor.normalization import (
     zscore_normalize,
 )
 from genotype_based_predictor.utils import taint_sample
+from genomics_pipeline.targets import (
+    build_class_maps,
+    classes_from_distribution,
+    classes_from_known,
+    classes_from_records,
+    target_value,
+)
 
 console = Console()
 
@@ -248,13 +255,26 @@ class ProcessedGenomicDataset(Dataset):
         if self.feature_mode == "masks_only":
             return {"method": "none", "per_track": False, "mean": 0.0, "std": 1.0}
 
-        if self.alphagenome_signal_variant_mask:
+        if self.alphagenome_signal_variant_mask and self.config.dataset_input.tensor_layout == "haplotype_channels":
             self.prepare_alignment_cache(self._global_variation_sample_ids(), entry_sample_ids=[])
 
         if self.normalization_method in {"log", "minmax_keep_zero"} and self.normalization_value not in (0, 0.0, None):
-            num_genes = len(self.config.dataset_input.genes_to_use or []) or 1
-            num_haplotypes = 2 if self.haplotype_mode == "H1+H2" else 1
-            num_tracks = num_haplotypes * self._rows_per_gene() * num_genes
+            if self.config.dataset_input.tensor_layout == "raw_center_crop":
+                num_tracks = 0
+                for idx in range(min(64, len(self.base_dataset))):
+                    try:
+                        input_data, _ = self.base_dataset[idx]
+                        processed = self._process_windows(input_data["windows"])
+                        if processed.size > 0:
+                            num_tracks = int(processed.shape[0])
+                            break
+                    except Exception:
+                        continue
+                if num_tracks <= 0:
+                    num_tracks = 1
+            else:
+                num_genes = len(self.config.dataset_input.genes_to_use or []) or 1
+                num_tracks = self._rows_per_gene() * num_genes
             if self.normalization_method == "log":
                 track_params = [{"log_max": float(self.normalization_value)} for _ in range(num_tracks)]
             else:
@@ -358,10 +378,9 @@ class ProcessedGenomicDataset(Dataset):
     # ------------------------------------------------------------------
 
     def _create_target_mappings(self):
-        known = self.config.output.known_classes
+        known = classes_from_known(self.config.output.known_classes)
         if known:
-            self.target_to_idx = {t: i for i, t in enumerate(known)}
-            self.idx_to_target = {i: t for t, i in self.target_to_idx.items()}
+            self.target_to_idx, self.idx_to_target = build_class_maps(known)
             self._discover_valid_sample_indices()
             return
 
@@ -376,22 +395,13 @@ class ProcessedGenomicDataset(Dataset):
         classes_from_metadata: Optional[List[str]] = None
         if dataset_metadata:
             pt = self.prediction_target
-            if pt == "superpopulation":
-                dist = dataset_metadata.get("superpopulation_distribution", {})
-                classes_from_metadata = sorted(dist.keys()) if dist else None
-            elif pt == "population":
-                dist = dataset_metadata.get("population_distribution", {})
-                classes_from_metadata = sorted(dist.keys()) if dist else None
-            elif pt in self.derived_targets:
+            classes_from_metadata = classes_from_distribution(dataset_metadata, pt)
+            if classes_from_metadata is None and pt in self.derived_targets:
                 pedigree = dataset_metadata.get("individuals_pedigree", {})
-                classes_from_metadata = sorted({
-                    t for t in (self._get_target_value(p) for p in pedigree.values())
-                    if t is not None
-                })
+                classes_from_metadata = classes_from_records(pedigree.values(), pt, self.derived_targets)
 
         if classes_from_metadata:
-            self.target_to_idx = {t: i for i, t in enumerate(classes_from_metadata)}
-            self.idx_to_target = {i: t for t, i in self.target_to_idx.items()}
+            self.target_to_idx, self.idx_to_target = build_class_maps(classes_from_metadata)
             self._discover_valid_sample_indices()
             console.print(f"[green]✓ Classes: {classes_from_metadata}[/green]")
             return
@@ -408,8 +418,7 @@ class ProcessedGenomicDataset(Dataset):
             except Exception:
                 pass
         sorted_t = sorted(unique_targets)
-        self.target_to_idx = {t: i for i, t in enumerate(sorted_t)}
-        self.idx_to_target = {i: t for t, i in self.target_to_idx.items()}
+        self.target_to_idx, self.idx_to_target = build_class_maps(sorted_t)
         self._discover_valid_sample_indices()
         console.print(f"[green]✓ Classes encontradas: {sorted_t}[/green]")
 
@@ -478,32 +487,85 @@ class ProcessedGenomicDataset(Dataset):
         return True
 
     def _get_target_value(self, output_data: Dict) -> Optional[str]:
-        pt = self.prediction_target
-        if pt == "superpopulation":
-            return output_data.get("superpopulation")
-        elif pt == "population":
-            return output_data.get("population")
-        elif pt in self.derived_targets:
-            return self._get_derived_target_value(output_data)
-        elif pt == "frog_likelihood":
-            return None
-        raise ValueError(f"prediction_target inválido: {pt}")
+        value = target_value(output_data, self.prediction_target, self.derived_targets)
+        if value is None and self.prediction_target not in {"frog_likelihood", *self.derived_targets.keys()} and self.prediction_target not in output_data:
+            raise ValueError(f"prediction_target inválido: {self.prediction_target}")
+        return value
 
     def _get_derived_target_value(self, output_data: Dict) -> Optional[str]:
-        dc = self._derived_target_config
-        if dc is None:
-            return None
-        source_value = output_data.get(dc.source_field)
-        if source_value is None:
-            return None
-        for cls, values in dc.class_map.items():
-            if source_value in values:
-                return cls
-        return None if dc.exclude_unmapped else source_value
+        return target_value(output_data, self.prediction_target, self.derived_targets)
 
     # ------------------------------------------------------------------
     # Processamento de janelas
     # ------------------------------------------------------------------
+
+    def _extract_center_raw(self, array: np.ndarray) -> np.ndarray:
+        if self.window_center_size <= 0 or self.window_center_size >= len(array):
+            return array
+        center = len(array) // 2
+        half = self.window_center_size // 2
+        start = max(0, center - half)
+        end = min(len(array), start + self.window_center_size)
+        if end - start < self.window_center_size:
+            start = max(0, end - self.window_center_size)
+        return array[start:end]
+
+    def _process_haplotype_raw_center_crop(
+        self,
+        predictions: Dict,
+        prediction_metadata: Optional[Dict] = None,
+    ) -> Optional[np.ndarray]:
+        rows = []
+        for output_type in self.alphagenome_outputs:
+            if output_type not in predictions:
+                continue
+            array = predictions[output_type]
+            track_meta = prediction_metadata.get(output_type) if prediction_metadata else None
+            if array.ndim == 2 and array.shape[1] > 1:
+                track_indices = self._filter_track_indices(output_type, track_meta) if track_meta else list(range(array.shape[1]))
+                for track_idx in track_indices:
+                    if not (0 <= track_idx < array.shape[1]):
+                        raise ValueError(f"track_index={track_idx} fora do limite para {output_type} com shape={array.shape}")
+                    row = np.asarray(array[:, track_idx], dtype=np.float32)
+                    row = self._extract_center_raw(row)
+                    if self.downsample_factor > 1:
+                        row = row[::self.downsample_factor]
+                    rows.append(row)
+            else:
+                row = np.asarray(array.flatten() if array.ndim > 1 else array, dtype=np.float32)
+                row = self._extract_center_raw(row)
+                if self.downsample_factor > 1:
+                    row = row[::self.downsample_factor]
+                rows.append(row)
+
+        if not rows:
+            return None
+        return np.vstack([row.reshape(1, -1) for row in rows])
+
+    def _process_windows_raw_center_crop(self, windows: Dict) -> np.ndarray:
+        processed_rows = []
+        gene_names = list(self.config.dataset_input.genes_to_use or windows.keys())
+        for gene_name in gene_names:
+            window_data = windows.get(gene_name)
+            if window_data is None:
+                continue
+            if self.haplotype_mode in {"H1", "H1+H2"}:
+                h1_rows = self._process_haplotype_raw_center_crop(
+                    window_data.get("predictions_h1", {}),
+                    window_data.get("prediction_metadata_h1"),
+                )
+                if h1_rows is not None:
+                    processed_rows.append(h1_rows)
+            if self.haplotype_mode in {"H2", "H1+H2"}:
+                h2_rows = self._process_haplotype_raw_center_crop(
+                    window_data.get("predictions_h2", {}),
+                    window_data.get("prediction_metadata_h2"),
+                )
+                if h2_rows is not None:
+                    processed_rows.append(h2_rows)
+        if not processed_rows:
+            return np.array([[]], dtype=np.float32).reshape(0, 0)
+        return np.vstack(processed_rows).astype(np.float32, copy=False)
 
     def _process_window_haplotype_channels(
         self,
@@ -828,8 +890,10 @@ class ProcessedGenomicDataset(Dataset):
         return aligned
 
     def _process_windows(self, windows: Dict, sample_id: Optional[str] = None) -> np.ndarray:
+        if self.config.dataset_input.tensor_layout == "raw_center_crop":
+            return self._process_windows_raw_center_crop(windows)
         if self.config.dataset_input.tensor_layout != "haplotype_channels":
-            raise ValueError("O pipeline atual requer tensor_layout='haplotype_channels'")
+            raise ValueError(f"tensor_layout inválido: {self.config.dataset_input.tensor_layout}")
         return self._process_windows_haplotype_channels(windows, sample_id=sample_id)
 
     def _process_windows_haplotype_channels(self, windows: Dict, sample_id: Optional[str] = None) -> np.ndarray:
@@ -932,6 +996,25 @@ class ProcessedGenomicDataset(Dataset):
     def _normalize_features_tensor(self, features_tensor: torch.Tensor) -> torch.Tensor:
         if self.feature_mode == "masks_only":
             return features_tensor
+
+        if self.config.dataset_input.tensor_layout == "raw_center_crop":
+            method = self.normalization_params.get("method", "zscore")
+            per_track = self.normalization_params.get("per_track", False)
+            if per_track:
+                rows = []
+                track_params = self.normalization_params["track_params"]
+                for ti in range(features_tensor.shape[0]):
+                    p = track_params[ti] if ti < len(track_params) else track_params[ti % len(track_params)]
+                    row = features_tensor[ti: ti + 1, :]
+                    if method == "zscore":
+                        row = zscore_normalize(row, p["mean"], p["std"])
+                    elif method == "minmax_keep_zero":
+                        row = minmax_keep_zero(row, p["max"])
+                    elif method == "log":
+                        row = log_normalize(row, p["log_max"])
+                    rows.append(row)
+                return torch.cat(rows, dim=0)
+            return apply_normalization(features_tensor, self.normalization_params)
 
         method = self.normalization_params.get("method", "zscore")
         per_track = self.normalization_params.get("per_track", False)
@@ -1072,6 +1155,10 @@ class ProcessedGenomicDataset(Dataset):
         return [self.idx_to_target[i] for i in range(len(self.idx_to_target))]
 
     def _rows_per_gene(self) -> int:
+        if self.config.dataset_input.tensor_layout == "raw_center_crop":
+            num_haplotypes = 2 if self.haplotype_mode == "H1+H2" else 1
+            num_tracks = len(self.ontology_terms) if self.ontology_terms else 1
+            return num_haplotypes * len(self.alphagenome_outputs) * num_tracks
         if self.feature_mode == "masks_only":
             return self._mask_channels_per_gene()
         num_ontologies = len(self.ontology_terms) if self.ontology_terms else 1
@@ -1084,6 +1171,21 @@ class ProcessedGenomicDataset(Dataset):
         return 2 + (1 if self.indel_include_valid_mask else 0) + (1 if self.indel_include_snp_mask else 0)
 
     def get_input_shape(self) -> Tuple[int, int]:
+        if self.config.dataset_input.tensor_layout == "raw_center_crop":
+            for idx in range(min(64, len(self))):
+                try:
+                    f, _ = self[idx]
+                    s = f.shape
+                    if len(s) == 2:
+                        return (s[0], s[1])
+                    if len(s) == 3:
+                        return (s[0] * s[1], s[2])
+                except Exception:
+                    continue
+            effective = self.window_center_size // max(self.downsample_factor, 1)
+            num_genes = len(self.config.dataset_input.genes_to_use or []) or 1
+            return (self._rows_per_gene() * num_genes, effective)
+
         if self.config.dataset_input.tensor_layout == "haplotype_channels":
             effective = self.window_center_size // max(self.downsample_factor, 1)
             num_genes = len(self.config.dataset_input.genes_to_use or []) or 1

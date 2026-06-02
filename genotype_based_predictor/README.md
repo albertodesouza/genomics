@@ -20,18 +20,18 @@ Dataset padrao usado pelas ferramentas:
 /dados/GENOMICS_DATA/v1/1kG_high_coverage
 ```
 
-Dataset preservado com os FASTAs/VCFs usados para gerar as predicoes AlphaGenome:
+Artefatos FASTA/VCF usados pelo modo `bcftools_chain` foram materializados no dataset canonico. O antigo dataset `top3` fica apenas em quarentena historica:
 
 ```text
-/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all
+/dados/GENOMICS_DATA/_deprecated/top3_20260601
 ```
 
-Esse diretorio contem `ref.window.fa`, `*.window.consensus_ready.vcf.gz`, `*.window.raw.fa`, `*.window.fixed.fa` e `predictions_H1/H2`. Ele e necessario para o modo padrao `bcftools_chain`, que reproduz o consenso do `bcftools` e gera chain files para mapear as predicoes AlphaGenome ao eixo expandido usado no treinamento.
+Novas execucoes devem usar `/dados/GENOMICS_DATA/v1/1kG_high_coverage` como `dataset_dir` e `consensus_dataset_dir`.
 
 Runs padrao:
 
 ```text
-/dados/GENOMICS_DATA/v1/1kG_high_coverage_runs
+results/genotype_based_predictor/runs
 ```
 
 TSVs alinhados padrao para o viewer:
@@ -70,7 +70,7 @@ Com paths explicitos:
 ```bash
 python3 -m genotype_based_predictor.genomics_workbench \
   --dataset-dir /dados/GENOMICS_DATA/v1/1kG_high_coverage \
-  --runs-root /dados/GENOMICS_DATA/v1/1kG_high_coverage_runs \
+  --runs-root results/genotype_based_predictor/runs \
   --aligned-tsv-root genotype_based_predictor/aligned_dna_genes_1000_all \
   --host 127.0.0.1 \
   --port 8780
@@ -140,7 +140,7 @@ Uso direto:
 
 ```bash
 python3 -m genotype_based_predictor.experiment_dashboard \
-  /dados/GENOMICS_DATA/v1/1kG_high_coverage_runs \
+  results/genotype_based_predictor/runs \
   --host 127.0.0.1 \
   --port 8772
 ```
@@ -181,7 +181,7 @@ python3 -m genotype_based_predictor.aligned_dna_viewer \
   genotype_based_predictor/aligned_dna_genes_1000_all \
   --dataset-dir /dados/GENOMICS_DATA/v1/1kG_high_coverage \
   --alignment-mapping bcftools_chain \
-  --consensus-dataset-dir /dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all \
+  --consensus-dataset-dir /dados/GENOMICS_DATA/v1/1kG_high_coverage \
   --host 127.0.0.1 \
   --port 8765
 ```
@@ -217,7 +217,7 @@ python3 -m genotype_based_predictor.aligned_dna_viewer \
   genotype_based_predictor/aligned_dna_genes_1000_all \
   --dataset-dir /dados/GENOMICS_DATA/v1/1kG_high_coverage \
   --alignment-mapping bcftools_chain \
-  --consensus-dataset-dir /dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all \
+  --consensus-dataset-dir /dados/GENOMICS_DATA/v1/1kG_high_coverage \
   --max-cells 300000
 ```
 
@@ -230,7 +230,7 @@ O treinamento usa `dataset_input.alignment_mapping`. O modo recomendado e:
 ```yaml
 dataset_input:
   alignment_mapping: "bcftools_chain"
-  consensus_dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all"
+  consensus_dataset_dir: "/dados/GENOMICS_DATA/v1/1kG_high_coverage"
 ```
 
 Nesse modo, para cada gene/individuo/haplotipo, o pipeline:
@@ -500,7 +500,7 @@ Campos importantes para alinhamento das predicoes AlphaGenome:
 ```yaml
 dataset_input:
   alignment_mapping: "bcftools_chain"
-  consensus_dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all"
+  consensus_dataset_dir: "/dados/GENOMICS_DATA/v1/1kG_high_coverage"
 ```
 
 Use `dynamic_indel` apenas para diagnostico/compatibilidade com caches antigas.
@@ -573,14 +573,27 @@ Exemplo geral:
 
 ```bash
 source scripts/start_genomics_universal.sh
-python3 -m genotype_based_predictor.train genotype_based_predictor/configs/genes_1000_all.yaml
+python3 -m genomics_cli genotype train genotype_based_predictor/configs/genes_1000_all.yaml
 ```
 
 Para a config de 3 ontologias:
 
 ```bash
 source scripts/start_genomics_universal.sh
-python3 -m genotype_based_predictor.train genotype_based_predictor/configs/genes_1000_all_3ontologies.yaml
+python3 -m genomics_cli genotype train genotype_based_predictor/configs/genes_1000_all_3ontologies.yaml
+```
+
+Para avaliar um checkpoint:
+
+```bash
+python3 -m genomics_cli genotype evaluate genotype_based_predictor/configs/genes_1000_all_3ontologies.yaml --checkpoint best_accuracy --split test
+```
+
+Para reproduzir os baselines historicos do `neural_ancestry_predictor_deprecated`, use os configs migrados com `tensor_layout: raw_center_crop`:
+
+```bash
+python3 -m genomics_cli genotype train genotype_based_predictor/configs/neural_legacy/pigmentation_binary.yaml
+python3 -m genomics_cli genotype single-gene-screen genotype_based_predictor/configs/neural_legacy/pigmentation_binary_single_gene_screen.yaml --dry-run
 ```
 
 ### Conferencia Visual Da Cache Processada
@@ -589,7 +602,7 @@ Durante a materializacao da cache processada, e util conferir rapidamente se os 
 
 ```bash
 python3 -m genotype_based_predictor.plot_processed_cache_shards \
-  /dados/GENOMICS_DATA/v1/1kG_high_coverage_runs/datasets/rna_seq_H1+H2_32768_ds1_log_shuf_ont3_view9d9f894aa231 \
+  results/cache/genotype_based_predictor/datasets/rna_seq_H1+H2_32768_ds1_log_shuf_ont3_view9d9f894aa231 \
   --split train \
   --max-shards 5 \
   --max-samples 16 \

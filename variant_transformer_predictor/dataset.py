@@ -7,6 +7,8 @@ from typing import Dict, List, Optional
 import torch
 from torch.utils.data import Dataset
 
+from genomics_pipeline.torch_collate import pad_1d, pad_2d
+
 
 class VariantTokenDataset(Dataset):
     def __init__(
@@ -87,24 +89,6 @@ class VariantTokenDataset(Dataset):
         return self._load_item(self.samples[idx])
 
 
-def _pad_1d(values: List[torch.Tensor], pad_value: int = 0) -> torch.Tensor:
-    max_len = max((v.shape[0] for v in values), default=0)
-    out = torch.full((len(values), max_len), pad_value, dtype=values[0].dtype if values else torch.long)
-    for i, value in enumerate(values):
-        out[i, : value.shape[0]] = value
-    return out
-
-
-def _pad_2d(values: List[torch.Tensor], pad_value: int | float = 0) -> torch.Tensor:
-    max_len = max((v.shape[0] for v in values), default=0)
-    width = values[0].shape[1] if values else 0
-    dtype = values[0].dtype if values else torch.long
-    out = torch.full((len(values), max_len, width), pad_value, dtype=dtype)
-    for i, value in enumerate(values):
-        out[i, : value.shape[0], :] = value
-    return out
-
-
 def collate_variant_tokens(batch: List[Dict]) -> Dict[str, torch.Tensor | List[str]]:
     if not batch:
         raise ValueError("Batch vazio")
@@ -124,14 +108,14 @@ def collate_variant_tokens(batch: List[Dict]) -> Dict[str, torch.Tensor | List[s
     ref_values = [item["ref_allele"] if item["ref_allele"].shape[1] else torch.empty((0, l_max), dtype=torch.long) for item in batch]
     alt_values = [item["alt_allele"] if item["alt_allele"].shape[1] else torch.empty((0, l_max), dtype=torch.long) for item in batch]
     return {
-        "variant_type": _pad_1d([item["variant_type"] for item in batch]),
-        "haplotype": _pad_1d([item["haplotype"] for item in batch]),
-        "gene": _pad_1d([item["gene"] for item in batch]),
-        "length_norm": _pad_2d([item["length_norm"] for item in batch], pad_value=0.0),
-        "position_relative": _pad_1d([item["position_relative"] for item in batch]),
-        "position": _pad_1d([item["position"] for item in batch]),
-        "ref_allele": _pad_2d(ref_values, pad_value=5),
-        "alt_allele": _pad_2d(alt_values, pad_value=5),
+        "variant_type": pad_1d([item["variant_type"] for item in batch]),
+        "haplotype": pad_1d([item["haplotype"] for item in batch]),
+        "gene": pad_1d([item["gene"] for item in batch]),
+        "length_norm": pad_2d([item["length_norm"] for item in batch], pad_value=0.0),
+        "position_relative": pad_1d([item["position_relative"] for item in batch]),
+        "position": pad_1d([item["position"] for item in batch]),
+        "ref_allele": pad_2d(ref_values, pad_value=5),
+        "alt_allele": pad_2d(alt_values, pad_value=5),
         "attention_mask": attention_mask,
         "targets": torch.stack([item["target"] for item in batch]),
         "lengths": lengths,

@@ -1,0 +1,97 @@
+metadata:
+  migrated_from: "neural_ancestry_predictor/configs/default.yaml"
+  migration_mode: "raw_center_crop"
+
+dataset_input:
+  dataset_id: "1kg_high_coverage"
+  processed_cache_dir: "results/cache/genotype_based_predictor/neural_legacy"
+  results_dir: "results/genotype_based_predictor/runs"
+  cache_processed_tensors: true
+  tensor_layout: "raw_center_crop"
+  feature_mode: "signals_only"
+  alphagenome_outputs: ["rna_seq"]
+  haplotype_mode: "H1"
+  window_center_size: 50000
+  downsample_factor: 1
+  genes_to_use:
+    - "MC1R"
+    - "TYRP1"
+    - "TYR"
+    - "SLC45A2"
+    - "DDB1"
+    - "EDAR"
+    - "MFSD12"
+    - "OCA2"
+    - "HERC2"
+    - "SLC24A5"
+    - "TCHH"
+  normalization_method: "log"
+  normalization_value: 0.0
+
+output:
+  prediction_target: "superpopulation"
+  known_classes: ["AFR", "AMR", "EAS", "EUR", "SAS"]
+
+model:
+  type: "CNN"
+  hidden_layers: [100, 40]
+  activation: "relu"
+  dropout_rate: 0.2
+  cnn:
+    kernel_size: [20, 20]
+    num_filters: 5
+    stride: [20, 20]
+    padding: 0
+    pool_size: null
+
+training:
+  optimizer: "adam"
+  learning_rate: 0.001
+  weight_decay: 0.0
+  loss_function: "cross_entropy"
+  batch_size: 1
+  num_epochs: 250
+  validation_frequency: 5
+  lr_scheduler:
+    enabled: true
+    type: "plateau"
+    mode: "min"
+    factor: 0.5
+    patience: 10
+    min_lr: 0.000001
+
+data_split:
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  random_seed: 3
+  family_split_mode: "family_aware"
+  balancing_strategy: "stratified"
+  strict_determinism: true
+
+wandb:
+  use_wandb: false
+  project_name: "genotype-based-predictor-neural-legacy"
+  run_name: "default"
+  log_frequency: 10
+
+checkpointing:
+  checkpoint_dir: "models"
+  save_frequency: 10
+  save_during_training: true
+  load_checkpoint: null
+
+debug:
+  enable_visualization: false
+  force_pca_cache_rebuild: false
+  max_samples_per_epoch: null
+  taint_at_cache_save: false
+  taint_at_runtime: false
+  visualization: {}
+
+data_loading:
+  loading_strategy: "lazy"
+  cache_size: 50
+
+mode: "train"
+test_dataset: "test"

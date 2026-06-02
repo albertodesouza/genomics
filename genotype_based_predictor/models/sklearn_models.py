@@ -35,6 +35,7 @@ from torch.utils.data import DataLoader
 from rich.console import Console
 
 from genotype_based_predictor.config import PipelineConfig
+from genomics_pipeline import update_manifest
 
 console = Console()
 
@@ -152,7 +153,7 @@ def load_sklearn_baseline_artifact(experiment_dir: Path) -> Dict[str, Any]:
     """Carrega artefato sklearn treinado (.joblib)."""
     import sys
 
-    predictor_dir = Path(__file__).parent.parent.parent / "neural_ancestry_predictor"
+    predictor_dir = Path(__file__).parent.parent.parent / "neural_ancestry_predictor_deprecated"
     if str(predictor_dir) not in sys.path:
         sys.path.insert(0, str(predictor_dir))
 
@@ -180,14 +181,7 @@ def train_sklearn_baseline(config: PipelineConfig, model_type: str, train_loader
     Usa cache de PCA em disco (se configurado) para acelerar experimentos
     subsequentes. Salva artefato em experiment_dir/models/sklearn_baseline.joblib.
     """
-    import sys
-    import os
-
-    # Importar sklearn_pca_cache do diretório do neural_ancestry_predictor
-    predictor_dir = Path(__file__).parent.parent.parent / "neural_ancestry_predictor"
-    if str(predictor_dir) not in sys.path:
-        sys.path.insert(0, str(predictor_dir))
-    from sklearn_pca_cache import (
+    from genomics_pipeline.sklearn_pca_cache import (
         ensure_sklearn_pca_cache, METADATA_FILENAME as SKLEARN_PCA_METADATA_FILENAME,
         fit_standard_scaler_incremental, fit_incremental_pca_on_train,
         fit_streaming_randomized_pca_on_train, stack_scaled_pca_batches, compute_sklearn_pca_effective_k,
@@ -244,6 +238,13 @@ def train_sklearn_baseline(config: PipelineConfig, model_type: str, train_loader
             results = sklearn_metrics_dict(yt, clf.predict(Xs), full_dataset)
             run_sklearn_eval_and_save(results, experiment_dir, name, wandb_run, name)
 
+        update_manifest(
+            experiment_dir,
+            status="completed",
+            model_type=model_type,
+            sklearn_artifact=str(artifact_path),
+            pca_cache_dir=str(pca_dir.resolve()),
+        )
         return {"model_type": model_type, "pca_n_components": k, "artifact_path": str(artifact_path)}
 
     # Sem cache: PCA in-memory
@@ -283,6 +284,13 @@ def train_sklearn_baseline(config: PipelineConfig, model_type: str, train_loader
         y_pred, y_true = sklearn_predict_labels(loader, scaler, pca, clf)
         run_sklearn_eval_and_save(sklearn_metrics_dict(y_true, y_pred, full_dataset), experiment_dir, name, wandb_run, name)
 
+    update_manifest(
+        experiment_dir,
+        status="completed",
+        model_type=model_type,
+        sklearn_artifact=str(artifact_path),
+        pca_n_components=k,
+    )
     return {"model_type": model_type, "pca_n_components": k, "artifact_path": str(artifact_path)}
 
 

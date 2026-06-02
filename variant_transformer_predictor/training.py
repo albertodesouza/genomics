@@ -5,25 +5,20 @@ from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
-import torch.optim as optim
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
+from genomics_pipeline.checkpointing import load_checkpoint as load_torch_checkpoint
+from genomics_pipeline.checkpointing import save_checkpoint as save_torch_checkpoint
+from genomics_pipeline.optim import make_optimizer_from_config
 from variant_transformer_predictor.config import PipelineConfig
 from variant_transformer_predictor.evaluation import evaluate, move_batch_to_device
 
 console = Console()
 
 
-def make_optimizer(model: nn.Module, config: PipelineConfig) -> optim.Optimizer:
-    train = config.training
-    if train.optimizer == "adamw":
-        return optim.AdamW(model.parameters(), lr=train.learning_rate, weight_decay=train.weight_decay)
-    if train.optimizer == "adam":
-        return optim.Adam(model.parameters(), lr=train.learning_rate, weight_decay=train.weight_decay)
-    if train.optimizer == "sgd":
-        return optim.SGD(model.parameters(), lr=train.learning_rate, momentum=0.9, weight_decay=train.weight_decay)
-    raise ValueError(f"Otimizador nao suportado: {train.optimizer}")
+def make_optimizer(model: nn.Module, config: PipelineConfig):
+    return make_optimizer_from_config(model, config.training)
 
 
 class Trainer:
@@ -50,24 +45,21 @@ class Trainer:
         path = Path(checkpoint)
         if not path.exists():
             path = self.models_dir / (checkpoint if checkpoint.endswith(".pt") else f"{checkpoint}.pt")
-        state = torch.load(path, map_location=self.device, weights_only=True)
-        self.model.load_state_dict(state.get("model_state_dict", state))
-        if "optimizer_state_dict" in state:
-            self.optimizer.load_state_dict(state["optimizer_state_dict"])
+        state = load_torch_checkpoint(path, self.model, optimizer=self.optimizer, device=self.device, weights_only=True)
         self.start_epoch = int(state.get("epoch", 0)) + 1
         self.best_val_accuracy = float(state.get("best_val_accuracy", 0.0))
         self.best_val_loss = float(state.get("best_val_loss", float("inf")))
         console.print(f"[green]Checkpoint carregado:[/green] {path}")
 
     def save_checkpoint(self, name: str, epoch: int, metrics: Dict[str, float]) -> None:
-        torch.save({
-            "epoch": epoch,
-            "model_state_dict": self.model.state_dict(),
-            "optimizer_state_dict": self.optimizer.state_dict(),
-            "best_val_accuracy": self.best_val_accuracy,
-            "best_val_loss": self.best_val_loss,
-            **metrics,
-        }, self.models_dir / name)
+        save_torch_checkpoint(
+            self.models_dir / name,
+            self.model,
+            self.optimizer,
+            epoch,
+            metrics,
+            extra={"best_val_accuracy": self.best_val_accuracy, "best_val_loss": self.best_val_loss},
+        )
 
     def run_train_epoch(self) -> Dict[str, float]:
         self.model.train()

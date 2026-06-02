@@ -30,13 +30,14 @@ get_dataset_cache_dir    : Retorna Path do cache do dataset
 
 from __future__ import annotations
 
-import json
-import hashlib
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Union
 
-import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+from genomics_pipeline.config_io import load_json, load_yaml, stable_hash, write_json
+from genomics_pipeline.data_registry import resolve_dataset
+from genomics_workspace import DEFAULT_GENOTYPE_CACHE_ROOT, DEFAULT_GENOTYPE_RUNS_ROOT
 
 
 # ===========================================================================
@@ -46,7 +47,10 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 class DatasetInputConfig(BaseModel):
     """Parâmetros de entrada dos dados genômicos."""
 
-    dataset_dir: str
+    dataset_id: Optional[str] = None
+    """ID lógico do dataset no registry comum (ex: '1kg_high_coverage')."""
+
+    dataset_dir: Optional[str] = None
     """Caminho absoluto para o diretório do dataset."""
 
     view_path: Optional[str] = None
@@ -58,8 +62,8 @@ class DatasetInputConfig(BaseModel):
     haplotype_mode: Literal["H1", "H2", "H1+H2"] = "H1+H2"
     """Modo de haplótipo: H1, H2 ou ambos concatenados."""
 
-    tensor_layout: Literal["haplotype_channels"] = "haplotype_channels"
-    """Layout canônico do tensor por amostra: (2, 4, L)."""
+    tensor_layout: Literal["haplotype_channels", "raw_center_crop"] = "haplotype_channels"
+    """Layout do tensor por amostra: alinhado canônico (2, C, L) ou crop bruto legado (C, L)."""
 
     feature_mode: Literal["signals_and_masks", "signals_only", "masks_only"] = "signals_and_masks"
     """Quais canais entram no tensor: sinais AlphaGenome + máscaras, apenas sinais alinhados, ou apenas máscaras INDEL."""
@@ -115,8 +119,11 @@ class DatasetInputConfig(BaseModel):
     selected_track_index: int = 0
     """Índice da track a usar quando o output possui múltiplas tracks e não há metadados úteis."""
 
-    processed_cache_dir: str
+    processed_cache_dir: str = str(DEFAULT_GENOTYPE_CACHE_ROOT)
     """Diretório raiz para cache de dados processados e experimentos."""
+
+    results_dir: str = str(DEFAULT_GENOTYPE_RUNS_ROOT)
+    """Diretório raiz para resultados de experimentos."""
 
     keep_split_metadata: bool = False
     """Se True, mantém metadados detalhados por split no cache processado."""
@@ -158,6 +165,20 @@ class DatasetInputConfig(BaseModel):
         if not v:
             raise ValueError("alignment_axis_splits deve conter pelo menos um split")
         return list(dict.fromkeys(v))
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_dataset_id(cls, values):
+        if isinstance(values, dict) and not values.get("dataset_dir") and values.get("dataset_id"):
+            values = dict(values)
+            values["dataset_dir"] = str(resolve_dataset(str(values["dataset_id"])).path)
+        return values
+
+    @model_validator(mode="after")
+    def dataset_dir_required(self):
+        if not self.dataset_dir:
+            raise ValueError("dataset_dir ou dataset_id deve ser informado")
+        return self
 
     @model_validator(mode="after")
     def validate_reference_signal_transform(self):
@@ -482,8 +503,7 @@ def load_config(config_path: Path) -> PipelineConfig:
     if not config_path.exists():
         raise FileNotFoundError(f"Config não encontrado: {config_path}")
 
-    with open(config_path, "r") as f:
-        raw = yaml.safe_load(f)
+    raw = load_yaml(config_path)
 
     dataset_input = raw.get("dataset_input", {}) or {}
     view_path = dataset_input.get("view_path")
@@ -493,8 +513,7 @@ def load_config(config_path: Path) -> PipelineConfig:
             view_file = (config_path.parent / view_file).resolve()
         if not view_file.exists():
             raise FileNotFoundError(f"View não encontrada: {view_file}")
-        with open(view_file) as f:
-            view_payload = json.load(f)
+        view_payload = load_json(view_file)
 
         merged_dataset_input = dict(view_payload)
         for key, value in dataset_input.items():
@@ -525,8 +544,7 @@ def save_config(config: PipelineConfig, output_path: Path) -> None:
         Caminho de destino para o arquivo JSON.
     """
     output_path = Path(output_path)
-    with open(output_path, "w") as f:
-        f.write(config.model_dump_json(indent=2))
+    write_json(output_path, config.model_dump(mode="python"))
 
 
 # ===========================================================================
@@ -558,6 +576,7 @@ def generate_dataset_name(config: PipelineConfig) -> str:
     ont_count = len(config.dataset_input.ontology_terms or []) or 1
     di = config.dataset_input
     view_payload = {
+        "dataset_id": di.dataset_id,
         "dataset_dir": str(Path(di.dataset_dir).resolve()),
         "sample_ids": di.sample_ids,
         "sample_ids_path": di.sample_ids_path,
@@ -599,7 +618,7 @@ def generate_dataset_name(config: PipelineConfig) -> str:
         view_payload["reference_predictions_sample_id"] = di.reference_predictions_sample_id
     if di.indel_include_snp_mask:
         view_payload["indel_include_snp_mask"] = di.indel_include_snp_mask
-    view_hash = hashlib.sha1(json.dumps(view_payload, sort_keys=True).encode("utf-8")).hexdigest()[:12]
+    view_hash = stable_hash(view_payload, length=12)
     return f"{outputs}_{hap}_{wcs}_ds{ds}_{norm}_{bal}_ont{ont_count}_view{view_hash}"
 
 
@@ -619,6 +638,10 @@ def get_dataset_cache_dir(config: PipelineConfig) -> Path:
     """
     base = Path(config.dataset_input.processed_cache_dir)
     return base / "datasets" / generate_dataset_name(config)
+
+
+def get_experiment_runs_dir(config: PipelineConfig) -> Path:
+    return Path(config.dataset_input.results_dir)
 
 
 def generate_experiment_name(config: PipelineConfig) -> str:

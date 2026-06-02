@@ -15,49 +15,17 @@ build_family_aware_sample_groups : Agrupa amostras por família
 build_valid_sample_index_map     : Filtra amostras sem target válido
 """
 
-import json
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from rich.console import Console
-
+from genomics_pipeline.splitting import build_family_groups
 from genotype_based_predictor.config import PipelineConfig
-
-console = Console()
 
 
 def _extract_family_links(pedigree: Dict) -> List[str]:
-    """
-    Extrai IDs de parentes a partir de um dicionário de pedigree.
+    from genomics_pipeline.splitting import extract_family_links
 
-    Procura por chaves que contenham termos relacionados a parentesco
-    (father, mother, parent, child, sibling, family).
-
-    Parameters
-    ----------
-    pedigree : Dict
-        Dicionário com metadados de pedigree de um indivíduo.
-
-    Returns
-    -------
-    List[str]
-        Lista de IDs de indivíduos relacionados.
-    """
-    related = []
-    for key, value in pedigree.items():
-        key_lower = str(key).lower()
-        if not any(
-            token in key_lower
-            for token in ["father", "mother", "parent", "child", "sibling", "family"]
-        ):
-            continue
-        if value in [None, "", "0"]:
-            continue
-        if isinstance(value, (list, tuple, set)):
-            related.extend(str(v) for v in value if v not in [None, "", "0"])
-        else:
-            related.append(str(value))
-    return related
+    return extract_family_links(pedigree)
 
 
 def build_family_aware_sample_groups(
@@ -91,105 +59,17 @@ def build_family_aware_sample_groups(
           que devem permanecer juntos no mesmo split.
         - Dicionário com informações sobre o agrupamento (para logging).
     """
-    family_mode = config.data_split.family_split_mode
-
     dataset_metadata = getattr(base_dataset, "dataset_metadata", {}) or {}
     individuals = dataset_metadata.get("individuals", [])
     pedigree_map = dataset_metadata.get("individuals_pedigree", {})
-
-    # Sem lista de indivíduos: tratar como singletons
     if not individuals:
-        groups = [[idx] for idx in range(len(base_dataset))]
-        return groups, {
-            "family_split_mode": family_mode,
-            "num_groups": len(groups),
-            "num_family_groups": 0,
-            "num_singletons": len(groups),
-            "grouping_source": "individual",
-        }
-
-    sample_to_idx = {sample_id: idx for idx, sample_id in enumerate(individuals)}
-
-    # Tentativa 1: usar family_id de individual_metadata.json
-    family_ids: Dict[str, str] = {}
-    individuals_dir = Path(base_dataset.dataset_dir) / "individuals"
-
-    for sample_id in individuals:
-        metadata_file = individuals_dir / sample_id / "individual_metadata.json"
-        if not metadata_file.exists():
-            continue
-        try:
-            with open(metadata_file, "r") as f:
-                individual_metadata = json.load(f)
-            family_id = individual_metadata.get("family_id")
-            if family_id not in [None, "", "0"]:
-                family_ids[sample_id] = str(family_id)
-        except Exception:
-            continue
-
-    if family_ids:
-        groups_by_family_id: Dict[str, List[int]] = {}
-        for sample_id, idx in sample_to_idx.items():
-            fid = family_ids.get(sample_id, sample_id)
-            groups_by_family_id.setdefault(fid, []).append(idx)
-
-        if family_mode != "ignore":
-            groups = list(groups_by_family_id.values())
-            return groups, {
-                "family_split_mode": family_mode,
-                "grouping_source": "family_id",
-                "num_groups": len(groups),
-                "num_family_groups": sum(1 for g in groups if len(g) > 1),
-                "num_singletons": sum(1 for g in groups if len(g) == 1),
-            }
-
-    # Modo ignore: singletons
-    if family_mode == "ignore":
-        groups = [[idx] for idx in range(len(individuals))]
-        return groups, {
-            "family_split_mode": family_mode,
-            "grouping_source": "individual",
-            "num_groups": len(groups),
-            "num_family_groups": 0,
-            "num_singletons": len(groups),
-        }
-
-    # Tentativa 2: union-find sobre links de pedigree
-    parent = {sample_id: sample_id for sample_id in individuals}
-
-    def find(sample_id: str) -> str:
-        while parent[sample_id] != sample_id:
-            parent[sample_id] = parent[parent[sample_id]]
-            sample_id = parent[sample_id]
-        return sample_id
-
-    def union(left: str, right: str) -> None:
-        if left not in parent or right not in parent:
-            return
-        root_left, root_right = find(left), find(right)
-        if root_left != root_right:
-            parent[root_right] = root_left
-
-    for sample_id, pedigree in pedigree_map.items():
-        if sample_id not in parent:
-            continue
-        for related_id in _extract_family_links(pedigree):
-            if related_id in parent:
-                union(sample_id, related_id)
-
-    groups_by_root: Dict[str, List[int]] = {}
-    for sample_id, idx in sample_to_idx.items():
-        root = find(sample_id)
-        groups_by_root.setdefault(root, []).append(idx)
-
-    groups = list(groups_by_root.values())
-    return groups, {
-        "family_split_mode": family_mode,
-        "grouping_source": "pedigree",
-        "num_groups": len(groups),
-        "num_family_groups": sum(1 for g in groups if len(g) > 1),
-        "num_singletons": sum(1 for g in groups if len(g) == 1),
-    }
+        individuals = [str(idx) for idx in range(len(base_dataset))]
+    return build_family_groups(
+        sample_ids=individuals,
+        pedigree_map=pedigree_map,
+        individuals_dir=Path(base_dataset.dataset_dir) / "individuals",
+        family_split_mode=config.data_split.family_split_mode,
+    )
 
 
 def build_valid_sample_index_map(base_dataset: Any, config: PipelineConfig) -> List[int]:

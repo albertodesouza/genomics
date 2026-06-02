@@ -4,7 +4,7 @@ Transformer esparso para classificacao baseada apenas em variantes geneticas de 
 
 ## Fluxo
 
-1. Materializar tokens esparsos a partir de VCFs em `/dados`.
+1. Materializar tokens esparsos a partir do dataset canonico em `/dados/GENOMICS_DATA/v1/1kG_high_coverage`.
 2. Treinar o Transformer com RoPE baseado em `position_relative` real.
 3. Avaliar checkpoints em train/val/test.
 
@@ -14,9 +14,8 @@ Usando regioes/metadados de um dataset ja materializado do repo:
 
 ```bash
 source scripts/start_genomics_universal.sh
-python3 -m variant_transformer_predictor.materialize_dataset \
-  --dataset-dir /dados/GENOMICS_DATA/v1/1kG_high_coverage \
-  --vcf-root-dir /dados/GENOMICS_DATA/top3/longevity_dataset/vcf_chromosomes \
+python3 -m genomics_cli variant materialize \
+  --dataset-id 1kg_high_coverage \
   --target superpopulation \
   --classes AFR AMR EAS EUR SAS \
   --output-dir /dados/GENOMICS_DATA/variant_transformer/superpopulation \
@@ -26,9 +25,8 @@ python3 -m variant_transformer_predictor.materialize_dataset \
 Para materializar apenas a janela central de 32 kb de cada gene/janela:
 
 ```bash
-python3 -m variant_transformer_predictor.materialize_dataset \
-  --dataset-dir /dados/GENOMICS_DATA/v1/1kG_high_coverage \
-  --vcf-root-dir /dados/GENOMICS_DATA/top3/longevity_dataset/vcf_chromosomes \
+python3 -m genomics_cli variant materialize \
+  --dataset-id 1kg_high_coverage \
   --target superpopulation \
   --classes AFR AMR EAS EUR SAS \
   --output-dir /dados/GENOMICS_DATA/variant_transformer/superpopulation_32k \
@@ -39,7 +37,7 @@ python3 -m variant_transformer_predictor.materialize_dataset \
 Para analisar a quantidade de tokens por gene antes/depois do recorte central:
 
 ```bash
-python3 -m variant_transformer_predictor.analyze_variant_counts \
+python3 -m genomics_cli variant analyze-counts \
   /dados/GENOMICS_DATA/variant_transformer/superpopulation \
   --central-window-size 32768
 ```
@@ -47,7 +45,7 @@ python3 -m variant_transformer_predictor.analyze_variant_counts \
 Tambem e possivel usar BED e metadados TSV/JSON explicitamente:
 
 ```bash
-python3 -m variant_transformer_predictor.materialize_dataset \
+python3 -m genomics_cli variant materialize \
   --regions-bed /dados/GENOMICS_DATA/regions/pigmentation_genes.bed \
   --samples-metadata /dados/GENOMICS_DATA/metadata.tsv \
   --vcf-pattern '/dados/GENOMICS_DATA/vcf/1kGP_high_coverage_Illumina.{chrom}.filtered.SNV_INDEL_SV_phased_panel.vcf.gz' \
@@ -67,16 +65,13 @@ O BED e interpretado como 0-based half-open. O VCF e consultado como 1-based inc
 ## Treino
 
 ```bash
-python3 -m variant_transformer_predictor.train variant_transformer_predictor/configs/superpopulation.yaml
+python3 -m genomics_cli variant train variant_transformer_predictor/configs/superpopulation.yaml
 ```
 
 ## Avaliacao
 
 ```bash
-python3 -m variant_transformer_predictor.evaluate_checkpoint \
-  variant_transformer_predictor/configs/superpopulation.yaml \
-  --checkpoint best_accuracy \
-  --split test
+python3 -m genomics_cli variant evaluate variant_transformer_predictor/configs/superpopulation.yaml --checkpoint best_accuracy --split test
 ```
 
 ## Representacao

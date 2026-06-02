@@ -2,12 +2,9 @@ from __future__ import annotations
 
 import argparse
 import gzip
-import json
 import os
-import random
 import shutil
 import subprocess
-from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
@@ -15,6 +12,15 @@ import torch
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
+from genomics_pipeline.config_io import load_json, write_json
+from genomics_pipeline.dataset_metadata import (
+    iter_sample_metadata,
+    load_dataset_metadata,
+    load_vcf_sources_from_dataset as load_common_vcf_sources_from_dataset,
+    load_window_catalog,
+)
+from genomics_pipeline.splitting import SplitSpec, records_from_objects, split_sample_records
+from genomics_pipeline.targets import target_value
 from variant_transformer_predictor.allele_codec import classify_variant, encode_allele, normalize_length
 from variant_transformer_predictor.constants import HAPLOTYPE_TO_ID, VARIANT_TYPE_TO_ID
 from variant_transformer_predictor.variant_schema import Region, SampleMetadata, VariantToken, sort_tokens
@@ -26,14 +32,11 @@ DEFAULT_VCF_ROOT_CANDIDATES: List[Path] = []
 
 
 def _load_json(path: Path) -> Dict:
-    with open(path) as f:
-        return json.load(f)
+    return load_json(path)
 
 
 def _write_json(path: Path, payload: Dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(payload, f, indent=2)
+    write_json(path, payload)
 
 
 def load_regions(path: Path) -> List[Region]:
@@ -58,15 +61,7 @@ def load_regions(path: Path) -> List[Region]:
 
 
 def load_regions_from_dataset(dataset_dir: Path, genes: Optional[set[str]] = None) -> List[Region]:
-    meta_path = dataset_dir / "dataset_metadata.json"
-    if not meta_path.exists():
-        raise FileNotFoundError(f"dataset_metadata.json nao encontrado: {meta_path}")
-    meta = _load_json(meta_path)
-    catalog = meta.get("window_catalog") or {}
-    if not catalog:
-        ref_windows = dataset_dir / "references" / "windows"
-        for window_meta_path in sorted(ref_windows.glob("*/window_metadata.json")):
-            catalog[window_meta_path.parent.name] = _load_json(window_meta_path)
+    catalog = load_window_catalog(dataset_dir, load_dataset_metadata(dataset_dir))
     regions: List[Region] = []
     for gene_id, item in sorted(catalog.items()):
         if genes and gene_id not in genes:
@@ -115,17 +110,11 @@ def load_sample_metadata(path: Optional[Path], dataset_dir: Optional[Path], targ
                     superpop = fields[col["superpopulation"]] if "superpopulation" in col and col["superpopulation"] < len(fields) else None
                     samples.append(SampleMetadata(sid, value, family_id, pop, superpop))
     elif dataset_dir is not None:
-        meta = _load_json(dataset_dir / "dataset_metadata.json")
-        individuals = meta.get("individuals", [])
-        pedigree = meta.get("individuals_pedigree", {}) or {}
-        for sid in individuals:
-            row = dict(pedigree.get(sid, {}) or {})
-            value = row.get(target)
+        for row in iter_sample_metadata(dataset_dir):
+            sid = str(row.get("sample_id"))
+            value = target_value(row, target)
             if value is None:
-                ind_meta_path = dataset_dir / "individuals" / sid / "individual_metadata.json"
-                if ind_meta_path.exists():
-                    row.update(_load_json(ind_meta_path))
-                    value = row.get(target)
+                value = row.get("target")
             if value in class_set:
                 samples.append(SampleMetadata(str(sid), str(value), row.get("family_id"), row.get("population"), row.get("superpopulation"), row))
     else:
@@ -200,24 +189,7 @@ def resolve_region_vcf_path(region: Region, vcf_pattern: Optional[str], vcf_root
 
 
 def load_vcf_sources_from_dataset(dataset_dir: Optional[Path]) -> Dict[str, str]:
-    if dataset_dir is None:
-        return {}
-    meta_path = Path(dataset_dir) / "dataset_metadata.json"
-    if not meta_path.exists():
-        return {}
-    meta = _load_json(meta_path)
-    sources: Dict[str, str] = {}
-    for gene_id, item in (meta.get("window_catalog") or {}).items():
-        raw_source = item.get("raw_variant_source") or {}
-        vcf_path = raw_source.get("vcf_path")
-        if not vcf_path:
-            continue
-        sources[str(gene_id)] = str(vcf_path)
-        chrom = raw_source.get("chromosome") or item.get("chromosome") or item.get("chrom")
-        if chrom:
-            sources.setdefault(str(chrom), str(vcf_path))
-            sources.setdefault(_strip_chr(str(chrom)), str(vcf_path))
-    return sources
+    return load_common_vcf_sources_from_dataset(dataset_dir)
 
 
 def _find_vcf_in_root(root: Path, chromosome: str) -> Optional[Path]:
@@ -353,21 +325,15 @@ def _allele_for_token(ref: str, alt_raw: str, token: str) -> Optional[str]:
     return None
 
 
-def _split_sample_groups(samples: List[SampleMetadata], train: float, val: float, seed: Optional[int], family_mode: str) -> Dict[str, List[str]]:
-    groups_by_key: Dict[str, List[str]] = defaultdict(list)
-    for sample in samples:
-        key = sample.family_id if family_mode != "ignore" and sample.family_id not in (None, "", "0") else sample.sample_id
-        groups_by_key[str(key)].append(sample.sample_id)
-    groups = list(groups_by_key.values())
-    rng = random.Random(seed)
-    rng.shuffle(groups)
-    n_train = int(train * len(groups))
-    n_val = int(val * len(groups))
-    return {
-        "train": [sid for group in groups[:n_train] for sid in group],
-        "val": [sid for group in groups[n_train:n_train + n_val] for sid in group],
-        "test": [sid for group in groups[n_train + n_val:] for sid in group],
-    }
+def _split_sample_groups(samples: List[SampleMetadata], train: float, val: float, test: float, seed: Optional[int], family_mode: str) -> Tuple[Dict[str, List[str]], Dict[str, object]]:
+    spec = SplitSpec(
+        train_split=train,
+        val_split=val,
+        test_split=test,
+        random_seed=seed,
+        family_split_mode=family_mode,
+    )
+    return split_sample_records(records_from_objects(samples), spec)
 
 
 def _tokens_to_tensors(tokens: List[VariantToken], gene_to_idx: Dict[str, int], l_max: int, max_indel_size: int) -> Dict[str, torch.Tensor]:
@@ -489,7 +455,7 @@ def materialize_variant_dataset(
                     "path": f"samples/{sid}.pt",
                 })
 
-    splits = _split_sample_groups(samples, train_split, val_split, random_seed, family_split_mode)
+    splits, split_info = _split_sample_groups(samples, train_split, val_split, test_split, random_seed, family_split_mode)
     metadata = {
         "format_version": 1,
         "target": target,
@@ -503,6 +469,7 @@ def materialize_variant_dataset(
         "regions": [region.__dict__ for region in regions],
         "vcf_sources": {"|".join(map(str, key)): value for key, value in region_vcfs.items()},
         "splits": {key: len(value) for key, value in splits.items()},
+        "split_info": split_info,
     }
     _write_json(output_dir / "metadata.json", metadata)
     _write_json(output_dir / "gene_vocab.json", gene_to_idx)

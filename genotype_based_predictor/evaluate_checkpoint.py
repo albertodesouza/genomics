@@ -6,7 +6,7 @@ from pathlib import Path
 import torch
 from rich.console import Console
 
-from genotype_based_predictor.config import generate_experiment_name, load_config
+from genotype_based_predictor.config import generate_experiment_name, get_experiment_runs_dir, load_config
 from genotype_based_predictor.data_pipeline import prepare_data
 from genotype_based_predictor.evaluation import run_test_and_save
 from genotype_based_predictor.models import CNN2AncestryPredictor, CNNAncestryPredictor, NNAncestryPredictor
@@ -58,7 +58,7 @@ def main() -> None:
 
     config_path = args.config_path.resolve()
     config = load_config(config_path)
-    experiment_dir = args.experiment_dir or (Path(config.dataset_input.processed_cache_dir) / generate_experiment_name(config))
+    experiment_dir = args.experiment_dir or (get_experiment_runs_dir(config) / generate_experiment_name(config))
     experiment_dir = experiment_dir.resolve()
     checkpoint_path = _resolve_checkpoint(experiment_dir, args.checkpoint)
     if not checkpoint_path.exists():

@@ -83,9 +83,10 @@ class CNNAncestryPredictor(nn.Module):
         console.print(f"  • Params: {self.count_parameters():,}")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if x.ndim != 4:
-            raise ValueError(f"CNNAncestryPredictor espera entrada (B,2,4,L), recebeu shape={tuple(x.shape)}")
-        x = x.view(x.size(0), x.size(1) * x.size(2), x.size(3))
+        if x.ndim == 4:
+            x = x.view(x.size(0), x.size(1) * x.size(2), x.size(3))
+        elif x.ndim != 3:
+            raise ValueError(f"CNNAncestryPredictor espera entrada (B,rows,L) ou (B,2,rows,L), recebeu shape={tuple(x.shape)}")
         x = x[:, self.rows_to_use, :]
         x = x.unsqueeze(1)  # (B, 1, rows, cols)
         x = self.relu(self.conv(x))

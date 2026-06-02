@@ -24,24 +24,28 @@ console = Console()
 
 def _resolve_gene_rows(config: PipelineConfig, input_shape: Tuple[int, int]) -> Tuple[List[str], List[int]]:
     """Determina quais linhas (tracks) usar com base nos genes configurados."""
-    if config.dataset_input.tensor_layout == "haplotype_channels":
+    if config.dataset_input.tensor_layout in {"haplotype_channels", "raw_center_crop"}:
         genes_to_use = list(config.dataset_input.genes_to_use or [])
         if not genes_to_use:
-            raise ValueError("tensor_layout='haplotype_channels' requer ao menos um gene em genes_to_use")
-        mask_channels = 2 + int(config.dataset_input.indel_include_valid_mask) + int(config.dataset_input.indel_include_snp_mask)
-        if config.dataset_input.feature_mode == "masks_only":
-            rows_per_gene = mask_channels
-        elif config.dataset_input.feature_mode == "signals_only":
-            num_ontologies = len(config.dataset_input.ontology_terms or []) or 1
-            rows_per_gene = 2 * num_ontologies
+            raise ValueError(f"tensor_layout='{config.dataset_input.tensor_layout}' requer ao menos um gene em genes_to_use")
+        if config.dataset_input.tensor_layout == "raw_center_crop":
+            return genes_to_use, list(range(input_shape[0]))
         else:
-            num_ontologies = len(config.dataset_input.ontology_terms or []) or 1
-            rows_per_gene = 2 * num_ontologies + mask_channels
-        num_haplotypes = 2 if config.dataset_input.haplotype_mode == "H1+H2" else 1
-        expected_rows = num_haplotypes * rows_per_gene * len(genes_to_use)
+            mask_channels = 2 + int(config.dataset_input.indel_include_valid_mask) + int(config.dataset_input.indel_include_snp_mask)
+            if config.dataset_input.feature_mode == "masks_only":
+                rows_per_gene = mask_channels
+            elif config.dataset_input.feature_mode == "signals_only":
+                num_ontologies = len(config.dataset_input.ontology_terms or []) or 1
+                rows_per_gene = 2 * num_ontologies
+            else:
+                num_ontologies = len(config.dataset_input.ontology_terms or []) or 1
+                rows_per_gene = 2 * num_ontologies + mask_channels
+            num_haplotypes = 2 if config.dataset_input.haplotype_mode == "H1+H2" else 1
+            rows_per_gene = num_haplotypes * rows_per_gene
+        expected_rows = rows_per_gene * len(genes_to_use)
         if input_shape[0] != expected_rows:
             raise ValueError(
-                f"tensor_layout='haplotype_channels' espera {expected_rows} linhas derivadas de {len(genes_to_use)} gene(s), feature_mode={config.dataset_input.feature_mode}, recebeu {input_shape[0]}"
+                f"tensor_layout='{config.dataset_input.tensor_layout}' espera {expected_rows} linhas derivadas de {len(genes_to_use)} gene(s), recebeu {input_shape[0]}"
             )
         return genes_to_use, list(range(input_shape[0]))
 
@@ -131,9 +135,10 @@ class NNAncestryPredictor(nn.Module):
         console.print(f"  • Genes: {', '.join(self.genes_selected)} | Params: {self.count_parameters():,}")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if x.ndim != 4:
-            raise ValueError(f"NNAncestryPredictor espera entrada (B,2,4,L), recebeu shape={tuple(x.shape)}")
-        x = x.view(x.size(0), x.size(1) * x.size(2), x.size(3))
+        if x.ndim == 4:
+            x = x.view(x.size(0), x.size(1) * x.size(2), x.size(3))
+        elif x.ndim != 3:
+            raise ValueError(f"NNAncestryPredictor espera entrada (B,rows,L) ou (B,2,rows,L), recebeu shape={tuple(x.shape)}")
         x = x[:, self.rows_to_use, :]
         x = x.view(x.size(0), -1)
         return self.network(x)

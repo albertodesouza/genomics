@@ -1,5 +1,6 @@
 dataset:
   processed_dir: "/dados/GENOMICS_DATA/variant_transformer/superpopulation"
+  results_dir: "results/variant_transformer_predictor/runs"
   target: "superpopulation"
   classes: ["AFR", "AMR", "EAS", "EUR", "SAS"]
   max_sequence_length: 1024
