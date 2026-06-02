@@ -139,7 +139,7 @@ def _add_neural_config_args(parser: argparse.ArgumentParser) -> None:
 
 def cmd_genotype_prepare_cache(args: argparse.Namespace) -> int:
     from genotype_based_predictor.config import get_dataset_cache_dir, get_experiment_runs_dir, load_config
-    from genotype_based_predictor.data_pipeline import prepare_data
+    from genotype_based_predictor.data.pipeline import prepare_data
 
     config_path = _genotype_config_with_overrides(args)
     config = load_config(config_path)
@@ -151,7 +151,7 @@ def cmd_genotype_prepare_cache(args: argparse.Namespace) -> int:
 
 
 def cmd_genotype_train(args: argparse.Namespace) -> int:
-    return _run_module("genotype_based_predictor.train", [_genotype_config_with_overrides(args)])
+    return _run_module("genotype_based_predictor.experiments.train", [_genotype_config_with_overrides(args)])
 
 
 def cmd_genotype_evaluate(args: argparse.Namespace) -> int:
@@ -161,7 +161,7 @@ def cmd_genotype_evaluate(args: argparse.Namespace) -> int:
         command_args.extend(["--experiment-dir", args.experiment_dir])
     if args.output_name:
         command_args.extend(["--output-name", args.output_name])
-    return _run_module("genotype_based_predictor.evaluate_checkpoint", command_args)
+    return _run_module("genotype_based_predictor.experiments.evaluate_checkpoint", command_args)
 
 
 def cmd_genotype_pca_variance(args: argparse.Namespace) -> int:
@@ -177,7 +177,7 @@ def cmd_genotype_pca_variance(args: argparse.Namespace) -> int:
         command_args.extend(["--max-components", str(args.max_components)])
     if args.force:
         command_args.append("--force")
-    return _run_module("genotype_based_predictor.plot_sklearn_pca_variance", command_args)
+    return _run_module("genotype_based_predictor.analysis.plot_sklearn_pca_variance", command_args)
 
 
 def cmd_genotype_workbench(args: argparse.Namespace) -> int:
@@ -195,7 +195,7 @@ def cmd_genotype_workbench(args: argparse.Namespace) -> int:
     ]
     if args.aligned_tsv_root:
         command_args.extend(["--aligned-tsv-root", args.aligned_tsv_root])
-    return _run_module("genotype_based_predictor.genomics_workbench", command_args)
+    return _run_module("genotype_based_predictor.apps.genomics_workbench", command_args)
 
 
 def cmd_genotype_sync_bcftools(args: argparse.Namespace) -> int:
@@ -216,7 +216,7 @@ def cmd_genotype_sync_bcftools(args: argparse.Namespace) -> int:
         command_args.extend(args.genes)
     if args.json:
         command_args.append("--json")
-    return _run_module("genotype_based_predictor.sync_bcftools_chain_artifacts", command_args)
+    return _run_module("genotype_based_predictor.tools.sync_bcftools_chain_artifacts", command_args)
 
 
 def cmd_genotype_single_gene_screen(args: argparse.Namespace) -> int:
@@ -238,7 +238,7 @@ def cmd_genotype_single_gene_screen(args: argparse.Namespace) -> int:
         command_args.append("--force")
     if args.dry_run:
         command_args.append("--dry-run")
-    return _run_module("genotype_based_predictor.run_single_gene_screen", command_args)
+    return _run_module("genotype_based_predictor.experiments.run_single_gene_screen", command_args)
 
 
 def cmd_variant_materialize(args: argparse.Namespace) -> int:

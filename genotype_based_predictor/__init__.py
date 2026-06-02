@@ -6,7 +6,11 @@ from __future__ import annotations
 import importlib
 
 __all__ = [
+    "alignment",
+    "analysis",
+    "apps",
     "config",
+    "data",
     "normalization",
     "utils",
     "dataset",
@@ -16,11 +20,13 @@ __all__ = [
     "genomic_dataset",
     "indel_tensor_builder",
     "dataset_subset_manifest",
+    "experiments",
     "training",
     "evaluation",
     "interpretability",
     "experiment",
     "models",
+    "tools",
 ]
 
 

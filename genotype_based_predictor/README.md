@@ -4,6 +4,18 @@ Modulo para explorar o dataset genomico local, construir views, visualizar track
 
 O uso recomendado hoje e pelo Workbench web local. Ele abre varias ferramentas em uma unica porta e evita que o usuario precise navegar por arquivos manualmente.
 
+## Organização Do Código
+
+O pacote foi organizado por responsabilidade. Os módulos antigos no diretório raiz continuam como wrappers de compatibilidade para comandos `python3 -m genotype_based_predictor.<modulo>` e imports existentes.
+
+- `data/`: datasets, cache processada, materialização de layout, splits e normalização.
+- `alignment/`: alinhamento INDEL, `bcftools_chain`, export/visualização textual de DNA alinhado e validação de entradas.
+- `apps/`: viewers e aplicações web locais, incluindo Workbench, Dataset Browser, View Builder e dashboards.
+- `experiments/`: treino, avaliação, setup de experimento e single-gene screen.
+- `analysis/`: interpretabilidade, DeepLIFT, PCA/UMAP e plots de cache.
+- `tools/`: utilitários operacionais para materializar datasets e sincronizar artefatos.
+- `models/`: arquiteturas NN/CNN/CNN2 e baselines relacionados.
+
 ## 1. Ambiente
 
 Antes de rodar comandos pesados ou viewers que consultam VCF, ative o ambiente `genomics`:
