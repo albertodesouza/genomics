@@ -11,8 +11,9 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeEl
 from genomics_pipeline.checkpointing import load_checkpoint as load_torch_checkpoint
 from genomics_pipeline.checkpointing import save_checkpoint as save_torch_checkpoint
 from genomics_pipeline.optim import make_optimizer_from_config
+from genomics_pipeline.training_utils import append_history_epoch, new_training_history
 from variant_transformer_predictor.config import PipelineConfig
-from variant_transformer_predictor.evaluation import evaluate, move_batch_to_device
+from variant_transformer_predictor.evaluation import move_batch_to_device
 
 console = Console()
 
@@ -99,16 +100,12 @@ class Trainer:
         return {"loss": total_loss / max(total, 1), "accuracy": total_correct / max(total, 1), "samples": total}
 
     def train(self) -> Dict:
-        history = {"epoch": [], "train_loss": [], "train_accuracy": [], "val_loss": [], "val_accuracy": []}
+        history = new_training_history()
         no_improve = 0
         for epoch in range(self.start_epoch, self.config.training.num_epochs + 1):
             train_metrics = self.run_train_epoch()
             val_metrics = self.run_val_loss() if len(self.val_loader.dataset) else train_metrics
-            history["epoch"].append(epoch)
-            history["train_loss"].append(train_metrics["loss"])
-            history["train_accuracy"].append(train_metrics["accuracy"])
-            history["val_loss"].append(val_metrics["loss"])
-            history["val_accuracy"].append(val_metrics["accuracy"])
+            append_history_epoch(history, epoch, train_metrics, val_metrics)
             improved_acc = val_metrics["accuracy"] > self.best_val_accuracy
             improved_loss = val_metrics["loss"] < self.best_val_loss
             if improved_acc:

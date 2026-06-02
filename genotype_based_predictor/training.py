@@ -4,7 +4,6 @@ training.py — Trainer: loop de treinamento, validação, checkpoints e W&B.
 """
 
 import time
-import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -20,6 +19,7 @@ from genomics_pipeline.checkpointing import load_checkpoint as load_torch_checkp
 from genomics_pipeline.checkpointing import resolve_checkpoint_path, save_checkpoint as save_torch_checkpoint
 from genomics_pipeline.optim import make_optimizer_from_config
 from genomics_pipeline.torch_utils import move_to_device
+from genomics_pipeline.training_utils import append_history_epoch, make_lr_scheduler, new_training_history, step_lr_scheduler, write_training_history
 
 console = Console()
 
@@ -29,31 +29,11 @@ def _make_optimizer(model: nn.Module, config: PipelineConfig) -> optim.Optimizer
 
 
 def _make_scheduler(optimizer: optim.Optimizer, config: PipelineConfig):
-    sc = config.training.lr_scheduler
-    if not sc.enabled:
+    try:
+        return make_lr_scheduler(optimizer, config.training.lr_scheduler, default_t_max=config.training.num_epochs)
+    except ValueError as exc:
+        console.print(f"[yellow]{exc}. Sem scheduler.[/yellow]")
         return None
-    t = sc.type.lower()
-    if t == "plateau":
-        return optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode=sc.mode, factor=sc.factor,
-            patience=sc.patience, min_lr=sc.min_lr,
-        )
-    elif t == "cosine":
-        return optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=sc.T_max, eta_min=sc.eta_min,
-        )
-    elif t == "step":
-        return optim.lr_scheduler.StepLR(optimizer, step_size=sc.step_size, gamma=sc.gamma)
-    elif t == "exponential":
-        return optim.lr_scheduler.ExponentialLR(optimizer, gamma=sc.gamma)
-    elif t == "multistep":
-        return optim.lr_scheduler.MultiStepLR(optimizer, milestones=sc.milestones, gamma=sc.gamma)
-    elif t == "cosine_warm_restarts":
-        return optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer, T_0=sc.T_0, T_mult=sc.T_mult, eta_min=sc.eta_min,
-        )
-    console.print(f"[yellow]Scheduler '{t}' desconhecido. Sem scheduler.[/yellow]")
-    return None
 
 
 class Trainer:
@@ -112,10 +92,7 @@ class Trainer:
         self.early_stop_patience = config.training.early_stopping_patience
         self.max_samples_per_epoch = config.debug.max_samples_per_epoch
 
-        self.history: Dict[str, list] = {
-            "train_loss": [], "train_accuracy": [],
-            "val_loss": [], "val_accuracy": [], "epoch": [],
-        }
+        self.history: Dict[str, list] = new_training_history()
         self.best_val_loss = float("inf")
         self.best_val_accuracy = 0.0
         self.start_epoch = 1
@@ -285,20 +262,10 @@ class Trainer:
             elif len(self.val_loader.dataset) == 0:
                 val_metrics = {"loss": train_metrics["loss"], "accuracy": train_metrics["accuracy"], "samples": 0}
 
-            # Scheduler step
-            if self.scheduler is not None:
-                if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
-                    if should_validate or len(self.val_loader.dataset) == 0:
-                        self.scheduler.step(val_metrics["loss"])
-                else:
-                    self.scheduler.step()
+            step_lr_scheduler(self.scheduler, val_metrics["loss"], metric_available=should_validate or len(self.val_loader.dataset) == 0)
 
             # Histórico
-            self.history["epoch"].append(epoch)
-            self.history["train_loss"].append(train_metrics["loss"])
-            self.history["train_accuracy"].append(train_metrics["accuracy"])
-            self.history["val_loss"].append(val_metrics["loss"])
-            self.history["val_accuracy"].append(val_metrics["accuracy"])
+            append_history_epoch(self.history, epoch, train_metrics, val_metrics)
 
             can_update_best = should_validate or len(self.val_loader.dataset) == 0
             improved_acc = can_update_best and val_metrics["accuracy"] > self.best_val_accuracy
@@ -364,6 +331,5 @@ class Trainer:
         )
         self.history["interrupted"] = interrupt_state.interrupted
         self.history["last_epoch"] = epoch
-        with open(self.models_dir / "training_history.json", "w", encoding="utf-8") as f:
-            json.dump(self.history, f, indent=2)
+        write_training_history(self.models_dir / "training_history.json", self.history)
         return self.history
