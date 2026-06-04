@@ -12,11 +12,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from genomics.predictors.genotype_based.alignment.dynamic_indel_alignment import DynamicIndelAligner
+from genomics.workspace import results_path
 
 
 DEFAULT_DATASET_DIR = Path("/dados/GENOMICS_DATA/v1/1kG_high_coverage")
 DEFAULT_CONSENSUS_ROOT = Path("/dados/GENOMICS_DATA/v1/1kG_high_coverage")
-DEFAULT_TSV_ROOT = Path("genotype_based_predictor/aligned_dna_genes_1000_all")
+DEFAULT_TSV_ROOT = results_path("genotype_based_predictor", "aligned_dna", "genes_1000_all")
 BCFTOOLS_CHAIN_MAPPER_VERSION = "bcftools_chain_mapper_v4"
 CENTRAL_ALIGNMENT_CACHE_VERSION = "bcftools_chain_alignment_v1"
 

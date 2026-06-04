@@ -9,6 +9,7 @@ Historical config files remain in their original module directories as compatibi
 |---|---|
 | Genomes Analyzer workflow | `configs/genomes_analyzer/` |
 | Genotype-based predictor | `configs/predictors/genotype_based/` |
+| Genotype ICANN paper configs | `configs/predictors/genotype_based/icann/` |
 | Genotype raw-center-crop legacy baselines | `configs/predictors/genotype_based/neural_legacy/` |
 | Variant Transformer predictor | `configs/predictors/variant_transformer/` |
 | SNP ancestry predictor | `configs/predictors/snp_ancestry/` |
@@ -16,6 +17,7 @@ Historical config files remain in their original module directories as compatibi
 | Longevity dataset legacy workflow | `configs/workflows/longevity_dataset/` |
 | AlphaGenome workflow | `configs/workflows/alphagenome/` |
 | VCF to 23andMe converter | `configs/converters/vcf_to_23andme/` |
-| Deprecated neural ancestry legacy configs | `configs/legacy/neural_ancestry_predictor_deprecated/` |
 
-Prefer these paths in new commands and documentation. Existing module-local configs are kept until external scripts and historical notebooks are migrated.
+Prefer these paths in new commands and documentation. Historical legacy-only configs live beside their deprecated code under `legacy/`.
+
+Each canonical directory should contain a `default.yaml` with a portable, commented example. Use these defaults as the starting point for new runs, then copy or override values for named experiments.

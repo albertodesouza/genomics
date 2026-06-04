@@ -11,7 +11,7 @@
 # ───────────────────────────────────────────────────────────────────
 input:
   # Path to input VCF file (.vcf or .vcf.gz)
-  vcf_file: "/home/lume2/Documents/Alberto/meu-genoma/alberto_genoma/A56102411139365.vcf.gz"
+  vcf_file: "data/example.vcf.gz"
 
   # Sample to extract from the VCF (optional).
   # If not specified, the first sample in the VCF is used.
@@ -23,7 +23,7 @@ input:
 # ───────────────────────────────────────────────────────────────────
 output:
   # Path to the output file in 23andMe format
-  output_file: "/home/lume2/Documents/Alberto/meu-genoma/alberto_genoma/A56102411139365.23andme.txt"
+  output_file: "results/vcf_to_23andme/example.23andme.txt"
 
   # Output format version: "V5" (default) or "V3"
   # V5: detailed header with quality disclaimers and NCBI links
@@ -46,7 +46,7 @@ output:
   #   V3 -> HumanOmniExpress-12 v1.1 (~960K SNPs)
   # The panel is downloaded once and cached in annotation.ref_dir.
   # Ignored if snp_panel is explicitly set. Default: false.
-  filter_by_chip_panel: "V5"
+  filter_by_chip_panel: true
 
 # ───────────────────────────────────────────────────────────────────
 # dbSNP Annotation
@@ -64,7 +64,7 @@ annotation:
   # Directory to store dbSNP reference files (downloaded automatically).
   # The dbSNP common variants file (~1.2 GB for GRCh37) will be
   # downloaded here on first run and reused for subsequent conversions.
-  ref_dir: "/dados/GENOMICS_DATA/top3/refs/"
+  ref_dir: "refs/vcf_to_23andme"
 
 # ───────────────────────────────────────────────────────────────────
 # Reference genome build

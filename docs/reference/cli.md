@@ -12,6 +12,7 @@ genomics
 |---|---|
 | `audit-configs` | Check configs for legacy paths and active/inactive status |
 | `audit-data` | Validate registered dataset paths and expected artifacts |
+| `config ...` | Describe, validate, and export typed config schemas |
 | `completion bash` | Print Bash completion script |
 | `convert vcf-to-23andme` | Convert VCF to 23andMe raw format |
 | `snp-ancestry run` | Run SNP ancestry pipeline |
@@ -27,6 +28,8 @@ genomics
 ```bash
 genomics audit-configs --fail-on-active-legacy
 genomics audit-data --dataset-id 1kg_high_coverage --check-bcftools-chain --sample-limit 3 --fail-on-missing
+genomics config describe genotype
+genomics config validate configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml
 genomics completion bash
 ```
 

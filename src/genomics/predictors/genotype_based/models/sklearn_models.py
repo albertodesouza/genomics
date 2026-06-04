@@ -3,7 +3,7 @@
 sklearn_models.py
 =================
 
-Baselines sklearn: StandardScaler + IncrementalPCA + SVM / RF / XGBoost.
+Baselines sklearn: StandardScaler + IncrementalPCA + SVM / Logistic Regression / RF / XGBoost.
 
 Funções principais
 ------------------
@@ -23,6 +23,7 @@ import joblib
 import numpy as np
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
@@ -54,7 +55,7 @@ def sklearn_flatten_batch(features) -> np.ndarray:
 
 
 def build_sklearn_classifier(config: PipelineConfig, model_type: str, random_seed: int, n_train: int = None) -> Any:
-    """Instancia classificador (SVM, RF ou XGBoost) a partir do config."""
+    """Instancia classificador (SVM, LOGREG, RF ou XGBoost) a partir do config."""
     model_type = model_type.upper()
     sk = config.model.sklearn
 
@@ -69,6 +70,20 @@ def build_sklearn_classifier(config: PipelineConfig, model_type: str, random_see
             cv = max(2, min(svm_cfg.calibration_cv, n_train or 100))
             return CalibratedClassifierCV(base, cv=cv, method="sigmoid")
         return base
+
+    if model_type == "LOGREG":
+        lr = sk.logistic_regression
+        cw = lr.class_weight
+        if cw not in (None, "balanced"):
+            cw = None
+        return LogisticRegression(C=lr.C,
+                                  penalty=lr.penalty,
+                                  solver=lr.solver,
+                                  max_iter=lr.max_iter,
+                                  class_weight=cw,
+                                  random_state=random_seed,
+                                  n_jobs=lr.n_jobs,
+                                  multi_class="auto")
 
     if model_type == "RF":
         rf = sk.random_forest
@@ -96,7 +111,7 @@ def build_sklearn_classifier(config: PipelineConfig, model_type: str, random_see
                                    random_state=xgb_cfg.random_state if xgb_cfg.random_state else random_seed,
                                    n_jobs=xgb_cfg.n_jobs)
 
-    raise ValueError(f"Tipo sklearn não suportado: {model_type}. Use SVM, RF ou XGBOOST.")
+    raise ValueError(f"Tipo sklearn não suportado: {model_type}. Use SVM, LOGREG, RF ou XGBOOST.")
 
 
 def sklearn_predict_labels(loader: DataLoader, scaler: Any, pca: Any, clf: Any) -> Tuple[np.ndarray, np.ndarray]:

@@ -1,18 +1,45 @@
 metadata:
+  # Historical source of this config before the repository layout consolidation.
   migrated_from: "neural_ancestry_predictor/configs/default.yaml"
+
+  # Indicates that this config intentionally uses the legacy raw center-crop
+  # tensor layout instead of the active aligned haplotype-channel layout.
   migration_mode: "raw_center_crop"
 
 dataset_input:
+  # Registered dataset ID resolved through genomics.core.data_registry.
   dataset_id: "1kg_high_coverage"
+
+  # Root directory for processed tensor caches used by this legacy baseline.
   processed_cache_dir: "results/cache/genotype_based_predictor/neural_legacy"
+
+  # Root directory for training/evaluation runs.
   results_dir: "results/genotype_based_predictor/runs"
+
+  # Materialize processed tensors to disk for reuse across runs.
   cache_processed_tensors: true
+
+  # Legacy tensor layout: crop the central window directly from raw predictions.
+  # Use haplotype_channels for new active experiments.
   tensor_layout: "raw_center_crop"
+
+  # Legacy baseline uses only AlphaGenome signal channels, without explicit
+  # variant masks.
   feature_mode: "signals_only"
+
+  # AlphaGenome output files to load. Names match lower-case .npz stems.
   alphagenome_outputs: ["rna_seq"]
+
+  # Use one haplotype to reproduce the original neural baseline behavior.
   haplotype_mode: "H1"
+
+  # Number of central bases extracted from each genomic window.
   window_center_size: 50000
+
+  # Downsampling factor after center crop. 1 means no downsampling.
   downsample_factor: 1
+
+  # Gene subset used by the legacy ancestry experiments.
   genes_to_use:
     - "MC1R"
     - "TYRP1"
@@ -25,73 +52,131 @@ dataset_input:
     - "HERC2"
     - "SLC24A5"
     - "TCHH"
+
+  # Normalization method for AlphaGenome signals. log is robust to sparse or
+  # heavy-tailed signal distributions.
   normalization_method: "log"
+
+  # Legacy override for normalization constants. 0.0 means compute normally.
   normalization_value: 0.0
 
 output:
+  # Metadata target to predict.
   prediction_target: "superpopulation"
+
+  # Fixed class order used by the classifier head and metrics.
   known_classes: ["AFR", "AMR", "EAS", "EUR", "SAS"]
 
 model:
+  # Legacy model family. CNN reproduces the old convolutional baseline.
   type: "CNN"
+
+  # Fully connected hidden layer sizes after feature extraction.
   hidden_layers: [100, 40]
+
+  # Hidden activation function.
   activation: "relu"
+
+  # Dropout probability for regularization.
   dropout_rate: 0.2
+
   cnn:
+    # Legacy 2D convolution kernel over raw center-crop tensors.
     kernel_size: [20, 20]
+    # Number of convolution filters.
     num_filters: 5
+    # Convolution stride.
     stride: [20, 20]
+    # Zero padding applied before convolution.
     padding: 0
+    # Optional pooling shape. null disables explicit pooling.
     pool_size: null
 
 training:
+  # Optimizer used by the training loop.
   optimizer: "adam"
+  # Initial learning rate.
   learning_rate: 0.001
+  # L2 weight decay.
   weight_decay: 0.0
+  # Classification loss.
   loss_function: "cross_entropy"
+  # Legacy baseline batch size. Small because raw tensors can be large.
   batch_size: 1
+  # Maximum training epochs.
   num_epochs: 250
+  # Run validation every N epochs.
   validation_frequency: 5
+
   lr_scheduler:
+    # Enable ReduceLROnPlateau-style scheduling.
     enabled: true
+    # Scheduler type. plateau lowers LR when validation metric stalls.
     type: "plateau"
+    # Monitor direction for plateau scheduling.
     mode: "min"
+    # LR multiplier applied when the plateau condition is met.
     factor: 0.5
+    # Epochs to wait before reducing LR.
     patience: 10
+    # Lower bound for LR.
     min_lr: 0.000001
 
 data_split:
+  # Train/validation/test fractions. Must sum to 1.0.
   train_split: 0.7
   val_split: 0.15
   test_split: 0.15
+  # Seed for reproducible splits.
   random_seed: 3
+  # Keep relatives in the same split to avoid leakage.
   family_split_mode: "family_aware"
+  # Preserve label balance where possible.
   balancing_strategy: "stratified"
+  # Prefer deterministic behavior where supported.
   strict_determinism: true
 
 wandb:
+  # Enable Weights & Biases logging.
   use_wandb: false
+  # W&B project name.
   project_name: "genotype-based-predictor-neural-legacy"
+  # Optional run name.
   run_name: "default"
+  # Log every N steps/epochs depending on the training loop.
   log_frequency: 10
 
 checkpointing:
+  # Directory inside each run for checkpoint files.
   checkpoint_dir: "models"
+  # Save every N epochs when save_during_training is enabled.
   save_frequency: 10
+  # Persist intermediate checkpoints during training.
   save_during_training: true
+  # Optional checkpoint to load before training/evaluation.
   load_checkpoint: null
 
 debug:
+  # Enable optional debug visualizations.
   enable_visualization: false
+  # Recompute PCA caches even when compatible caches exist.
   force_pca_cache_rebuild: false
+  # Limit samples per epoch for smoke tests. null means no limit.
   max_samples_per_epoch: null
+  # Synthetic taint/debug controls.
   taint_at_cache_save: false
   taint_at_runtime: false
+  # Visualization-specific options consumed by debug tooling.
   visualization: {}
 
 data_loading:
+  # Lazy loading reads tensors on demand; preload loads them all into memory.
   loading_strategy: "lazy"
+  # Number of items kept in the lazy loader cache.
   cache_size: 50
 
+# Execution mode.
 mode: "train"
+
+# Split used by evaluation/test flows.
 test_dataset: "test"

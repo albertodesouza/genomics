@@ -9,9 +9,9 @@ Path: `legacy/neural_ancestry_predictor_deprecated/`
 CLI wrapper:
 
 ```bash
-genomics neural train configs/legacy/neural_ancestry_predictor_deprecated/genes_1000_all.yaml
-genomics neural test configs/legacy/neural_ancestry_predictor_deprecated/genes_1000_all.yaml
-genomics neural pca-cache configs/legacy/neural_ancestry_predictor_deprecated/genes_1000_all.yaml
+genomics neural train legacy/neural_ancestry_predictor_deprecated/configs/genes_1000_all.yaml
+genomics neural test legacy/neural_ancestry_predictor_deprecated/configs/genes_1000_all.yaml
+genomics neural pca-cache legacy/neural_ancestry_predictor_deprecated/configs/genes_1000_all.yaml
 ```
 
 For new ancestry/model experiments, prefer:
@@ -40,6 +40,8 @@ The legacy package now imports shared infrastructure from `genomics.core` where 
 ### Why It Remains
 
 This code produced historical benchmarks and plots. It remains available so old results can be reproduced or compared, but it is not the recommended implementation for new experiments.
+
+Legacy-only configs live beside this code under `legacy/neural_ancestry_predictor_deprecated/configs/`. Configs for reproducing the old raw-center-crop representation on the active genotype predictor live under `configs/predictors/genotype_based/neural_legacy/`.
 
 ## Legacy Longevity Dataset
 

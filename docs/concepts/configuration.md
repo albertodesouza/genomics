@@ -11,7 +11,7 @@ Canonical configs live under `configs/`.
 | Non-longevous dataset builder | `configs/workflows/non_longevous_dataset/` |
 | AlphaGenome workflow | `configs/workflows/alphagenome/` |
 | VCF to 23andMe converter | `configs/converters/vcf_to_23andme/` |
-| Legacy neural ancestry | `configs/legacy/neural_ancestry_predictor_deprecated/` |
+| Legacy neural ancestry code | `legacy/neural_ancestry_predictor_deprecated/configs/` |
 
 ## Auditing Configs
 

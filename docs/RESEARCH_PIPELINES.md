@@ -108,7 +108,7 @@ Status atual dos blockers de legado:
 
 - `genotype_based_predictor` com `alignment_mapping: bcftools_chain` ja tem os artefatos necessarios materializados no dataset canonico por hardlink: `*.window.raw.fa`, `*.window.consensus_ready.vcf.gz`, indices `.tbi`, `*.window.vcf.gz` e indices `.tbi`.
 - `genes_1000_all_3ontologies_delta_reference.yaml` continua inativo porque aponta `reference_predictions_dataset_dir` para um dataset legado de referencia ainda nao materializado no canonico.
-- Alguns configs dentro de `configs/legacy/neural_ancestry_predictor_deprecated/` continuam apontando para paths historicos; isso e aceitavel apenas porque o pacote esta deprecated.
+- Alguns configs dentro de `legacy/neural_ancestry_predictor_deprecated/configs/` continuam apontando para paths historicos; isso e aceitavel apenas porque o pacote esta deprecated.
 
 Critério mínimo para manter novas execucoes livres de legado: `genomics audit-configs --fail-on-active-legacy` deve passar. Esse audit passou apos a quarentena e a materializacao dos artefatos `bcftools_chain` no canonico.
 
@@ -143,9 +143,9 @@ genomics variant analyze-counts /dados/GENOMICS_DATA/variant_transformer/superpo
 Este pipeline e legado/monolitico. A CLI comum apenas delega para o script preservado, e seu uso deve ficar restrito a reproducibilidade historica.
 
 ```bash
-genomics neural train configs/legacy/neural_ancestry_predictor_deprecated/genes_1000_all.yaml
-genomics neural test configs/legacy/neural_ancestry_predictor_deprecated/genes_1000_all.yaml
-genomics neural pca-cache configs/legacy/neural_ancestry_predictor_deprecated/genes_1000_all.yaml
+genomics neural train legacy/neural_ancestry_predictor_deprecated/configs/genes_1000_all.yaml
+genomics neural test legacy/neural_ancestry_predictor_deprecated/configs/genes_1000_all.yaml
+genomics neural pca-cache legacy/neural_ancestry_predictor_deprecated/configs/genes_1000_all.yaml
 ```
 
 ## Migração dos configs históricos

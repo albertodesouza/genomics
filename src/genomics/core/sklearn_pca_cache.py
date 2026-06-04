@@ -7,8 +7,8 @@ O cache é compartilhado entre experimentos com o mesmo dataset processado
 (mesmo diretório em datasets/) e o mesmo pca_components pedido.
 
 CLI (após o cache do dataset existir):
-    genomics neural pca-cache configs/legacy/neural_ancestry_predictor_deprecated/genes_1000.yaml
-    genomics neural pca-cache configs/legacy/neural_ancestry_predictor_deprecated/genes_1000.yaml --force
+    genomics neural pca-cache legacy/neural_ancestry_predictor_deprecated/configs/genes_1000.yaml
+    genomics neural pca-cache legacy/neural_ancestry_predictor_deprecated/configs/genes_1000.yaml --force
 """
 
 from __future__ import annotations

@@ -257,6 +257,16 @@ class RandomForestConfig(BaseModel):
     n_jobs: int = -1
 
 
+class LogisticRegressionConfig(BaseModel):
+    """Hiperparâmetros do baseline Logistic Regression."""
+    C: float = 1.0
+    penalty: Literal["l1", "l2", "elasticnet", "none"] = "l2"
+    solver: str = "saga"
+    max_iter: int = 5000
+    class_weight: Optional[str] = None
+    n_jobs: int = -1
+
+
 class XGBoostConfig(BaseModel):
     """Hiperparâmetros do XGBoost baseline."""
     n_estimators: int = 200
@@ -281,6 +291,7 @@ class SklearnConfig(BaseModel):
     randomized_pca_feature_chunk_size: int = 16384
     randomized_pca_dtype: Literal["float32", "float64"] = "float32"
     svm: SVMConfig = Field(default_factory=SVMConfig)
+    logistic_regression: LogisticRegressionConfig = Field(default_factory=LogisticRegressionConfig)
     random_forest: RandomForestConfig = Field(default_factory=RandomForestConfig)
     xgboost: XGBoostConfig = Field(default_factory=XGBoostConfig)
 
@@ -295,7 +306,7 @@ class SklearnConfig(BaseModel):
 class ModelConfig(BaseModel):
     """Configuração completa do modelo."""
 
-    type: Literal["NN", "CNN", "CNN2", "SVM", "RF", "XGBOOST"] = "NN"
+    type: Literal["NN", "CNN", "CNN2", "SVM", "LOGREG", "RF", "XGBOOST"] = "NN"
     """Tipo de modelo."""
 
     hidden_layers: List[int] = Field(default=[128, 64])
@@ -712,13 +723,17 @@ def generate_experiment_name(config: PipelineConfig) -> str:
             f"{hl}_{act}_{dr}_{opt}"
         )
 
-    elif model_type in ("svm", "rf", "xgboost"):
+    elif model_type in ("svm", "logreg", "rf", "xgboost"):
         sk = m.sklearn
         pca = f"pca{sk.pca_components}" if sk.pca_components is not None else "pca_auto"
         if model_type == "svm":
             c_str = str(sk.svm.C).replace(".", "p")
             cal = "cal1" if sk.svm.calibrate_probabilities else "cal0"
             tag = f"svm_C{c_str}_{cal}"
+        elif model_type == "logreg":
+            lr_cfg = sk.logistic_regression
+            c_str = str(lr_cfg.C).replace(".", "p")
+            tag = f"logreg_C{c_str}_{lr_cfg.penalty}_{lr_cfg.solver}"
         elif model_type == "rf":
             md = f"md{sk.random_forest.max_depth}" if sk.random_forest.max_depth else "mdNone"
             tag = f"rf_nt{sk.random_forest.n_estimators}_{md}"

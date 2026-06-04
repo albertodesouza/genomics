@@ -1,0 +1,341 @@
+# Default example config for the active genotype-based predictor.
+#
+# Usage:
+#   genomics config describe genotype
+#   genomics config validate configs/predictors/genotype_based/default.yaml
+#   genomics genotype train configs/predictors/genotype_based/default.yaml
+#
+# The authoritative schema is exposed by:
+#   genomics config schema genotype
+
+dataset_input:
+  # Registered dataset ID resolved by genomics.core.data_registry. Prefer this
+  # over dataset_dir for portable configs.
+  dataset_id: "1kg_high_coverage"
+
+  # Optional explicit dataset directory. Leave null when dataset_id is set.
+  dataset_dir: null
+
+  # Optional logical view JSON. A view can predefine samples, genes, outputs,
+  # ontology terms, and filters. Values below override values from the view.
+  view_path: null
+
+  # AlphaGenome output tensors to load from each individual/window. Names are the
+  # lower-case file stems used in predictions directories, such as rna_seq, atac,
+  # cage, chip_histone, chip_tf, dnase, or procap.
+  alphagenome_outputs:
+    - "rna_seq"
+
+  # Haplotype input mode. H1 or H2 uses one haplotype; H1+H2 combines both.
+  haplotype_mode: "H1+H2"
+
+  # Tensor layout. haplotype_channels is the canonical aligned layout. Use
+  # raw_center_crop only for legacy baselines.
+  tensor_layout: "haplotype_channels"
+
+  # Feature channels included in the tensor. signals_and_masks combines
+  # AlphaGenome signals with INDEL/SNP masks; signals_only ignores masks;
+  # masks_only trains only on variant masks.
+  feature_mode: "signals_and_masks"
+
+  # If true, zero AlphaGenome signals at positions without a variant in the
+  # selected individuals. Useful for variant-signal ablations.
+  alphagenome_signal_variant_mask: false
+
+  # Signal transform before normalization. absolute uses raw prediction values;
+  # delta_reference subtracts reference-only predictions and requires
+  # reference_predictions_dataset_dir.
+  alphagenome_signal_transform: "absolute"
+
+  # Dataset with reference-only AlphaGenome predictions, required only for
+  # alphagenome_signal_transform: delta_reference.
+  reference_predictions_dataset_dir: null
+
+  # Sample ID inside the reference-only dataset. null means use the first sample.
+  reference_predictions_sample_id: null
+
+  # Number of bases kept from the center of each genomic window.
+  window_center_size: 32768
+
+  # Downsampling factor applied after center cropping. 1 means no downsampling.
+  downsample_factor: 1
+
+  # Optional explicit gene list. null means use all genes/windows in metadata.
+  genes_to_use:
+    - "MC1R"
+    - "TYRP1"
+    - "TYR"
+    - "SLC45A2"
+    - "DDB1"
+    - "EDAR"
+    - "MFSD12"
+    - "OCA2"
+    - "HERC2"
+    - "SLC24A5"
+    - "TCHH"
+
+  # Optional explicit sample IDs or path to sample IDs. Leave null to use all
+  # samples allowed by the dataset/view/split logic.
+  sample_ids: null
+  sample_ids_path: null
+
+  # Optional metadata filters. null means no filter.
+  superpopulations_to_use: null
+  populations_to_use: null
+
+  # Internal/cache metadata fields. Leave null in hand-written configs.
+  gene_order: null
+  gene_window_metadata: null
+
+  # Normalization applied to AlphaGenome tracks. log is robust for sparse/count
+  # outputs, zscore standardizes per track, minmax_keep_zero preserves zeros.
+  normalization_method: "log"
+
+  # Legacy override for normalization constants. Keep 0.0 to compute normally.
+  normalization_value: 0.0
+
+  # Optional ontology/cell-type filters. Examples: CL:1000458, CL:0000346.
+  # null means use all tracks available for the selected outputs.
+  ontology_terms:
+    - "CL:1000458"
+    - "CL:0000346"
+    - "CL:2000092"
+
+  # Fallback track index when multiple tracks exist and metadata cannot identify
+  # a selected ontology/output unambiguously.
+  selected_track_index: 0
+
+  # Root directory for processed tensor caches.
+  processed_cache_dir: "results/cache/genotype_based_predictor"
+
+  # Root directory for experiment runs.
+  results_dir: "results/genotype_based_predictor/runs"
+
+  # Store detailed sample/split metadata in cache artifacts.
+  keep_split_metadata: false
+
+  # If false, compute metadata/normalization/splits without materializing all .pt
+  # tensors. Usually true for training.
+  cache_processed_tensors: true
+
+  # Optional path to precomputed normalization_params.json.
+  normalization_params_path: null
+
+  # Neutral value used for inserted/deleted aligned positions.
+  indel_neutral_value: 0.0
+
+  # Include a validity mask channel for aligned INDEL axes.
+  indel_include_valid_mask: true
+
+  # Include a SNP mask channel in addition to INDEL masks.
+  indel_include_snp_mask: false
+
+  # Mapping strategy for AlphaGenome prediction coordinates. Currently only
+  # bcftools_chain is supported.
+  alignment_mapping: "bcftools_chain"
+
+  # Splits used to construct the global alignment axis.
+  alignment_axis_splits:
+    - "train"
+    - "val"
+
+  # Dataset containing raw FASTA/VCF chain artifacts for alignment. null means use
+  # dataset_dir; set explicitly when artifacts live in a separate dataset.
+  consensus_dataset_dir: null
+
+output:
+  # Target label to predict from sample metadata. Common values are
+  # superpopulation and population. Derived targets can be declared below.
+  prediction_target: "superpopulation"
+
+  # Fixed class order. null means discover classes from the dataset.
+  known_classes: ["AFR", "AMR", "EAS", "EUR", "SAS"]
+
+  # Optional derived targets. Example structure:
+  #   pigmentation_binary:
+  #     source_field: "population"
+  #     class_map:
+  #       light: ["GBR", "FIN"]
+  #       dark: ["YRI", "LWK"]
+  #     exclude_unmapped: true
+  derived_targets: {}
+
+model:
+  # Model family: NN, CNN, CNN2, SVM, RF, or XGBOOST.
+  type: "CNN2"
+
+  # Hidden layer sizes for NN/head layers.
+  hidden_layers: [100, 40]
+
+  # Activation function for hidden layers.
+  activation: "relu"
+
+  # Dropout rate in [0, 1).
+  dropout_rate: 0.5
+
+  cnn:
+    # Simple CNN kernel shape [height, width]. Used only for type: CNN.
+    kernel_size: [6, 32]
+    # Number of convolution filters for the simple CNN.
+    num_filters: 16
+    # Convolution stride, either scalar or [height, width].
+    stride: 1
+    # Convolution padding, either scalar or [height, width].
+    padding: 0
+    # Optional pooling shape. null disables explicit pooling.
+    pool_size: null
+
+  cnn2:
+    # Multi-stage CNN first stage filters and kernel/stride.
+    num_filters_stage1: 16
+    kernel_stage1: [9, 32]
+    stride_stage1: [9, 32]
+    # Filters for later convolution stages.
+    num_filters_stage2: 32
+    num_filters_stage3: 64
+    # Shared kernel/stride/padding for stages 2 and 3.
+    kernel_stages23: [1, 5]
+    stride_stages23: [1, 2]
+    padding_stages23: [0, 2]
+    # Global pooling over sequence positions: max or avg.
+    global_pool_type: "max"
+    # Fully connected head width after convolutional feature extraction.
+    fc_hidden_size: 256
+
+  sklearn:
+    # Number of PCA components for sklearn baselines. null disables PCA.
+    pca_components: null
+    # Reuse cached PCA transforms when available.
+    use_pca_cache: true
+    # Align PCA component count to the number of training samples.
+    pca_align_n_train: false
+    # PCA implementation for large datasets.
+    pca_backend: "incremental"
+    randomized_pca_oversampling: 32
+    randomized_pca_n_iter: 2
+    randomized_pca_feature_chunk_size: 16384
+    randomized_pca_dtype: "float32"
+    svm:
+      C: 1.0
+      max_iter: 20000
+      class_weight: null
+      calibrate_probabilities: false
+      calibration_cv: 3
+    random_forest:
+      n_estimators: 200
+      max_depth: null
+      class_weight: null
+      random_state: 42
+      n_jobs: -1
+    xgboost:
+      n_estimators: 200
+      max_depth: 6
+      learning_rate: 0.1
+      subsample: 0.8
+      colsample_bytree: 0.8
+      tree_method: "hist"
+      random_state: 42
+      n_jobs: -1
+      eval_metric: "logloss"
+
+training:
+  # Optimizer: adam, adamw, or sgd.
+  optimizer: "adam"
+  # Initial learning rate.
+  learning_rate: 0.001
+  # L2 weight decay.
+  weight_decay: 0.0001
+  # Loss function. Classification normally uses cross_entropy.
+  loss_function: "cross_entropy"
+  # Number of samples per optimization step.
+  batch_size: 32
+  # Maximum number of training epochs.
+  num_epochs: 300
+  # Run validation every N epochs.
+  validation_frequency: 3
+  # Optional early stopping patience. null disables early stopping.
+  early_stopping_patience: null
+  lr_scheduler:
+    # Enable learning-rate scheduling.
+    enabled: true
+    # Scheduler type: plateau, step, cosine, exponential, multistep,
+    # cosine_warm_restarts.
+    type: "cosine_warm_restarts"
+    mode: "min"
+    factor: 0.5
+    patience: 30
+    min_lr: 0.0000001
+    step_size: 30
+    gamma: 0.1
+    milestones: [30, 60, 90]
+    T_max: 300
+    eta_min: 0.0000001
+    T_0: 50
+    T_mult: 1
+
+data_split:
+  # Train/validation/test fractions. Must sum to 1.0.
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  # Seed for reproducible splits. null allows non-deterministic behavior.
+  random_seed: 13
+  # family_aware keeps relatives in the same split; ignore splits per sample.
+  family_split_mode: "family_aware"
+  # stratified preserves label balance; shuffle only shuffles before split.
+  balancing_strategy: "stratified"
+  # Prefer deterministic algorithms where supported.
+  strict_determinism: true
+
+wandb:
+  # Enable Weights & Biases logging.
+  use_wandb: false
+  project_name: "genotype-based-predictor"
+  run_name: null
+  log_frequency: 100
+
+checkpointing:
+  # Directory inside each run for model checkpoints.
+  checkpoint_dir: "models"
+  # Save every N epochs when save_during_training is true.
+  save_frequency: 100
+  save_during_training: true
+  # Optional checkpoint path/name to load before training/evaluation.
+  load_checkpoint: null
+
+debug:
+  # Enable optional debug visualizations.
+  enable_visualization: false
+  # Recompute PCA caches even if compatible cache files exist.
+  force_pca_cache_rebuild: false
+  # Limit samples per epoch for smoke tests. null means no limit.
+  max_samples_per_epoch: null
+  # Synthetic taint/debug controls for robustness experiments.
+  taint_at_cache_save: false
+  taint_at_runtime: false
+  taint_type: "additive"
+  taint_value: 1.0
+  taint_horizontal_size: 6
+  taint_vertical_size: 6
+  taint_horizontal_step: 100
+  taint_vertical_step: 6
+  visualization: {}
+
+data_loading:
+  # preload loads tensors into memory; lazy reads on demand.
+  loading_strategy: "lazy"
+  # In-memory cache size for lazy loading.
+  cache_size: 50
+  # Optional DataLoader worker overrides.
+  train_num_workers: null
+  val_num_workers: null
+  prefetch_factor: null
+  # Processed tensor sharding controls.
+  processed_shard_size: 64
+  shard_cache_size: 4
+
+# Execution mode for modules that support both training and testing.
+mode: "train"
+
+# Split used by test/evaluation flows by default.
+test_dataset: "test"

@@ -17,11 +17,11 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
-from genomics.workspace import DEFAULT_CONSENSUS_DATASET_DIR, DEFAULT_DATASET_DIR, DEFAULT_GENOTYPE_RUNS_ROOT
+from genomics.workspace import DEFAULT_CONSENSUS_DATASET_DIR, DEFAULT_DATASET_DIR, DEFAULT_GENOTYPE_RUNS_ROOT, results_path
 
 
 DEFAULT_RUNS_ROOT = DEFAULT_GENOTYPE_RUNS_ROOT
-DEFAULT_ALIGNED_TSV_ROOT = Path("genotype_based_predictor/aligned_dna_genes_1000_all")
+DEFAULT_ALIGNED_TSV_ROOT = results_path("genotype_based_predictor", "aligned_dna", "genes_1000_all")
 
 
 @dataclass

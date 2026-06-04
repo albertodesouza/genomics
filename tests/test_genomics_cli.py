@@ -176,3 +176,48 @@ def test_completion_bash_outputs_completion_script(capsys):
     assert rc == 0
     assert "complete -F _genomics_completion genomics" in captured.out
     assert "genotype" in captured.out
+
+
+def test_config_describe_genotype_lists_known_fields(capsys):
+    rc = genomics_cli.main(["config", "describe", "genotype"])
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "Genotype-Based Predictor config schema" in captured.out
+    assert "dataset_input.dataset_id" in captured.out
+    assert "training.batch_size" in captured.out
+
+
+def test_config_validate_infers_genotype_kind(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("GENOMICS_DATA_ROOT", str(tmp_path / "data"))
+    config_dir = tmp_path / "configs" / "predictors" / "genotype_based"
+    config_dir.mkdir(parents=True)
+    config_path = config_dir / "minimal.yaml"
+    _write_yaml(
+        config_path,
+        {
+            "dataset_input": {
+                "dataset_id": "1kg_high_coverage",
+                "alphagenome_outputs": ["rna_seq"],
+            },
+            "output": {"prediction_target": "superpopulation"},
+        },
+    )
+
+    rc = genomics_cli.main(["config", "validate", str(config_path)])
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "ok:" in captured.out
+    assert "(genotype)" in captured.out
+
+
+def test_config_validate_reports_errors(tmp_path, capsys):
+    config_path = tmp_path / "bad.yaml"
+    _write_yaml(config_path, {"dataset": {"processed_dir": "processed"}, "model": {"d_model": 255, "heads": 8}})
+
+    rc = genomics_cli.main(["config", "validate", str(config_path), "--kind", "variant"])
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert "config validation failed" in captured.err

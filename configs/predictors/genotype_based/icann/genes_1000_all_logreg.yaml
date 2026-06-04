@@ -1,0 +1,87 @@
+metadata:
+  source: "genes_1000_all_icann.yaml"
+  paper: "ICANN accepted paper"
+  migration_mode: "raw_center_crop"
+  note: "PCA+LogisticRegression configuration adapted from the accepted-paper experiment config."
+
+dataset_input:
+  dataset_id: "1kg_high_coverage"
+  processed_cache_dir: "results/cache/genotype_based_predictor/icann"
+  results_dir: "results/genotype_based_predictor/icann/runs"
+  cache_processed_tensors: true
+  tensor_layout: "raw_center_crop"
+  feature_mode: "signals_only"
+  alphagenome_outputs: ["rna_seq"]
+  haplotype_mode: "H1+H2"
+  window_center_size: 32768
+  downsample_factor: 1
+  genes_to_use: ["MC1R", "TYRP1", "TYR", "SLC45A2", "DDB1", "EDAR", "MFSD12", "OCA2", "HERC2", "SLC24A5", "TCHH"]
+  normalization_method: "log"
+  normalization_value: 0.0
+
+output:
+  prediction_target: "superpopulation"
+  known_classes: null
+
+model:
+  type: "LOGREG"
+  hidden_layers: [100, 40]
+  activation: "relu"
+  dropout_rate: 0.5
+  sklearn:
+    pca_components: 300
+    use_pca_cache: true
+    pca_align_n_train: false
+    logistic_regression:
+      C: 1.0
+      penalty: "l2"
+      solver: "saga"
+      max_iter: 5000
+      class_weight: null
+      n_jobs: -1
+
+data_loading:
+  loading_strategy: "preload"
+
+training:
+  optimizer: "adam"
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  loss_function: "cross_entropy"
+  batch_size: 50
+  num_epochs: 1
+  validation_frequency: 1
+  lr_scheduler:
+    enabled: false
+
+data_split:
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  random_seed: 13
+  family_split_mode: "family_aware"
+  balancing_strategy: "shuffle"
+  strict_determinism: true
+
+wandb:
+  use_wandb: true
+  project_name: "genotype-based-predictor-icann"
+  run_name: "genes-1000-all-logreg-pca300"
+  log_frequency: 100
+
+checkpointing:
+  checkpoint_dir: "models"
+  save_during_training: true
+  save_frequency: 100
+  load_checkpoint: null
+
+debug:
+  enable_visualization: false
+  force_pca_cache_rebuild: false
+  max_samples_per_epoch: null
+  visualization: {}
+  taint_at_cache_save: false
+  taint_at_runtime: false
+
+mode: "train"
+test_dataset: "test"

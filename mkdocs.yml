@@ -74,6 +74,7 @@ nav:
       - Applied AlphaGenome Fixes: APPLIED_FIXES.md
   - Reference:
       - CLI: reference/cli.md
+      - Config Schemas: reference/configs.md
       - Repository Layout: reference/repository-layout.md
       - Architecture: ARCHITECTURE.md
       - Research Pipelines: RESEARCH_PIPELINES.md

@@ -6,25 +6,31 @@ def test_canonical_config_layout_exists():
     expected_dirs = [
         "configs/genomes_analyzer",
         "configs/predictors/genotype_based",
+        "configs/predictors/genotype_based/icann",
         "configs/predictors/variant_transformer",
         "configs/predictors/snp_ancestry",
         "configs/workflows/non_longevous_dataset",
         "configs/workflows/longevity_dataset",
         "configs/workflows/alphagenome",
         "configs/converters/vcf_to_23andme",
-        "configs/legacy/neural_ancestry_predictor_deprecated",
     ]
 
     for rel_path in expected_dirs:
         assert (root / rel_path).is_dir(), rel_path
 
     expected_files = [
+        "configs/genomes_analyzer/default.yaml",
         "configs/genomes_analyzer/config_human_30x_low_memory.yaml",
+        "configs/predictors/genotype_based/default.yaml",
+        "configs/predictors/genotype_based/icann/genes_1000_all_cnn2.yaml",
         "configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml",
+        "configs/predictors/genotype_based/neural_legacy/default.yaml",
         "configs/predictors/genotype_based/neural_legacy/genes_1000_all.yaml",
+        "configs/predictors/variant_transformer/default.yaml",
         "configs/predictors/variant_transformer/superpopulation.yaml",
         "configs/predictors/snp_ancestry/default.yaml",
         "configs/workflows/non_longevous_dataset/default.yaml",
+        "configs/workflows/longevity_dataset/default.yaml",
         "configs/workflows/alphagenome/default.yaml",
         "configs/converters/vcf_to_23andme/default.yaml",
     ]
@@ -65,6 +71,9 @@ def test_script_category_layout_exists():
     ]
     for rel_path in removed_wrappers:
         assert not (root / rel_path).exists(), rel_path
+
+    assert not (root / "configs/legacy").exists()
+    assert (root / "legacy/neural_ancestry_predictor_deprecated/configs/default.yaml").is_file()
 
 
 def test_removed_root_legacy_directories_are_absent():

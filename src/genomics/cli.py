@@ -402,7 +402,6 @@ def cmd_audit_configs(args: argparse.Namespace) -> int:
     roots = [
         Path("configs/predictors/genotype_based"),
         Path("configs/predictors/variant_transformer"),
-        Path("configs/legacy/neural_ancestry_predictor_deprecated"),
     ]
     rows = []
     for root in roots:
@@ -648,6 +647,72 @@ def cmd_audit_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_config_kind(kind: Optional[str], config_path: Optional[Path] = None) -> str:
+    from genomics.core.config_schema import infer_schema_kind, schema_kinds
+
+    if kind:
+        return kind
+    if config_path is not None:
+        inferred = infer_schema_kind(config_path)
+        if inferred:
+            return inferred
+    raise ValueError(f"Config kind is required. Choices: {', '.join(schema_kinds())}")
+
+
+def cmd_config_describe(args: argparse.Namespace) -> int:
+    from genomics.core.config_schema import describe_config_schema, get_schema_spec
+
+    spec = get_schema_spec(args.kind)
+    rows = describe_config_schema(args.kind)
+    if args.json:
+        print(json.dumps({"kind": spec.kind, "title": spec.title, "fields": rows}, indent=2, ensure_ascii=False))
+        return 0
+    print(f"{spec.title} config schema ({spec.kind})")
+    for row in rows:
+        required = "required" if row["required"] else f"default={row['default']}"
+        print(f"{row['path']}")
+        print(f"  type: {row['type']}")
+        print(f"  {required}")
+        if row["description"]:
+            print(f"  {row['description']}")
+    return 0
+
+
+def cmd_config_schema(args: argparse.Namespace) -> int:
+    from genomics.core.config_schema import json_schema_for_kind
+
+    payload = json_schema_for_kind(args.kind)
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_config_validate(args: argparse.Namespace) -> int:
+    from pydantic import ValidationError
+    from genomics.core.config_schema import load_typed_config
+
+    try:
+        kind = _resolve_config_kind(args.kind, args.config)
+        load_typed_config(kind, args.config)
+    except ValidationError as exc:
+        if args.json:
+            print(json.dumps({"status": "error", "errors": exc.errors()}, indent=2, ensure_ascii=False, default=str))
+        else:
+            print(f"ERROR: config validation failed for {args.config}", file=sys.stderr)
+            print(str(exc), file=sys.stderr)
+        return 2
+    except Exception as exc:
+        if args.json:
+            print(json.dumps({"status": "error", "error": str(exc)}, indent=2, ensure_ascii=False))
+        else:
+            print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps({"status": "ok", "kind": kind, "path": str(args.config)}, indent=2, ensure_ascii=False))
+    else:
+        print(f"ok: {args.config} ({kind})")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="CLI comum para pipelines de pesquisa genômica")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -672,6 +737,21 @@ def build_parser() -> argparse.ArgumentParser:
     completion_sub = completion.add_subparsers(dest="completion_shell", required=True)
     completion_bash = completion_sub.add_parser("bash")
     completion_bash.set_defaults(func=cmd_completion_bash)
+
+    config = subparsers.add_parser("config", help="Describe and validate typed config files")
+    config_sub = config.add_subparsers(dest="config_command", required=True)
+    config_describe = config_sub.add_parser("describe", help="Describe fields for a config kind")
+    config_describe.add_argument("kind", choices=["genotype", "variant"])
+    config_describe.add_argument("--json", action="store_true")
+    config_describe.set_defaults(func=cmd_config_describe)
+    config_schema = config_sub.add_parser("schema", help="Print JSON schema for a config kind")
+    config_schema.add_argument("kind", choices=["genotype", "variant"])
+    config_schema.set_defaults(func=cmd_config_schema)
+    config_validate = config_sub.add_parser("validate", help="Validate a typed YAML config")
+    config_validate.add_argument("config", type=Path)
+    config_validate.add_argument("--kind", choices=["genotype", "variant"], default=None)
+    config_validate.add_argument("--json", action="store_true")
+    config_validate.set_defaults(func=cmd_config_validate)
 
     convert = subparsers.add_parser("convert", help="Conversores de formatos genomicos")
     convert_sub = convert.add_subparsers(dest="convert_command", required=True)

@@ -12,10 +12,10 @@ de predições AlphaGenome armazenadas em um dataset PyTorch.
 
 Uso:
     # Treino
-    genomics neural train configs/legacy/neural_ancestry_predictor_deprecated/default.yaml
+    genomics neural train legacy/neural_ancestry_predictor_deprecated/configs/default.yaml
 
     # Teste
-    genomics neural test configs/legacy/neural_ancestry_predictor_deprecated/default.yaml
+    genomics neural test legacy/neural_ancestry_predictor_deprecated/configs/default.yaml
 
 Author: ChatGPT (for Alberto)
 Created: 2025-11-14
