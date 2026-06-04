@@ -1,0 +1,110 @@
+dataset_input:
+  dataset_dir: "/dados/GENOMICS_DATA/v1/1kG_high_coverage"
+  sample_ids_path: "/home/breno/I2CA/genomics/genotype_based_predictor/views/genes_100_all.sample_ids.txt"
+  alphagenome_outputs:
+    - "rna_seq"
+  haplotype_mode: "H1+H2"
+  window_center_size: 32768
+  downsample_factor: 1
+  genes_to_use:
+    - "MC1R"
+    - "TYRP1"
+    - "TYR"
+    - "SLC45A2"
+    - "DDB1"
+    - "EDAR"
+    - "MFSD12"
+    - "OCA2"
+    - "HERC2"
+    - "SLC24A5"
+    - "TCHH"
+  ontology_terms:
+    - "CL:1000458"
+    - "CL:0000346"
+    - "CL:2000092"
+  normalization_method: "log"
+  processed_cache_dir: "results/cache/genotype_based_predictor"
+  results_dir: "results/genotype_based_predictor/runs"
+  cache_processed_tensors: true
+  tensor_layout: "haplotype_channels"
+  ontology_terms: ["CL:1000458", "CL:0000346", "CL:2000092"]
+  selected_track_index: 0
+  indel_include_valid_mask: true
+  alignment_mapping: "bcftools_chain"
+  consensus_dataset_dir: "/dados/GENOMICS_DATA/v1/1kG_high_coverage"
+
+output:
+  prediction_target: "superpopulation"
+  known_classes: null
+
+model:
+  type: "CNN2"
+  hidden_layers: [100, 40]
+  activation: "relu"
+  dropout_rate: 0.5
+  cnn2:
+    num_filters_stage1: 16
+    kernel_stage1: [1, 32]
+    num_filters_stage2: 32
+    kernel_stage2: 5
+    num_filters_stage3: 64
+    kernel_stage3: 3
+    global_pool_type: "avg"
+    fc_hidden_size: 256
+
+training:
+  optimizer: "adam"
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  loss_function: "cross_entropy"
+  batch_size: 8
+  num_epochs: 50
+  validation_frequency: 3
+  lr_scheduler:
+    enabled: true
+    type: "cosine_warm_restarts"
+    mode: "min"
+    factor: 0.5
+    patience: 30
+    min_lr: 0.0000001
+    step_size: 30
+    T_max: 300
+    eta_min: 0.0000001
+    T_0: 50
+    T_mult: 1
+
+data_split:
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  random_seed: 13
+  family_split_mode: "family_aware"
+  balancing_strategy: "shuffle"
+  strict_determinism: true
+
+wandb:
+  use_wandb: false
+  project_name: "genotype-based-predictor-genes-100-all-3ontologies"
+  run_name: null
+  log_frequency: 100
+
+checkpointing:
+  checkpoint_dir: "models"
+  save_frequency: 100
+  save_during_training: true
+  load_checkpoint: null
+
+debug:
+  enable_visualization: false
+  force_pca_cache_rebuild: false
+  max_samples_per_epoch: null
+  taint_at_cache_save: false
+  taint_at_runtime: false
+  visualization: {}
+
+data_loading:
+  loading_strategy: "lazy"
+  cache_size: 50
+
+mode: "train"
+test_dataset: "test"

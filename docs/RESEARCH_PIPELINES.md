@@ -17,9 +17,9 @@ O root dos datasets pode ser sobrescrito com `GENOMICS_DATA_ROOT`. O root de res
 ## CLI comum
 
 ```bash
-python3 -m genomics_cli --help
-python3 -m genomics_cli audit-configs
-python3 -m genomics_cli audit-data --dataset-id 1kg_high_coverage
+genomics --help
+genomics audit-configs
+genomics audit-data --dataset-id 1kg_high_coverage
 ```
 
 ## Estrutura de cada run
@@ -34,34 +34,34 @@ Os pipelines integrados à infraestrutura comum criam runs em `results/<pipeline
 - `plots/`: reservado para figuras.
 - `reports/`: reservado para relatórios.
 
-Os pipelines ativos integrados a essa estrutura sao `genotype_based_predictor` e `variant_transformer_predictor`. O `neural_ancestry_predictor_deprecated` fica apenas como legado para reproducibilidade historica; novos experimentos devem ser migrados para `genotype_based_predictor/configs/neural_legacy/`.
+Os pipelines ativos integrados a essa estrutura sao `genomics.predictors.genotype_based` e `genomics.predictors.variant_transformer`. O `neural_ancestry_predictor_deprecated` fica apenas como legado para reproducibilidade historica; novos experimentos devem usar `configs/predictors/genotype_based/`.
 
 ## Componentes compartilhados
 
-- `genomics_workspace.py`: resolve roots padrão de dados e resultados.
-- `genomics_pipeline.data_registry`: resolve IDs lógicos de datasets para paths em `/dados/GENOMICS_DATA`.
-- `genomics_pipeline.experiment`: cria estrutura de runs e `manifest.json`.
-- `genomics_pipeline.config_io`: leitura YAML/JSON, escrita JSON e hashes estáveis.
-- `genomics_pipeline.dataset_metadata`: leitura canônica de `dataset_metadata.json`, catálogo de janelas, pedigree e fontes VCF.
-- `genomics_pipeline.reproducibility`: seeds Python/NumPy/PyTorch e `worker_init_fn`.
-- `genomics_pipeline.splitting`: agrupamento family-aware e geração de splits compartilháveis.
-- `genomics_pipeline.arrays`: utilitários NumPy compartilhados, como `block_reduce_2d`.
-- `genomics_pipeline.sklearn_pca_cache`: cache compartilhado de `StandardScaler + PCA` para baselines sklearn.
-- `genomics_pipeline.metrics`: metricas de classificacao, reports e JSONs de resultado.
-- `genomics_pipeline.optim`: factory compartilhada de otimizadores.
-- `genomics_pipeline.checkpointing`: save/load/resolve de checkpoints.
-- `genomics_pipeline.targets`: mapeamento de targets diretos e derivados.
-- `genomics_pipeline.run_utils`: selecao de device, split loader e campos comuns de manifest.
-- `genomics_pipeline.data_loading`: kwargs padronizados de `DataLoader` e geradores deterministas.
-- `genomics_pipeline.torch_collate`: padding tensorial para batches variaveis.
-- `genomics_pipeline.training_utils`: `EpochTrainer` generico, schedulers e historico de treino compartilhados.
-- `genomics_pipeline.wandb_utils`: inicializacao/finalizacao opcional de W&B.
+- `genomics.workspace`: resolve roots padrão de dados e resultados.
+- `genomics.core.data_registry`: resolve IDs lógicos de datasets para paths em `/dados/GENOMICS_DATA`.
+- `genomics.core.experiment`: cria estrutura de runs e `manifest.json`.
+- `genomics.core.config_io`: leitura YAML/JSON, escrita JSON e hashes estáveis.
+- `genomics.core.dataset_metadata`: leitura canônica de `dataset_metadata.json`, catálogo de janelas, pedigree e fontes VCF.
+- `genomics.core.reproducibility`: seeds Python/NumPy/PyTorch e `worker_init_fn`.
+- `genomics.core.splitting`: agrupamento family-aware e geração de splits compartilháveis.
+- `genomics.core.arrays`: utilitários NumPy compartilhados, como `block_reduce_2d`.
+- `genomics.core.sklearn_pca_cache`: cache compartilhado de `StandardScaler + PCA` para baselines sklearn.
+- `genomics.core.metrics`: metricas de classificacao, reports e JSONs de resultado.
+- `genomics.core.optim`: factory compartilhada de otimizadores.
+- `genomics.core.checkpointing`: save/load/resolve de checkpoints.
+- `genomics.core.targets`: mapeamento de targets diretos e derivados.
+- `genomics.core.run_utils`: selecao de device, split loader e campos comuns de manifest.
+- `genomics.core.data_loading`: kwargs padronizados de `DataLoader` e geradores deterministas.
+- `genomics.core.torch_collate`: padding tensorial para batches variaveis.
+- `genomics.core.training_utils`: `EpochTrainer` generico, schedulers e historico de treino compartilhados.
+- `genomics.core.wandb_utils`: inicializacao/finalizacao opcional de W&B.
 
-`neural_ancestry_predictor_deprecated/sklearn_pca_cache.py` é apenas um wrapper temporário de compatibilidade. Código novo deve importar `genomics_pipeline.sklearn_pca_cache`.
+Código novo deve importar `genomics.core.sklearn_pca_cache`.
 
 ## Fonte única dos dados
 
-O dataset canônico para novas análises é `/dados/GENOMICS_DATA/v1/1kG_high_coverage`, exposto em `genomics_workspace.DEFAULT_DATASET_DIR` e `CANONICAL_1KG_HIGH_COVERAGE_DIR`.
+O dataset canônico para novas análises é `/dados/GENOMICS_DATA/v1/1kG_high_coverage`, exposto em `genomics.workspace.DEFAULT_DATASET_DIR` e `CANONICAL_1KG_HIGH_COVERAGE_DIR`.
 
 Código novo pode referenciar o dataset por ID lógico em vez de path absoluto:
 
@@ -90,16 +90,16 @@ O antigo diretório `/dados/GENOMICS_DATA/top3` foi movido para quarentena em `/
 `top3` está descontinuado para novas análises. Use o audit para localizar usos remanescentes:
 
 ```bash
-python3 -m genomics_cli audit-configs --legacy-only
-python3 -m genomics_cli audit-configs --fail-on-legacy
-python3 -m genomics_cli audit-configs --fail-on-active-legacy
+genomics audit-configs --legacy-only
+genomics audit-configs --fail-on-legacy
+genomics audit-configs --fail-on-active-legacy
 ```
 
 Use o audit fisico para validar datasets registrados e artefatos esperados:
 
 ```bash
-python3 -m genomics_cli audit-data --dataset-id 1kg_high_coverage --fail-on-missing
-python3 -m genomics_cli audit-data --dataset-id 1kg_high_coverage --check-bcftools-chain --sample-limit 3 --fail-on-missing
+genomics audit-data --dataset-id 1kg_high_coverage --fail-on-missing
+genomics audit-data --dataset-id 1kg_high_coverage --check-bcftools-chain --sample-limit 3 --fail-on-missing
 ```
 
 O segundo comando retorna código diferente de zero enquanto houver qualquer config com path `legacy-top3`. O terceiro comando falha apenas para configs ativos.
@@ -108,34 +108,34 @@ Status atual dos blockers de legado:
 
 - `genotype_based_predictor` com `alignment_mapping: bcftools_chain` ja tem os artefatos necessarios materializados no dataset canonico por hardlink: `*.window.raw.fa`, `*.window.consensus_ready.vcf.gz`, indices `.tbi`, `*.window.vcf.gz` e indices `.tbi`.
 - `genes_1000_all_3ontologies_delta_reference.yaml` continua inativo porque aponta `reference_predictions_dataset_dir` para um dataset legado de referencia ainda nao materializado no canonico.
-- Alguns configs dentro de `neural_ancestry_predictor_deprecated/configs/` continuam apontando para paths historicos; isso e aceitavel apenas porque o pacote esta deprecated.
+- Alguns configs dentro de `configs/legacy/neural_ancestry_predictor_deprecated/` continuam apontando para paths historicos; isso e aceitavel apenas porque o pacote esta deprecated.
 
-Critério mínimo para manter novas execucoes livres de legado: `python3 -m genomics_cli audit-configs --fail-on-active-legacy` deve passar. Esse audit passou apos a quarentena e a materializacao dos artefatos `bcftools_chain` no canonico.
+Critério mínimo para manter novas execucoes livres de legado: `genomics audit-configs --fail-on-active-legacy` deve passar. Esse audit passou apos a quarentena e a materializacao dos artefatos `bcftools_chain` no canonico.
 
 Datasets derivados, como `/dados/GENOMICS_DATA/variant_transformer/*`, devem ser materializados a partir do dataset canônico e registrar a fonte em seus metadados.
 
 ### genotype_based_predictor
 
 ```bash
-python3 -m genomics_cli genotype prepare-cache genotype_based_predictor/configs/repo_layout.example.yaml
-python3 -m genomics_cli genotype train genotype_based_predictor/configs/repo_layout.example.yaml
-python3 -m genomics_cli genotype evaluate genotype_based_predictor/configs/repo_layout.example.yaml --checkpoint best_accuracy --split test
-python3 -m genomics_cli genotype workbench
-python3 -m genomics_cli genotype single-gene-screen genotype_based_predictor/configs/neural_legacy/pigmentation_binary_single_gene_screen.yaml --dry-run
+genomics genotype prepare-cache configs/predictors/genotype_based/repo_layout.example.yaml
+genomics genotype train configs/predictors/genotype_based/repo_layout.example.yaml
+genomics genotype evaluate configs/predictors/genotype_based/repo_layout.example.yaml --checkpoint best_accuracy --split test
+genomics genotype workbench
+genomics genotype single-gene-screen configs/predictors/genotype_based/neural_legacy/pigmentation_binary_single_gene_screen.yaml --dry-run
 ```
 
 Layouts de tensor principais:
 
 - `haplotype_channels`: layout canonico alinhado para experimentos novos, normalmente com `alignment_mapping: bcftools_chain`.
-- `raw_center_crop`: baseline legado sem alinhamento, usado pelos configs migrados de `neural_ancestry_predictor_deprecated` em `genotype_based_predictor/configs/neural_legacy/`.
+- `raw_center_crop`: baseline legado sem alinhamento, usado pelos configs migrados de `neural_ancestry_predictor_deprecated` em `configs/predictors/genotype_based/neural_legacy/`.
 
 ### variant_transformer_predictor
 
 ```bash
-python3 -m genomics_cli variant materialize --dataset-id 1kg_high_coverage --output-dir /dados/GENOMICS_DATA/variant_transformer/superpopulation
-python3 -m genomics_cli variant train variant_transformer_predictor/configs/repo_layout.example.yaml
-python3 -m genomics_cli variant evaluate variant_transformer_predictor/configs/repo_layout.example.yaml --checkpoint best_accuracy --split test
-python3 -m genomics_cli variant analyze-counts /dados/GENOMICS_DATA/variant_transformer/superpopulation
+genomics variant materialize --dataset-id 1kg_high_coverage --output-dir /dados/GENOMICS_DATA/variant_transformer/superpopulation
+genomics variant train configs/predictors/variant_transformer/repo_layout.example.yaml
+genomics variant evaluate configs/predictors/variant_transformer/repo_layout.example.yaml --checkpoint best_accuracy --split test
+genomics variant analyze-counts /dados/GENOMICS_DATA/variant_transformer/superpopulation
 ```
 
 ### neural_ancestry_predictor_deprecated
@@ -143,9 +143,9 @@ python3 -m genomics_cli variant analyze-counts /dados/GENOMICS_DATA/variant_tran
 Este pipeline e legado/monolitico. A CLI comum apenas delega para o script preservado, e seu uso deve ficar restrito a reproducibilidade historica.
 
 ```bash
-python3 -m genomics_cli neural train neural_ancestry_predictor_deprecated/configs/genes_1000_all.yaml
-python3 -m genomics_cli neural test neural_ancestry_predictor_deprecated/configs/genes_1000_all.yaml
-python3 -m genomics_cli neural pca-cache neural_ancestry_predictor_deprecated/configs/genes_1000_all.yaml
+genomics neural train configs/legacy/neural_ancestry_predictor_deprecated/genes_1000_all.yaml
+genomics neural test configs/legacy/neural_ancestry_predictor_deprecated/genes_1000_all.yaml
+genomics neural pca-cache configs/legacy/neural_ancestry_predictor_deprecated/genes_1000_all.yaml
 ```
 
 ## Migração dos configs históricos

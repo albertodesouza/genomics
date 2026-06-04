@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-import genomics_cli
+from genomics import cli as genomics_cli
 
 
 def _write_yaml(path: Path, payload: dict) -> None:
@@ -98,7 +98,7 @@ def test_variant_config_overrides_preserve_yaml_defaults(tmp_path):
 def test_audit_configs_has_no_active_legacy_references():
     repo_root = Path(__file__).resolve().parents[1]
     proc = subprocess.run(
-        [sys.executable, "-m", "genomics_cli", "audit-configs", "--fail-on-active-legacy"],
+        [sys.executable, "-m", "genomics", "audit-configs", "--fail-on-active-legacy"],
         cwd=repo_root,
         text=True,
         stdout=subprocess.PIPE,
@@ -119,7 +119,10 @@ def test_audit_data_reports_dataset_status(monkeypatch, tmp_path, capsys):
     )
     (dataset_dir / "layout_metadata.json").write_text(json.dumps({"layout_version": 1}), encoding="utf-8")
     (dataset_dir / "individuals" / "HG00096" / "windows" / "DDB1").mkdir(parents=True)
-    (dataset_dir / "references" / "windows" / "DDB1").mkdir(parents=True)
+    ref_window_dir = dataset_dir / "references" / "windows" / "DDB1"
+    ref_window_dir.mkdir(parents=True)
+    (ref_window_dir / "ref.window.fa").write_text(">DDB1\nACGT\n", encoding="utf-8")
+    (ref_window_dir / "window_metadata.json").write_text(json.dumps({"chromosome": "chr11"}), encoding="utf-8")
     monkeypatch.setenv("GENOMICS_DATA_ROOT", str(data_root))
 
     rc = genomics_cli.main(["audit-data", "--dataset-id", "1kg_high_coverage", "--json", "--fail-on-missing"])
@@ -137,7 +140,10 @@ def test_audit_data_detects_missing_bcftools_chain_artifacts(monkeypatch, tmp_pa
     dataset_dir = data_root / "v1" / "1kG_high_coverage"
     window_dir = dataset_dir / "individuals" / "HG00096" / "windows" / "DDB1"
     window_dir.mkdir(parents=True)
-    (dataset_dir / "references" / "windows" / "DDB1").mkdir(parents=True)
+    ref_window_dir = dataset_dir / "references" / "windows" / "DDB1"
+    ref_window_dir.mkdir(parents=True)
+    (ref_window_dir / "ref.window.fa").write_text(">DDB1\nACGT\n", encoding="utf-8")
+    (ref_window_dir / "window_metadata.json").write_text(json.dumps({"chromosome": "chr11"}), encoding="utf-8")
     (dataset_dir / "dataset_metadata.json").write_text(
         json.dumps({"individuals": ["HG00096"], "genes": ["DDB1"], "window_catalog": {"DDB1": {}}}),
         encoding="utf-8",
@@ -161,3 +167,12 @@ def test_audit_data_detects_missing_bcftools_chain_artifacts(monkeypatch, tmp_pa
     assert payload[0]["status"] == "error"
     assert payload[0]["bcftools_chain"]["missing"] == len(genomics_cli.BCFTOOLS_CHAIN_REQUIRED_TEMPLATES)
     assert str(window_dir) in payload[0]["bcftools_chain"]["examples"][0]
+
+
+def test_completion_bash_outputs_completion_script(capsys):
+    rc = genomics_cli.main(["completion", "bash"])
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "complete -F _genomics_completion genomics" in captured.out
+    assert "genotype" in captured.out

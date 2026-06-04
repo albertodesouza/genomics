@@ -13,15 +13,15 @@
 
 ```bash
 # Na sua máquina local, compacte os arquivos:
-tar -czf genomics_pipeline.tar.gz *.py *.sh *.yaml *.md
+tar -czf genomics.tar.gz genomics src configs docs scripts pyproject.toml setup.py README.md
 
 # Transfira para a monster:
-scp genomics_pipeline.tar.gz usuario@monster:/home/usuario/
+scp genomics.tar.gz usuario@monster:/home/usuario/
 
 # Na monster, extraia:
 ssh usuario@monster
 cd /home/usuario
-tar -xzf genomics_pipeline.tar.gz
+tar -xzf genomics.tar.gz
 cd genomics
 ```
 
@@ -29,10 +29,10 @@ cd genomics
 
 ```bash
 # Torna script executável
-chmod +x scripts/install_conda_universal.sh
+chmod +x scripts/env/install_conda_universal.sh
 
 # Instala conda/mamba automaticamente
-./scripts/install_conda_universal.sh
+./scripts/env/install_conda_universal.sh
 
 # Reinicia terminal ou carrega configurações
 source ~/.bashrc
@@ -42,27 +42,27 @@ source ~/.bashrc
 
 ```bash
 # Torna scripts executáveis
-chmod +x scripts/*.sh
+chmod +x scripts/env/*.sh scripts/ops/*.sh scripts/maintenance/*.sh
 
 # Instala ambiente genomics
-./scripts/install_genomics_env.sh
+./scripts/env/install_genomics_env.sh
 
 # Instala VEP
-source scripts/vep_install.sh
+source scripts/maintenance/vep_install.sh
 ```
 
 ### **4. Configurar Sistema Monster**
 
 ```bash
 # Otimiza sistema para 256GB RAM
-./scripts/setup_monster_256gb.sh
+./scripts/ops/setup_monster_256gb.sh
 ```
 
 ### **5. Testar Instalação**
 
 ```bash
 # Testa ambiente
-source scripts/start_genomics_universal.sh
+source scripts/env/start_genomics_universal.sh
 
 # Verifica ferramentas
 bwa-mem2 version
@@ -75,12 +75,12 @@ vep --help | head -10
 
 ### **Execução em Background:**
 ```bash
-./scripts/run_monster_background.sh
+./scripts/ops/run_monster_background.sh
 ```
 
 ### **Monitoramento:**
 ```bash
-./scripts/monitor_monster.sh
+./scripts/ops/monitor_monster.sh
 ```
 
 ## 🔧 Troubleshooting
@@ -101,13 +101,13 @@ source ~/.bashrc
 conda env list
 
 # Recria ambiente
-./scripts/install_genomics_env.sh
+./scripts/env/install_genomics_env.sh
 ```
 
 ### **Se VEP não funcionar:**
 ```bash
 # Reinstala VEP
-source scripts/vep_install.sh
+source scripts/maintenance/vep_install.sh
 
 # Verifica cache
 ls -la /dados/vep_cache/

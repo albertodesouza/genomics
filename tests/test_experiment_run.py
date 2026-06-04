@@ -1,6 +1,6 @@
 import json
 
-from genomics_pipeline.experiment import setup_experiment_run, update_manifest
+from genomics.core.experiment import setup_experiment_run, update_manifest
 
 
 def test_setup_experiment_run_creates_standard_layout(tmp_path):

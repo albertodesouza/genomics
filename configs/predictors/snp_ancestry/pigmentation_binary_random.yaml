@@ -1,0 +1,51 @@
+# Binary pigmentation association analysis.
+# Uses the existing splits from non_longevous_results_runs_genes_1000_all.
+# This config does not depend on the temporary family_stratified cache.
+
+input:
+  dataset_id: "1kg_high_coverage"
+  genotype_cache_dir: "/dados/GENOMICS_DATA/v1/1kG_high_coverage_runs/datasets/rna_seq_H1+H2_32768_ds1_log_shuf_ont3_view9d9f894aa231"
+  # Override vcf_pattern here only when using an explicit random/subsampled VCF set.
+  validate_family_aware_splits: false
+
+conversion:
+  output_filename: "{sample_id}_random_23andme.txt"
+  skip_no_rsid: false
+
+statistics:
+  snp_panel: null
+
+prediction:
+  haplotype_mode: "H1"
+
+association:
+  enabled: true
+  phenotype_name: "pigmentation_binary"
+  positive_label: "strong_pigmentation"
+  negative_label: "weak_pigmentation"
+  positive_populations:
+    - "YRI"
+    - "ESN"
+    - "LWK"
+    - "MSL"
+    - "GWD"
+  negative_populations:
+    - "FIN"
+    - "CEU"
+    - "GBR"
+  subsets:
+    - "train"
+    - "val"
+    - "test"
+  haplotype_mode: "H1"
+  test: "chi_square"
+  min_maf: 0.001
+  max_snps: null
+  output_dir: "../../../results/snp_ancestry_predictor/pigmentation_association_random"
+
+pipeline:
+  steps:
+    generate_23andme: true
+    compute_statistics: false
+    predict_ancestry: false
+    binary_association: true

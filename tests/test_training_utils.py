@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import torch
 
-from genomics_pipeline.training_utils import (
+from genomics.core.training_utils import (
     EpochTrainer,
     append_history_epoch,
     make_lr_scheduler,

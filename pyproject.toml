@@ -1,0 +1,85 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "genomics"
+version = "0.1.0"
+description = "Multi-pipeline genomics workspace"
+requires-python = ">=3.8"
+
+[project.optional-dependencies]
+alphagenome = [
+    "alphagenome",
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "rich",
+]
+genotype = [
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "pydantic>=2",
+    "PyYAML",
+    "rich",
+    "scikit-learn",
+    "scipy",
+    "torch",
+]
+variant = [
+    "numpy",
+    "pandas",
+    "PyYAML",
+    "rich",
+    "scikit-learn",
+    "torch",
+]
+snp-ancestry = [
+    "numpy",
+    "PyYAML",
+    "rich",
+    "scipy",
+]
+legacy = [
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "psutil",
+    "PyYAML",
+    "rich",
+    "scikit-learn",
+    "scipy",
+    "torch",
+]
+test = [
+    "pytest",
+]
+docs = ["mkdocs-material>=9.5"]
+all = [
+    "alphagenome",
+    "matplotlib",
+    "mkdocs-material>=9.5",
+    "numpy",
+    "pandas",
+    "psutil",
+    "pydantic>=2",
+    "pytest",
+    "PyYAML",
+    "rich",
+    "scikit-learn",
+    "scipy",
+    "torch",
+]
+
+[project.scripts]
+genomics = "genomics.cli:cli_main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"genomics.completions" = ["*.bash"]

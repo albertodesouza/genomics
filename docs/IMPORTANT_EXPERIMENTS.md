@@ -14,15 +14,15 @@ Use este arquivo para:
 - Dataset canonico para novos experimentos genotype: `/dados/GENOMICS_DATA/v1/1kG_high_coverage`.
 - Runs genotype: `results/genotype_based_predictor/runs/`.
 - Cache genotype: `results/cache/genotype_based_predictor/`.
-- Comandos genotype devem usar `python3 -m genomics_cli genotype ...`.
-- Comandos MLC/SNP ainda rodam via `snp_ancestry_predictor/snp_ancestry_predictor.py`.
+- Comandos genotype devem usar `genomics genotype ...`.
+- Comandos MLC/SNP rodam via `genomics snp-ancestry run`.
 - `top3` esta descontinuado para novas analises, mas alguns configs MLC/SNP historicos ainda apontam para paths legados e precisam migracao futura.
 
 Validacoes recomendadas antes de reproduzir:
 
 ```bash
-python3 -m genomics_cli audit-configs --fail-on-active-legacy
-python3 -m genomics_cli audit-data --dataset-id 1kg_high_coverage --check-bcftools-chain --sample-limit 3 --fail-on-missing
+genomics audit-configs --fail-on-active-legacy
+genomics audit-data --dataset-id 1kg_high_coverage --check-bcftools-chain --sample-limit 3 --fail-on-missing
 ```
 
 ## Resultados Historicos
@@ -31,19 +31,19 @@ Resultados no conjunto de teste antes da refatoracao de unificacao dos pipelines
 
 | Experimento | Haps | Precision | Recall | F1 | Accuracy | Config/comando atual | Status |
 | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| MLC SNP genome-wide panel | 2 | 0.97 | 0.97 | 0.97 | 0.97 | derivar de `snp_ancestry_predictor/configs/default.yaml` com painel genome-wide e `prediction.haplotype_mode: H1+H2` | precisa config canonico |
-| MLC SNP gene-window panel | 2 | 0.72 | 0.71 | 0.70 | 0.71 | derivar de `snp_ancestry_predictor/configs/default.yaml` com `panel_23andme_V5_genes_1000_w32768.txt` e `prediction.haplotype_mode: H1+H2` | precisa config canonico |
-| PCA+RF AlphaGenome raw center crop | 1 | 0.54 | 0.65 | 0.58 | 0.65 | `genotype_based_predictor/configs/genes_1000_all_3ontologies_pca400_rf.yaml` | pronto, requer sklearn/joblib |
-| PCA+XGBoost AlphaGenome raw center crop | 1 | 0.73 | 0.74 | 0.73 | 0.74 | `genotype_based_predictor/configs/genes_1000_all_3ontologies_pca400_xgboost.yaml` | pronto, requer xgboost |
-| CNN AlphaGenome raw center crop | 1 | 0.75 | 0.74 | 0.74 | 0.74 | `genotype_based_predictor/configs/neural_legacy/default.yaml` ou config equivalente de 3 ontologias/H1 | aproximado |
-| CNN AlphaGenome raw center crop | 2 | 0.75 | 0.76 | 0.75 | 0.76 | `genotype_based_predictor/configs/neural_legacy/genes_1000_all.yaml` | pronto para baseline legado |
-| CNN DITA AG+MI+MD+MV | 2 | 0.91 | 0.91 | 0.91 | 0.91 | `genotype_based_predictor/configs/genes_1000_all_3ontologies.yaml` | pronto |
-| CNN DITA MI+MD+MV | 2 | 0.92 | 0.92 | 0.92 | 0.92 | `genotype_based_predictor/configs/genes_1000_all_3ontologies_masks_only.yaml` | pronto |
-| CNN DITA MI+MD+MV+MS | 2 | 0.91 | 0.91 | 0.91 | 0.91 | `genotype_based_predictor/configs/genes_1000_all_3ontologies_masks_snp.yaml` | pronto |
-| CNN DITA AG0+MI+MD+MV+MS | 2 | 0.91 | 0.91 | 0.91 | 0.91 | `genotype_based_predictor/configs/genes_1000_all_3ontologies_variant_signal_mask.yaml` | pronto |
-| CNN DITA AGN+MI+MD+MV+MS | 2 | 0.90 | 0.90 | 0.90 | 0.90 | `genotype_based_predictor/configs/genes_1000_all_3ontologies_delta_reference.yaml` | bloqueado: reference-only canonico ausente |
-| MLC SNP+Indel DITA windows | 2 | 0.96 | 0.96 | 0.96 | 0.96 | `snp_ancestry_predictor/configs/genotype_windows_all_variants_mle.yaml` | pronto, mas usa paths legados |
-| CNN DITA AG only | 2 | 0.80 | 0.81 | 0.80 | 0.81 | `genotype_based_predictor/configs/genes_1000_all_3ontologies_signals_only.yaml` | pronto |
+| MLC SNP genome-wide panel | 2 | 0.97 | 0.97 | 0.97 | 0.97 | derivar de `configs/predictors/snp_ancestry/default.yaml` com painel genome-wide e `prediction.haplotype_mode: H1+H2` | precisa config canonico |
+| MLC SNP gene-window panel | 2 | 0.72 | 0.71 | 0.70 | 0.71 | derivar de `configs/predictors/snp_ancestry/default.yaml` com `panel_23andme_V5_genes_1000_w32768.txt` e `prediction.haplotype_mode: H1+H2` | precisa config canonico |
+| PCA+RF AlphaGenome raw center crop | 1 | 0.54 | 0.65 | 0.58 | 0.65 | `configs/predictors/genotype_based/genes_1000_all_3ontologies_pca400_rf.yaml` | pronto, requer sklearn/joblib |
+| PCA+XGBoost AlphaGenome raw center crop | 1 | 0.73 | 0.74 | 0.73 | 0.74 | `configs/predictors/genotype_based/genes_1000_all_3ontologies_pca400_xgboost.yaml` | pronto, requer xgboost |
+| CNN AlphaGenome raw center crop | 1 | 0.75 | 0.74 | 0.74 | 0.74 | `configs/predictors/genotype_based/neural_legacy/default.yaml` ou config equivalente de 3 ontologias/H1 | aproximado |
+| CNN AlphaGenome raw center crop | 2 | 0.75 | 0.76 | 0.75 | 0.76 | `configs/predictors/genotype_based/neural_legacy/genes_1000_all.yaml` | pronto para baseline legado |
+| CNN DITA AG+MI+MD+MV | 2 | 0.91 | 0.91 | 0.91 | 0.91 | `configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml` | pronto |
+| CNN DITA MI+MD+MV | 2 | 0.92 | 0.92 | 0.92 | 0.92 | `configs/predictors/genotype_based/genes_1000_all_3ontologies_masks_only.yaml` | pronto |
+| CNN DITA MI+MD+MV+MS | 2 | 0.91 | 0.91 | 0.91 | 0.91 | `configs/predictors/genotype_based/genes_1000_all_3ontologies_masks_snp.yaml` | pronto |
+| CNN DITA AG0+MI+MD+MV+MS | 2 | 0.91 | 0.91 | 0.91 | 0.91 | `configs/predictors/genotype_based/genes_1000_all_3ontologies_variant_signal_mask.yaml` | pronto |
+| CNN DITA AGN+MI+MD+MV+MS | 2 | 0.90 | 0.90 | 0.90 | 0.90 | `configs/predictors/genotype_based/genes_1000_all_3ontologies_delta_reference.yaml` | bloqueado: reference-only canonico ausente |
+| MLC SNP+Indel DITA windows | 2 | 0.96 | 0.96 | 0.96 | 0.96 | `configs/predictors/snp_ancestry/genotype_windows_all_variants_mle.yaml` | pronto, mas usa paths legados |
+| CNN DITA AG only | 2 | 0.80 | 0.81 | 0.80 | 0.81 | `configs/predictors/genotype_based/genes_1000_all_3ontologies_signals_only.yaml` | pronto |
 
 ## Glossario Dos Sinais
 
@@ -64,13 +64,13 @@ Resultados no conjunto de teste antes da refatoracao de unificacao dos pipelines
 Treinar:
 
 ```bash
-python3 -m genomics_cli genotype train <config.yaml>
+genomics genotype train <config.yaml>
 ```
 
 Avaliar checkpoint PyTorch:
 
 ```bash
-python3 -m genomics_cli genotype evaluate <config.yaml> --checkpoint best_accuracy --split test
+genomics genotype evaluate <config.yaml> --checkpoint best_accuracy --split test
 ```
 
 Os resultados ficam em:
@@ -95,8 +95,7 @@ models/training_history.json
 Rodar:
 
 ```bash
-cd snp_ancestry_predictor
-python3 snp_ancestry_predictor.py --config configs/<config>.yaml
+genomics snp-ancestry run --config configs/predictors/snp_ancestry/<config>.yaml
 ```
 
 O pipeline MLC executa, conforme YAML:
@@ -114,7 +113,7 @@ Resultado historico: `0.97` accuracy com 2 haplotipos.
 Partir de:
 
 ```text
-snp_ancestry_predictor/configs/default.yaml
+configs/predictors/snp_ancestry/default.yaml
 ```
 
 Ajustes necessarios para repetir exatamente:
@@ -136,7 +135,7 @@ Resultado historico: `0.71` accuracy com 2 haplotipos.
 Partir de:
 
 ```text
-snp_ancestry_predictor/configs/default.yaml
+configs/predictors/snp_ancestry/default.yaml
 ```
 
 Ajustes:
@@ -154,7 +153,7 @@ Status: precisa criar config canonico e migrar paths legados.
 ### PCA+RF
 
 ```bash
-python3 -m genomics_cli genotype train genotype_based_predictor/configs/genes_1000_all_3ontologies_pca400_rf.yaml
+genomics genotype train configs/predictors/genotype_based/genes_1000_all_3ontologies_pca400_rf.yaml
 ```
 
 Notas:
@@ -166,7 +165,7 @@ Notas:
 ### PCA+XGBoost
 
 ```bash
-python3 -m genomics_cli genotype train genotype_based_predictor/configs/genes_1000_all_3ontologies_pca400_xgboost.yaml
+genomics genotype train configs/predictors/genotype_based/genes_1000_all_3ontologies_pca400_xgboost.yaml
 ```
 
 Notas:
@@ -180,15 +179,15 @@ Notas:
 Baseline legado sem DITA:
 
 ```bash
-python3 -m genomics_cli genotype train genotype_based_predictor/configs/neural_legacy/default.yaml
-python3 -m genomics_cli genotype evaluate genotype_based_predictor/configs/neural_legacy/default.yaml --checkpoint best_accuracy --split test
+genomics genotype train configs/predictors/genotype_based/neural_legacy/default.yaml
+genomics genotype evaluate configs/predictors/genotype_based/neural_legacy/default.yaml --checkpoint best_accuracy --split test
 ```
 
 Para 2 haplotipos:
 
 ```bash
-python3 -m genomics_cli genotype train genotype_based_predictor/configs/neural_legacy/genes_1000_all.yaml
-python3 -m genomics_cli genotype evaluate genotype_based_predictor/configs/neural_legacy/genes_1000_all.yaml --checkpoint best_accuracy --split test
+genomics genotype train configs/predictors/genotype_based/neural_legacy/genes_1000_all.yaml
+genomics genotype evaluate configs/predictors/genotype_based/neural_legacy/genes_1000_all.yaml --checkpoint best_accuracy --split test
 ```
 
 Esses configs usam:
@@ -201,29 +200,29 @@ feature_mode: "signals_only"
 ### CNN DITA AG+MI+MD+MV
 
 ```bash
-python3 -m genomics_cli genotype train genotype_based_predictor/configs/genes_1000_all_3ontologies.yaml
-python3 -m genomics_cli genotype evaluate genotype_based_predictor/configs/genes_1000_all_3ontologies.yaml --checkpoint best_accuracy --split test
+genomics genotype train configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml
+genomics genotype evaluate configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml --checkpoint best_accuracy --split test
 ```
 
 ### CNN DITA MI+MD+MV
 
 ```bash
-python3 -m genomics_cli genotype train genotype_based_predictor/configs/genes_1000_all_3ontologies_masks_only.yaml
-python3 -m genomics_cli genotype evaluate genotype_based_predictor/configs/genes_1000_all_3ontologies_masks_only.yaml --checkpoint best_accuracy --split test
+genomics genotype train configs/predictors/genotype_based/genes_1000_all_3ontologies_masks_only.yaml
+genomics genotype evaluate configs/predictors/genotype_based/genes_1000_all_3ontologies_masks_only.yaml --checkpoint best_accuracy --split test
 ```
 
 ### CNN DITA MI+MD+MV+MS
 
 ```bash
-python3 -m genomics_cli genotype train genotype_based_predictor/configs/genes_1000_all_3ontologies_masks_snp.yaml
-python3 -m genomics_cli genotype evaluate genotype_based_predictor/configs/genes_1000_all_3ontologies_masks_snp.yaml --checkpoint best_accuracy --split test
+genomics genotype train configs/predictors/genotype_based/genes_1000_all_3ontologies_masks_snp.yaml
+genomics genotype evaluate configs/predictors/genotype_based/genes_1000_all_3ontologies_masks_snp.yaml --checkpoint best_accuracy --split test
 ```
 
 ### CNN DITA AG0+MI+MD+MV+MS
 
 ```bash
-python3 -m genomics_cli genotype train genotype_based_predictor/configs/genes_1000_all_3ontologies_variant_signal_mask.yaml
-python3 -m genomics_cli genotype evaluate genotype_based_predictor/configs/genes_1000_all_3ontologies_variant_signal_mask.yaml --checkpoint best_accuracy --split test
+genomics genotype train configs/predictors/genotype_based/genes_1000_all_3ontologies_variant_signal_mask.yaml
+genomics genotype evaluate configs/predictors/genotype_based/genes_1000_all_3ontologies_variant_signal_mask.yaml --checkpoint best_accuracy --split test
 ```
 
 ### CNN DITA AGN+MI+MD+MV+MS
@@ -231,7 +230,7 @@ python3 -m genomics_cli genotype evaluate genotype_based_predictor/configs/genes
 Config:
 
 ```text
-genotype_based_predictor/configs/genes_1000_all_3ontologies_delta_reference.yaml
+configs/predictors/genotype_based/genes_1000_all_3ontologies_delta_reference.yaml
 ```
 
 Status atual: inativo.
@@ -247,13 +246,12 @@ Para reativar:
 1. Materializar um dataset reference-only canonico.
 2. Atualizar `reference_predictions_dataset_dir` para o novo path canonico.
 3. Remover `metadata.active: false`.
-4. Rodar `python3 -m genomics_cli audit-configs --fail-on-active-legacy`.
+4. Rodar `genomics audit-configs --fail-on-active-legacy`.
 
 ### MLC SNP+Indel DITA Windows
 
 ```bash
-cd snp_ancestry_predictor
-python3 snp_ancestry_predictor.py --config configs/genotype_windows_all_variants_mle.yaml
+genomics snp-ancestry run --config configs/predictors/snp_ancestry/genotype_windows_all_variants_mle.yaml
 ```
 
 Config relevante:
@@ -275,8 +273,8 @@ Status: reproduz a familia do resultado historico, mas ainda usa paths legados e
 ### CNN DITA AG Only
 
 ```bash
-python3 -m genomics_cli genotype train genotype_based_predictor/configs/genes_1000_all_3ontologies_signals_only.yaml
-python3 -m genomics_cli genotype evaluate genotype_based_predictor/configs/genes_1000_all_3ontologies_signals_only.yaml --checkpoint best_accuracy --split test
+genomics genotype train configs/predictors/genotype_based/genes_1000_all_3ontologies_signals_only.yaml
+genomics genotype evaluate configs/predictors/genotype_based/genes_1000_all_3ontologies_signals_only.yaml --checkpoint best_accuracy --split test
 ```
 
 ## Template Para Novos Experimentos Importantes
@@ -323,6 +321,6 @@ Notas:
 ## Gaps De Reprodutibilidade
 
 - Criar configs canonicos para os dois experimentos MLC SNP historicos `(1)` e `(2)` sem depender de edicao manual de `default.yaml`.
-- Migrar configs `snp_ancestry_predictor` de `/dados/GENOMICS_DATA/top3` para dataset/VCFs canonicos ou registrar esses insumos no `genomics_pipeline.data_registry`.
+- Migrar configs SNP ancestry de `/dados/GENOMICS_DATA/top3` para dataset/VCFs canonicos ou registrar esses insumos no `genomics.core.data_registry`.
 - Materializar reference-only AlphaGenome predictions canonicas para reativar `AGN`.
 - Registrar, para cada resultado importante novo, o commit exato e o diretório de run em `results/`.

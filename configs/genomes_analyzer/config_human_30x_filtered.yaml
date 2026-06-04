@@ -1,0 +1,145 @@
+# config_human_30x_filtered.yaml - Versão com filtro de cromossomos problemáticos
+# Baseado no low_memory mas com filtros para evitar falhas em cromossomos virais
+
+project:
+  name: human_30x_trio_filtered
+  organism: homo_sapiens
+  reference:
+    name: GRCh38.d1.vd1
+    fasta_url: "https://api.gdc.cancer.gov/data/254f697d-310d-4d7d-a27b-27fbf767a834"
+    bwa_index_url: "https://api.gdc.cancer.gov/data/25217ec9-af07-4a17-8db9-101271ee7225"
+
+general:
+  force_indexes: false
+  sort_mem_mb: 512
+  bwa_batch_k: 20000000
+  aln_threads: 16
+
+  gene_presence_min_mean_cov: 5.0
+  gene_presence_min_breadth_1x: 0.8
+
+  trio_child_id: NA12878
+  trio_parent_ids: [NA12891, NA12892]
+
+  trio_min_dp_child: 8
+  trio_min_dp_parents: 8
+  trio_min_gq: 20
+  trio_min_ab_het: 0.25
+  trio_max_ab_het: 0.75
+  trio_min_ab_hom: 0.90
+  trio_max_parent_alt_frac: 0.02
+
+params:
+  aligner: bwa
+  bwa_mem2_threads: 2
+  gatk_threads: 8
+  target_gene_list: null
+
+  variant_caller: bcftools
+  filter_problematic_contigs: true  # 🔧 NOVO: filtra cromossomos problemáticos
+
+  # BCFtools com filtro de cromossomos problemáticos
+  bcf_verbose: true
+  bcf_show_intervals: true
+  bcf_show_intervals_rows: 12
+  bcf_heartbeat_sec: 30
+  bcf_progress_sec: 30
+  bcf_mapq: 20
+  bcf_baseq: 20
+  bcf_max_depth: 250
+  bcf_scatter_parts: 16
+  bcf_max_parallel: 8
+  bcf_threads_io: 2
+  bcf_io_threads: 16
+  bcf_emit_variants_only: true
+  bcf_min_baseq: 20
+  bcf_min_mapq: 20
+  bcf_emit_all_sites: false
+  bcf_split_multiallelic: true
+
+  # GATK (caso queira usar)
+  hc_java_mem_gb: 24
+  hc_threads_native: 4
+  hc_pcr_free: true
+  keep_alt_decoy: true
+  hc_scatter_parts: 8
+  hc_max_parallel: 8
+  hc_extra_args: []
+
+  # GenotypeGVCFs
+  gg_java_mem_gb: 12
+  gg_extra_args: []
+
+  # VEP com filtros
+  annotate_with_vep: true
+  vep_species: "homo_sapiens"
+  vep_assembly: "GRCh38"
+  vep_dir_cache: "/dados/vep_cache"
+  
+  # Performance VEP
+  vep_fork: 16
+  vep_buffer_size: 10000
+  vep_heartbeat_sec: 15
+  vep_compress_output: false
+  
+  vep_extra:
+    - "--everything"
+    - "--no_stats"
+
+storage:
+  base_dir: "/mnt/barra-dados/GENOMICS_DATA/filtered"
+  work_dir: "/mnt/barra-dados/GENOMICS_DATA/filtered/work"
+  keep_intermediates: true
+  temp_dir: "/mnt/barra-dados/tmp"
+
+download:
+  tool: sra_toolkit
+  use_ascp: false
+  threads: 8
+  prefetch_retries: 3
+
+execution:
+  verbose: true
+  resume: true
+  skip_existing: true
+  progress_interval_sec: 60
+  stall_warn_min: 5
+  stall_fail_min: 50
+  ena_fallback: true
+  cancel_on_convert_stall: false
+  prefer_ena_fastq: false
+  
+size_control:
+  downsample:
+    enabled: true
+    fraction: 0.25             # 25% para teste rápido
+
+limit_to_canonical: false
+
+samples:
+  - sample_id: NA12878
+    study: PRJEB31736
+    runs:
+      - ERR3239334
+    notes: "CRAM 'final' disponível: ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR323/ERR3239334/NA12878.final.cram"
+
+  - sample_id: NA12891
+    study: PRJEB36890
+    runs:
+      - ERR3989341
+    notes: "CRAM 'final': ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR398/ERR3989341/NA12891.final.cram"
+
+  - sample_id: NA12892
+    study: PRJEB36890
+    runs:
+      - ERR3989342
+    notes: "CRAM 'final': ftp://ftp.sra.ebi.ac.uk/vol1/run/ERR398/ERR3989342/NA12892.final.cram"
+
+steps:
+  - fetch_fastqs
+  - qc_reads
+  - align_and_sort
+  - mark_duplicates
+  - bqsr
+  - call_genes
+  - summarize

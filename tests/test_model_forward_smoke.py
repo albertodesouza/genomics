@@ -1,9 +1,10 @@
 import torch
+import pytest
 
-from genotype_based_predictor.config import PipelineConfig as GenotypeConfig
-from genotype_based_predictor.models import CNN2AncestryPredictor, CNNAncestryPredictor, NNAncestryPredictor
-from variant_transformer_predictor.config import ModelConfig
-from variant_transformer_predictor.model import VariantTransformerClassifier
+from genomics.predictors.genotype_based.config import PipelineConfig as GenotypeConfig
+from genomics.predictors.genotype_based.models import CNN2AncestryPredictor, CNNAncestryPredictor, NNAncestryPredictor
+from genomics.predictors.variant_transformer.config import ModelConfig
+from genomics.predictors.variant_transformer.model import VariantTransformerClassifier
 
 
 def _genotype_config(model_type: str) -> GenotypeConfig:
@@ -71,6 +72,21 @@ def test_genotype_models_forward_haplotype_channels_input_shape():
     model = NNAncestryPredictor(_genotype_config("NN"), input_shape, num_classes=3)
     out = model(x)
     assert out.shape == (2, 3)
+
+
+def test_genotype_config_rejects_legacy_dynamic_indel_alignment():
+    with pytest.raises(Exception):
+        GenotypeConfig.model_validate(
+            {
+                "dataset_input": {
+                    "dataset_dir": "/tmp/nonexistent_dataset_for_model_smoke",
+                    "alphagenome_outputs": ["rna_seq"],
+                    "alignment_mapping": "dynamic_indel",
+                },
+                "output": {"prediction_target": "superpopulation"},
+                "model": {"type": "NN"},
+            }
+        )
 
 
 def test_variant_transformer_forward_smoke():

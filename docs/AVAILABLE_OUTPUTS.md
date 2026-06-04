@@ -85,7 +85,7 @@ AlphaGenome offers **11 different output types** for DNA analysis:
 
 ### Basic Analysis (Expression and Accessibility)
 ```bash
-python neural_module/neural_module.py \
+genomics alphagenome analyze -- \
     -i sequence.fasta \
     -k API_KEY \
     -o results/ \
@@ -94,7 +94,7 @@ python neural_module/neural_module.py \
 
 ### Complete Epigenetic Analysis
 ```bash
-python neural_module/neural_module.py \
+genomics alphagenome analyze -- \
     -i sequence.fasta \
     -k API_KEY \
     -o results/ \
@@ -103,7 +103,7 @@ python neural_module/neural_module.py \
 
 ### Splicing Analysis
 ```bash
-python neural_module/neural_module.py \
+genomics alphagenome analyze -- \
     -i sequence.fasta \
     -k API_KEY \
     -o results/ \
@@ -112,7 +112,7 @@ python neural_module/neural_module.py \
 
 ### 3D Analysis
 ```bash
-python neural_module/neural_module.py \
+genomics alphagenome analyze -- \
     -i sequence.fasta \
     -k API_KEY \
     -o results/ \
@@ -121,7 +121,7 @@ python neural_module/neural_module.py \
 
 ### Complete Analysis
 ```bash
-python neural_module/neural_module.py \
+genomics alphagenome analyze -- \
     -i sequence.fasta \
     -k API_KEY \
     -o results/ \
@@ -218,4 +218,3 @@ Studies nuclear organization and loops.
 **For more information**: https://www.alphagenomedocs.com/
 
 *Last updated: October 2025*
-

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from genomics_pipeline.data_registry import (
+from genomics.core.data_registry import (
     classify_dataset_path,
     registered_dataset_ids,
     resolve_dataset,

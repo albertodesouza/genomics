@@ -117,8 +117,8 @@ except AttributeError:
 
 ## 📚 New Files Created
 
-1. **`scripts/check_alphagenome_outputs.py`** - List available outputs
-2. **`scripts/check_dna_client_methods.py`** - List API methods
+1. **`scripts/diagnostics/check_alphagenome_outputs.py`** - List available outputs
+2. **`scripts/diagnostics/check_dna_client_methods.py`** - List API methods
 3. **`docs/AVAILABLE_OUTPUTS.md`** - Complete output documentation
 4. **`docs/SUPPORTED_SIZES.md`** - Guide to sequence sizes
 5. **`docs/APPLIED_FIXES.md`** - This file
@@ -127,7 +127,7 @@ except AttributeError:
 
 ### Basic Usage (RNA-seq and ATAC)
 ```bash
-python neural_module/neural_module.py \
+genomics alphagenome analyze -- \
     -i example_sequence.fasta \
     -k YOUR_API_KEY \
     -o results/ \
@@ -136,7 +136,7 @@ python neural_module/neural_module.py \
 
 ### Complete Epigenetic Analysis
 ```bash
-python neural_module/neural_module.py \
+genomics alphagenome analyze -- \
     -i sequence_2kb.fasta \
     -k YOUR_API_KEY \
     -o results/ \
@@ -145,7 +145,7 @@ python neural_module/neural_module.py \
 
 ### Splicing Analysis
 ```bash
-python neural_module/neural_module.py \
+genomics alphagenome analyze -- \
     -i sequence_16kb.fasta \
     -k YOUR_API_KEY \
     -o results/ \
@@ -180,10 +180,10 @@ To confirm everything is working:
 
 ```bash
 # 1. Check available outputs
-python scripts/check_alphagenome_outputs.py
+python scripts/diagnostics/check_alphagenome_outputs.py
 
 # 2. Test with example
-python neural_module/neural_module.py \
+genomics alphagenome analyze -- \
     -i example_sequence.fasta \
     -k YOUR_API_KEY \
     -o test_results/ \
@@ -238,4 +238,3 @@ python neural_module/neural_module.py \
 **✅ `neural_module.py` is now fully functional!**
 
 *Fixes applied in: October 2025*
-

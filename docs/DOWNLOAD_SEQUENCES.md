@@ -197,7 +197,7 @@ Antes de usar uma sequência baixada:
 
 ---
 
-## 🚀 Uso com Neural Module
+## Uso com AlphaGenome workflow
 
 ```bash
 # Baixar sequência
@@ -205,20 +205,20 @@ curl 'https://rest.ensembl.org/sequence/region/human/11:5227002..5229049?coord_s
   -H 'Content-type:text/x-fasta' > my_sequence.fasta
 
 # Analisar
-python neural_module/neural_module.py \
+genomics alphagenome analyze -- \
   -i my_sequence.fasta \
   -k YOUR_API_KEY \
   -o results/
 
 # Analisar variante
-python neural_module/neural_module.py \
+genomics alphagenome analyze -- \
   -i my_sequence.fasta \
   -k YOUR_API_KEY \
   -o results_variant/ \
   --variant 1024 A T
 
 # Analisar com metadados de ontologia
-python neural_module/neural_module.py \
+genomics alphagenome analyze -- \
   -i my_sequence.fasta \
   -k YOUR_API_KEY \
   -o results_with_metadata/ \
@@ -238,4 +238,3 @@ python neural_module/neural_module.py \
 
 **Criado**: Outubro 2025  
 **Parte do**: Neural Module Documentation
-

@@ -74,7 +74,7 @@ with open("seq_2kb.fasta", "w") as f:
 EOF
 
 # Analyze
-python neural_module/neural_module.py -i seq_2kb.fasta -k API_KEY -o results/
+genomics alphagenome analyze -- -i seq_2kb.fasta -k API_KEY -o results/
 ```
 
 ### Example 2: Typical Gene (~3000 bp → 16384 bp)
@@ -94,7 +94,7 @@ with open("BRCA1_16kb.fasta", "w") as f:
 
 ```bash
 python gene.py
-python neural_module/neural_module.py -i BRCA1_16kb.fasta -k API_KEY -o results/
+genomics alphagenome analyze -- -i BRCA1_16kb.fasta -k API_KEY -o results/
 ```
 
 ### Example 3: Large Region (~100kb → 131kb)
@@ -104,7 +104,7 @@ python neural_module/neural_module.py -i BRCA1_16kb.fasta -k API_KEY -o results/
 samtools faidx genome.fa chr1:1000000-1131072 > region_131kb.fasta
 
 # Analyze
-python neural_module/neural_module.py -i region_131kb.fasta -k API_KEY -o results/
+genomics alphagenome analyze -- -i region_131kb.fasta -k API_KEY -o results/
 ```
 
 ## 🔧 Helper Script for Automatic Resize
@@ -179,4 +179,3 @@ print(len(rec.seq))
 **Updated**: `neural_module.py` now automatically validates sizes and provides clear messages about which sizes are supported.
 
 *Last updated: October 2025*
-

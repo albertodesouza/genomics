@@ -1,0 +1,69 @@
+# Binary pigmentation classification restricted to the same 32 kb gene windows
+# used by neural_ancestry_predictor/configs/genes_1000_all.yaml.
+
+input:
+  dataset_id: "1kg_high_coverage"
+  genotype_cache_dir: "/dados/GENOMICS_DATA/v1/1kG_high_coverage_runs/datasets/rna_seq_H1+H2_32768_ds1_log_shuf_ont3_view9d9f894aa231"
+  chromosomes:
+    - "chr1"
+    - "chr2"
+    - "chr5"
+    - "chr9"
+    - "chr11"
+    - "chr15"
+    - "chr16"
+    - "chr19"
+  validate_family_aware_splits: false
+
+conversion:
+  output_filename: "{sample_id}_genes_1000_all_w32768_23andme.txt"
+  skip_no_rsid: true
+  filter_by_chip_panel: false
+  format_version: "V5"
+  annotate_dbsnp: true
+  genome_build: "GRCh38"
+  ref_dir: "refs"
+  region_bed: "genes_1000_all_w32768.bed"
+
+statistics:
+  output_dir: "../../../results/snp_ancestry_predictor/statistics_pigmentation_selected_genes"
+  reference_subsets:
+    - "train"
+  min_maf: 0.001
+  max_snps: null
+  snp_panel: null
+  region_bed: "genes_1000_all_w32768.bed"
+
+output:
+  prediction_target: "pigmentation"
+  known_classes:
+    - "strong pigmentation"
+    - "weak pigmentation"
+  derived_targets:
+    pigmentation:
+      source_field: "population"
+      exclude_unmapped: true
+      class_map:
+        strong pigmentation: ["YRI", "ESN", "LWK", "MSL", "GWD"]
+        weak pigmentation: ["FIN", "CEU", "GBR"]
+
+prediction:
+  haplotype_mode: "H1"
+  method: "mle"
+  evaluation_subsets:
+    - "train"
+    - "val"
+    - "test"
+  results_dir: "../../../results/snp_ancestry_predictor/ancestry_results_pigmentation_selected_genes"
+  admixture_em:
+    max_iter: 1000
+    tol: 1.0e-7
+  admixture_mle:
+    n_restarts: 20
+
+pipeline:
+  steps:
+    generate_23andme: true
+    compute_statistics: true
+    predict_ancestry: true
+    binary_association: false

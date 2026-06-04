@@ -1,0 +1,84 @@
+site_name: Genomics Workspace
+site_description: Multi-pipeline genomics workspace documentation
+repo_url: https://github.com/albertodesouza/genomics
+docs_dir: docs
+site_dir: site
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.indexes
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: cyan
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: cyan
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Environment: getting-started/environment.md
+      - First Commands: getting-started/first-commands.md
+  - Concepts:
+      - Data And Results: concepts/data-and-results.md
+      - Configuration: concepts/configuration.md
+      - Experiments: concepts/experiments.md
+  - Components:
+      - Overview: components/index.md
+      - Genomes Analyzer: components/genomes-analyzer.md
+      - Genotype Predictor: components/genotype-predictor.md
+      - Variant Transformer: components/variant-transformer.md
+      - SNP Ancestry: components/snp-ancestry.md
+      - VCF To 23andMe: components/vcf-to-23andme.md
+      - AlphaGenome: components/alphagenome.md
+      - Dataset Builders: components/dataset-builders.md
+      - Native And Third-Party: components/native-and-third-party.md
+      - Legacy: components/legacy.md
+  - Operations:
+      - Scripts: operations/scripts.md
+      - Monster Install: INSTALL_MONSTER.md
+  - Guides:
+      - Download Sequences: DOWNLOAD_SEQUENCES.md
+      - AlphaGenome Outputs: AVAILABLE_OUTPUTS.md
+      - Supported Sequence Sizes: SUPPORTED_SIZES.md
+      - Applied AlphaGenome Fixes: APPLIED_FIXES.md
+  - Reference:
+      - CLI: reference/cli.md
+      - Repository Layout: reference/repository-layout.md
+      - Architecture: ARCHITECTURE.md
+      - Research Pipelines: RESEARCH_PIPELINES.md
+      - Important Experiments: IMPORTANT_EXPERIMENTS.md
+      - Migration Notes: MIGRATION.md
+  - Historical References:
+      - 1000 Genomes High Coverage README: 20190405_1000G_2504_high_cov_README.md
+      - 1000 Genomes Data Reuse README: 20190405_1000G_2504_high_cov_data_reuse_README.md
