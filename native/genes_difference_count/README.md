@@ -33,7 +33,7 @@ Edit `scripts/generate_gene_fastas.sh` and modify the paths at the top (lines 17
 ROOT="/dados/GENOMICS_DATA/top3"
 
 # Path to your configuration YAML file (optional)
-YAML="/home/alberto/genomics/configs/config_human_30x_monster.yaml"
+YAML="/home/alberto/genomics/configs/genomes_analyzer/config_human_30x_monster.yaml"
 
 # Reference genome FASTA
 REF="${ROOT}/refs/reference.fa"

@@ -19,10 +19,10 @@ ROOT="/dados/GENOMICS_DATA/top3"
 
 # Path to your configuration YAML file
 # Uncomment and modify as needed:
-#YAML="/home/lume2/genomics/configs/config_human_30x_monster.yaml"
-YAML="/home/alberto/genomics/configs/config_human_30x_monster.yaml"
+#YAML="/home/lume2/genomics/configs/genomes_analyzer/config_human_30x_monster.yaml"
+YAML="/home/alberto/genomics/configs/genomes_analyzer/config_human_30x_monster.yaml"
 #ROOT="/dados/GENOMICS_DATA/top4"
-#YAML="/home/alberto/genomics/configs/config_human_30x_atena.yaml"
+#YAML="/home/alberto/genomics/configs/genomes_analyzer/config_human_30x_atena.yaml"
 
 # Reference genome FASTA
 REF="${ROOT}/refs/reference.fa"
