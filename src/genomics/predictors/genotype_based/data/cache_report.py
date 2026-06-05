@@ -53,10 +53,34 @@ def _metadata_value(record: Mapping[str, Any], *keys: str, default: str = "UNK")
     return default
 
 
-def _counter_for(samples: Iterable[str], records: Mapping[str, Mapping[str, Any]], *keys: str) -> Dict[str, int]:
+def _normalize_metadata_label(field: str, value: str) -> str:
+    if field == "sex":
+        mapping = {
+            "1": "male",
+            "1.0": "male",
+            "M": "male",
+            "m": "male",
+            "male": "male",
+            "Male": "male",
+            "2": "female",
+            "2.0": "female",
+            "F": "female",
+            "f": "female",
+            "female": "female",
+            "Female": "female",
+            "0": "unknown",
+            "0.0": "unknown",
+            "UNK": "unknown",
+        }
+        return mapping.get(str(value), str(value))
+    return str(value)
+
+
+def _counter_for(samples: Iterable[str], records: Mapping[str, Mapping[str, Any]], field: str, *keys: str) -> Dict[str, int]:
     counter: Counter[str] = Counter()
     for sample_id in samples:
-        counter[_metadata_value(records.get(sample_id, {}), *keys)] += 1
+        value = _metadata_value(records.get(sample_id, {}), *keys)
+        counter[_normalize_metadata_label(field, value)] += 1
     return dict(sorted(counter.items()))
 
 
@@ -75,9 +99,9 @@ def build_cache_report(cache_dir: Path) -> Dict[str, Any]:
     for split_name, samples in splits.items():
         split_stats[split_name] = {
             "count": len(samples),
-            "superpopulation": _counter_for(samples, records, "superpopulation", "Superpopulation"),
-            "population": _counter_for(samples, records, "population", "Population"),
-            "sex": _counter_for(samples, records, "sex", "Sex"),
+            "superpopulation": _counter_for(samples, records, "superpopulation", "superpopulation", "Superpopulation"),
+            "population": _counter_for(samples, records, "population", "population", "Population"),
+            "sex": _counter_for(samples, records, "sex", "sex", "Sex"),
         }
 
     class_names = metadata.get("class_names") or {}
