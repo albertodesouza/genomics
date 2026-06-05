@@ -44,7 +44,7 @@ model:
       eval_metric: "mlogloss"
 
 data_loading:
-  loading_strategy: "preload"
+  loading_strategy: "lazy"
 
 training:
   optimizer: "adam"

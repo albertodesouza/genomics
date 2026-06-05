@@ -40,7 +40,7 @@ model:
       n_jobs: -1
 
 data_loading:
-  loading_strategy: "preload"
+  loading_strategy: "lazy"
 
 training:
   optimizer: "adam"
