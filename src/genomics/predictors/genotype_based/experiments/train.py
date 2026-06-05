@@ -115,10 +115,12 @@ def main() -> None:
             **training_manifest_fields(history),
         )
 
+        selected_loader, split_name = select_split_loader(config.test_dataset, train_loader, val_loader, test_loader)
         if history.get("interrupted"):
-            selected_loader, split_name = select_split_loader(config.test_dataset, train_loader, val_loader, test_loader)
             console.print(f"[cyan]Executando avaliação pós-interrupção no split '{split_name}'...[/cyan]")
-            run_test_and_save(model, selected_loader, full_ds, config, device, split_name, experiment_dir, wandb_run)
+        else:
+            console.print(f"[cyan]Executando avaliação final no split '{split_name}'...[/cyan]")
+        run_test_and_save(model, selected_loader, full_ds, config, device, split_name, experiment_dir, wandb_run)
     finally:
         _restore_terminal()
         if "experiment_dir" in locals():

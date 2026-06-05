@@ -30,6 +30,11 @@ model:
   dropout_rate: 0.5
   sklearn:
     pca_components: 300
+    pca_backend: "randomized_streaming"
+    randomized_pca_oversampling: 32
+    randomized_pca_n_iter: 2
+    randomized_pca_feature_chunk_size: 8192
+    randomized_pca_dtype: "float64"
     use_pca_cache: true
     pca_align_n_train: false
     logistic_regression:
