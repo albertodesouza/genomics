@@ -190,6 +190,16 @@ def test_genotype_test_command_parses():
     assert args.checkpoint == "best_accuracy"
 
 
+def test_genotype_split_command_parses():
+    args = genomics_cli.build_parser().parse_args([
+        "genotype",
+        "split",
+        "configs/predictors/genotype_based/default.yaml",
+    ])
+
+    assert args.genotype_command == "split"
+
+
 def test_config_describe_genotype_lists_known_fields(capsys):
     rc = genomics_cli.main(["config", "describe", "genotype"])
     captured = capsys.readouterr()

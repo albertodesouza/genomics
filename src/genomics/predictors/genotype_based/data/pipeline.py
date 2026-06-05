@@ -20,6 +20,7 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeEl
 from torch.utils.data import DataLoader, Sampler, Subset
 
 from genomics.predictors.genotype_based.config import PipelineConfig, get_dataset_cache_dir, generate_dataset_name
+from genomics.predictors.genotype_based.data.cache_report import save_cache_report
 from genomics.predictors.genotype_based.data.processed_dataset import CachedProcessedDataset, ProcessedGenomicDataset
 from genomics.predictors.genotype_based.data.layout import is_dataset_dir
 from genomics.predictors.genotype_based.data.splitting import (
@@ -1008,6 +1009,7 @@ def prepare_data(config: PipelineConfig, experiment_dir: Path):
         norm_dst = experiment_dir / "models" / "normalization_params.json"
         if norm_src.exists() and not norm_dst.exists():
             shutil.copyfile(norm_src, norm_dst)
+        save_cache_report(cache_path, console)
         return full_ds, train_l, val_l, test_l
 
     # Processar do zero
@@ -1070,4 +1072,12 @@ def prepare_data(config: PipelineConfig, experiment_dir: Path):
         config.dataset_input.gene_window_metadata = cache_meta["gene_window_metadata"]
 
     shutil.copyfile(cache_path / "normalization_params.json", norm_path)
+    save_cache_report(cache_path, console)
     return full_ds, train_l, val_l, test_l
+
+
+def prepare_cache_only(config: PipelineConfig, experiment_dir: Path) -> Path:
+    """Idempotently materialize/validate the processed dataset cache and reports."""
+    prepare_data(config, experiment_dir)
+    cache_path = Path(get_dataset_cache_dir(config))
+    return cache_path

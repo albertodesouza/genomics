@@ -158,15 +158,19 @@ def _add_neural_config_args(parser: argparse.ArgumentParser) -> None:
 
 def cmd_genotype_prepare_cache(args: argparse.Namespace) -> int:
     from genomics.predictors.genotype_based.config import get_dataset_cache_dir, get_experiment_runs_dir, load_config
-    from genomics.predictors.genotype_based.data.pipeline import prepare_data
+    from genomics.predictors.genotype_based.data.pipeline import prepare_cache_only
 
     config_path = _genotype_config_with_overrides(args)
     config = load_config(config_path)
     run_dir = get_experiment_runs_dir(config).resolve() / "_prepare_cache"
     run_dir.mkdir(parents=True, exist_ok=True)
-    prepare_data(config, run_dir)
+    prepare_cache_only(config, run_dir)
     print(f"Dataset cache: {get_dataset_cache_dir(config)}")
     return 0
+
+
+def cmd_genotype_split(args: argparse.Namespace) -> int:
+    return cmd_genotype_prepare_cache(args)
 
 
 def cmd_genotype_train(args: argparse.Namespace) -> int:
@@ -816,6 +820,9 @@ def build_parser() -> argparse.ArgumentParser:
     gp_cache = genotype_sub.add_parser("prepare-cache")
     _add_genotype_config_args(gp_cache)
     gp_cache.set_defaults(func=cmd_genotype_prepare_cache)
+    gp_split = genotype_sub.add_parser("split", help="Materializa split/cache e relatórios sem treinar")
+    _add_genotype_config_args(gp_split)
+    gp_split.set_defaults(func=cmd_genotype_split)
     gp_train = genotype_sub.add_parser("train")
     _add_genotype_config_args(gp_train)
     gp_train.set_defaults(func=cmd_genotype_train)
