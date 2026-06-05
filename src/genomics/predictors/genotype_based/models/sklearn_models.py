@@ -37,6 +37,7 @@ from rich.console import Console
 
 from genomics.predictors.genotype_based.config import PipelineConfig
 from genomics.core import update_manifest
+from genomics.core.metrics import print_classification_metrics, save_classification_plots, save_results_json
 
 console = Console()
 
@@ -147,8 +148,9 @@ def run_sklearn_eval_and_save(results: Dict, experiment_dir: Path, dataset_name:
     for k, v in results.items():
         serializable[k] = v.tolist() if isinstance(v, np.ndarray) else v
     json_file = experiment_dir / f"{dataset_name}_results.json"
-    with open(json_file, "w") as f:
-        json.dump(serializable, f, indent=2)
+    save_results_json(serializable, json_file, console)
+    save_classification_plots(serializable, experiment_dir / "plots", dataset_name, console)
+    print_classification_metrics(serializable, f"📊 {dataset_name}", console)
     console.print(
         f"[green]✓ {dataset_name}: "
         f"acc={results['accuracy']:.4f} "
@@ -247,7 +249,7 @@ def train_sklearn_baseline(config: PipelineConfig, model_type: str, train_loader
                       "dataset_cache_dir": str(dataset_cache_dir.resolve())}, artifact_path)
         console.print(f"[green]✓ Artefato sklearn salvo em: {artifact_path}[/green]")
 
-        for name, xk, yk in [("train", "X_train", "y_train"), ("val", "X_val", "y_val"), ("test", "X_test", "y_test")]:
+        for name, xk, yk in [("val", "X_val", "y_val")]:
             Xs = np.load(pca_dir / f"{xk}.npy")
             yt = np.load(pca_dir / f"{yk}.npy")
             results = sklearn_metrics_dict(yt, clf.predict(Xs), full_dataset)
@@ -295,7 +297,7 @@ def train_sklearn_baseline(config: PipelineConfig, model_type: str, train_loader
     joblib.dump({"scaler": scaler, "pca": pca, "classifier": clf, "model_type": model_type, "pca_n_components": k}, artifact_path)
     console.print(f"[green]✓ Artefato sklearn salvo em: {artifact_path}[/green]")
 
-    for name, loader in [("train", train_loader), ("val", val_loader), ("test", test_loader)]:
+    for name, loader in [("val", val_loader)]:
         y_pred, y_true = sklearn_predict_labels(loader, scaler, pca, clf)
         run_sklearn_eval_and_save(sklearn_metrics_dict(y_true, y_pred, full_dataset), experiment_dir, name, wandb_run, name)
 
@@ -311,7 +313,8 @@ def train_sklearn_baseline(config: PipelineConfig, model_type: str, train_loader
 
 def run_sklearn_test_mode(config: PipelineConfig, train_loader: DataLoader, val_loader: DataLoader,
                           test_loader: DataLoader, full_dataset: Any,
-                          experiment_dir: Path, wandb_run: Optional[Any] = None) -> None:
+                          experiment_dir: Path, wandb_run: Optional[Any] = None,
+                          output_name: Optional[str] = None) -> None:
     """Avaliação em modo test usando artefato joblib salvo."""
     if config.output.prediction_target == "frog_likelihood":
         raise ValueError("Baselines sklearn suportam apenas classificação.")
@@ -322,4 +325,4 @@ def run_sklearn_test_mode(config: PipelineConfig, train_loader: DataLoader, val_
     loader = loader_map.get(choice, test_loader)
     y_pred, y_true = sklearn_predict_labels(loader, scaler, pca, clf)
     results = sklearn_metrics_dict(y_true, y_pred, full_dataset)
-    run_sklearn_eval_and_save(results, experiment_dir, choice, wandb_run, choice)
+    run_sklearn_eval_and_save(results, experiment_dir, output_name or choice, wandb_run, choice)

@@ -176,6 +176,18 @@ def test_completion_bash_outputs_completion_script(capsys):
     assert rc == 0
     assert "complete -F _genomics_completion genomics" in captured.out
     assert "genotype" in captured.out
+    assert "test" in captured.out
+
+
+def test_genotype_test_command_parses():
+    args = genomics_cli.build_parser().parse_args([
+        "genotype",
+        "test",
+        "configs/predictors/genotype_based/default.yaml",
+    ])
+
+    assert args.genotype_command == "test"
+    assert args.checkpoint == "best_accuracy"
 
 
 def test_config_describe_genotype_lists_known_fields(capsys):

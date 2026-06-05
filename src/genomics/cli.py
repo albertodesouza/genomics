@@ -183,6 +183,18 @@ def cmd_genotype_evaluate(args: argparse.Namespace) -> int:
     return _run_module("genomics.predictors.genotype_based.experiments.evaluate_checkpoint", command_args)
 
 
+def cmd_genotype_test(args: argparse.Namespace) -> int:
+    config_path = _genotype_config_with_overrides(args)
+    command_args: list[PathLike] = [config_path, "--checkpoint", args.checkpoint, "--split", "test"]
+    if args.experiment_dir:
+        command_args.extend(["--experiment-dir", args.experiment_dir])
+    if args.output_name:
+        command_args.extend(["--output-name", args.output_name])
+    else:
+        command_args.extend(["--output-name", "test_best_accuracy"])
+    return _run_module("genomics.predictors.genotype_based.experiments.evaluate_checkpoint", command_args)
+
+
 def cmd_genotype_pca_variance(args: argparse.Namespace) -> int:
     config_path = _genotype_config_with_overrides(args)
     command_args: list[PathLike] = [
@@ -814,6 +826,12 @@ def build_parser() -> argparse.ArgumentParser:
     gp_eval.add_argument("--experiment-dir", type=Path, default=None)
     gp_eval.add_argument("--output-name", default=None)
     gp_eval.set_defaults(func=cmd_genotype_evaluate)
+    gp_test = genotype_sub.add_parser("test")
+    _add_genotype_config_args(gp_test)
+    gp_test.add_argument("--checkpoint", default="best_accuracy")
+    gp_test.add_argument("--experiment-dir", type=Path, default=None)
+    gp_test.add_argument("--output-name", default=None)
+    gp_test.set_defaults(func=cmd_genotype_test)
     gp_pca = genotype_sub.add_parser("pca-variance")
     _add_genotype_config_args(gp_pca)
     gp_pca.add_argument("--output", type=Path, required=True)

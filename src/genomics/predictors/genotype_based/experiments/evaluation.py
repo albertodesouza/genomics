@@ -14,7 +14,7 @@ from rich.table import Table
 from torch.utils.data import DataLoader
 
 from genomics.predictors.genotype_based.config import PipelineConfig
-from genomics.core.metrics import classification_metrics, print_classification_metrics, save_results_json
+from genomics.core.metrics import classification_metrics, print_classification_metrics, save_classification_plots, save_results_json
 
 console = Console()
 
@@ -151,6 +151,8 @@ def run_test_and_save(
     if results:
         out_path = experiment_dir / f"{split_name}_results.json"
         save_results_json(results, out_path, console)
+        if config.output.prediction_target != "frog_likelihood":
+            save_classification_plots(results, experiment_dir / "plots", split_name, console)
 
     return results
 

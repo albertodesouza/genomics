@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import torch
 from rich.console import Console
 
 from genomics.predictors.genotype_based.config import load_config
@@ -115,12 +116,21 @@ def main() -> None:
             **training_manifest_fields(history),
         )
 
-        selected_loader, split_name = select_split_loader(config.test_dataset, train_loader, val_loader, test_loader)
+        selected_loader, split_name = select_split_loader("val", train_loader, val_loader, test_loader)
         if history.get("interrupted"):
             console.print(f"[cyan]Executando avaliação pós-interrupção no split '{split_name}'...[/cyan]")
         else:
-            console.print(f"[cyan]Executando avaliação final no split '{split_name}'...[/cyan]")
-        run_test_and_save(model, selected_loader, full_ds, config, device, split_name, experiment_dir, wandb_run)
+            best_accuracy_path = experiment_dir / "models" / "best_accuracy.pt"
+            if best_accuracy_path.exists():
+                checkpoint = torch.load(best_accuracy_path, map_location=device)
+                state_dict = checkpoint.get("model_state_dict", checkpoint)
+                model.load_state_dict(state_dict)
+                console.print(f"[green]✓ Melhor checkpoint carregado para validação final:[/green] {best_accuracy_path}")
+            else:
+                console.print("[yellow]best_accuracy.pt não encontrado; avaliando pesos finais.[/yellow]")
+            console.print(f"[cyan]Executando avaliação final do melhor modelo no split '{split_name}'...[/cyan]")
+        output_name = "val_best_accuracy" if not history.get("interrupted") else split_name
+        run_test_and_save(model, selected_loader, full_ds, config, device, output_name, experiment_dir, wandb_run)
     finally:
         _restore_terminal()
         if "experiment_dir" in locals():
