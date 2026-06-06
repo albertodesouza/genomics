@@ -192,6 +192,9 @@ def _save_search_outputs(rows: List[Dict[str, Any]], best: Dict[str, Any], searc
 def _save_search_plot(rows: List[Dict[str, Any]], plots_dir: Path) -> None:
     plots_dir.mkdir(parents=True, exist_ok=True)
     try:
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
         import matplotlib.pyplot as plt
     except ImportError:
         console.print("[yellow]matplotlib indisponível; plot da busca não foi gerado.[/yellow]")

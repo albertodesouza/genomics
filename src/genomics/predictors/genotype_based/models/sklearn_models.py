@@ -23,12 +23,6 @@ import numpy as np
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (
-    accuracy_score,
-    classification_report,
-    confusion_matrix,
-    precision_recall_fscore_support,
-)
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import LinearSVC
 from torch.utils.data import DataLoader
@@ -37,7 +31,7 @@ from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn, Ti
 
 from genomics.predictors.genotype_based.config import PipelineConfig
 from genomics.core import update_manifest
-from genomics.core.metrics import print_classification_metrics, save_classification_plots, save_results_json, stratified_bootstrap_confidence_intervals
+from genomics.core.metrics import classification_metrics, print_classification_metrics, save_classification_plots, save_results_json, stratified_bootstrap_confidence_intervals
 
 console = Console()
 
@@ -150,15 +144,8 @@ def sklearn_predict_labels(loader: DataLoader, scaler: Any, pca: Any, clf: Any) 
 
 def sklearn_metrics_dict(y_true: np.ndarray, y_pred: np.ndarray, full_dataset: Any, config: Optional[PipelineConfig] = None) -> Dict[str, Any]:
     """Calcula métricas padronizadas (mesmas chaves que Tester.test())."""
-    labels = list(range(full_dataset.get_num_classes()))
-    target_names = [full_dataset.idx_to_target[i] for i in labels]
-    p, r, f1, _ = precision_recall_fscore_support(y_true, y_pred, average="weighted", zero_division=0)
-    results = {
-        "accuracy": float(accuracy_score(y_true, y_pred)),
-        "precision": float(p), "recall": float(r), "f1": float(f1),
-        "confusion_matrix": confusion_matrix(y_true, y_pred, labels=labels).tolist(),
-        "classification_report": classification_report(y_true, y_pred, labels=labels, target_names=target_names, zero_division=0),
-    }
+    target_names = [full_dataset.idx_to_target[i] for i in range(full_dataset.get_num_classes())]
+    results = classification_metrics(y_true, y_pred, target_names)
     if config is not None and config.evaluation.confidence_intervals.enabled:
         ci_cfg = config.evaluation.confidence_intervals
         results["confidence_intervals"] = stratified_bootstrap_confidence_intervals(

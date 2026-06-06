@@ -170,6 +170,9 @@ def _write_markdown_report(report: Mapping[str, Any], path: Path) -> None:
 
 def _save_plots(report: Mapping[str, Any], plots_dir: Path, console: Optional[Any]) -> None:
     try:
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
         import matplotlib.pyplot as plt
     except ImportError:
         if console is not None:

@@ -228,6 +228,9 @@ def save_classification_plots(results: Dict[str, Any], output_dir: Path, prefix:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     try:
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
         import matplotlib.pyplot as plt
     except ImportError:
         if console is not None:
