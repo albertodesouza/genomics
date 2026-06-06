@@ -37,12 +37,15 @@ genomics completion bash
 genomics genotype train configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml
 genomics genotype split configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml
 genomics genotype test configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml
+genomics genotype search configs/predictors/genotype_based/icann/search_rf_xgboost.yaml
 genomics genotype evaluate configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml --checkpoint best_accuracy --split test
 ```
 
 `genomics genotype train` trains on the training split, validates during training, and reports final validation metrics for the `best_accuracy` checkpoint. It does not evaluate the test split. Use `genomics genotype test` after model/hyperparameter selection to evaluate `best_accuracy` on the held-out test split.
 
 `genomics genotype split` materializes or validates the processed dataset cache, split metadata, and dataset report plots without training a model.
+
+`genomics genotype search` runs validation-only hyperparameter search for configured sklearn baselines. Use `genomics genotype test` on the selected best directory after model selection.
 
 ```bash
 genomics variant materialize --dataset-id 1kg_high_coverage --output-dir /dados/GENOMICS_DATA/variant_transformer/superpopulation

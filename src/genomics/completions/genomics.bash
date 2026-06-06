@@ -14,7 +14,7 @@ _genomics_completion()
 
     local commands="audit-configs audit-data config convert snp-ancestry genomes-analyzer dataset-builders alphagenome genotype variant neural completion"
     local config="describe schema validate"
-    local genotype="prepare-cache split train test evaluate pca-variance workbench sync-bcftools-artifacts single-gene-screen"
+    local genotype="prepare-cache split train test search evaluate pca-variance workbench sync-bcftools-artifacts single-gene-screen"
     local variant="materialize train evaluate analyze-counts"
     local convert="vcf-to-23andme"
     local snp="run"
@@ -57,7 +57,7 @@ _genomics_completion()
         genotype)
             if [[ ${cword} -eq 2 ]]; then COMPREPLY=( $(compgen -W "$genotype" -- "$cur") ); return; fi
             case "${words[2]}" in
-                prepare-cache|split|train|test|evaluate|pca-variance|single-gene-screen) _genomics_yaml_configs; return ;;
+                prepare-cache|split|train|test|search|evaluate|pca-variance|single-gene-screen) _genomics_yaml_configs; return ;;
                 workbench|sync-bcftools-artifacts) _genomics_filedir; return ;;
             esac
             ;;

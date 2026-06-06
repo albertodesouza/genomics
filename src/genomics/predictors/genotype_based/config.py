@@ -459,6 +459,44 @@ class DataLoadingConfig(BaseModel):
         return v
 
 
+class RandomForestSearchConfig(BaseModel):
+    """Grid search do baseline Random Forest."""
+
+    enabled: bool = False
+    n_estimators: List[int] = Field(default_factory=lambda: [100, 200, 400])
+    max_depth: List[Optional[int]] = Field(default_factory=lambda: [None, 5, 10, 15])
+    class_weight: List[Optional[str]] = Field(default_factory=lambda: [None])
+    random_state: int = 42
+    n_jobs: int = -1
+
+
+class XGBoostSearchConfig(BaseModel):
+    """Grid search do baseline XGBoost."""
+
+    enabled: bool = False
+    n_estimators: List[int] = Field(default_factory=lambda: [25, 50, 100, 200])
+    max_depth: List[int] = Field(default_factory=lambda: [2, 4, 6])
+    learning_rate: List[float] = Field(default_factory=lambda: [0.05, 0.1])
+    subsample: List[float] = Field(default_factory=lambda: [0.8])
+    colsample_bytree: List[float] = Field(default_factory=lambda: [0.8])
+    tree_method: List[str] = Field(default_factory=lambda: ["hist"])
+    random_state: int = 42
+    n_jobs: int = -1
+    eval_metric: str = "mlogloss"
+
+
+class HyperparameterSearchConfig(BaseModel):
+    """Configuração de model selection em validação."""
+
+    enabled: bool = False
+    selection_metric: Literal["accuracy", "precision", "recall", "f1"] = "accuracy"
+    selection_split: Literal["val"] = "val"
+    output_dir: Optional[str] = None
+    run_name: Optional[str] = None
+    random_forest: RandomForestSearchConfig = Field(default_factory=RandomForestSearchConfig)
+    xgboost: XGBoostSearchConfig = Field(default_factory=XGBoostSearchConfig)
+
+
 # ===========================================================================
 # Modelo raiz
 # ===========================================================================
@@ -488,6 +526,7 @@ class PipelineConfig(BaseModel):
     wandb: WandbConfig = Field(default_factory=WandbConfig)
     debug: DebugConfig = Field(default_factory=DebugConfig)
     data_loading: DataLoadingConfig = Field(default_factory=DataLoadingConfig)
+    hyperparameter_search: HyperparameterSearchConfig = Field(default_factory=HyperparameterSearchConfig)
 
     mode: Literal["train", "test"] = "train"
     test_dataset: Literal["train", "val", "test"] = "test"

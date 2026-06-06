@@ -1,0 +1,109 @@
+metadata:
+  source: "genes_1000_all_icann.yaml"
+  paper: "ICANN accepted paper"
+  purpose: "Replicate RF/XGBoost hyperparameter search described in the paper."
+
+dataset_input:
+  dataset_id: "1kg_high_coverage"
+  processed_cache_dir: "results/cache/genotype_based_predictor"
+  results_dir: "results/genotype_based_predictor/icann/runs"
+  cache_processed_tensors: true
+  tensor_layout: "raw_center_crop"
+  feature_mode: "signals_only"
+  alphagenome_outputs: ["rna_seq"]
+  haplotype_mode: "H1+H2"
+  window_center_size: 32768
+  downsample_factor: 1
+  genes_to_use: ["MC1R", "TYRP1", "TYR", "SLC45A2", "DDB1", "EDAR", "MFSD12", "OCA2", "HERC2", "SLC24A5", "TCHH"]
+  normalization_method: "log"
+  normalization_value: 0.0
+
+output:
+  prediction_target: "superpopulation"
+  known_classes: null
+
+model:
+  type: "RF"
+  hidden_layers: [100, 40]
+  activation: "relu"
+  dropout_rate: 0.5
+  sklearn:
+    pca_components: 300
+    pca_backend: "randomized_streaming"
+    randomized_pca_oversampling: 32
+    randomized_pca_n_iter: 2
+    randomized_pca_feature_chunk_size: 8192
+    randomized_pca_dtype: "float64"
+    use_pca_cache: true
+    pca_align_n_train: false
+
+data_loading:
+  loading_strategy: "lazy"
+
+training:
+  optimizer: "adam"
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  loss_function: "cross_entropy"
+  batch_size: 50
+  num_epochs: 1
+  validation_frequency: 1
+  lr_scheduler:
+    enabled: false
+
+data_split:
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  random_seed: 13
+  family_split_mode: "family_aware"
+  balancing_strategy: "shuffle"
+  strict_determinism: true
+
+wandb:
+  use_wandb: false
+  project_name: "genotype-based-predictor-icann"
+  run_name: "search-rf-xgboost-pca300"
+  log_frequency: 100
+
+checkpointing:
+  checkpoint_dir: "models"
+  save_during_training: true
+  save_frequency: 100
+  load_checkpoint: null
+
+debug:
+  enable_visualization: false
+  force_pca_cache_rebuild: false
+  max_samples_per_epoch: null
+  visualization: {}
+  taint_at_cache_save: false
+  taint_at_runtime: false
+
+hyperparameter_search:
+  enabled: true
+  selection_metric: "accuracy"
+  selection_split: "val"
+  output_dir: "results/genotype_based_predictor/icann/search/rf_xgboost_pca300"
+  run_name: "rf_xgboost_pca300"
+  random_forest:
+    enabled: true
+    n_estimators: [100, 200, 400]
+    max_depth: [null, 5, 10, 15]
+    class_weight: [null]
+    random_state: 42
+    n_jobs: -1
+  xgboost:
+    enabled: true
+    n_estimators: [25, 50, 100, 200]
+    max_depth: [2, 4, 6]
+    learning_rate: [0.05, 0.1]
+    subsample: [0.8]
+    colsample_bytree: [0.8]
+    tree_method: ["hist"]
+    random_state: 42
+    n_jobs: -1
+    eval_metric: "mlogloss"
+
+mode: "train"
+test_dataset: "test"

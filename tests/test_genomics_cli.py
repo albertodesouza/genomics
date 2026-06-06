@@ -200,6 +200,16 @@ def test_genotype_split_command_parses():
     assert args.genotype_command == "split"
 
 
+def test_genotype_search_command_parses():
+    args = genomics_cli.build_parser().parse_args([
+        "genotype",
+        "search",
+        "configs/predictors/genotype_based/icann/search_rf_xgboost.yaml",
+    ])
+
+    assert args.genotype_command == "search"
+
+
 def test_config_describe_genotype_lists_known_fields(capsys):
     rc = genomics_cli.main(["config", "describe", "genotype"])
     captured = capsys.readouterr()
