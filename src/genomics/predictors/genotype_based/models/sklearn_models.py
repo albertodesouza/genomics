@@ -19,7 +19,6 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import joblib
 import numpy as np
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import RandomForestClassifier
@@ -166,9 +165,31 @@ def run_sklearn_eval_and_save(results: Dict, experiment_dir: Path, dataset_name:
             pass
 
 
-def load_sklearn_baseline_artifact(experiment_dir: Path) -> Dict[str, Any]:
+def _repair_streaming_pca_components_path(pca: Any, pca_dir: Path) -> Any:
+    components_path = getattr(pca, "components_path", None)
+    if components_path and Path(components_path).exists():
+        return pca
+    dtype = getattr(pca, "dtype", None)
+    if dtype:
+        candidate = Path(pca_dir) / f"randomized_pca_components.{dtype}.memmap"
+        if candidate.exists():
+            pca.components_path = str(candidate.resolve())
+    return pca
+
+
+def _current_pca_cache_dir(config: PipelineConfig) -> Path:
+    from genomics.predictors.genotype_based.config import get_dataset_cache_dir
+    from genomics.core.sklearn_pca_cache import get_sklearn_pca_cache_dir_path
+
+    sk = config.model.sklearn
+    return get_sklearn_pca_cache_dir_path(get_dataset_cache_dir(config), sk.pca_components, sk.pca_backend)
+
+
+def load_sklearn_baseline_artifact(experiment_dir: Path, config: Optional[PipelineConfig] = None) -> Dict[str, Any]:
     """Carrega artefato sklearn treinado (.joblib)."""
     import sys
+
+    import joblib
 
     predictor_dir = Path(__file__).resolve().parents[5] / "legacy" / "neural_ancestry_predictor_deprecated"
     if str(predictor_dir) not in sys.path:
@@ -181,7 +202,13 @@ def load_sklearn_baseline_artifact(experiment_dir: Path) -> Dict[str, Any]:
     if not isinstance(data, dict) or "classifier" not in data:
         raise ValueError(f"Artefato inválido em {path}")
     if "pca_cache_dir" in data:
-        bundle = joblib.load(Path(data["pca_cache_dir"]) / SCALER_PCA_FILENAME)
+        pca_dir = Path(data["pca_cache_dir"])
+        if not (pca_dir / SCALER_PCA_FILENAME).exists() and config is not None:
+            current_dir = _current_pca_cache_dir(config)
+            if (current_dir / SCALER_PCA_FILENAME).exists():
+                pca_dir = current_dir
+        bundle = joblib.load(pca_dir / SCALER_PCA_FILENAME)
+        bundle["pca"] = _repair_streaming_pca_components_path(bundle["pca"], pca_dir)
         data = {**data, "scaler": bundle["scaler"], "pca": bundle["pca"]}
     elif "scaler" not in data or "pca" not in data:
         raise ValueError(f"Artefato inválido: faltam scaler/pca")
@@ -222,6 +249,7 @@ def train_sklearn_baseline(config: PipelineConfig, model_type: str, train_loader
     models_dir = experiment_dir / "models"
     models_dir.mkdir(parents=True, exist_ok=True)
     artifact_path = models_dir / SKLEARN_ARTIFACT_FILENAME
+    import joblib
 
     if use_pca_cache:
         # A função de cache legada recebe config serializado e o diretório do dataset processado.
@@ -318,7 +346,7 @@ def run_sklearn_test_mode(config: PipelineConfig, train_loader: DataLoader, val_
     """Avaliação em modo test usando artefato joblib salvo."""
     if config.output.prediction_target == "frog_likelihood":
         raise ValueError("Baselines sklearn suportam apenas classificação.")
-    art = load_sklearn_baseline_artifact(experiment_dir)
+    art = load_sklearn_baseline_artifact(experiment_dir, config)
     scaler, pca, clf = art["scaler"], art["pca"], art["classifier"]
     choice = config.test_dataset.lower()
     loader_map = {"train": train_loader, "val": val_loader, "test": test_loader}
