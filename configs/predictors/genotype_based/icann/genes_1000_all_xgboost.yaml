@@ -91,5 +91,13 @@ debug:
   taint_at_cache_save: false
   taint_at_runtime: false
 
+evaluation:
+  confidence_intervals:
+    enabled: true
+    method: "stratified_bootstrap"
+    n_bootstrap: 2000
+    confidence_level: 0.95
+    random_seed: 13
+
 mode: "train"
 test_dataset: "test"

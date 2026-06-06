@@ -14,7 +14,7 @@ from rich.table import Table
 from torch.utils.data import DataLoader
 
 from genomics.predictors.genotype_based.config import PipelineConfig
-from genomics.core.metrics import classification_metrics, print_classification_metrics, save_classification_plots, save_results_json, stratified_bootstrap_confidence_intervals
+from genomics.core.metrics import bootstrap_confidence_intervals, classification_metrics, print_classification_metrics, save_classification_plots, save_results_json
 
 console = Console()
 
@@ -100,10 +100,11 @@ class Tester:
             results = classification_metrics(all_targets, all_preds, target_names)
             ci_cfg = self.config.evaluation.confidence_intervals
             if ci_cfg.enabled:
-                results["confidence_intervals"] = stratified_bootstrap_confidence_intervals(
+                results["confidence_intervals"] = bootstrap_confidence_intervals(
                     all_targets,
                     all_preds,
                     target_names,
+                    method=ci_cfg.method,
                     n_bootstrap=ci_cfg.n_bootstrap,
                     confidence_level=ci_cfg.confidence_level,
                     seed=ci_cfg.random_seed,

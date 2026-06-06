@@ -31,7 +31,7 @@ from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn, Ti
 
 from genomics.predictors.genotype_based.config import PipelineConfig
 from genomics.core import update_manifest
-from genomics.core.metrics import classification_metrics, print_classification_metrics, save_classification_plots, save_results_json, stratified_bootstrap_confidence_intervals
+from genomics.core.metrics import bootstrap_confidence_intervals, classification_metrics, print_classification_metrics, save_classification_plots, save_results_json
 
 console = Console()
 
@@ -148,10 +148,11 @@ def sklearn_metrics_dict(y_true: np.ndarray, y_pred: np.ndarray, full_dataset: A
     results = classification_metrics(y_true, y_pred, target_names)
     if config is not None and config.evaluation.confidence_intervals.enabled:
         ci_cfg = config.evaluation.confidence_intervals
-        results["confidence_intervals"] = stratified_bootstrap_confidence_intervals(
+        results["confidence_intervals"] = bootstrap_confidence_intervals(
             y_true,
             y_pred,
             target_names,
+            method=ci_cfg.method,
             n_bootstrap=ci_cfg.n_bootstrap,
             confidence_level=ci_cfg.confidence_level,
             seed=ci_cfg.random_seed,

@@ -91,11 +91,12 @@ def classification_metrics(y_true: Sequence[int], y_pred: Sequence[int], class_n
         return _fallback_classification_metrics(y_true, y_pred, class_names)
 
 
-def stratified_bootstrap_confidence_intervals(
+def bootstrap_confidence_intervals(
     y_true: Sequence[int],
     y_pred: Sequence[int],
     class_names: Sequence[str],
     *,
+    method: str = "stratified_bootstrap",
     n_bootstrap: int = 2000,
     confidence_level: float = 0.95,
     seed: int = 13,
@@ -113,14 +114,22 @@ def stratified_bootstrap_confidence_intervals(
         if 0 <= label < len(class_names)
     }
 
+    n_samples = len(y_true_arr)
     for _ in range(int(n_bootstrap)):
-        sampled = []
-        for indices in label_indices.values():
-            if len(indices):
-                sampled.append(rng.choice(indices, size=len(indices), replace=True))
-        if not sampled:
-            continue
-        idx = np.concatenate(sampled)
+        if method == "stratified_bootstrap":
+            sampled = []
+            for indices in label_indices.values():
+                if len(indices):
+                    sampled.append(rng.choice(indices, size=len(indices), replace=True))
+            if not sampled:
+                continue
+            idx = np.concatenate(sampled)
+        elif method == "bootstrap":
+            if n_samples == 0:
+                continue
+            idx = rng.choice(np.arange(n_samples), size=n_samples, replace=True)
+        else:
+            raise ValueError(f"Metodo de bootstrap nao suportado: {method}")
         metrics = classification_metrics(y_true_arr[idx], y_pred_arr[idx], class_names)
         for metric in metric_values:
             metric_values[metric].append(float(metrics.get(metric, 0.0)))
@@ -139,7 +148,7 @@ def stratified_bootstrap_confidence_intervals(
         }
 
     return {
-        "method": "stratified_bootstrap",
+        "method": method,
         "n_bootstrap": int(n_bootstrap),
         "confidence_level": float(confidence_level),
         "seed": int(seed),
@@ -149,6 +158,26 @@ def stratified_bootstrap_confidence_intervals(
             for class_name, metrics in per_class_values.items()
         },
     }
+
+
+def stratified_bootstrap_confidence_intervals(
+    y_true: Sequence[int],
+    y_pred: Sequence[int],
+    class_names: Sequence[str],
+    *,
+    n_bootstrap: int = 2000,
+    confidence_level: float = 0.95,
+    seed: int = 13,
+) -> Dict[str, Any]:
+    return bootstrap_confidence_intervals(
+        y_true,
+        y_pred,
+        class_names,
+        method="stratified_bootstrap",
+        n_bootstrap=n_bootstrap,
+        confidence_level=confidence_level,
+        seed=seed,
+    )
 
 
 def print_classification_metrics(results: Dict[str, Any], title: str, console: Console) -> None:

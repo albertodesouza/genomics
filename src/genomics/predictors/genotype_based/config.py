@@ -501,7 +501,7 @@ class ConfidenceIntervalConfig(BaseModel):
     """Intervalos de confiança para métricas de classificação."""
 
     enabled: bool = False
-    method: Literal["stratified_bootstrap"] = "stratified_bootstrap"
+    method: Literal["bootstrap", "stratified_bootstrap"] = "stratified_bootstrap"
     n_bootstrap: int = 2000
     confidence_level: float = 0.95
     random_seed: int = 13
