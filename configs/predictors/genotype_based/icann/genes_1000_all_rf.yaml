@@ -95,5 +95,16 @@ evaluation:
     confidence_level: 0.95
     random_seed: 13
 
+stability_analysis:
+  enabled: true
+  strategy: "repeated_random_split"
+  n_repeats: 5
+  n_splits: 5
+  val_split: null
+  random_seed: 13
+  stratify: true
+  selection_metric: "accuracy"
+  output_dir: "results/genotype_based_predictor/icann/stability/rf_pca300"
+
 mode: "train"
 test_dataset: "test"

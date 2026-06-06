@@ -527,6 +527,35 @@ class EvaluationConfig(BaseModel):
     confidence_intervals: ConfidenceIntervalConfig = Field(default_factory=ConfidenceIntervalConfig)
 
 
+class StabilityAnalysisConfig(BaseModel):
+    """Avaliação de estabilidade em dev mantendo o teste fixo."""
+
+    enabled: bool = False
+    strategy: Literal["repeated_random_split", "randomized_split", "cross_validation"] = "repeated_random_split"
+    n_repeats: int = 5
+    n_splits: int = 5
+    val_split: Optional[float] = None
+    random_seed: int = 13
+    stratify: bool = True
+    selection_metric: Literal["accuracy", "precision", "recall", "f1"] = "accuracy"
+    output_dir: Optional[str] = None
+    run_name: Optional[str] = None
+
+    @field_validator("n_repeats", "n_splits")
+    @classmethod
+    def positive_counts(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("n_repeats e n_splits devem ser >= 1")
+        return value
+
+    @field_validator("val_split")
+    @classmethod
+    def val_split_valid(cls, value: Optional[float]) -> Optional[float]:
+        if value is not None and not 0.0 < value < 1.0:
+            raise ValueError("val_split deve estar em (0, 1)")
+        return value
+
+
 # ===========================================================================
 # Modelo raiz
 # ===========================================================================
@@ -558,6 +587,7 @@ class PipelineConfig(BaseModel):
     data_loading: DataLoadingConfig = Field(default_factory=DataLoadingConfig)
     hyperparameter_search: HyperparameterSearchConfig = Field(default_factory=HyperparameterSearchConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
+    stability_analysis: StabilityAnalysisConfig = Field(default_factory=StabilityAnalysisConfig)
 
     mode: Literal["train", "test"] = "train"
     test_dataset: Literal["train", "val", "test"] = "test"

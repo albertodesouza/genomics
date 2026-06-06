@@ -3,6 +3,7 @@ from pathlib import Path
 import yaml
 
 from genomics.predictors.snp_ancestry.pipeline import load_config as load_snp_config
+from genomics.predictors.genotype_based.config import load_config as load_genotype_config
 
 
 def test_all_canonical_yaml_configs_load():
@@ -31,3 +32,12 @@ def test_snp_ancestry_configs_use_canonical_dataset_registry():
                 value = section.get(key)
                 if value:
                     assert not str(value).startswith("/dados/GENOMICS_DATA/top3"), f"{path}:{key} uses legacy top3"
+
+
+def test_genotype_stability_analysis_config_loads(monkeypatch, tmp_path):
+    monkeypatch.setenv("GENOMICS_DATA_ROOT", str(tmp_path / "data"))
+    config = load_genotype_config(Path("configs/predictors/genotype_based/icann/genes_1000_all_rf.yaml"))
+
+    assert config.stability_analysis.strategy == "repeated_random_split"
+    assert config.stability_analysis.n_repeats == 5
+    assert config.stability_analysis.stratify is True

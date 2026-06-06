@@ -210,6 +210,16 @@ def test_genotype_search_command_parses():
     assert args.genotype_command == "search"
 
 
+def test_genotype_stability_command_parses():
+    args = genomics_cli.build_parser().parse_args([
+        "genotype",
+        "stability",
+        "configs/predictors/genotype_based/icann/genes_1000_all_rf.yaml",
+    ])
+
+    assert args.genotype_command == "stability"
+
+
 def test_genotype_confidence_intervals_command_parses():
     args = genomics_cli.build_parser().parse_args([
         "genotype",

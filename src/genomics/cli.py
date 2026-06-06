@@ -205,6 +205,10 @@ def cmd_genotype_search(args: argparse.Namespace) -> int:
     return _run_module("genomics.predictors.genotype_based.experiments.search_sklearn", [_genotype_config_with_overrides(args)])
 
 
+def cmd_genotype_stability(args: argparse.Namespace) -> int:
+    return _run_module("genomics.predictors.genotype_based.experiments.stability", [_genotype_config_with_overrides(args)])
+
+
 def cmd_genotype_confidence_intervals(args: argparse.Namespace) -> int:
     config_path = _genotype_config_with_overrides(args)
     command_args: list[PathLike] = [config_path, "--checkpoint", args.checkpoint, "--split", args.split]
@@ -858,6 +862,9 @@ def build_parser() -> argparse.ArgumentParser:
     gp_search = genotype_sub.add_parser("search")
     _add_genotype_config_args(gp_search)
     gp_search.set_defaults(func=cmd_genotype_search)
+    gp_stability = genotype_sub.add_parser("stability", help="Avalia estabilidade em dev com teste fixo")
+    _add_genotype_config_args(gp_stability)
+    gp_stability.set_defaults(func=cmd_genotype_stability)
     gp_ci = genotype_sub.add_parser("confidence-intervals")
     _add_genotype_config_args(gp_ci)
     gp_ci.add_argument("--checkpoint", default="best_accuracy")
