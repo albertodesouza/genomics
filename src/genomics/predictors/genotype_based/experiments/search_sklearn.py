@@ -8,23 +8,13 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
-import joblib
 import numpy as np
 from rich.console import Console
 from rich.table import Table
 
 from genomics.core import update_manifest
 from genomics.core.metrics import save_classification_plots, save_results_json
-from genomics.core.sklearn_pca_cache import METADATA_FILENAME as SKLEARN_PCA_METADATA_FILENAME
-from genomics.core.sklearn_pca_cache import ensure_sklearn_pca_cache
 from genomics.predictors.genotype_based.config import PipelineConfig, generate_dataset_name, load_config
-from genomics.predictors.genotype_based.data.pipeline import prepare_data
-from genomics.predictors.genotype_based.models.sklearn_models import (
-    SKLEARN_ARTIFACT_FILENAME,
-    build_sklearn_classifier,
-    run_sklearn_eval_and_save,
-    sklearn_metrics_dict,
-)
 from genomics.predictors.genotype_based.config import get_dataset_cache_dir, get_experiment_runs_dir
 
 
@@ -124,6 +114,15 @@ def _train_candidate(
     search_dir: Path,
     rank_index: int,
 ) -> Dict[str, Any]:
+    import joblib
+
+    from genomics.predictors.genotype_based.models.sklearn_models import (
+        SKLEARN_ARTIFACT_FILENAME,
+        build_sklearn_classifier,
+        run_sklearn_eval_and_save,
+        sklearn_metrics_dict,
+    )
+
     candidate_config = _candidate_config(config, candidate)
     model_type = candidate["model_type"]
     params = candidate["params"]
@@ -169,6 +168,8 @@ def _train_candidate(
 
 
 def _read_pca_k(pca_dir: Path) -> int:
+    from genomics.core.sklearn_pca_cache import METADATA_FILENAME as SKLEARN_PCA_METADATA_FILENAME
+
     with open(pca_dir / SKLEARN_PCA_METADATA_FILENAME, "r", encoding="utf-8") as f:
         return int(json.load(f)["pca_n_components_effective"])
 
@@ -193,6 +194,10 @@ def _save_search_outputs(rows: List[Dict[str, Any]], best: Dict[str, Any], searc
     _save_search_plot(rows, search_dir / "plots")
 
 
+def _search_plot_labels(rows: List[Dict[str, Any]]) -> List[str]:
+    return [f"{row['candidate']}\n{row['model_type']}" for row in rows]
+
+
 def _save_search_plot(rows: List[Dict[str, Any]], plots_dir: Path) -> None:
     plots_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -203,7 +208,7 @@ def _save_search_plot(rows: List[Dict[str, Any]], plots_dir: Path) -> None:
     except ImportError:
         console.print("[yellow]matplotlib indisponível; plot da busca não foi gerado.[/yellow]")
         return
-    labels = [f"{idx + 1}\n{row['model_type']}" for idx, row in enumerate(rows)]
+    labels = _search_plot_labels(rows)
     values = [row["val_accuracy"] for row in rows]
     fig, ax = plt.subplots(figsize=(max(10, len(rows) * 0.35), 5))
     bars = ax.bar(labels, values)
@@ -219,6 +224,8 @@ def _save_search_plot(rows: List[Dict[str, Any]], plots_dir: Path) -> None:
 
 
 def _copy_best_artifact(best: Dict[str, Any], search_dir: Path) -> Path:
+    from genomics.predictors.genotype_based.models.sklearn_models import SKLEARN_ARTIFACT_FILENAME
+
     best_dir = search_dir / "best"
     models_dir = best_dir / "models"
     models_dir.mkdir(parents=True, exist_ok=True)
@@ -232,6 +239,9 @@ def _copy_best_artifact(best: Dict[str, Any], search_dir: Path) -> Path:
 
 
 def run_search(config_path: Path) -> Path:
+    from genomics.core.sklearn_pca_cache import ensure_sklearn_pca_cache
+    from genomics.predictors.genotype_based.data.pipeline import prepare_data
+
     config = load_config(config_path)
     if not config.hyperparameter_search.enabled:
         raise ValueError("hyperparameter_search.enabled deve ser true para genotype search")
