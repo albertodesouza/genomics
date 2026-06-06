@@ -497,6 +497,36 @@ class HyperparameterSearchConfig(BaseModel):
     xgboost: XGBoostSearchConfig = Field(default_factory=XGBoostSearchConfig)
 
 
+class ConfidenceIntervalConfig(BaseModel):
+    """Intervalos de confiança para métricas de classificação."""
+
+    enabled: bool = False
+    method: Literal["stratified_bootstrap"] = "stratified_bootstrap"
+    n_bootstrap: int = 2000
+    confidence_level: float = 0.95
+    random_seed: int = 13
+
+    @field_validator("n_bootstrap")
+    @classmethod
+    def n_bootstrap_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("n_bootstrap deve ser >= 1")
+        return value
+
+    @field_validator("confidence_level")
+    @classmethod
+    def confidence_level_valid(cls, value: float) -> float:
+        if not 0.0 < value < 1.0:
+            raise ValueError("confidence_level deve estar em (0, 1)")
+        return value
+
+
+class EvaluationConfig(BaseModel):
+    """Configuração de avaliação e incerteza das métricas."""
+
+    confidence_intervals: ConfidenceIntervalConfig = Field(default_factory=ConfidenceIntervalConfig)
+
+
 # ===========================================================================
 # Modelo raiz
 # ===========================================================================
@@ -527,6 +557,7 @@ class PipelineConfig(BaseModel):
     debug: DebugConfig = Field(default_factory=DebugConfig)
     data_loading: DataLoadingConfig = Field(default_factory=DataLoadingConfig)
     hyperparameter_search: HyperparameterSearchConfig = Field(default_factory=HyperparameterSearchConfig)
+    evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
 
     mode: Literal["train", "test"] = "train"
     test_dataset: Literal["train", "val", "test"] = "test"

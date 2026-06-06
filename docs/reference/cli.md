@@ -38,6 +38,7 @@ genomics genotype train configs/predictors/genotype_based/genes_1000_all_3ontolo
 genomics genotype split configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml
 genomics genotype test configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml
 genomics genotype search configs/predictors/genotype_based/icann/search_rf_xgboost.yaml
+genomics genotype confidence-intervals configs/predictors/genotype_based/icann/search_rf_xgboost.yaml --experiment-dir results/genotype_based_predictor/icann/search/rf_xgboost_pca300/best --split test
 genomics genotype evaluate configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml --checkpoint best_accuracy --split test
 ```
 
@@ -46,6 +47,8 @@ genomics genotype evaluate configs/predictors/genotype_based/genes_1000_all_3ont
 `genomics genotype split` materializes or validates the processed dataset cache, split metadata, and dataset report plots without training a model.
 
 `genomics genotype search` runs validation-only hyperparameter search for configured sklearn baselines. Use `genomics genotype test` on the selected best directory after model selection.
+
+`genomics genotype confidence-intervals` recomputes metrics and configured bootstrap confidence intervals for a saved model artifact/checkpoint without retraining.
 
 ```bash
 genomics variant materialize --dataset-id 1kg_high_coverage --output-dir /dados/GENOMICS_DATA/variant_transformer/superpopulation

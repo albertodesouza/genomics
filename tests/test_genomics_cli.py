@@ -210,6 +210,17 @@ def test_genotype_search_command_parses():
     assert args.genotype_command == "search"
 
 
+def test_genotype_confidence_intervals_command_parses():
+    args = genomics_cli.build_parser().parse_args([
+        "genotype",
+        "confidence-intervals",
+        "configs/predictors/genotype_based/icann/search_rf_xgboost.yaml",
+    ])
+
+    assert args.genotype_command == "confidence-intervals"
+    assert args.split == "test"
+
+
 def test_config_describe_genotype_lists_known_fields(capsys):
     rc = genomics_cli.main(["config", "describe", "genotype"])
     captured = capsys.readouterr()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Mapping, Sequence
 
 import numpy as np
 from rich.console import Console
@@ -91,6 +91,66 @@ def classification_metrics(y_true: Sequence[int], y_pred: Sequence[int], class_n
         return _fallback_classification_metrics(y_true, y_pred, class_names)
 
 
+def stratified_bootstrap_confidence_intervals(
+    y_true: Sequence[int],
+    y_pred: Sequence[int],
+    class_names: Sequence[str],
+    *,
+    n_bootstrap: int = 2000,
+    confidence_level: float = 0.95,
+    seed: int = 13,
+) -> Dict[str, Any]:
+    y_true_arr = np.asarray(list(y_true), dtype=int)
+    y_pred_arr = np.asarray(list(y_pred), dtype=int)
+    labels = sorted(set(y_true_arr.tolist()))
+    label_indices = {label: np.where(y_true_arr == label)[0] for label in labels}
+    rng = np.random.default_rng(seed)
+    alpha = 1.0 - float(confidence_level)
+    metric_values: Dict[str, List[float]] = {"accuracy": [], "precision": [], "recall": [], "f1": []}
+    per_class_values: Dict[str, Dict[str, List[float]]] = {
+        str(class_names[label]): {"precision": [], "recall": [], "f1": []}
+        for label in labels
+        if 0 <= label < len(class_names)
+    }
+
+    for _ in range(int(n_bootstrap)):
+        sampled = []
+        for indices in label_indices.values():
+            if len(indices):
+                sampled.append(rng.choice(indices, size=len(indices), replace=True))
+        if not sampled:
+            continue
+        idx = np.concatenate(sampled)
+        metrics = classification_metrics(y_true_arr[idx], y_pred_arr[idx], class_names)
+        for metric in metric_values:
+            metric_values[metric].append(float(metrics.get(metric, 0.0)))
+        for class_name, row in (metrics.get("per_class_metrics") or {}).items():
+            if class_name in per_class_values:
+                for metric in per_class_values[class_name]:
+                    per_class_values[class_name][metric].append(float(row.get(metric, 0.0)))
+
+    def interval(values: Sequence[float]) -> Dict[str, float]:
+        if not values:
+            return {"low": 0.0, "high": 0.0}
+        arr = np.asarray(values, dtype=float)
+        return {
+            "low": float(np.quantile(arr, alpha / 2.0)),
+            "high": float(np.quantile(arr, 1.0 - alpha / 2.0)),
+        }
+
+    return {
+        "method": "stratified_bootstrap",
+        "n_bootstrap": int(n_bootstrap),
+        "confidence_level": float(confidence_level),
+        "seed": int(seed),
+        "metrics": {metric: interval(values) for metric, values in metric_values.items()},
+        "per_class_metrics": {
+            class_name: {metric: interval(values) for metric, values in metrics.items()}
+            for class_name, metrics in per_class_values.items()
+        },
+    }
+
+
 def print_classification_metrics(results: Dict[str, Any], title: str, console: Console) -> None:
     table = Table(title=title, show_header=True)
     table.add_column("Métrica")
@@ -101,6 +161,23 @@ def print_classification_metrics(results: Dict[str, Any], title: str, console: C
     table.add_row("F1 (weighted)", f"{float(results['f1']):.4f}")
     table.add_row("Amostras", str(results.get("num_samples", "")))
     console.print(table)
+    ci = results.get("confidence_intervals") or {}
+    ci_metrics = ci.get("metrics") or {}
+    if ci_metrics:
+        ci_table = Table(title="Confidence intervals", show_header=True)
+        ci_table.add_column("Métrica")
+        ci_table.add_column("Valor", justify="right")
+        ci_table.add_column("CI low", justify="right")
+        ci_table.add_column("CI high", justify="right")
+        for metric in ("accuracy", "precision", "recall", "f1"):
+            interval = ci_metrics.get(metric) or {}
+            ci_table.add_row(
+                metric,
+                f"{float(results.get(metric, 0.0)):.4f}",
+                f"{float(interval.get('low', 0.0)):.4f}",
+                f"{float(interval.get('high', 0.0)):.4f}",
+            )
+        console.print(ci_table)
     report = results.get("classification_report")
     if report:
         console.print(report)
@@ -198,5 +275,26 @@ def save_classification_plots(results: Dict[str, Any], output_dir: Path, prefix:
         fig.tight_layout()
         fig.savefig(output_dir / f"{prefix}_confusion_matrix.png", dpi=160)
         plt.close(fig)
+    ci = results.get("confidence_intervals") or {}
+    if ci.get("metrics"):
+        _save_metric_ci_plot(results, ci["metrics"], output_dir / f"{prefix}_metric_confidence_intervals.png", prefix, plt)
     if console is not None:
         console.print(f"[green]Plots salvos em:[/green] {output_dir}")
+
+
+def _save_metric_ci_plot(results: Mapping[str, Any], intervals: Mapping[str, Any], output_path: Path, prefix: str, plt: Any) -> None:
+    metrics = ["accuracy", "precision", "recall", "f1"]
+    values = np.asarray([float(results.get(metric, 0.0)) for metric in metrics], dtype=float)
+    lows = np.asarray([float((intervals.get(metric) or {}).get("low", values[idx])) for idx, metric in enumerate(metrics)], dtype=float)
+    highs = np.asarray([float((intervals.get(metric) or {}).get("high", values[idx])) for idx, metric in enumerate(metrics)], dtype=float)
+    yerr = np.vstack([values - lows, highs - values])
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    bars = ax.bar(metrics, values, yerr=yerr, capsize=5)
+    ax.set_ylim(0.0, 1.0)
+    ax.set_ylabel("Score")
+    ax.set_title(f"{prefix} metric confidence intervals")
+    for bar, value in zip(bars, values):
+        ax.annotate(f"{value:.3f}", xy=(bar.get_x() + bar.get_width() / 2, value), xytext=(0, 3), textcoords="offset points", ha="center", va="bottom", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=160)
+    plt.close(fig)

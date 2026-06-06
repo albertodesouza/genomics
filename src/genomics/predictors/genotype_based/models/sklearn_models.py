@@ -33,10 +33,11 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import LinearSVC
 from torch.utils.data import DataLoader
 from rich.console import Console
+from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn, TimeRemainingColumn
 
 from genomics.predictors.genotype_based.config import PipelineConfig
 from genomics.core import update_manifest
-from genomics.core.metrics import print_classification_metrics, save_classification_plots, save_results_json
+from genomics.core.metrics import print_classification_metrics, save_classification_plots, save_results_json, stratified_bootstrap_confidence_intervals
 
 console = Console()
 
@@ -117,27 +118,58 @@ def build_sklearn_classifier(config: PipelineConfig, model_type: str, random_see
 def sklearn_predict_labels(loader: DataLoader, scaler: Any, pca: Any, clf: Any) -> Tuple[np.ndarray, np.ndarray]:
     """Gera predições e targets para todo o DataLoader."""
     preds, ys = [], []
-    for features, targets, _idx in loader:
-        X = scaler.transform(sklearn_flatten_batch(features))
-        Xr = pca.transform(X)
-        preds.append(np.asarray(clf.predict(Xr)).reshape(-1))
-        ys.append(targets.detach().cpu().numpy().reshape(-1))
+    total_batches = len(loader)
+    total_samples = len(loader.dataset)
+    with Progress(
+        TextColumn("[cyan]Predizendo sklearn"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total} batches"),
+        TextColumn("{task.fields[samples]}/{task.fields[total_samples]} amostras"),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task(
+            "sklearn_predict",
+            total=total_batches,
+            samples=0,
+            total_samples=total_samples,
+        )
+        processed_samples = 0
+        for features, targets, _idx in loader:
+            X = scaler.transform(sklearn_flatten_batch(features))
+            Xr = pca.transform(X)
+            preds.append(np.asarray(clf.predict(Xr)).reshape(-1))
+            ys.append(targets.detach().cpu().numpy().reshape(-1))
+            processed_samples += int(features.shape[0])
+            progress.update(task, advance=1, samples=processed_samples)
     if not preds:
         return np.empty((0,), dtype=np.int64), np.empty((0,), dtype=np.int64)
     return np.concatenate(preds), np.concatenate(ys)
 
 
-def sklearn_metrics_dict(y_true: np.ndarray, y_pred: np.ndarray, full_dataset: Any) -> Dict[str, Any]:
+def sklearn_metrics_dict(y_true: np.ndarray, y_pred: np.ndarray, full_dataset: Any, config: Optional[PipelineConfig] = None) -> Dict[str, Any]:
     """Calcula métricas padronizadas (mesmas chaves que Tester.test())."""
     labels = list(range(full_dataset.get_num_classes()))
     target_names = [full_dataset.idx_to_target[i] for i in labels]
     p, r, f1, _ = precision_recall_fscore_support(y_true, y_pred, average="weighted", zero_division=0)
-    return {
+    results = {
         "accuracy": float(accuracy_score(y_true, y_pred)),
         "precision": float(p), "recall": float(r), "f1": float(f1),
         "confusion_matrix": confusion_matrix(y_true, y_pred, labels=labels).tolist(),
         "classification_report": classification_report(y_true, y_pred, labels=labels, target_names=target_names, zero_division=0),
     }
+    if config is not None and config.evaluation.confidence_intervals.enabled:
+        ci_cfg = config.evaluation.confidence_intervals
+        results["confidence_intervals"] = stratified_bootstrap_confidence_intervals(
+            y_true,
+            y_pred,
+            target_names,
+            n_bootstrap=ci_cfg.n_bootstrap,
+            confidence_level=ci_cfg.confidence_level,
+            seed=ci_cfg.random_seed,
+        )
+    return results
 
 
 def run_sklearn_eval_and_save(results: Dict, experiment_dir: Path, dataset_name: str,
@@ -280,7 +312,7 @@ def train_sklearn_baseline(config: PipelineConfig, model_type: str, train_loader
         for name, xk, yk in [("val", "X_val", "y_val")]:
             Xs = np.load(pca_dir / f"{xk}.npy")
             yt = np.load(pca_dir / f"{yk}.npy")
-            results = sklearn_metrics_dict(yt, clf.predict(Xs), full_dataset)
+            results = sklearn_metrics_dict(yt, clf.predict(Xs), full_dataset, config)
             run_sklearn_eval_and_save(results, experiment_dir, name, wandb_run, name)
 
         update_manifest(
@@ -327,7 +359,7 @@ def train_sklearn_baseline(config: PipelineConfig, model_type: str, train_loader
 
     for name, loader in [("val", val_loader)]:
         y_pred, y_true = sklearn_predict_labels(loader, scaler, pca, clf)
-        run_sklearn_eval_and_save(sklearn_metrics_dict(y_true, y_pred, full_dataset), experiment_dir, name, wandb_run, name)
+        run_sklearn_eval_and_save(sklearn_metrics_dict(y_true, y_pred, full_dataset, config), experiment_dir, name, wandb_run, name)
 
     update_manifest(
         experiment_dir,
@@ -352,5 +384,5 @@ def run_sklearn_test_mode(config: PipelineConfig, train_loader: DataLoader, val_
     loader_map = {"train": train_loader, "val": val_loader, "test": test_loader}
     loader = loader_map.get(choice, test_loader)
     y_pred, y_true = sklearn_predict_labels(loader, scaler, pca, clf)
-    results = sklearn_metrics_dict(y_true, y_pred, full_dataset)
+    results = sklearn_metrics_dict(y_true, y_pred, full_dataset, config)
     run_sklearn_eval_and_save(results, experiment_dir, output_name or choice, wandb_run, choice)
