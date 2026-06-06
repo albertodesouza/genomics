@@ -178,13 +178,17 @@ def _save_search_outputs(rows: List[Dict[str, Any]], best: Dict[str, Any], searc
     with open(search_dir / "search_results.json", "w", encoding="utf-8") as f:
         json.dump({"selection_metric": metric, "best": best, "results": rows}, f, indent=2, ensure_ascii=False)
     with open(search_dir / "search_results.csv", "w", newline="", encoding="utf-8") as f:
+        fieldnames = ["rank", "candidate", "model_type", "val_accuracy", "val_precision", "val_recall", "val_f1", "params", "artifact_path"]
         writer = csv.DictWriter(
             f,
-            fieldnames=["rank", "candidate", "model_type", "val_accuracy", "val_precision", "val_recall", "val_f1", "params", "artifact_path"],
+            fieldnames=fieldnames,
         )
         writer.writeheader()
         for rank, row in enumerate(rows, start=1):
-            writer.writerow({**row, "rank": rank, "params": json.dumps(row["params"], sort_keys=True)})
+            csv_row = {key: row.get(key) for key in fieldnames}
+            csv_row["rank"] = rank
+            csv_row["params"] = json.dumps(row["params"], sort_keys=True)
+            writer.writerow(csv_row)
     save_results_json(best, search_dir / "best_summary.json", console)
     _save_search_plot(rows, search_dir / "plots")
 
