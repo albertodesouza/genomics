@@ -157,14 +157,16 @@ def _add_neural_config_args(parser: argparse.ArgumentParser) -> None:
 
 
 def cmd_genotype_prepare_cache(args: argparse.Namespace) -> int:
-    from genomics.predictors.genotype_based.config import get_dataset_cache_dir, get_experiment_runs_dir, load_config
+    from pathlib import Path
+
+    from genomics.predictors.genotype_based.config import get_dataset_cache_dir, load_config
     from genomics.predictors.genotype_based.data.pipeline import prepare_cache_only
 
     config_path = _genotype_config_with_overrides(args)
     config = load_config(config_path)
-    run_dir = get_experiment_runs_dir(config).resolve() / "_prepare_cache"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    prepare_cache_only(config, run_dir)
+    prepare_dir = Path(config.dataset_input.processed_cache_dir).resolve() / "prepare_cache"
+    prepare_dir.mkdir(parents=True, exist_ok=True)
+    prepare_cache_only(config, prepare_dir)
     print(f"Dataset cache: {get_dataset_cache_dir(config)}")
     return 0
 
