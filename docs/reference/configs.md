@@ -56,6 +56,40 @@ genomics config schema genotype > genotype.schema.json
 genomics config schema variant > variant.schema.json
 ```
 
+## Genotype Preprocessing Fit Subsampling
+
+Genotype configs can reduce preprocessing cost by fitting normalization and sklearn PCA on stratified subsets while still applying the fitted transform to every sample.
+
+Normalization parameters are controlled under `dataset_input`:
+
+```yaml
+dataset_input:
+  normalization_fit_splits: ["train"]      # stricter; ["train", "val"] preserves historical behavior
+  normalization_fit_sample_fraction: 0.5
+  normalization_fit_min_samples: 700
+  normalization_fit_min_samples_per_class: 75
+  normalization_fit_random_seed: 13
+  normalization_fit_stratify: true
+```
+
+Use `normalization_fit_splits: ["train"]` when validation should remain unseen by fitted preprocessing parameters. The fitted normalization is still applied to train, validation, and test. `log` and `zscore` usually tolerate moderate stratified subsampling. `minmax_keep_zero` is more sensitive to missed extremes; prefer larger fractions such as `0.8` or keep `1.0`.
+
+Sklearn scaler/PCA fitting is controlled under `model.sklearn`:
+
+```yaml
+model:
+  sklearn:
+    pca_fit_sample_fraction: 0.5
+    pca_fit_min_samples: 700
+    pca_fit_min_samples_per_class: 75
+    pca_fit_random_seed: 13
+    pca_fit_stratify: true
+```
+
+Only the scaler/PCA fit uses the subset. The PCA transform, classifier training, validation, and test evaluation still use the full split arrays. Changing either normalization-fit or PCA-fit parameters invalidates the corresponding cache so stale transforms are not reused. See [Genotype Predictor: Dataset Processing Flow](../components/genotype-predictor.md#dataset-processing-flow) for the full processing sequence and the intermediate artifact paths to inspect.
+
+See [Preprocessing And Leakage](../concepts/preprocessing-and-leakage.md) for the evaluation rationale behind these fields.
+
 ## Current Scope
 
 This first schema layer covers `genotype` and `variant` configs because those components already use typed Pydantic configuration models.

@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - unify-genomic-pipelines
   workflow_dispatch:
 
 permissions:

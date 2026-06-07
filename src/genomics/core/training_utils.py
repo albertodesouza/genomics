@@ -215,7 +215,13 @@ class EpochTrainer:
             step_lr_scheduler(self.scheduler, val_metrics["loss"], metric_available=can_update_best)
             append_history_epoch(self.history, epoch, train_metrics, val_metrics)
 
-            improved_acc = can_update_best and val_metrics["accuracy"] > self.best_val_accuracy
+            improved_acc = can_update_best and (
+                val_metrics["accuracy"] > self.best_val_accuracy
+                or (
+                    val_metrics["accuracy"] == self.best_val_accuracy
+                    and val_metrics["loss"] < self.best_val_loss
+                )
+            )
             improved_loss = can_update_best and val_metrics["loss"] < self.best_val_loss
             if improved_acc:
                 self.best_val_accuracy = val_metrics["accuracy"]

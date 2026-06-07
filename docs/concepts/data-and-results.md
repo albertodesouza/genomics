@@ -33,6 +33,8 @@ Validate data availability with:
 genomics audit-data --dataset-id 1kg_high_coverage --fail-on-missing
 ```
 
+See [Data Registry](../reference/data-registry.md) for the canonical dataset layout, registered dataset IDs, and `bcftools_chain` artifact checks.
+
 ## Results
 
 Runs generally write under:

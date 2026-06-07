@@ -14,9 +14,28 @@ src/genomics/
 configs/
   genomes_analyzer/
   predictors/
+    genotype_based/
+    variant_transformer/
+    snp_ancestry/
   workflows/
+    non_longevous_dataset/
+    longevity_dataset/
+    alphagenome/
   converters/
-  legacy/
+    vcf_to_23andme/
+
+docs/
+  components/
+  concepts/
+  getting-started/
+  guides/
+  historical/
+    alphagenome/
+    1000-genomes/
+  operations/
+    monster.md
+    scripts.md
+  reference/
 
 legacy/
   neural_ancestry_predictor_deprecated/
@@ -43,7 +62,9 @@ third_party/
 - New commands should be exposed through `genomics ...`.
 - Shared code belongs in `src/genomics/core/`.
 - Canonical configs belong under `configs/`.
+- Legacy-only neural ancestry configs belong under `legacy/neural_ancestry_predictor_deprecated/configs/`, not under `configs/`.
 - Historical reproducibility code belongs under `legacy/`.
+- Historical notes and migration records belong under `docs/historical/`.
 - External modified code belongs under `third_party/`.
 - Native non-Python tools belong under `native/`.
 - Root-level wrappers and old package directories should not be reintroduced.

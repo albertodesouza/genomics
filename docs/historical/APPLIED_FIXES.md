@@ -119,8 +119,8 @@ except AttributeError:
 
 1. **`scripts/diagnostics/check_alphagenome_outputs.py`** - List available outputs
 2. **`scripts/diagnostics/check_dna_client_methods.py`** - List API methods
-3. **`docs/AVAILABLE_OUTPUTS.md`** - Complete output documentation
-4. **`docs/SUPPORTED_SIZES.md`** - Guide to sequence sizes
+3. **`docs/historical/alphagenome/AVAILABLE_OUTPUTS.md`** - Complete output documentation
+4. **`docs/historical/alphagenome/SUPPORTED_SIZES.md`** - Guide to sequence sizes
 5. **`docs/APPLIED_FIXES.md`** - This file
 
 ## 🎯 How to Use Now
@@ -221,10 +221,10 @@ genomics alphagenome analyze -- \
 
 ## 📖 Additional Documentation
 
-- **Outputs**: See `docs/AVAILABLE_OUTPUTS.md`
-- **Sizes**: See `docs/SUPPORTED_SIZES.md`
-- **Check outputs**: `python scripts/check_alphagenome_outputs.py`
-- **Check methods**: `python scripts/check_dna_client_methods.py`
+- **Outputs**: See `docs/historical/alphagenome/AVAILABLE_OUTPUTS.md`
+- **Sizes**: See `docs/historical/alphagenome/SUPPORTED_SIZES.md`
+- **Check outputs**: `python scripts/diagnostics/check_alphagenome_outputs.py`
+- **Check methods**: `python scripts/diagnostics/check_dna_client_methods.py`
 
 ## 💡 Tips
 

@@ -2,6 +2,8 @@
 
 The repository is organized into active components, external tools, and legacy components.
 
+If you are reproducing the pipeline for the first time, start with [Building 1000 Genomes Dataset](../getting-started/building-1000-genomes-dataset.md), then [Training And Running Predictions](../getting-started/training-and-running-predictions.md). The component pages below are reference material for individual subsystems.
+
 | Component | CLI Prefix | Code |
 |---|---|---|
 | Genomes Analyzer | `genomics genomes-analyzer` | `src/genomics/workflows/genomes_analyzer/` |

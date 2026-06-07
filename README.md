@@ -32,11 +32,12 @@ The activation script loads Bash completion automatically when `genomics` is ins
 
 ## Documentation
 
-Public documentation is published with GitHub Pages at:
+Public documentation is built from `mkdocs.yml` and the Markdown sources in `docs/` with
+Material for MkDocs. The published site is available with GitHub Pages at:
 
 https://albertodesouza.github.io/genomics/
 
-The full documentation is organized under `docs/` and can be served with Material for MkDocs:
+Serve the same MkDocs site locally with:
 
 ```bash
 python3 -m pip install -e ".[docs]"

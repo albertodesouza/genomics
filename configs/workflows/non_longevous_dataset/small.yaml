@@ -25,7 +25,7 @@ data_sources:
   # CSV file with 1000 Genomes metadata
   # Header: FamilyID,SampleID,FatherID,MotherID,Sex,Population,Superpopulation
   # Sex: 1=Male, 2=Female
-  metadata_csv: "../../docs/1000_genomes_metadata.csv"  # Relativo ao diretório configs/
+  metadata_csv: "../../docs/historical/1000-genomes/1000_genomes_metadata.csv"  # Relativo ao diretório configs/
   
   # Reference genome
   reference:
@@ -202,4 +202,3 @@ logging:
   level: "INFO"              # DEBUG, INFO, WARNING, ERROR
   log_file: "non_longevous_dataset_small.log"
   console_output: true
-

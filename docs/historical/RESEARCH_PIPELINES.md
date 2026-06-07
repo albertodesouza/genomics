@@ -2,7 +2,7 @@
 
 Este repositório agora tem uma CLI comum para executar etapas separadas sem decorar os entrypoints internos de cada pacote.
 
-Resultados e comandos de experimentos importantes ficam em `docs/IMPORTANT_EXPERIMENTS.md`.
+Resultados e comandos de experimentos importantes ficam em `docs/historical/IMPORTANT_EXPERIMENTS.md`.
 
 ## Layout padrão
 

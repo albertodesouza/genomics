@@ -135,6 +135,12 @@ def _build_view_definition(config: PipelineConfig) -> Dict[str, Any]:
         "window_center_size": di.window_center_size,
         "downsample_factor": di.downsample_factor,
         "normalization_method": di.normalization_method,
+        "normalization_fit_splits": di.normalization_fit_splits,
+        "normalization_fit_sample_fraction": di.normalization_fit_sample_fraction,
+        "normalization_fit_min_samples": di.normalization_fit_min_samples,
+        "normalization_fit_min_samples_per_class": di.normalization_fit_min_samples_per_class,
+        "normalization_fit_random_seed": di.normalization_fit_random_seed,
+        "normalization_fit_stratify": di.normalization_fit_stratify,
         "selected_track_index": di.selected_track_index,
         "indel_include_valid_mask": di.indel_include_valid_mask,
         "alignment_mapping": di.alignment_mapping,
@@ -248,6 +254,63 @@ def _count_alignment_entries(processed_dataset: ProcessedGenomicDataset) -> Opti
     return total
 
 
+def _normalization_fit_base_indices(
+    config: PipelineConfig,
+    processed_dataset: ProcessedGenomicDataset,
+    split_base_indices: Dict[str, list[int]],
+) -> list[int]:
+    from genomics.core.sklearn_pca_cache import _stratified_fit_indices
+
+    selected_base_indices: list[int] = []
+    for split_name in config.dataset_input.normalization_fit_splits:
+        selected_base_indices.extend(split_base_indices.get(split_name, []))
+    selected_base_indices = list(dict.fromkeys(selected_base_indices))
+    if not selected_base_indices:
+        raise ValueError("normalization_fit_splits não selecionou nenhuma amostra")
+
+    di = config.dataset_input
+    fraction = float(di.normalization_fit_sample_fraction)
+    min_samples = int(di.normalization_fit_min_samples or 0)
+    min_per_class = int(di.normalization_fit_min_samples_per_class or 0)
+    if fraction >= 1.0 and min_samples <= 0 and min_per_class <= 0:
+        return selected_base_indices
+
+    labels = []
+    pedigree = processed_dataset.dataset_metadata.get("individuals_pedigree", {}) or {}
+    for base_idx in selected_base_indices:
+        sample_id = processed_dataset._sample_id_for_base_index(base_idx)
+        target_text = None
+        if sample_id and sample_id in pedigree:
+            target_text = processed_dataset._get_target_value(pedigree.get(sample_id, {}))
+        if target_text is None:
+            try:
+                _data, output = processed_dataset.base_dataset[base_idx]
+                target_text = processed_dataset._get_target_value(output)
+            except Exception:
+                target_text = None
+        labels.append(processed_dataset.target_to_idx.get(target_text, -1))
+    valid_pairs = [(idx, label) for idx, label in zip(selected_base_indices, labels) if label >= 0]
+    if not valid_pairs:
+        raise ValueError("Não foi possível obter targets para subamostragem de normalização")
+    selected_base_indices = [idx for idx, _label in valid_pairs]
+    labels = [label for _idx, label in valid_pairs]
+    fit_local_indices = _stratified_fit_indices(
+        np.asarray(labels, dtype=np.int64),
+        fraction=fraction,
+        min_samples=min_samples,
+        min_samples_per_class=min_per_class,
+        random_seed=di.normalization_fit_random_seed,
+        stratify=di.normalization_fit_stratify,
+    )
+    fit_base_indices = [selected_base_indices[idx] for idx in fit_local_indices]
+    console.print(
+        f"[cyan]Normalization fit subset: {len(fit_base_indices)}/{len(selected_base_indices)} "
+        f"amostras (splits={di.normalization_fit_splits}, fraction={fraction}, "
+        f"stratify={di.normalization_fit_stratify})[/cyan]"
+    )
+    return fit_base_indices
+
+
 def _resolve_runtime_dataset_dir(config: PipelineConfig) -> Path:
     dataset_dir = Path(config.dataset_input.dataset_dir)
     if is_dataset_dir(dataset_dir):
@@ -320,6 +383,12 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
             "window_center_size": config.dataset_input.window_center_size,
             "downsample_factor": config.dataset_input.downsample_factor,
             "normalization_method": config.dataset_input.normalization_method,
+            "normalization_fit_splits": config.dataset_input.normalization_fit_splits,
+            "normalization_fit_sample_fraction": config.dataset_input.normalization_fit_sample_fraction,
+            "normalization_fit_min_samples": config.dataset_input.normalization_fit_min_samples,
+            "normalization_fit_min_samples_per_class": config.dataset_input.normalization_fit_min_samples_per_class,
+            "normalization_fit_random_seed": config.dataset_input.normalization_fit_random_seed,
+            "normalization_fit_stratify": config.dataset_input.normalization_fit_stratify,
             "selected_track_index": config.dataset_input.selected_track_index,
             "indel_include_valid_mask": config.dataset_input.indel_include_valid_mask,
             "alignment_mapping": config.dataset_input.alignment_mapping,
@@ -723,6 +792,12 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                 "window_center_size": config.dataset_input.window_center_size,
                 "downsample_factor": config.dataset_input.downsample_factor,
                 "normalization_method": config.dataset_input.normalization_method,
+                "normalization_fit_splits": config.dataset_input.normalization_fit_splits,
+                "normalization_fit_sample_fraction": config.dataset_input.normalization_fit_sample_fraction,
+                "normalization_fit_min_samples": config.dataset_input.normalization_fit_min_samples,
+                "normalization_fit_min_samples_per_class": config.dataset_input.normalization_fit_min_samples_per_class,
+                "normalization_fit_random_seed": config.dataset_input.normalization_fit_random_seed,
+                "normalization_fit_stratify": config.dataset_input.normalization_fit_stratify,
                 "selected_track_index": config.dataset_input.selected_track_index,
                 "indel_include_valid_mask": config.dataset_input.indel_include_valid_mask,
                 "indel_include_snp_mask": config.dataset_input.indel_include_snp_mask,
@@ -989,7 +1064,8 @@ def prepare_data(config: PipelineConfig, experiment_dir: Path):
     Tenta carregar do cache. Se não existir ou for inválido, processa
     do zero e salva o cache para reutilização futura.
 
-    Normalização é computada APENAS com train+val para evitar data leakage.
+    Normalização é computada apenas com os splits configurados em
+    dataset_input.normalization_fit_splits para evitar data leakage.
     """
     runtime_dataset_dir = _resolve_runtime_dataset_dir(config)
 
@@ -1043,11 +1119,16 @@ def prepare_data(config: PipelineConfig, experiment_dir: Path):
 
     train_idx, val_idx, test_idx = flatten(train_g), flatten(val_g), flatten(test_g)
 
-    # Normalização apenas com train+val, a menos que um arquivo compatível já exista.
+    # Normalização apenas com train/val configurados, a menos que um arquivo compatível já exista.
     norm_params = _load_external_normalization_params(config)
     if norm_params is None:
-        train_val_base = [bi for gi in (train_g + val_g) for bi in sample_groups[gi]]
-        tv_subset = Subset(base_dataset, train_val_base)
+        split_base_indices = {
+            "train": [bi for gi in train_g for bi in sample_groups[gi]],
+            "val": [bi for gi in val_g for bi in sample_groups[gi]],
+        }
+        probe_ds = ProcessedGenomicDataset(base_dataset, config, normalization_params={"mean": 0.0, "std": 1.0}, compute_normalization=False)
+        normalization_base = _normalization_fit_base_indices(config, probe_ds, split_base_indices)
+        tv_subset = Subset(base_dataset, normalization_base)
         temp_ds = ProcessedGenomicDataset(tv_subset, config, normalization_params=None, compute_normalization=True)
         norm_params = temp_ds.normalization_params
 

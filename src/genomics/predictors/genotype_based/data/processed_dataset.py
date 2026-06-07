@@ -126,6 +126,8 @@ class ProcessedGenomicDataset(Dataset):
         self._reference_prediction_cache: Dict[Tuple[str, str, int], np.ndarray] = {}
         self._reference_prediction_metadata_cache: Dict[Tuple[str, str], Optional[List[Dict]]] = {}
         self._expanded_slice_cache: Dict[str, Tuple[int, int]] = {}
+        self._normalization_tensor_cache: Dict[Tuple[Any, ...], torch.Tensor] = {}
+        self._normalization_mask_cache: Dict[Tuple[Any, ...], Tuple[torch.Tensor, List[Dict]]] = {}
         self._global_variation_mask_cache_dir = self.dataset_dir / "alignment_cache" / "global_variation_masks_v1"
         self.profile_stats = {
             "base_fetch_s": 0.0,
@@ -998,22 +1000,48 @@ class ProcessedGenomicDataset(Dataset):
         if self.feature_mode == "masks_only":
             return features_tensor
 
+        def param_tensor(
+            cache_key: Tuple[Any, ...],
+            params: List[Dict],
+            field: str,
+            default: float,
+            clamp_min: Optional[float] = None,
+        ) -> torch.Tensor:
+            key = cache_key + (field, str(features_tensor.dtype), str(features_tensor.device))
+            cached = self._normalization_tensor_cache.get(key)
+            if cached is None:
+                cached = torch.tensor(
+                    [p.get(field, default) for p in params],
+                    dtype=features_tensor.dtype,
+                    device=features_tensor.device,
+                ).view(-1, 1)
+                if clamp_min is not None:
+                    cached = cached.clamp_min(clamp_min)
+                self._normalization_tensor_cache[key] = cached
+            return cached
+
         if self.config.dataset_input.tensor_layout == "raw_center_crop":
             method = self.normalization_params.get("method", "zscore")
             per_track = self.normalization_params.get("per_track", False)
             if per_track:
                 t0 = time.perf_counter()
                 track_params = self.normalization_params["track_params"]
-                params = [track_params[ti] if ti < len(track_params) else track_params[ti % len(track_params)] for ti in range(features_tensor.shape[0])]
+                cache_key = ("raw", int(features_tensor.shape[0]))
+                params = self._normalization_mask_cache.get(cache_key)
+                if params is None:
+                    params = [track_params[ti] if ti < len(track_params) else track_params[ti % len(track_params)] for ti in range(features_tensor.shape[0])]
+                    self._normalization_mask_cache[cache_key] = (torch.empty(0), params)
+                else:
+                    params = params[1]
                 if method == "zscore":
-                    mean = torch.tensor([p.get("mean", 0.0) for p in params], dtype=features_tensor.dtype, device=features_tensor.device).view(-1, 1)
-                    std = torch.tensor([p.get("std", 1.0) for p in params], dtype=features_tensor.dtype, device=features_tensor.device).clamp_min(1e-8).view(-1, 1)
+                    mean = param_tensor(cache_key, params, "mean", 0.0)
+                    std = param_tensor(cache_key, params, "std", 1.0, clamp_min=1e-8)
                     features_tensor = (features_tensor - mean) / std
                 elif method == "minmax_keep_zero":
-                    xmax = torch.tensor([p.get("max", 1.0) for p in params], dtype=features_tensor.dtype, device=features_tensor.device).clamp_min(1e-8).view(-1, 1)
+                    xmax = param_tensor(cache_key, params, "max", 1.0, clamp_min=1e-8)
                     features_tensor = features_tensor / xmax
                 elif method == "log":
-                    log_max = torch.tensor([p.get("log_max", 1.0) for p in params], dtype=features_tensor.dtype, device=features_tensor.device).clamp_min(1e-8).view(-1, 1)
+                    log_max = param_tensor(cache_key, params, "log_max", 1.0, clamp_min=1e-8)
                     features_tensor = torch.log1p(features_tensor) / log_max
                 else:
                     features_tensor = apply_normalization(features_tensor, self.normalization_params)
@@ -1035,27 +1063,39 @@ class ProcessedGenomicDataset(Dataset):
             t0 = time.perf_counter()
             flat = features_tensor.view(-1, features_tensor.shape[-1])
             track_params = self.normalization_params["track_params"]
-            params = []
-            normalize_rows = []
-            for ti in range(flat.shape[0]):
-                channel_idx = ti % features_tensor.shape[1]
-                gene_channel_idx = channel_idx % channels_per_gene if channels_per_gene > 0 else channel_idx
-                is_mask_channel = gene_channel_idx >= signal_channels_per_gene
-                normalize_rows.append(not is_mask_channel)
-                params.append(track_params[ti] if ti < len(track_params) else track_params[ti % len(track_params)])
-            row_mask = torch.tensor(normalize_rows, dtype=torch.bool, device=features_tensor.device)
+            cache_key = (
+                "haplotype",
+                int(flat.shape[0]),
+                int(features_tensor.shape[1]),
+                int(channels_per_gene),
+                int(signal_channels_per_gene),
+            )
+            mask_entry = self._normalization_mask_cache.get(cache_key + (str(features_tensor.device),))
+            if mask_entry is None:
+                params = []
+                normalize_rows = []
+                for ti in range(flat.shape[0]):
+                    channel_idx = ti % features_tensor.shape[1]
+                    gene_channel_idx = channel_idx % channels_per_gene if channels_per_gene > 0 else channel_idx
+                    is_mask_channel = gene_channel_idx >= signal_channels_per_gene
+                    normalize_rows.append(not is_mask_channel)
+                    params.append(track_params[ti] if ti < len(track_params) else track_params[ti % len(track_params)])
+                row_mask = torch.tensor(normalize_rows, dtype=torch.bool, device=features_tensor.device)
+                selected_params = [p for p, keep in zip(params, normalize_rows) if keep]
+                self._normalization_mask_cache[cache_key + (str(features_tensor.device),)] = (row_mask, selected_params)
+            else:
+                row_mask, selected_params = mask_entry
             if row_mask.any():
                 normalized = flat.clone()
-                selected_params = [p for p, keep in zip(params, normalize_rows) if keep]
                 if method == "zscore":
-                    mean = torch.tensor([p.get("mean", 0.0) for p in selected_params], dtype=features_tensor.dtype, device=features_tensor.device).view(-1, 1)
-                    std = torch.tensor([p.get("std", 1.0) for p in selected_params], dtype=features_tensor.dtype, device=features_tensor.device).clamp_min(1e-8).view(-1, 1)
+                    mean = param_tensor(cache_key, selected_params, "mean", 0.0)
+                    std = param_tensor(cache_key, selected_params, "std", 1.0, clamp_min=1e-8)
                     normalized[row_mask] = (flat[row_mask] - mean) / std
                 elif method == "minmax_keep_zero":
-                    xmax = torch.tensor([p.get("max", 1.0) for p in selected_params], dtype=features_tensor.dtype, device=features_tensor.device).clamp_min(1e-8).view(-1, 1)
+                    xmax = param_tensor(cache_key, selected_params, "max", 1.0, clamp_min=1e-8)
                     normalized[row_mask] = flat[row_mask] / xmax
                 elif method == "log":
-                    log_max = torch.tensor([p.get("log_max", 1.0) for p in selected_params], dtype=features_tensor.dtype, device=features_tensor.device).clamp_min(1e-8).view(-1, 1)
+                    log_max = param_tensor(cache_key, selected_params, "log_max", 1.0, clamp_min=1e-8)
                     normalized[row_mask] = torch.log1p(flat[row_mask]) / log_max
                 else:
                     normalized[row_mask] = apply_normalization(flat[row_mask], self.normalization_params)

@@ -16,7 +16,7 @@ Status: concluida nesta etapa.
 
 Objetivos:
 
-- Documentar a arquitetura alvo em `docs/ARCHITECTURE.md`.
+- Documentar a arquitetura alvo em `docs/historical/ARCHITECTURE.md`.
 - Atualizar o `README.md` raiz para explicar o repo como plataforma multi-pipeline.
 - Manter o codigo no lugar por enquanto.
 
@@ -179,5 +179,5 @@ A migracao pode ser considerada concluida quando:
 - Codigo novo usa apenas imports `genomics.*`.
 - Wrappers antigos foram removidos.
 - `python3 -m pytest tests` passa.
-- `docs/ARCHITECTURE.md` reflete o layout real.
+- `docs/historical/ARCHITECTURE.md` reflete o layout real.
 - O README raiz e um indice da plataforma, nao a documentacao de um unico pipeline.

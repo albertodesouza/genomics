@@ -18,9 +18,8 @@ Arguments after `--` are forwarded to the underlying workflow modules.
 |---|---|
 | Code | `src/genomics/workflows/alphagenome/` |
 | Configs | `configs/workflows/alphagenome/` |
-| Sequence guide | `docs/DOWNLOAD_SEQUENCES.md` |
-| Output types | `docs/AVAILABLE_OUTPUTS.md` |
-| Supported sizes | `docs/SUPPORTED_SIZES.md` |
+| Sequence and output guide | `docs/guides/alphagenome-sequences.md` |
+| Track discovery script | `scripts/diagnostics/check_alphagenome_outputs.py` |
 
 ## Typical Uses
 
@@ -50,7 +49,7 @@ FASTA input
   -> arrays, metadata, plots, and optional variant comparison
 ```
 
-The workflow supports the sequence sizes accepted by AlphaGenome. See [Supported Sizes](../SUPPORTED_SIZES.md) for practical resizing examples.
+The workflow supports the sequence sizes accepted by AlphaGenome. See [AlphaGenome Sequences And Outputs](../guides/alphagenome-sequences.md) for practical extraction, sizing, and output selection examples.
 
 ## Integration Flow
 
@@ -62,6 +61,14 @@ Supported sources include:
 - BED intervals;
 - gene lists;
 - manually supplied FASTA files.
+
+Use `genomics alphagenome tracks` to export the currently available AlphaGenome output and ontology metadata:
+
+```bash
+genomics alphagenome tracks --api-key API_KEY --output configs/workflows/alphagenome/tracks.json
+```
+
+That metadata is useful when selecting `alphagenome_outputs` and `ontology_terms` for dataset builders and genotype predictor configs.
 
 ## Outputs
 

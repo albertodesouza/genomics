@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 if TYPE_CHECKING:
     from sklearn.decomposition import IncrementalPCA
@@ -156,6 +156,95 @@ def _dataloader_len(loader: DataLoader) -> Optional[int]:
         return len(loader)
     except TypeError:
         return None
+
+
+def _labels_for_dataset(dataset: Any) -> np.ndarray:
+    labels = []
+    for idx in range(len(dataset)):
+        _features, target, _item_idx = dataset[idx]
+        labels.append(int(target.item() if hasattr(target, "item") else target))
+    return np.asarray(labels, dtype=np.int64)
+
+
+def _stratified_fit_indices(
+    labels: np.ndarray,
+    *,
+    fraction: float,
+    min_samples: int,
+    min_samples_per_class: int,
+    random_seed: int,
+    stratify: bool,
+) -> List[int]:
+    n_total = int(labels.shape[0])
+    if n_total <= 0:
+        return []
+    requested = int(np.ceil(n_total * float(fraction)))
+    requested = max(requested, int(min_samples))
+    if stratify and min_samples_per_class > 0:
+        requested = max(requested, int(min_samples_per_class) * len(np.unique(labels)))
+    requested = min(max(requested, 1), n_total)
+    if requested >= n_total:
+        return list(range(n_total))
+
+    rng = np.random.default_rng(int(random_seed))
+    if not stratify:
+        return sorted(rng.choice(n_total, size=requested, replace=False).astype(int).tolist())
+
+    selected: List[int] = []
+    class_indices = []
+    for label in sorted(int(x) for x in np.unique(labels)):
+        idxs = np.flatnonzero(labels == label)
+        rng.shuffle(idxs)
+        class_indices.append(idxs)
+        target_count = int(np.ceil(len(idxs) * float(fraction)))
+        target_count = max(target_count, int(min_samples_per_class))
+        target_count = min(target_count, len(idxs))
+        selected.extend(idxs[:target_count].astype(int).tolist())
+
+    if len(selected) < requested:
+        selected_set = set(selected)
+        remaining = np.asarray([idx for idx in range(n_total) if idx not in selected_set], dtype=np.int64)
+        rng.shuffle(remaining)
+        selected.extend(remaining[: requested - len(selected)].astype(int).tolist())
+    if len(selected) > requested:
+        selected = rng.choice(np.asarray(selected, dtype=np.int64), size=requested, replace=False).astype(int).tolist()
+    return sorted(int(idx) for idx in selected)
+
+
+def make_pca_fit_loader(train_loader: DataLoader, config: Dict[str, Any], log: Optional[Callable[[str], None]] = None) -> DataLoader:
+    """Return a stratified training subset loader for fitting scaler/PCA only."""
+    log = log or print
+    sk = config.get("model", {}).get("sklearn", {})
+    fraction = float(sk.get("pca_fit_sample_fraction", 1.0))
+    min_samples = int(sk.get("pca_fit_min_samples", 0) or 0)
+    min_per_class = int(sk.get("pca_fit_min_samples_per_class", 0) or 0)
+    seed = int(sk.get("pca_fit_random_seed", config.get("data_split", {}).get("random_seed", 13) or 13))
+    stratify = bool(sk.get("pca_fit_stratify", True))
+    if fraction >= 1.0 and min_samples <= 0 and min_per_class <= 0:
+        return train_loader
+
+    labels = _labels_for_dataset(train_loader.dataset)
+    fit_indices = _stratified_fit_indices(
+        labels,
+        fraction=fraction,
+        min_samples=min_samples,
+        min_samples_per_class=min_per_class,
+        random_seed=seed,
+        stratify=stratify,
+    )
+    if len(fit_indices) >= len(train_loader.dataset):
+        return train_loader
+    log(
+        f"[cyan]PCA fit subset: {len(fit_indices)}/{len(train_loader.dataset)} "
+        f"amostras (fraction={fraction}, stratify={stratify})[/cyan]"
+    )
+    return DataLoader(
+        Subset(train_loader.dataset, fit_indices),
+        batch_size=train_loader.batch_size,
+        shuffle=False,
+        num_workers=0,
+        collate_fn=train_loader.collate_fn,
+    )
 
 
 def fit_standard_scaler_incremental(
@@ -559,6 +648,7 @@ def pca_cache_is_valid(
     pca_components_requested: int,
     n_features: int,
     n_train: int,
+    n_fit: int,
     n_val: int,
     n_test: int,
     prediction_target: str,
@@ -568,6 +658,11 @@ def pca_cache_is_valid(
     randomized_pca_n_iter: int,
     randomized_pca_feature_chunk_size: int,
     randomized_pca_dtype: str,
+    pca_fit_sample_fraction: float,
+    pca_fit_min_samples: int,
+    pca_fit_min_samples_per_class: int,
+    pca_fit_random_seed: int,
+    pca_fit_stratify: bool,
 ) -> bool:
     cache_dir = Path(cache_dir)
     if not (cache_dir / COMPLETE_FLAG).exists():
@@ -588,6 +683,8 @@ def pca_cache_is_valid(
         return False
     if int(meta.get("n_train", -1)) != int(n_train):
         return False
+    if int(meta.get("n_fit", n_train)) != int(n_fit):
+        return False
     if int(meta.get("n_val", -1)) != int(n_val):
         return False
     if int(meta.get("n_test", -1)) != int(n_test):
@@ -597,6 +694,16 @@ def pca_cache_is_valid(
     if bool(meta.get("pca_align_n_train", False)) != bool(pca_align_n_train):
         return False
     if str(meta.get("pca_backend", "incremental")) != str(pca_backend):
+        return False
+    if float(meta.get("pca_fit_sample_fraction", 1.0)) != float(pca_fit_sample_fraction):
+        return False
+    if int(meta.get("pca_fit_min_samples", 0)) != int(pca_fit_min_samples):
+        return False
+    if int(meta.get("pca_fit_min_samples_per_class", 0)) != int(pca_fit_min_samples_per_class):
+        return False
+    if int(meta.get("pca_fit_random_seed", 13)) != int(pca_fit_random_seed):
+        return False
+    if bool(meta.get("pca_fit_stratify", True)) != bool(pca_fit_stratify):
         return False
     if str(pca_backend) == "randomized_streaming":
         if int(meta.get("randomized_pca_oversampling", -1)) != int(randomized_pca_oversampling):
@@ -636,15 +743,22 @@ def build_sklearn_pca_cache(
     randomized_n_iter = int(sk.get("randomized_pca_n_iter", 2))
     randomized_feature_chunk_size = int(sk.get("randomized_pca_feature_chunk_size", 16384))
     randomized_dtype = str(sk.get("randomized_pca_dtype", "float32"))
+    pca_fit_fraction = float(sk.get("pca_fit_sample_fraction", 1.0))
+    pca_fit_min_samples = int(sk.get("pca_fit_min_samples", 0) or 0)
+    pca_fit_min_per_class = int(sk.get("pca_fit_min_samples_per_class", 0) or 0)
+    pca_fit_seed = int(sk.get("pca_fit_random_seed", config.get("data_split", {}).get("random_seed", 13) or 13))
+    pca_fit_stratify = bool(sk.get("pca_fit_stratify", True))
 
     n_train = len(train_loader.dataset)
     n_val = len(val_loader.dataset)
     n_test = len(test_loader.dataset)
-    first = next(iter(train_loader))
+    fit_loader = make_pca_fit_loader(train_loader, config, log=log)
+    n_fit = len(fit_loader.dataset)
+    first = next(iter(fit_loader))
     n_features = int(np.prod(first[0].shape[1:]))
 
     effective_k, pca_req = compute_sklearn_pca_effective_k(
-        config, n_train=n_train, n_features=n_features, log=log
+        config, n_train=n_fit, n_features=n_features, log=log
     )
 
     out_dir = get_sklearn_pca_cache_dir_path(dataset_cache_dir, pca_req, pca_backend)
@@ -658,6 +772,7 @@ def build_sklearn_pca_cache(
             pca_req,
             n_features,
             n_train,
+            n_fit,
             n_val,
             n_test,
             pred_target,
@@ -667,6 +782,11 @@ def build_sklearn_pca_cache(
             randomized_n_iter,
             randomized_feature_chunk_size,
             randomized_dtype,
+            pca_fit_fraction,
+            pca_fit_min_samples,
+            pca_fit_min_per_class,
+            pca_fit_seed,
+            pca_fit_stratify,
         )
     ):
         log(f"[green]✓ Cache PCA já existe e é válido: {out_dir}[/green]")
@@ -678,13 +798,13 @@ def build_sklearn_pca_cache(
 
     log(
         f"[cyan]Construindo cache PCA → {out_dir} | backend={pca_backend}, "
-        f"k={effective_k} (pedido={pca_req}, n_train={n_train}, D={n_features})[/cyan]"
+        f"k={effective_k} (pedido={pca_req}, n_fit={n_fit}, n_train={n_train}, D={n_features})[/cyan]"
     )
 
     if rich_console is None:
         log("[cyan]PCA cache: StandardScaler (treino)...[/cyan]")
     scaler = fit_standard_scaler_incremental(
-        train_loader,
+        fit_loader,
         rich_console=rich_console,
         progress_desc="PCA cache: StandardScaler (treino)",
     )
@@ -692,7 +812,7 @@ def build_sklearn_pca_cache(
         if rich_console is None:
             log("[cyan]PCA cache: IncrementalPCA (treino)...[/cyan]")
         pca = fit_incremental_pca_on_train(
-            train_loader,
+            fit_loader,
             scaler,
             effective_k,
             log=log,
@@ -704,7 +824,7 @@ def build_sklearn_pca_cache(
         if rich_console is None:
             log("[cyan]PCA cache: PCA randomizada streaming (treino)...[/cyan]")
         pca = fit_streaming_randomized_pca_on_train(
-            train_loader,
+            fit_loader,
             scaler,
             effective_k,
             out_dir,
@@ -762,11 +882,17 @@ def build_sklearn_pca_cache(
         "pca_n_components_effective": int(effective_k),
         "n_features_original": int(n_features),
         "n_train": int(n_train),
+        "n_fit": int(n_fit),
         "n_val": int(n_val),
         "n_test": int(n_test),
         "prediction_target": pred_target,
         "pca_align_n_train": align,
         "pca_backend": pca_backend,
+        "pca_fit_sample_fraction": pca_fit_fraction,
+        "pca_fit_min_samples": pca_fit_min_samples,
+        "pca_fit_min_samples_per_class": pca_fit_min_per_class,
+        "pca_fit_random_seed": pca_fit_seed,
+        "pca_fit_stratify": pca_fit_stratify,
         "randomized_pca_oversampling": randomized_oversampling,
         "randomized_pca_n_iter": randomized_n_iter,
         "randomized_pca_feature_chunk_size": randomized_feature_chunk_size,

@@ -13,7 +13,7 @@ dataset_input:
   feature_mode: "signals_only"
   alphagenome_outputs:
     - "rna_seq"
-  haplotype_mode: "H1+H2"
+  haplotype_mode: "H1"
   window_center_size: 32768
   downsample_factor: 1
   genes_to_use:
@@ -30,6 +30,12 @@ dataset_input:
     - "TCHH"
   normalization_method: "log"
   normalization_value: 0.0
+  normalization_fit_splits: ["train", "val", "test"]
+  normalization_fit_sample_fraction: 1.0
+  normalization_fit_min_samples: 0
+  normalization_fit_min_samples_per_class: 0
+  normalization_fit_random_seed: 13
+  normalization_fit_stratify: true
 
 output:
   prediction_target: "superpopulation"

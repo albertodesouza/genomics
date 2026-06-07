@@ -113,6 +113,24 @@ class DatasetInputConfig(BaseModel):
     normalization_value: float = 0.0
     """Valor pré-definido para normalização (legado, ignorado em per-track)."""
 
+    normalization_fit_splits: List[Literal["train", "val", "test"]] = Field(default_factory=lambda: ["train", "val"])
+    """Splits usados para estimar parâmetros de normalização, antes de aplicar em todos os splits."""
+
+    normalization_fit_sample_fraction: float = 1.0
+    """Fração dos splits de fit usada para estimar normalização."""
+
+    normalization_fit_min_samples: int = 0
+    """Mínimo global de amostras para estimar normalização."""
+
+    normalization_fit_min_samples_per_class: int = 0
+    """Mínimo por classe na subamostra estratificada de normalização."""
+
+    normalization_fit_random_seed: int = 13
+    """Seed da subamostragem usada para estimar normalização."""
+
+    normalization_fit_stratify: bool = True
+    """Se True, preserva distribuição de classes ao subamostrar para normalização."""
+
     ontology_terms: Optional[List[str]] = None
     """CURIEs de ontologia para filtrar tracks (ex: ['CL:0000236'])."""
 
@@ -165,6 +183,27 @@ class DatasetInputConfig(BaseModel):
         if not v:
             raise ValueError("alignment_axis_splits deve conter pelo menos um split")
         return list(dict.fromkeys(v))
+
+    @field_validator("normalization_fit_splits")
+    @classmethod
+    def normalization_fit_splits_must_not_be_empty(cls, v: List[str]) -> List[str]:
+        if not v:
+            raise ValueError("normalization_fit_splits deve conter pelo menos um split")
+        return list(dict.fromkeys(v))
+
+    @field_validator("normalization_fit_sample_fraction")
+    @classmethod
+    def normalization_fit_sample_fraction_valid(cls, v: float) -> float:
+        if not 0.0 < v <= 1.0:
+            raise ValueError("normalization_fit_sample_fraction deve estar em (0, 1]")
+        return v
+
+    @field_validator("normalization_fit_min_samples", "normalization_fit_min_samples_per_class")
+    @classmethod
+    def normalization_fit_counts_non_negative(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("normalization_fit_min_samples e normalization_fit_min_samples_per_class devem ser >= 0")
+        return v
 
     @model_validator(mode="before")
     @classmethod
@@ -285,6 +324,11 @@ class SklearnConfig(BaseModel):
     pca_components: Optional[int] = None
     use_pca_cache: bool = True
     pca_align_n_train: bool = False
+    pca_fit_sample_fraction: float = 1.0
+    pca_fit_min_samples: int = 0
+    pca_fit_min_samples_per_class: int = 0
+    pca_fit_random_seed: int = 13
+    pca_fit_stratify: bool = True
     pca_backend: Literal["incremental", "randomized_streaming"] = "incremental"
     randomized_pca_oversampling: int = 32
     randomized_pca_n_iter: int = 2
@@ -300,6 +344,20 @@ class SklearnConfig(BaseModel):
     def randomized_pca_non_negative(cls, v: int) -> int:
         if v < 0:
             raise ValueError("Parâmetros randomized_pca_* devem ser >= 0")
+        return v
+
+    @field_validator("pca_fit_sample_fraction")
+    @classmethod
+    def pca_fit_sample_fraction_valid(cls, v: float) -> float:
+        if not 0.0 < v <= 1.0:
+            raise ValueError("pca_fit_sample_fraction deve estar em (0, 1]")
+        return v
+
+    @field_validator("pca_fit_min_samples", "pca_fit_min_samples_per_class")
+    @classmethod
+    def pca_fit_sample_counts_non_negative(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("pca_fit_min_samples e pca_fit_min_samples_per_class devem ser >= 0")
         return v
 
 
@@ -540,6 +598,8 @@ class StabilityAnalysisConfig(BaseModel):
     selection_metric: Literal["accuracy", "precision", "recall", "f1"] = "accuracy"
     output_dir: Optional[str] = None
     run_name: Optional[str] = None
+    split_plan_path: Optional[str] = None
+    reuse_split_plan: bool = True
 
     @field_validator("n_repeats", "n_splits")
     @classmethod

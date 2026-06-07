@@ -3,6 +3,7 @@ metadata:
   paper: "ICANN accepted paper"
   migration_mode: "raw_center_crop"
   note: "PCA+RandomForest configuration adapted from the accepted-paper experiment config."
+  pca_selection: "pca_components is the operational value selected from the cumulative explained variance analysis; regenerate the curve with genomics genotype pca-variance."
 
 dataset_input:
   dataset_id: "1kg_high_coverage"
@@ -12,12 +13,18 @@ dataset_input:
   tensor_layout: "raw_center_crop"
   feature_mode: "signals_only"
   alphagenome_outputs: ["rna_seq"]
-  haplotype_mode: "H1+H2"
+  haplotype_mode: "H1"
   window_center_size: 32768
   downsample_factor: 1
   genes_to_use: ["MC1R", "TYRP1", "TYR", "SLC45A2", "DDB1", "EDAR", "MFSD12", "OCA2", "HERC2", "SLC24A5", "TCHH"]
   normalization_method: "log"
   normalization_value: 0.0
+  normalization_fit_splits: ["train", "val", "test"]
+  normalization_fit_sample_fraction: 1.0
+  normalization_fit_min_samples: 0
+  normalization_fit_min_samples_per_class: 0
+  normalization_fit_random_seed: 13
+  normalization_fit_stratify: true
 
 output:
   prediction_target: "superpopulation"
@@ -30,7 +37,12 @@ model:
   dropout_rate: 0.5
   sklearn:
     pca_components: 300
-    pca_backend: "randomized_streaming"
+    pca_fit_sample_fraction: 1.0
+    pca_fit_min_samples: 0
+    pca_fit_min_samples_per_class: 0
+    pca_fit_random_seed: 13
+    pca_fit_stratify: true
+    pca_backend: "incremental"
     randomized_pca_oversampling: 32
     randomized_pca_n_iter: 2
     randomized_pca_feature_chunk_size: 8192
@@ -104,6 +116,8 @@ stability_analysis:
   random_seed: 13
   stratify: true
   selection_metric: "accuracy"
+  split_plan_path: "results/genotype_based_predictor/icann/stability/shared_dev_split_plan_seed13.json"
+  reuse_split_plan: true
   output_dir: "results/genotype_based_predictor/icann/stability/rf_pca300"
 
 mode: "train"

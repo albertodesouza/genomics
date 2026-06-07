@@ -1,0 +1,69 @@
+# ICANN paper SNP MLC baseline using the full Illumina GSA V5 chip panel.
+
+input:
+  dataset_id: "1kg_high_coverage"
+  split_index: "../../../../results/cache/genotype_based_predictor/datasets/rna_seq_H1_32768_ds1_log_shuf_ont1_view0436a3bba883/split_index.json"
+  chromosomes:
+    - "chr1"
+    - "chr2"
+    - "chr3"
+    - "chr4"
+    - "chr5"
+    - "chr6"
+    - "chr7"
+    - "chr8"
+    - "chr9"
+    - "chr10"
+    - "chr11"
+    - "chr12"
+    - "chr13"
+    - "chr14"
+    - "chr15"
+    - "chr16"
+    - "chr17"
+    - "chr18"
+    - "chr19"
+    - "chr20"
+    - "chr21"
+    - "chr22"
+    - "chrX"
+
+conversion:
+  format_version: "V5"
+  skip_no_rsid: true
+  annotate_dbsnp: true
+  genome_build: "GRCh38"
+  filter_by_chip_panel: true
+  ref_dir: "refs"
+  snp_panel: null
+  parallel_chroms: "auto"
+  output_filename: "{sample_id}_icann_illumina_gsa_v5_diploid_23andme.txt"
+
+statistics:
+  output_dir: "../../../results/snp_ancestry_predictor/icann/statistics_illumina_gsa_diploid"
+  reference_subsets:
+    - "train"
+  min_maf: 0.001
+  max_snps: null
+  snp_panel: null
+
+prediction:
+  level: "superpopulation"
+  haplotype_mode: "H1+H2"
+  method: "mle"
+  evaluation_subsets:
+    - "train"
+    - "val"
+    - "test"
+  results_dir: "../../../results/snp_ancestry_predictor/icann/ancestry_results_illumina_gsa_diploid"
+  admixture_em:
+    max_iter: 1000
+    tol: 1.0e-7
+  admixture_mle:
+    n_restarts: 20
+
+pipeline:
+  steps:
+    generate_23andme: true
+    compute_statistics: true
+    predict_ancestry: true

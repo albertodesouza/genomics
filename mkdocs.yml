@@ -40,19 +40,27 @@ markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
+  - pymdownx.arithmatex:
+      generic: true
   - pymdownx.snippets
   - pymdownx.tabbed:
       alternate_style: true
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 nav:
   - Home: index.md
   - Getting Started:
       - Installation: getting-started/installation.md
       - Environment: getting-started/environment.md
-      - First Commands: getting-started/first-commands.md
+      - Building 1000 Genomes Dataset: getting-started/building-1000-genomes-dataset.md
+      - Training And Running Predictions: getting-started/training-and-running-predictions.md
   - Concepts:
       - Data And Results: concepts/data-and-results.md
       - Configuration: concepts/configuration.md
       - Experiments: concepts/experiments.md
+      - Dynamic Indel Tensor Alignment: concepts/dynamic-indel-tensor-alignment.md
+      - Preprocessing And Leakage: concepts/preprocessing-and-leakage.md
   - Components:
       - Overview: components/index.md
       - Genomes Analyzer: components/genomes-analyzer.md
@@ -66,20 +74,23 @@ nav:
       - Legacy: components/legacy.md
   - Operations:
       - Scripts: operations/scripts.md
-      - Monster Install: INSTALL_MONSTER.md
+      - Monster Install: operations/monster.md
   - Guides:
-      - Download Sequences: DOWNLOAD_SEQUENCES.md
-      - AlphaGenome Outputs: AVAILABLE_OUTPUTS.md
-      - Supported Sequence Sizes: SUPPORTED_SIZES.md
-      - Applied AlphaGenome Fixes: APPLIED_FIXES.md
+      - AlphaGenome Sequences And Outputs: guides/alphagenome-sequences.md
   - Reference:
       - CLI: reference/cli.md
       - Config Schemas: reference/configs.md
+      - Data Registry: reference/data-registry.md
       - Repository Layout: reference/repository-layout.md
-      - Architecture: ARCHITECTURE.md
-      - Research Pipelines: RESEARCH_PIPELINES.md
-      - Important Experiments: IMPORTANT_EXPERIMENTS.md
-      - Migration Notes: MIGRATION.md
+  - Historical Notes:
+      - Architecture Migration Notes: historical/ARCHITECTURE.md
+      - Research Pipelines: historical/RESEARCH_PIPELINES.md
+      - Important Experiments: historical/IMPORTANT_EXPERIMENTS.md
+      - Migration Plan: historical/MIGRATION.md
+      - Applied AlphaGenome Fixes: historical/APPLIED_FIXES.md
+      - Legacy Download Sequences: historical/alphagenome/DOWNLOAD_SEQUENCES.md
+      - Legacy AlphaGenome Outputs: historical/alphagenome/AVAILABLE_OUTPUTS.md
+      - Legacy Supported Sequence Sizes: historical/alphagenome/SUPPORTED_SIZES.md
   - Historical References:
-      - 1000 Genomes High Coverage README: 20190405_1000G_2504_high_cov_README.md
-      - 1000 Genomes Data Reuse README: 20190405_1000G_2504_high_cov_data_reuse_README.md
+      - 1000 Genomes High Coverage README: historical/1000-genomes/20190405_1000G_2504_high_cov_README.md
+      - 1000 Genomes Data Reuse README: historical/1000-genomes/20190405_1000G_2504_high_cov_data_reuse_README.md

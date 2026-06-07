@@ -134,7 +134,7 @@ genomics alphagenome analyze -- \
 
 Run the verification script:
 ```bash
-python scripts/check_alphagenome_outputs.py
+python scripts/diagnostics/check_alphagenome_outputs.py
 ```
 
 This script will list all outputs that your AlphaGenome installation supports.
@@ -203,7 +203,7 @@ Studies nuclear organization and loops.
 
 ### Error: "Output 'X' not available"
 **Cause**: Output doesn't exist or incorrect name  
-**Solution**: Run `python scripts/check_alphagenome_outputs.py` to see correct list
+**Solution**: Run `python scripts/diagnostics/check_alphagenome_outputs.py` to see correct list
 
 ### Error: "No valid output specified"
 **Cause**: All requested outputs are invalid  

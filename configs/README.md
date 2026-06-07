@@ -11,6 +11,7 @@ Historical config files remain in their original module directories as compatibi
 | Genotype-based predictor | `configs/predictors/genotype_based/` |
 | Genotype ICANN paper configs | `configs/predictors/genotype_based/icann/` |
 | Genotype raw-center-crop legacy baselines | `configs/predictors/genotype_based/neural_legacy/` |
+| SNP ancestry ICANN paper configs | `configs/predictors/snp_ancestry/icann/` |
 | Variant Transformer predictor | `configs/predictors/variant_transformer/` |
 | SNP ancestry predictor | `configs/predictors/snp_ancestry/` |
 | Non-longevous dataset builder | `configs/workflows/non_longevous_dataset/` |

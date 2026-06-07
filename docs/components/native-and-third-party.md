@@ -52,3 +52,5 @@ python3 tools/vcf_to_frog.py sample.vcf.gz tools/aisnps_55_list.txt input/sample
 ```
 
 Use the SNP ancestry pipeline for integrated `genomics` CLI runs. Use FROGAncestryCalc when reproducing or comparing against AISNP-panel likelihood methods.
+
+In the reproduction flow, FROGAncestryCalc is part of the [classical SNP superpopulation path](../getting-started/training-and-running-predictions.md#classical-snp-superpopulation-path), alongside the integrated SNP ancestry pipeline.

@@ -3224,7 +3224,7 @@ def main():
                 # Modo de comparação entre dois indivíduos
                 metadata_csv = config.get('data_sources', {}).get('metadata_csv')
                 if metadata_csv is None:
-                    metadata_csv = "../docs/1000_genomes_metadata.csv"
+                    metadata_csv = "../docs/historical/1000-genomes/1000_genomes_metadata.csv"
                 
                 viewer = InteractiveComparisonViewer(
                     config, splits_data, dataset_metadata, metadata_csv
@@ -3357,7 +3357,7 @@ def main():
                     # NOVO: Modo de comparação entre indivíduos
                     metadata_csv = config.get('data_sources', {}).get('metadata_csv')
                     if metadata_csv is None:
-                        metadata_csv = "../docs/1000_genomes_metadata.csv"
+                        metadata_csv = "../docs/historical/1000-genomes/1000_genomes_metadata.csv"
                     
                     viewer = InteractiveComparisonViewer(
                         config, splits_data, dataset_metadata, metadata_csv

@@ -111,7 +111,7 @@ def _apply_dataset_registry_defaults(config: dict) -> None:
     if not inp.get("split_index") and not inp.get("splits_metadata"):
         cache_dir = inp.get("genotype_cache_dir")
         if cache_dir:
-            split_index = Path(str(cache_dir)).expanduser() / "split_index.json"
+            split_index = _resolve_path(str(cache_dir), config) / "split_index.json"
             if split_index.exists():
                 inp["split_index"] = str(split_index)
 
@@ -151,7 +151,7 @@ def load_configured_splits(config: dict) -> dict:
     if inp.get("split_index"):
         return load_split_index(inp["split_index"], inp["individuals_dir"])
     if inp.get("genotype_cache_dir"):
-        split_index = Path(inp["genotype_cache_dir"]) / "split_index.json"
+        split_index = _resolve_path(inp["genotype_cache_dir"], config) / "split_index.json"
         if split_index.exists():
             return load_split_index(str(split_index), inp["individuals_dir"])
     return load_splits(inp["splits_metadata"])

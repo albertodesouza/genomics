@@ -94,6 +94,24 @@ dataset_input:
   # Legacy override for normalization constants. Keep 0.0 to compute normally.
   normalization_value: 0.0
 
+  # Splits used to estimate normalization parameters. The historical default is
+  # [train, val]. Use [train] for stricter model-selection hygiene: validation
+  # remains completely unseen by fitted preprocessing parameters. Parameters are
+  # still applied to all splits after fitting.
+  normalization_fit_splits:
+    - "train"
+    - "val"
+
+  # Optional stratified subsampling for fitting normalization only. This can
+  # speed up expensive log/zscore/minmax parameter estimation. zscore/log usually
+  # tolerate 30-50% if class coverage is preserved. minmax_keep_zero is more
+  # sensitive to missed extremes; prefer larger fractions such as 0.8 or keep 1.0.
+  normalization_fit_sample_fraction: 1.0
+  normalization_fit_min_samples: 0
+  normalization_fit_min_samples_per_class: 0
+  normalization_fit_random_seed: 13
+  normalization_fit_stratify: true
+
   # Optional ontology/cell-type filters. Examples: CL:1000458, CL:0000346.
   # null means use all tracks available for the selected outputs.
   ontology_terms:
@@ -209,6 +227,13 @@ model:
     use_pca_cache: true
     # Align PCA component count to the number of training samples.
     pca_align_n_train: false
+    # Optional stratified subset used only to fit scaler/PCA. Transform and model
+    # training still use the full train/val/test arrays. Keep 1.0 for exact PCA.
+    pca_fit_sample_fraction: 1.0
+    pca_fit_min_samples: 0
+    pca_fit_min_samples_per_class: 0
+    pca_fit_random_seed: 13
+    pca_fit_stratify: true
     # PCA implementation for large datasets.
     pca_backend: "incremental"
     randomized_pca_oversampling: 32
@@ -333,6 +358,26 @@ data_loading:
   # Processed tensor sharding controls.
   processed_shard_size: 64
   shard_cache_size: 4
+
+stability_analysis:
+  # Enables `genomics genotype stability`. Keep false for ordinary train/test.
+  enabled: false
+  # repeated_random_split resamples dev=train+val; cross_validation runs K folds.
+  strategy: "repeated_random_split"
+  n_repeats: 5
+  n_splits: 5
+  # null derives val fraction from data_split.val_split / (train+val).
+  val_split: null
+  random_seed: 13
+  stratify: true
+  selection_metric: "accuracy"
+  # Shared split plan path. Set the same path across model configs to guarantee
+  # they reuse exactly the same dev resampling plan by sample_id.
+  split_plan_path: null
+  reuse_split_plan: true
+  # Optional per-model output directory for stability metrics/artifacts.
+  output_dir: null
+  run_name: null
 
 # Execution mode for modules that support both training and testing.
 mode: "train"

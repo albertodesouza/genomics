@@ -170,8 +170,8 @@ print(len(rec.seq))
 
 ## 📚 Resources
 
-- **Check sizes**: `python scripts/check_alphagenome_outputs.py`
-- **Documentation**: See `docs/AVAILABLE_OUTPUTS.md`
+- **Check sizes**: `python scripts/diagnostics/check_alphagenome_outputs.py`
+- **Documentation**: See `docs/historical/alphagenome/AVAILABLE_OUTPUTS.md`
 - **Valid example**: `example_sequence.fasta` (2048 bp)
 
 ---

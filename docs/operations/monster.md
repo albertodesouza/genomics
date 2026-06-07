@@ -170,4 +170,4 @@ hc_java_mem_gb: 32
 1. **Verifique logs**: `tail -f pipeline_monster_*.log`
 2. **Monitore recursos**: `htop`
 3. **Verifique espaço**: `df -h`
-4. **Teste ferramentas**: `source start_genomics_universal.sh`
+4. **Teste ferramentas**: `source scripts/env/start_genomics_universal.sh`

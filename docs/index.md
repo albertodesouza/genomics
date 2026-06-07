@@ -20,10 +20,10 @@
 
 1. [Installation](getting-started/installation.md)
 2. [Environment](getting-started/environment.md)
-3. [First Commands](getting-started/first-commands.md)
-4. [Components Overview](components/index.md)
-5. [CLI Reference](reference/cli.md)
-6. [Repository Layout](reference/repository-layout.md)
+3. [Building 1000 Genomes Dataset](getting-started/building-1000-genomes-dataset.md)
+4. [Training And Running Predictions](getting-started/training-and-running-predictions.md)
+
+The Getting Started pages contain the reproduction commands. For background and implementation details, follow their links into Concepts, Components, and Reference.
 
 ## Primary Command
 

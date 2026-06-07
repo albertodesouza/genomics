@@ -9,4 +9,3 @@ If using this data please acknowledge that: “These data were generated at the 
 For more general information about the consent for the samples in this data set, please see http://www.internationalgenome.org/about#g1k_data_reuse.
 
 For general enquiries, please contact info@1000genomes.org.
-
