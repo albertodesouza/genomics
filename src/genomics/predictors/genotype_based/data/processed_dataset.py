@@ -140,6 +140,7 @@ class ProcessedGenomicDataset(Dataset):
         self._valid_sample_index_set = set(self.valid_sample_indices)
         self.target_to_idx: Dict[str, int] = {}
         self.idx_to_target: Dict[int, str] = {}
+        self.permuted_targets_by_sample_id: Dict[str, str] = {}
 
         if normalization_params is not None:
             self.normalization_params = normalization_params
@@ -149,6 +150,7 @@ class ProcessedGenomicDataset(Dataset):
             self.normalization_params = {"method": self.normalization_method, "mean": 0.0, "std": 1.0}
 
         self._create_target_mappings()
+        self._create_label_permutation_mapping()
 
     def _resolve_selected_sample_ids(self) -> Optional[Set[str]]:
         di = self.config.dataset_input
@@ -495,6 +497,46 @@ class ProcessedGenomicDataset(Dataset):
         if value is None and self.prediction_target not in {"frog_likelihood", *self.derived_targets.keys()} and self.prediction_target not in output_data:
             raise ValueError(f"prediction_target inválido: {self.prediction_target}")
         return value
+
+    def _create_label_permutation_mapping(self) -> None:
+        lp = self.config.label_permutation
+        if not lp.enabled:
+            return
+        if self.prediction_target == "frog_likelihood":
+            raise ValueError("label_permutation não é suportado para prediction_target='frog_likelihood'")
+
+        pairs: List[Tuple[str, str]] = []
+        for base_idx in self.valid_sample_indices:
+            sample_id = self._sample_id_for_base_index(base_idx)
+            if not sample_id:
+                continue
+            target_text = None
+            pedigree = self.dataset_metadata.get("individuals_pedigree", {}) or {}
+            if sample_id in pedigree:
+                target_text = self._get_target_value(pedigree.get(sample_id, {}))
+            if target_text is None:
+                try:
+                    _input_data, output_data = self.base_dataset[base_idx]
+                    target_text = self._get_target_value(output_data)
+                except Exception:
+                    target_text = None
+            if target_text in self.target_to_idx:
+                pairs.append((sample_id, str(target_text)))
+
+        if not pairs:
+            raise ValueError("label_permutation não encontrou labels válidos para permutar")
+
+        labels = [target_text for _sample_id, target_text in pairs]
+        rng = np.random.default_rng(lp.random_seed)
+        permuted = list(rng.permutation(labels))
+        self.permuted_targets_by_sample_id = {
+            sample_id: str(permuted_label)
+            for (sample_id, _target_text), permuted_label in zip(pairs, permuted)
+        }
+        console.print(
+            f"[yellow]Label permutation ativo: {len(self.permuted_targets_by_sample_id)} labels permutados "
+            f"(seed={lp.random_seed})[/yellow]"
+        )
 
     def _get_derived_target_value(self, output_data: Dict) -> Optional[str]:
         return target_value(output_data, self.prediction_target, self.derived_targets)
@@ -1115,11 +1157,20 @@ class ProcessedGenomicDataset(Dataset):
         self.profile_stats["normalization_s"] += time.perf_counter() - t0
         return features_tensor
 
-    def _build_target_tensor(self, output_data: Dict, features_tensor: torch.Tensor) -> torch.Tensor:
+    def _build_target_tensor(
+        self,
+        output_data: Dict,
+        features_tensor: torch.Tensor,
+        sample_id: Optional[str] = None,
+    ) -> torch.Tensor:
         if self.prediction_target == "frog_likelihood":
             return torch.FloatTensor(output_data.get("frog_likelihood", np.zeros(150)))
 
         target_value = self._get_target_value(output_data)
+        if self.config.label_permutation.enabled:
+            if sample_id is None or sample_id not in self.permuted_targets_by_sample_id:
+                return torch.tensor(-1, dtype=torch.long)
+            target_value = self.permuted_targets_by_sample_id[sample_id]
         if target_value in self.target_to_idx:
             target_idx = self.target_to_idx[target_value]
             target_tensor = torch.tensor(target_idx, dtype=torch.long)
@@ -1152,7 +1203,7 @@ class ProcessedGenomicDataset(Dataset):
         features = self._process_windows(input_data["windows"], sample_id=sample_id)
         self.profile_stats["window_process_s"] += time.perf_counter() - t0
         features_tensor = self._normalize_features_tensor(torch.FloatTensor(features))
-        target_tensor = self._build_target_tensor(output_data, features_tensor)
+        target_tensor = self._build_target_tensor(output_data, features_tensor, sample_id=sample_id)
         self.profile_stats["getitem_calls"] += 1
         return features_tensor, target_tensor
 

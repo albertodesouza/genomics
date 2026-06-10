@@ -202,7 +202,7 @@ def cmd_genotype_test(args: argparse.Namespace) -> int:
 
 
 def cmd_genotype_search(args: argparse.Namespace) -> int:
-    return _run_module("genomics.predictors.genotype_based.experiments.search_sklearn", [_genotype_config_with_overrides(args)])
+    return _run_module("genomics.predictors.genotype_based.experiments.search", [_genotype_config_with_overrides(args)])
 
 
 def cmd_genotype_stability(args: argparse.Namespace) -> int:

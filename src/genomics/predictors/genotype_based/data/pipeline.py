@@ -169,6 +169,7 @@ def _target_definition(config: PipelineConfig) -> Dict[str, Any]:
             name: target.model_dump(mode="python")
             for name, target in config.output.derived_targets.items()
         },
+        "label_permutation": config.label_permutation.model_dump(mode="python"),
     }
 
 
@@ -398,6 +399,7 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
             "prediction_target": config.output.prediction_target,
             "known_classes": config.output.known_classes,
             "derived_targets": _target_definition(config)["derived_targets"],
+            "label_permutation": config.label_permutation.model_dump(mode="python"),
             "input_shape": "2D_raw_center_crop" if config.dataset_input.tensor_layout == "raw_center_crop" else "3D_haplotype_channels",
             "center_window_policy": "raw_array_center_crop" if config.dataset_input.tensor_layout == "raw_center_crop" else "reference_center_to_expanded_axis",
             "mask_normalization_policy": "preserve_binary_masks_v1",
@@ -411,6 +413,12 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
                 cached_value = requested_view.get(k)
             if cached_value is None and k == "derived_targets":
                 cached_value = {}
+            if cached_value is None and k == "label_permutation":
+                cached_value = {
+                    "enabled": False,
+                    "random_seed": 13,
+                    "preserve_class_distribution": True,
+                }
             if cached_value != v:
                 console.print(f"[yellow]Cache inválido: {k} mudou ({cached_value} → {v})[/yellow]")
                 return False
@@ -820,6 +828,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                 "prediction_target": config.output.prediction_target,
                 "known_classes": config.output.known_classes,
                 "derived_targets": _target_definition(config)["derived_targets"],
+                "label_permutation": config.label_permutation.model_dump(mode="python"),
                 "input_shape": "2D_raw_center_crop" if config.dataset_input.tensor_layout == "raw_center_crop" else "3D_haplotype_channels",
                 "center_window_policy": "raw_array_center_crop" if config.dataset_input.tensor_layout == "raw_center_crop" else "reference_center_to_expanded_axis",
                 "mask_normalization_policy": "preserve_binary_masks_v1",

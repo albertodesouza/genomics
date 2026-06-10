@@ -456,6 +456,25 @@ class DataSplitConfig(BaseModel):
         return self
 
 
+class LabelPermutationConfig(BaseModel):
+    """Controle negativo por permutação determinística dos labels."""
+
+    enabled: bool = False
+    """Se True, usa labels permutados preservando a distribuição global de classes."""
+
+    random_seed: int = 13
+    """Seed usada para gerar a permutação reprodutível sample_id -> label."""
+
+    preserve_class_distribution: bool = True
+    """Mantido para documentação do ablation; apenas True é suportado."""
+
+    @model_validator(mode="after")
+    def validate_supported_mode(self) -> "LabelPermutationConfig":
+        if self.enabled and not self.preserve_class_distribution:
+            raise ValueError("label_permutation.preserve_class_distribution=false não é suportado")
+        return self
+
+
 class CheckpointingConfig(BaseModel):
     """Configuração de checkpoints do modelo."""
 
@@ -543,6 +562,23 @@ class XGBoostSearchConfig(BaseModel):
     eval_metric: str = "mlogloss"
 
 
+class PyTorchSearchCandidateConfig(BaseModel):
+    """Candidato nomeado para busca/ablation de modelos PyTorch."""
+
+    symbol: str
+    description: str = ""
+    baseline: bool = False
+    overrides: Dict[str, Any] = Field(default_factory=dict)
+
+
+class PyTorchSearchConfig(BaseModel):
+    """Busca/ablation para modelos PyTorch usando overrides nomeados."""
+
+    enabled: bool = False
+    candidates: List[PyTorchSearchCandidateConfig] = Field(default_factory=list)
+    copy_best_checkpoint: Literal["best_accuracy", "best_loss", "final"] = "best_accuracy"
+
+
 class HyperparameterSearchConfig(BaseModel):
     """Configuração de model selection em validação."""
 
@@ -553,6 +589,7 @@ class HyperparameterSearchConfig(BaseModel):
     run_name: Optional[str] = None
     random_forest: RandomForestSearchConfig = Field(default_factory=RandomForestSearchConfig)
     xgboost: XGBoostSearchConfig = Field(default_factory=XGBoostSearchConfig)
+    pytorch: PyTorchSearchConfig = Field(default_factory=PyTorchSearchConfig)
 
 
 class ConfidenceIntervalConfig(BaseModel):
@@ -648,6 +685,7 @@ class PipelineConfig(BaseModel):
     hyperparameter_search: HyperparameterSearchConfig = Field(default_factory=HyperparameterSearchConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
     stability_analysis: StabilityAnalysisConfig = Field(default_factory=StabilityAnalysisConfig)
+    label_permutation: LabelPermutationConfig = Field(default_factory=LabelPermutationConfig)
 
     mode: Literal["train", "test"] = "train"
     test_dataset: Literal["train", "val", "test"] = "test"
@@ -801,6 +839,8 @@ def generate_dataset_name(config: PipelineConfig) -> str:
             name: target.model_dump(mode="python")
             for name, target in config.output.derived_targets.items()
         }
+    if config.label_permutation.enabled:
+        view_payload["label_permutation"] = config.label_permutation.model_dump(mode="python")
     if di.feature_mode != "signals_and_masks":
         view_payload["feature_mode"] = di.feature_mode
     if di.alphagenome_signal_variant_mask:
@@ -863,6 +903,7 @@ def generate_experiment_name(config: PipelineConfig) -> str:
     act = m.activation
     dr = m.dropout_rate
     opt = config.training.optimizer
+    ablation = "_yrand" if config.label_permutation.enabled else ""
 
     if model_type == "cnn":
         c = m.cnn
@@ -870,13 +911,13 @@ def generate_experiment_name(config: PipelineConfig) -> str:
         st = f"s{c.stride[0]}x{c.stride[1]}" if isinstance(c.stride, list) else f"s{c.stride}"
         pad = f"p{c.padding[0]}x{c.padding[1]}" if isinstance(c.padding, list) else f"p{c.padding}"
         pool = f"pool{c.pool_size[0]}x{c.pool_size[1]}_" if c.pool_size else ""
-        return f"cnn_{target}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{ks}_f{c.num_filters}_{st}_{pad}_{pool}{hl}_{act}_{dr}_{opt}"
+        return f"cnn_{target}{ablation}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{ks}_f{c.num_filters}_{st}_{pad}_{pool}{hl}_{act}_{dr}_{opt}"
 
     elif model_type == "cnn2":
         c2 = m.cnn2
         ks1 = c2.kernel_stage1
         return (
-            f"cnn2_{target}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_"
+            f"cnn2_{target}{ablation}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_"
             f"s1k{ks1[0]}x{ks1[1]}f{c2.num_filters_stage1}_"
             f"s2f{c2.num_filters_stage2}_s3f{c2.num_filters_stage3}_"
             f"gp{c2.global_pool_type}_fc{c2.fc_hidden_size}_"
@@ -901,8 +942,8 @@ def generate_experiment_name(config: PipelineConfig) -> str:
             xgb = sk.xgboost
             lr = str(xgb.learning_rate).replace(".", "p")
             tag = f"xgb_nt{xgb.n_estimators}_md{xgb.max_depth}_lr{lr}"
-        return f"{model_type}_{target}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{pca}_{tag}"
+        return f"{model_type}_{target}{ablation}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{pca}_{tag}"
 
     else:
         # NN (default)
-        return f"nn_{target}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{hl}_{act}_{dr}_{opt}"
+        return f"nn_{target}{ablation}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{hl}_{act}_{dr}_{opt}"

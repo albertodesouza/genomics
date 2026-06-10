@@ -19,7 +19,7 @@ dataset_input:
   genes_to_use: ["MC1R", "TYRP1", "TYR", "SLC45A2", "DDB1", "EDAR", "MFSD12", "OCA2", "HERC2", "SLC24A5", "TCHH"]
   normalization_method: "log"
   normalization_value: 0.0
-  normalization_fit_splits: ["train", "val", "test"]
+  normalization_fit_splits: ["train"]
   normalization_fit_sample_fraction: 1.0
   normalization_fit_min_samples: 0
   normalization_fit_min_samples_per_class: 0
@@ -36,7 +36,7 @@ model:
   activation: "relu"
   dropout_rate: 0.5
   sklearn:
-    pca_components: 300
+    pca_components: 411
     pca_fit_sample_fraction: 1.0
     pca_fit_min_samples: 0
     pca_fit_min_samples_per_class: 0

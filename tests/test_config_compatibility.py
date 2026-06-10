@@ -3,7 +3,11 @@ from pathlib import Path
 import yaml
 
 from genomics.predictors.snp_ancestry.pipeline import load_config as load_snp_config
-from genomics.predictors.genotype_based.config import load_config as load_genotype_config
+from genomics.predictors.genotype_based.config import (
+    generate_dataset_name,
+    generate_experiment_name,
+    load_config as load_genotype_config,
+)
 
 
 def test_all_canonical_yaml_configs_load():
@@ -41,3 +45,18 @@ def test_genotype_stability_analysis_config_loads(monkeypatch, tmp_path):
     assert config.stability_analysis.strategy == "repeated_random_split"
     assert config.stability_analysis.n_repeats == 5
     assert config.stability_analysis.stratify is True
+
+
+def test_genotype_y_randomization_config_loads(monkeypatch, tmp_path):
+    monkeypatch.setenv("GENOMICS_DATA_ROOT", str(tmp_path / "data"))
+    config = load_genotype_config(
+        Path("configs/predictors/genotype_based/icann/genes_1000_all_cnn2_y_randomization.yaml")
+    )
+
+    assert config.label_permutation.enabled is True
+    assert config.label_permutation.random_seed == 13
+    assert config.label_permutation.preserve_class_distribution is True
+    assert "yrand" in generate_experiment_name(config)
+    assert generate_dataset_name(config) != generate_dataset_name(
+        load_genotype_config(Path("configs/predictors/genotype_based/icann/genes_1000_all_cnn2.yaml"))
+    )

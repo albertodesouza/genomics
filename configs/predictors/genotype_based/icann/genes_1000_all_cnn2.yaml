@@ -30,7 +30,7 @@ dataset_input:
     - "TCHH"
   normalization_method: "log"
   normalization_value: 0.0
-  normalization_fit_splits: ["train", "val", "test"]
+  normalization_fit_splits: ["train"]
   normalization_fit_sample_fraction: 1.0
   normalization_fit_min_samples: 0
   normalization_fit_min_samples_per_class: 0

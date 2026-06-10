@@ -44,6 +44,7 @@ genomics genotype train configs/predictors/genotype_based/genes_1000_all_3ontolo
 genomics genotype split configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml
 genomics genotype test configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml
 genomics genotype search configs/predictors/genotype_based/icann/search_rf_xgboost.yaml
+genomics genotype search configs/predictors/genotype_based/icann/search_cnn2_ablation.yaml
 genomics genotype stability configs/predictors/genotype_based/icann/genes_1000_all_rf.yaml
 genomics genotype confidence-intervals configs/predictors/genotype_based/icann/search_rf_xgboost.yaml --experiment-dir results/genotype_based_predictor/icann/search/rf_xgboost_pca300/best --split test
 genomics genotype evaluate configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml --checkpoint best_accuracy --split test
@@ -57,7 +58,7 @@ genomics genotype single-gene-screen configs/predictors/genotype_based/neural_le
 
 `genomics genotype split` materializes or validates the processed dataset cache, split metadata, and dataset report plots without training a model.
 
-`genomics genotype search` runs validation-only hyperparameter search for configured sklearn baselines. Use `genomics genotype test` on the selected best directory after model selection.
+`genomics genotype search` runs validation-only hyperparameter search for configured sklearn baselines or named PyTorch ablation candidates. Use `genomics genotype test` on the selected best directory after model selection.
 
 `genomics genotype stability` evaluates sklearn model stability on the development split only. It keeps the original test split fixed, resamples `train+val` using `stability_analysis.strategy` (`repeated_random_split`, `randomized_split`, or `cross_validation`), and writes aggregate validation metrics. Use the held-out test split only after model selection. Set the same `stability_analysis.split_plan_path` across model configs to reuse exactly the same resampling plan by `sample_id`.
 
