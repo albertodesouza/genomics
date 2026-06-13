@@ -42,8 +42,8 @@ model:
     pca_fit_min_samples_per_class: 0
     pca_fit_random_seed: 13
     pca_fit_stratify: true
-    pca_backend: "incremental"
-    randomized_pca_oversampling: 16
+    pca_backend: "randomized_streaming"
+    randomized_pca_oversampling: 32
     randomized_pca_n_iter: 2
     randomized_pca_feature_chunk_size: 4096
     randomized_pca_dtype: "float32"
@@ -51,7 +51,7 @@ model:
     pca_align_n_train: false
     xgboost:
       n_estimators: 200
-      max_depth: 4
+      max_depth: 6
       learning_rate: 0.1
       subsample: 0.8
       colsample_bytree: 0.8

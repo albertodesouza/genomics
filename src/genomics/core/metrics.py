@@ -48,7 +48,7 @@ def _fallback_classification_metrics(y_true: Sequence[int], y_pred: Sequence[int
     rows.append("")
     rows.append(f"{'accuracy':>12} {'':>10} {'':>9} {acc:9.2f} {total:9d}")
     rows.append(f"{'weighted avg':>12} {weighted_p:10.2f} {weighted_r:9.2f} {weighted_f1:9.2f} {total:9d}")
-    return {
+    return with_weighted_metric_aliases({
         "accuracy": acc,
         "precision": float(weighted_p),
         "recall": float(weighted_r),
@@ -57,7 +57,7 @@ def _fallback_classification_metrics(y_true: Sequence[int], y_pred: Sequence[int
         "per_class_metrics": per_class,
         "classification_report": "\n".join(rows),
         "num_samples": total,
-    }
+    })
 
 
 def classification_metrics(y_true: Sequence[int], y_pred: Sequence[int], class_names: Sequence[str]) -> Dict[str, Any]:
@@ -77,7 +77,7 @@ def classification_metrics(y_true: Sequence[int], y_pred: Sequence[int], class_n
             }
             for idx, name in enumerate(class_names)
         }
-        return {
+        return with_weighted_metric_aliases({
             "accuracy": float(acc),
             "precision": float(p),
             "recall": float(r),
@@ -86,9 +86,60 @@ def classification_metrics(y_true: Sequence[int], y_pred: Sequence[int], class_n
             "per_class_metrics": per_class,
             "classification_report": classification_report(y_true, y_pred, labels=labels, target_names=list(class_names), zero_division=0),
             "num_samples": len(y_true),
-        }
+        })
     except ImportError:
         return _fallback_classification_metrics(y_true, y_pred, class_names)
+
+
+def weighted_metric_aliases(results: Mapping[str, Any]) -> Dict[str, float]:
+    """Return explicit support-weighted metric fields for classification results.
+
+    Existing ``precision``, ``recall`` and ``f1`` are already support-weighted in
+    this package. These aliases make that explicit in saved JSONs and tables.
+    """
+    per_class = results.get("per_class_metrics") or {}
+    total_support = sum(float(row.get("support", 0.0)) for row in per_class.values() if isinstance(row, Mapping))
+
+    def weighted_from_per_class(metric: str) -> float:
+        if not total_support:
+            return 0.0
+        return float(
+            sum(
+                float(row.get(metric, 0.0)) * float(row.get("support", 0.0))
+                for row in per_class.values()
+                if isinstance(row, Mapping)
+            )
+            / total_support
+        )
+
+    def accuracy_from_confusion() -> float:
+        confusion = results.get("confusion_matrix") or []
+        matrix = np.asarray(confusion, dtype=float)
+        total = float(matrix.sum()) if matrix.size else 0.0
+        if not total:
+            return 0.0
+        return float(np.trace(matrix) / total)
+
+    accuracy = float(results["accuracy"]) if "accuracy" in results else accuracy_from_confusion()
+    precision = float(results["precision"]) if "precision" in results else weighted_from_per_class("precision")
+    recall = float(results["recall"]) if "recall" in results else weighted_from_per_class("recall")
+    f1 = float(results["f1"]) if "f1" in results else weighted_from_per_class("f1")
+    return {
+        "weighted_accuracy": accuracy,
+        "weighted_precision": precision,
+        "weighted_recall": recall,
+        "weighted_f1_score": f1,
+    }
+
+
+def with_weighted_metric_aliases(results: Dict[str, Any]) -> Dict[str, Any]:
+    aliases = weighted_metric_aliases(results)
+    results.setdefault("accuracy", aliases["weighted_accuracy"])
+    results.setdefault("precision", aliases["weighted_precision"])
+    results.setdefault("recall", aliases["weighted_recall"])
+    results.setdefault("f1", aliases["weighted_f1_score"])
+    results.update(aliases)
+    return results
 
 
 def bootstrap_confidence_intervals(
@@ -184,10 +235,10 @@ def print_classification_metrics(results: Dict[str, Any], title: str, console: C
     table = Table(title=title, show_header=True)
     table.add_column("Métrica")
     table.add_column("Valor", justify="right")
-    table.add_row("Accuracy", f"{float(results['accuracy']):.4f}")
-    table.add_row("Precision (weighted)", f"{float(results['precision']):.4f}")
-    table.add_row("Recall (weighted)", f"{float(results['recall']):.4f}")
-    table.add_row("F1 (weighted)", f"{float(results['f1']):.4f}")
+    table.add_row("W-Accuracy", f"{float(results.get('weighted_accuracy', results['accuracy'])):.4f}")
+    table.add_row("W-Precision", f"{float(results.get('weighted_precision', results['precision'])):.4f}")
+    table.add_row("W-Recall", f"{float(results.get('weighted_recall', results['recall'])):.4f}")
+    table.add_row("W-F1-score", f"{float(results.get('weighted_f1_score', results['f1'])):.4f}")
     table.add_row("Amostras", str(results.get("num_samples", "")))
     console.print(table)
     ci = results.get("confidence_intervals") or {}
@@ -198,11 +249,17 @@ def print_classification_metrics(results: Dict[str, Any], title: str, console: C
         ci_table.add_column("Valor", justify="right")
         ci_table.add_column("CI low", justify="right")
         ci_table.add_column("CI high", justify="right")
-        for metric in ("accuracy", "precision", "recall", "f1"):
-            interval = ci_metrics.get(metric) or {}
+        metric_labels = [
+            ("weighted_accuracy", "accuracy", "W-Accuracy"),
+            ("weighted_precision", "precision", "W-Precision"),
+            ("weighted_recall", "recall", "W-Recall"),
+            ("weighted_f1_score", "f1", "W-F1-score"),
+        ]
+        for weighted_key, legacy_key, label in metric_labels:
+            interval = ci_metrics.get(weighted_key) or ci_metrics.get(legacy_key) or {}
             ci_table.add_row(
-                metric,
-                f"{float(results.get(metric, 0.0)):.4f}",
+                label,
+                f"{float(results.get(weighted_key, results.get(legacy_key, 0.0))):.4f}",
                 f"{float(interval.get('low', 0.0)):.4f}",
                 f"{float(interval.get('high', 0.0)):.4f}",
             )
@@ -239,9 +296,40 @@ def print_classification_metrics(results: Dict[str, Any], title: str, console: C
         console.print(cmt)
 
 
+def public_classification_results(results: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return the user-facing classification payload with explicit weighted names.
+
+    Internally several training components still use the short metric names for
+    model selection and checkpoint bookkeeping. Persisted classification result
+    JSONs should avoid duplicating those names when they are identical to the
+    explicit weighted metrics.
+    """
+    payload = dict(results)
+    if not {"confusion_matrix", "per_class_metrics"}.issubset(payload):
+        return payload
+    payload.update(weighted_metric_aliases(payload))
+    for key in ("accuracy", "precision", "recall", "f1"):
+        payload.pop(key, None)
+    ci = payload.get("confidence_intervals")
+    if isinstance(ci, dict) and isinstance(ci.get("metrics"), dict):
+        metrics = dict(ci["metrics"])
+        aliases = {
+            "accuracy": "weighted_accuracy",
+            "precision": "weighted_precision",
+            "recall": "weighted_recall",
+            "f1": "weighted_f1_score",
+        }
+        for old_key, new_key in aliases.items():
+            if old_key in metrics and new_key not in metrics:
+                metrics[new_key] = metrics[old_key]
+            metrics.pop(old_key, None)
+        payload["confidence_intervals"] = {**ci, "metrics": metrics}
+    return payload
+
+
 def save_results_json(results: Dict[str, Any], output_path: Path, console: Console | None = None) -> None:
     serializable: Dict[str, Any] = {}
-    for key, value in results.items():
+    for key, value in public_classification_results(results).items():
         if isinstance(value, np.ndarray):
             serializable[key] = value.tolist()
         else:

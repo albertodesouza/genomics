@@ -13,6 +13,8 @@ LOG_DIR="$RUN_ROOT/logs"
 SUMMARY_FILE="$RUN_ROOT/summary.tsv"
 MIN_FREE_GB="${MIN_FREE_GB:-30}"
 CONTINUE_ON_ERROR="${CONTINUE_ON_ERROR:-0}"
+SKIP_EXISTING="${SKIP_EXISTING:-1}"
+FORCE_RERUN="${FORCE_RERUN:-0}"
 RUN_VALIDATIONS="${RUN_VALIDATIONS:-1}"
 RUN_PCA_VARIANCE="${RUN_PCA_VARIANCE:-1}"
 RUN_RF="${RUN_RF:-1}"
@@ -26,6 +28,7 @@ GENOMICS_BIN="${GENOMICS_BIN:-genomics}"
 export WANDB_MODE="${WANDB_MODE:-offline}"
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+export GENOTYPE_CACHE_BUILD_WORKERS="${GENOTYPE_CACHE_BUILD_WORKERS:-2}"
 
 mkdir -p "$LOG_DIR"
 printf "step\tstatus\tstarted_at\tended_at\tlog\tcommand\n" > "$SUMMARY_FILE"
@@ -99,25 +102,51 @@ run_if_enabled() {
   fi
 }
 
+run_if_missing() {
+  local enabled="$1"
+  shift
+  local name="$1"
+  shift
+  local marker="$1"
+  shift
+  local started ended command_text
+  if [ "$enabled" != "1" ]; then
+    log "Skipping $name"
+    return 0
+  fi
+  if [ "$FORCE_RERUN" != "1" ] && [ "$SKIP_EXISTING" = "1" ] && [ -e "$marker" ]; then
+    started="$(date -Iseconds)"
+    ended="$started"
+    command_text="$*"
+    log "Skipping $name because marker exists: $marker"
+    printf "%s\tskipped:exists\t%s\t%s\t%s\t%s\n" "$name" "$started" "$ended" "$marker" "$command_text" >> "$SUMMARY_FILE"
+    return 0
+  fi
+  run_step "$name" "$@"
+}
+
 log "ICANN genotype experiments"
 log "Run root: $RUN_ROOT"
 log "Logs: $LOG_DIR"
 log "Summary: $SUMMARY_FILE"
 log "Minimum free disk: ${MIN_FREE_GB}GB"
 log "CONTINUE_ON_ERROR: $CONTINUE_ON_ERROR"
+log "SKIP_EXISTING: $SKIP_EXISTING"
+log "FORCE_RERUN: $FORCE_RERUN"
 log "WANDB_MODE: $WANDB_MODE"
+log "GENOTYPE_CACHE_BUILD_WORKERS: $GENOTYPE_CACHE_BUILD_WORKERS"
 
 if [ "$RUN_VALIDATIONS" = "1" ]; then
   run_step audit_configs "$GENOMICS_BIN" audit-configs --fail-on-active-legacy
   run_step audit_data_1kg_high_coverage "$GENOMICS_BIN" audit-data --dataset-id 1kg_high_coverage --sample-limit 3 --fail-on-missing
 fi
 
-run_if_enabled "$RUN_PCA_VARIANCE" pca500_variance_randomized "$GENOMICS_BIN" genotype pca-variance configs/predictors/genotype_based/icann/search_rf_xgboost.yaml --output results/genotype_based_predictor/icann/pca_variance/pca500_variance_randomized.png --json-output results/genotype_based_predictor/icann/pca_variance/pca500_variance_randomized.json --max-components 500
-run_if_enabled "$RUN_RF" rf_train "$GENOMICS_BIN" genotype train configs/predictors/genotype_based/icann/genes_1000_all_rf.yaml
-run_if_enabled "$RUN_XGBOOST" xgboost_train "$GENOMICS_BIN" genotype train configs/predictors/genotype_based/icann/genes_1000_all_xgboost.yaml
-run_if_enabled "$RUN_CNN2" cnn2_train "$GENOMICS_BIN" genotype train configs/predictors/genotype_based/icann/genes_1000_all_cnn2.yaml
-run_if_enabled "$RUN_SEARCH_RF_XGBOOST" rf_xgboost_search "$GENOMICS_BIN" genotype search configs/predictors/genotype_based/icann/search_rf_xgboost.yaml
-run_if_enabled "$RUN_SEARCH_CNN2" cnn2_ablation_search "$GENOMICS_BIN" genotype search configs/predictors/genotype_based/icann/search_cnn2_ablation.yaml
-run_if_enabled "$RUN_Y_RANDOMIZATION" cnn2_y_randomization_train "$GENOMICS_BIN" genotype train configs/predictors/genotype_based/icann/genes_1000_all_cnn2_y_randomization.yaml
+run_if_missing "$RUN_PCA_VARIANCE" pca500_variance_randomized results/genotype_based_predictor/icann/pca_variance/pca500_variance_randomized.json "$GENOMICS_BIN" genotype pca-variance configs/predictors/genotype_based/icann/search_rf_xgboost.yaml --output results/genotype_based_predictor/icann/pca_variance/pca500_variance_randomized.png --json-output results/genotype_based_predictor/icann/pca_variance/pca500_variance_randomized.json --max-components 500
+run_if_missing "$RUN_RF" rf_train results/genotype_based_predictor/icann/runs/rf_superpopulation_rna_seq_H1_raw_center_crop_32768_log_pca411_rf_nt200_mdNone/val_results.json "$GENOMICS_BIN" genotype train configs/predictors/genotype_based/icann/genes_1000_all_rf.yaml
+run_if_missing "$RUN_XGBOOST" xgboost_train results/genotype_based_predictor/icann/runs/xgboost_superpopulation_rna_seq_H1_raw_center_crop_32768_log_pca411_xgb_nt200_md6_lr0p1/val_results.json "$GENOMICS_BIN" genotype train configs/predictors/genotype_based/icann/genes_1000_all_xgboost.yaml
+run_if_missing "$RUN_CNN2" cnn2_train results/genotype_based_predictor/icann/runs/cnn2_superpopulation_rna_seq_H1_raw_center_crop_32768_log_s1k6x32f16_s2f32_s3f64_gpavg_fc256_L100-40_relu_0.5_adam/val_best_accuracy_results.json "$GENOMICS_BIN" genotype train configs/predictors/genotype_based/icann/genes_1000_all_cnn2.yaml
+run_if_missing "$RUN_SEARCH_RF_XGBOOST" rf_xgboost_search results/genotype_based_predictor/icann/search/rf_xgboost/best_summary.json "$GENOMICS_BIN" genotype search configs/predictors/genotype_based/icann/search_rf_xgboost.yaml
+run_if_missing "$RUN_SEARCH_CNN2" cnn2_ablation_search results/genotype_based_predictor/icann/search/cnn2_ablation/search_results.csv "$GENOMICS_BIN" genotype search configs/predictors/genotype_based/icann/search_cnn2_ablation.yaml
+run_if_missing "$RUN_Y_RANDOMIZATION" cnn2_y_randomization_train results/genotype_based_predictor/icann/y_randomization/runs/cnn2_superpopulation_yrand_rna_seq_H1_raw_center_crop_32768_log_s1k6x32f16_s2f32_s3f64_gpavg_fc256_L100-40_relu_0.5_adam/val_best_accuracy_results.json "$GENOMICS_BIN" genotype train configs/predictors/genotype_based/icann/genes_1000_all_cnn2_y_randomization.yaml
 
 log "Finished. Summary: $SUMMARY_FILE"

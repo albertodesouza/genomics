@@ -42,16 +42,16 @@ model:
     pca_fit_min_samples_per_class: 0
     pca_fit_random_seed: 13
     pca_fit_stratify: true
-    pca_backend: "incremental"
+    pca_backend: "randomized_streaming"
     randomized_pca_oversampling: 32
     randomized_pca_n_iter: 2
-    randomized_pca_feature_chunk_size: 8192
-    randomized_pca_dtype: "float64"
+    randomized_pca_feature_chunk_size: 4096
+    randomized_pca_dtype: "float32"
     use_pca_cache: true
     pca_align_n_train: false
     random_forest:
-      n_estimators: 400
-      max_depth: 10
+      n_estimators: 200
+      max_depth: null
       class_weight: null
       random_state: 42
       n_jobs: -1

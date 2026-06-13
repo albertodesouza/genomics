@@ -19,6 +19,18 @@ from genomics.core.metrics import bootstrap_confidence_intervals, classification
 console = Console()
 
 
+def _saved_metric_value(data: Dict[str, Any], short_key: str) -> Any:
+    weighted_key = {
+        "accuracy": "weighted_accuracy",
+        "precision": "weighted_precision",
+        "recall": "weighted_recall",
+        "f1": "weighted_f1_score",
+    }.get(short_key)
+    if weighted_key:
+        return data.get(weighted_key, data.get(short_key))
+    return data.get(short_key)
+
+
 class Tester:
     """
     Avalia um modelo PyTorch em um DataLoader e calcula métricas padrão.
@@ -197,8 +209,8 @@ def summarize_experiments(config: PipelineConfig, sort_by: str = "test_acc") -> 
                     try:
                         with open(fname) as f:
                             data = json.load(f)
-                        row[f"{prefix}{checkpoint}_acc"] = data.get("accuracy")
-                        row[f"{prefix}{checkpoint}_f1"] = data.get("f1")
+                        row[f"{prefix}{checkpoint}_acc"] = _saved_metric_value(data, "accuracy")
+                        row[f"{prefix}{checkpoint}_f1"] = _saved_metric_value(data, "f1")
                     except Exception:
                         pass
         if len(row) > 1:

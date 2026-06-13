@@ -21,6 +21,17 @@ from genomics.predictors.genotype_based.config import get_dataset_cache_dir, get
 console = Console()
 
 
+def _metric_value(results: Dict[str, Any], short_key: str) -> float:
+    weighted_key = {
+        "accuracy": "weighted_accuracy",
+        "precision": "weighted_precision",
+        "recall": "weighted_recall",
+        "f1": "weighted_f1_score",
+    }.get(short_key)
+    value = results.get(weighted_key, results.get(short_key, 0.0)) if weighted_key else results.get(short_key, 0.0)
+    return float(value)
+
+
 def _search_dir(config: PipelineConfig) -> Path:
     search = config.hyperparameter_search
     if search.output_dir:
@@ -157,10 +168,10 @@ def _train_candidate(
         "candidate": candidate_name,
         "model_type": model_type,
         "params": params,
-        "val_accuracy": float(results.get("accuracy", 0.0)),
-        "val_precision": float(results.get("precision", 0.0)),
-        "val_recall": float(results.get("recall", 0.0)),
-        "val_f1": float(results.get("f1", 0.0)),
+        "val_weighted_accuracy": _metric_value(results, "accuracy"),
+        "val_weighted_precision": _metric_value(results, "precision"),
+        "val_weighted_recall": _metric_value(results, "recall"),
+        "val_weighted_f1_score": _metric_value(results, "f1"),
         "artifact_path": str(artifact_path),
         "candidate_dir": str(candidate_dir),
     }
@@ -179,7 +190,17 @@ def _save_search_outputs(rows: List[Dict[str, Any]], best: Dict[str, Any], searc
     with open(search_dir / "search_results.json", "w", encoding="utf-8") as f:
         json.dump({"selection_metric": metric, "best": best, "results": rows}, f, indent=2, ensure_ascii=False)
     with open(search_dir / "search_results.csv", "w", newline="", encoding="utf-8") as f:
-        fieldnames = ["rank", "candidate", "model_type", "val_accuracy", "val_precision", "val_recall", "val_f1", "params", "artifact_path"]
+        fieldnames = [
+            "rank",
+            "candidate",
+            "model_type",
+            "val_weighted_accuracy",
+            "val_weighted_precision",
+            "val_weighted_recall",
+            "val_weighted_f1_score",
+            "params",
+            "artifact_path",
+        ]
         writer = csv.DictWriter(
             f,
             fieldnames=fieldnames,
@@ -209,7 +230,7 @@ def _save_search_plot(rows: List[Dict[str, Any]], plots_dir: Path) -> None:
         console.print("[yellow]matplotlib indisponível; plot da busca não foi gerado.[/yellow]")
         return
     labels = _search_plot_labels(rows)
-    values = [row["val_accuracy"] for row in rows]
+    values = [row["val_weighted_accuracy"] for row in rows]
     fig, ax = plt.subplots(figsize=(max(10, len(rows) * 0.35), 5))
     bars = ax.bar(labels, values)
     ax.set_ylim(0.0, 1.0)
@@ -275,7 +296,9 @@ def run_search(config_path: Path) -> Path:
                 rank_index=idx,
             )
         )
-    metric_key = f"val_{config.hyperparameter_search.selection_metric}"
+    metric_key = f"val_weighted_{config.hyperparameter_search.selection_metric}"
+    if config.hyperparameter_search.selection_metric == "f1":
+        metric_key = "val_weighted_f1_score"
     rows.sort(key=lambda row: row.get(metric_key, 0.0), reverse=True)
     best = rows[0]
     best_dir = _copy_best_artifact(best, search_dir)
@@ -289,7 +312,7 @@ def run_search(config_path: Path) -> Path:
     table.add_column("Val F1", justify="right")
     table.add_column("Params")
     for rank, row in enumerate(rows, start=1):
-        table.add_row(str(rank), row["model_type"], f"{row['val_accuracy']:.4f}", f"{row['val_f1']:.4f}", json.dumps(row["params"], sort_keys=True))
+        table.add_row(str(rank), row["model_type"], f"{row['val_weighted_accuracy']:.4f}", f"{row['val_weighted_f1_score']:.4f}", json.dumps(row["params"], sort_keys=True))
     console.print(table)
     console.print(f"[bold green]Melhor modelo:[/bold green] {best['model_type']} → {best_dir}")
     return search_dir

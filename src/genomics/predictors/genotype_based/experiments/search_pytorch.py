@@ -3,9 +3,10 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import torch
 from rich.console import Console
@@ -25,6 +26,17 @@ from genomics.predictors.genotype_based.utils import set_random_seeds
 
 
 console = Console()
+
+
+def _metric_value(results: Dict[str, Any], short_key: str) -> float:
+    weighted_key = {
+        "accuracy": "weighted_accuracy",
+        "precision": "weighted_precision",
+        "recall": "weighted_recall",
+        "f1": "weighted_f1_score",
+    }.get(short_key)
+    value = results.get(weighted_key, results.get(short_key, 0.0)) if weighted_key else results.get(short_key, 0.0)
+    return float(value)
 
 
 def _search_dir(config: PipelineConfig) -> Path:
@@ -63,6 +75,62 @@ def _safe_symbol(symbol: str) -> str:
     return cleaned or "candidate"
 
 
+def _candidate_experiment_dir(candidate_config: PipelineConfig) -> Path:
+    from genomics.predictors.genotype_based.config import generate_experiment_name
+
+    return get_experiment_runs_dir(candidate_config) / generate_experiment_name(candidate_config)
+
+
+def _latest_epoch_checkpoint(models_dir: Path) -> Optional[Path]:
+    latest_epoch = -1
+    latest_path = None
+    for path in models_dir.glob("epoch_*.pt"):
+        match = re.fullmatch(r"epoch_(\d+)\.pt", path.name)
+        if not match:
+            continue
+        epoch = int(match.group(1))
+        if epoch > latest_epoch:
+            latest_epoch = epoch
+            latest_path = path
+    return latest_path
+
+
+def _row_from_existing_result(
+    candidate_config: PipelineConfig,
+    candidate: Any,
+    rank_index: int,
+    symbol: str,
+    experiment_dir: Path,
+) -> Dict[str, Any] | None:
+    results_path = experiment_dir / "val_best_accuracy_results.json"
+    if not results_path.exists():
+        return None
+    with open(results_path, "r", encoding="utf-8") as f:
+        results = json.load(f)
+    checkpoint_name = candidate_config.hyperparameter_search.pytorch.copy_best_checkpoint
+    checkpoint_path = experiment_dir / "models" / f"{checkpoint_name}.pt"
+    if not checkpoint_path.exists():
+        checkpoint_path = experiment_dir / "models" / "final.pt"
+    parameter_count = results.get("model_parameters")
+    if parameter_count is None:
+        parameter_count = results.get("parameters", 0)
+    return {
+        "candidate": f"{rank_index:03d}_{symbol}",
+        "symbol": symbol,
+        "description": candidate.description,
+        "baseline": bool(candidate.baseline),
+        "model_type": candidate_config.model.type,
+        "params": candidate.overrides,
+        "parameters": int(parameter_count or 0),
+        "val_weighted_accuracy": _metric_value(results, "accuracy"),
+        "val_weighted_precision": _metric_value(results, "precision"),
+        "val_weighted_recall": _metric_value(results, "recall"),
+        "val_weighted_f1_score": _metric_value(results, "f1"),
+        "artifact_path": str(checkpoint_path),
+        "candidate_dir": str(experiment_dir),
+    }
+
+
 def _load_best_checkpoint(model: torch.nn.Module, candidate_dir: Path, checkpoint_name: str, device: torch.device) -> Path:
     checkpoint_path = candidate_dir / "models" / f"{checkpoint_name}.pt"
     if not checkpoint_path.exists():
@@ -89,6 +157,17 @@ def _train_candidate(
     candidate_root = search_dir / "candidates"
     candidate_root.mkdir(parents=True, exist_ok=True)
     candidate_config = _candidate_config(base_config, candidate.overrides, candidate_root / f"{rank_index:03d}_{symbol}", symbol)
+    experiment_dir = _candidate_experiment_dir(candidate_config)
+    existing_row = _row_from_existing_result(candidate_config, candidate, rank_index, symbol, experiment_dir)
+    if existing_row is not None:
+        console.print(f"[green]Reutilizando candidato concluido:[/green] {symbol} -> {experiment_dir}")
+        return existing_row
+
+    latest_checkpoint = _latest_epoch_checkpoint(experiment_dir / "models")
+    if latest_checkpoint is not None:
+        candidate_config.checkpointing.load_checkpoint = str(latest_checkpoint.resolve())
+        console.print(f"[yellow]Retomando candidato {symbol} de:[/yellow] {latest_checkpoint}")
+
     if candidate_config.data_split.random_seed is not None and candidate_config.data_split.random_seed != -1:
         set_random_seeds(candidate_config.data_split.random_seed, candidate_config.data_split.strict_determinism)
 
@@ -134,10 +213,10 @@ def _train_candidate(
         "model_type": candidate_config.model.type,
         "params": candidate.overrides,
         "parameters": int(parameter_count),
-        "val_accuracy": float(results.get("accuracy", 0.0)),
-        "val_precision": float(results.get("precision", 0.0)),
-        "val_recall": float(results.get("recall", 0.0)),
-        "val_f1": float(results.get("f1", 0.0)),
+        "val_weighted_accuracy": _metric_value(results, "accuracy"),
+        "val_weighted_precision": _metric_value(results, "precision"),
+        "val_weighted_recall": _metric_value(results, "recall"),
+        "val_weighted_f1_score": _metric_value(results, "f1"),
         "artifact_path": str(checkpoint_path),
         "candidate_dir": str(experiment_dir),
     }
@@ -154,10 +233,10 @@ def _save_search_outputs(rows: List[Dict[str, Any]], best: Dict[str, Any], searc
             "symbol",
             "description",
             "model_type",
-            "val_accuracy",
-            "val_precision",
-            "val_recall",
-            "val_f1",
+            "val_weighted_accuracy",
+            "val_weighted_precision",
+            "val_weighted_recall",
+            "val_weighted_f1_score",
             "parameters",
             "params",
             "artifact_path",
@@ -178,7 +257,7 @@ def _save_search_outputs(rows: List[Dict[str, Any]], best: Dict[str, Any], searc
                 {
                     "Symbol": row["symbol"],
                     "Experiment Description": row["description"],
-                    "Accuracy": f"{row['val_accuracy']:.4f}",
+                    "Accuracy": f"{row['val_weighted_accuracy']:.4f}",
                     "Parameters": row["parameters"],
                 }
             )
@@ -198,7 +277,7 @@ def _save_search_plots(rows: List[Dict[str, Any]], plots_dir: Path) -> None:
         return
 
     labels = [row["symbol"] for row in rows]
-    accuracies = [row["val_accuracy"] for row in rows]
+    accuracies = [row["val_weighted_accuracy"] for row in rows]
     parameters = [row["parameters"] for row in rows]
 
     fig, ax = plt.subplots(figsize=(max(10, len(rows) * 0.45), 5))
@@ -225,7 +304,7 @@ def _save_search_plots(rows: List[Dict[str, Any]], plots_dir: Path) -> None:
     fig, ax = plt.subplots(figsize=(6, 5))
     ax.scatter(parameters, accuracies)
     for row in rows:
-        ax.annotate(row["symbol"], (row["parameters"], row["val_accuracy"]), fontsize=8)
+        ax.annotate(row["symbol"], (row["parameters"], row["val_weighted_accuracy"]), fontsize=8)
     ax.set_xlabel("Trainable parameters")
     ax.set_ylabel("Validation accuracy")
     ax.set_ylim(0.0, 1.0)
@@ -283,7 +362,9 @@ def run_search(config_path: Path) -> Path:
             )
         )
 
-    metric_key = f"val_{config.hyperparameter_search.selection_metric}"
+    metric_key = f"val_weighted_{config.hyperparameter_search.selection_metric}"
+    if config.hyperparameter_search.selection_metric == "f1":
+        metric_key = "val_weighted_f1_score"
     ranked_rows = sorted(rows, key=lambda row: row.get(metric_key, 0.0), reverse=True)
     best = ranked_rows[0]
     best_dir = _copy_best_artifact(best, search_dir)
@@ -297,7 +378,7 @@ def run_search(config_path: Path) -> Path:
     table.add_column("Val F1", justify="right")
     table.add_column("Parameters", justify="right")
     for rank, row in enumerate(ranked_rows, start=1):
-        table.add_row(str(rank), row["symbol"], f"{row['val_accuracy']:.4f}", f"{row['val_f1']:.4f}", f"{row['parameters']:,}")
+        table.add_row(str(rank), row["symbol"], f"{row['val_weighted_accuracy']:.4f}", f"{row['val_weighted_f1_score']:.4f}", f"{row['parameters']:,}")
     console.print(table)
     console.print(f"[bold green]Melhor modelo:[/bold green] {best['symbol']} -> {best_dir}")
     return search_dir
