@@ -54,7 +54,7 @@ conversion:
   annotate_dbsnp: true
   genome_build: "GRCh38"
   filter_by_chip_panel: true
-  ref_dir: "refs"
+  ref_dir: "results/snp_ancestry_predictor/refs"
   snp_panel: null
 
   # Parallel chromosome jobs in Step 1 (worker processes). See default.yaml.
@@ -74,7 +74,7 @@ statistics:
     - "train"
   min_maf: 0.001
   max_snps: 500000
-  snp_panel: "refs/panel_23andme_V5_genes_1000_w32768.txt"
+  snp_panel: "results/snp_ancestry_predictor/refs/panel_23andme_V5_genes_1000_w32768.txt"
 
 # ── Ancestry / Derived Prediction (Step 3) ───────────────────
 prediction:

@@ -2,7 +2,7 @@
 
 input:
   dataset_id: "1kg_high_coverage"
-  split_index: "../../../../results/cache/genotype_based_predictor/datasets/rna_seq_H1_32768_ds1_log_shuf_ont1_view0436a3bba883/split_index.json"
+  split_index: "results/cache/genotype_based_predictor/datasets/rna_seq_H1_32768_ds1_log_shuf_ont1_view0436a3bba883/split_index.json"
   chromosomes:
     - "chr1"
     - "chr2"
@@ -34,13 +34,13 @@ conversion:
   annotate_dbsnp: true
   genome_build: "GRCh38"
   filter_by_chip_panel: true
-  ref_dir: "refs"
+  ref_dir: "results/snp_ancestry_predictor/refs"
   snp_panel: null
   parallel_chroms: "auto"
   output_filename: "{sample_id}_icann_illumina_gsa_v5_diploid_23andme.txt"
 
 statistics:
-  output_dir: "../../../results/snp_ancestry_predictor/icann/statistics_illumina_gsa_diploid"
+  output_dir: "results/snp_ancestry_predictor/icann/statistics_illumina_gsa_diploid"
   reference_subsets:
     - "train"
   min_maf: 0.001
@@ -55,7 +55,7 @@ prediction:
     - "train"
     - "val"
     - "test"
-  results_dir: "../../../results/snp_ancestry_predictor/icann/ancestry_results_illumina_gsa_diploid"
+  results_dir: "results/snp_ancestry_predictor/icann/ancestry_results_illumina_gsa_diploid"
   admixture_em:
     max_iter: 1000
     tol: 1.0e-7

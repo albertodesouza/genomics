@@ -22,7 +22,7 @@ conversion:
   format_version: "V5"
   annotate_dbsnp: true
   genome_build: "GRCh38"
-  ref_dir: "refs"
+  ref_dir: "results/snp_ancestry_predictor/refs"
   region_bed: "genes_1000_all_w32768.bed"
 
 statistics:

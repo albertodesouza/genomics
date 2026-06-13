@@ -118,20 +118,6 @@ def _variant_config_with_overrides(args: argparse.Namespace) -> Path:
     return _write_temp_yaml(payload, "genomics_variant_config_")
 
 
-def _neural_config_with_overrides(args: argparse.Namespace) -> Path:
-    payload = _load_yaml(Path(args.config).resolve())
-    dataset_input = payload.setdefault("dataset_input", {})
-    _resolve_dataset_id_field(dataset_input, "dataset_dir")
-    _set_if_present(dataset_input, "dataset_dir", getattr(args, "dataset_dir", None))
-    if getattr(args, "dataset_id", None):
-        dataset_input["dataset_id"] = args.dataset_id
-        if not getattr(args, "dataset_dir", None):
-            dataset_input.pop("dataset_dir", None)
-            _resolve_dataset_id_field(dataset_input, "dataset_dir")
-    _set_if_present(dataset_input, "processed_cache_dir", getattr(args, "processed_cache_dir", None))
-    return _write_temp_yaml(payload, "genomics_neural_config_")
-
-
 def _add_genotype_config_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("config", type=Path)
     parser.add_argument("--dataset-dir", type=Path, default=None)
@@ -147,13 +133,6 @@ def _add_variant_config_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--processed-dir", type=Path, default=None)
     parser.add_argument("--source-dataset-id", default=None)
     parser.add_argument("--results-dir", type=Path, default=None)
-
-
-def _add_neural_config_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("config", type=Path)
-    parser.add_argument("--dataset-dir", type=Path, default=None)
-    parser.add_argument("--dataset-id", default=None)
-    parser.add_argument("--processed-cache-dir", type=Path, default=None)
 
 
 def cmd_genotype_prepare_cache(args: argparse.Namespace) -> int:
@@ -355,7 +334,12 @@ def cmd_convert_vcf_to_23andme(args: argparse.Namespace) -> int:
 
 
 def cmd_snp_ancestry_run(args: argparse.Namespace) -> int:
-    command_args: list[PathLike] = ["--config", args.config]
+    config = args.config or args.config_flag
+    if args.config and args.config_flag and Path(args.config) != Path(args.config_flag):
+        raise SystemExit("Use either positional config or --config, not both with different values")
+    if config is None:
+        raise SystemExit("snp-ancestry run requires a config path")
+    command_args: list[PathLike] = ["--config", config]
     if args.individual:
         command_args.extend(["--individual", args.individual])
     return _run_module("genomics.predictors.snp_ancestry", command_args)
@@ -494,32 +478,6 @@ def cmd_alphagenome_tracks(args: argparse.Namespace) -> int:
     if args.output:
         command_args.extend(["--output", args.output])
     return _run_module("genomics.workflows.alphagenome.alphagenome_output_tracks", command_args)
-
-
-def cmd_neural_train(args: argparse.Namespace) -> int:
-    config_path = _neural_config_with_overrides(args)
-    return _run_module("legacy.neural_ancestry_predictor_deprecated.neural_ancestry_predictor_deprecated", ["--config", config_path, "--mode", "train"])
-
-
-def cmd_neural_test(args: argparse.Namespace) -> int:
-    config_path = _neural_config_with_overrides(args)
-    return _run_module("legacy.neural_ancestry_predictor_deprecated.neural_ancestry_predictor_deprecated", ["--config", config_path, "--mode", "test"])
-
-
-def cmd_neural_summarize(args: argparse.Namespace) -> int:
-    config_path = _neural_config_with_overrides(args)
-    return _run_module(
-        "legacy.neural_ancestry_predictor_deprecated.neural_ancestry_predictor_deprecated",
-        ["--config", config_path, "--summarize_results", "--sort_by", args.sort_by],
-    )
-
-
-def cmd_neural_pca_cache(args: argparse.Namespace) -> int:
-    config_path = _neural_config_with_overrides(args)
-    command_args: list[PathLike] = ["--config", config_path]
-    if args.force:
-        command_args.append("--force")
-    return _run_module("legacy.neural_ancestry_predictor_deprecated.sklearn_pca_cache", command_args)
 
 
 def cmd_completion_bash(args: argparse.Namespace) -> int:
@@ -891,7 +849,8 @@ def build_parser() -> argparse.ArgumentParser:
     snp = subparsers.add_parser("snp-ancestry", help="Pipeline snp_ancestry_predictor")
     snp_sub = snp.add_subparsers(dest="snp_ancestry_command", required=True)
     snp_run = snp_sub.add_parser("run")
-    snp_run.add_argument("--config", type=Path, required=True)
+    snp_run.add_argument("config", type=Path, nargs="?", help="Config YAML path")
+    snp_run.add_argument("--config", "-c", dest="config_flag", type=Path, default=None, help="Config YAML path (legacy form)")
     snp_run.add_argument("--individual", type=Path, default=None)
     snp_run.set_defaults(func=cmd_snp_ancestry_run)
     snp_markers = snp_sub.add_parser("markers", help="Export ranked ancestry-informative markers from computed statistics")
@@ -1083,23 +1042,6 @@ def build_parser() -> argparse.ArgumentParser:
     vt_counts.add_argument("--central-window-size", type=int, default=32768)
     vt_counts.add_argument("--output-dir", type=Path, default=None)
     vt_counts.set_defaults(func=cmd_variant_analyze_counts)
-
-    neural = subparsers.add_parser("neural", help="Pipeline neural_ancestry_predictor_deprecated legado")
-    neural_sub = neural.add_subparsers(dest="neural_command", required=True)
-    na_train = neural_sub.add_parser("train")
-    _add_neural_config_args(na_train)
-    na_train.set_defaults(func=cmd_neural_train)
-    na_test = neural_sub.add_parser("test")
-    _add_neural_config_args(na_test)
-    na_test.set_defaults(func=cmd_neural_test)
-    na_sum = neural_sub.add_parser("summarize")
-    _add_neural_config_args(na_sum)
-    na_sum.add_argument("--sort-by", default="test_acc")
-    na_sum.set_defaults(func=cmd_neural_summarize)
-    na_pca = neural_sub.add_parser("pca-cache")
-    _add_neural_config_args(na_pca)
-    na_pca.add_argument("--force", action="store_true")
-    na_pca.set_defaults(func=cmd_neural_pca_cache)
 
     return parser
 

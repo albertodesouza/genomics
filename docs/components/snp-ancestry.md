@@ -21,7 +21,7 @@ genomics snp-ancestry plot --ml-dir results/snp_ancestry_predictor/chr15/ml --ab
 |---|---|
 | Code | `src/genomics/predictors/snp_ancestry/` |
 | Configs | `configs/predictors/snp_ancestry/` |
-| Default refs location | `configs/predictors/snp_ancestry/refs/` |
+| Default refs location | `results/snp_ancestry_predictor/refs/` |
 
 ## Pipeline Steps
 

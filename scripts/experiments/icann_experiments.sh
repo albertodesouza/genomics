@@ -23,6 +23,9 @@ RUN_CNN2="${RUN_CNN2:-1}"
 RUN_SEARCH_RF_XGBOOST="${RUN_SEARCH_RF_XGBOOST:-1}"
 RUN_SEARCH_CNN2="${RUN_SEARCH_CNN2:-1}"
 RUN_Y_RANDOMIZATION="${RUN_Y_RANDOMIZATION:-1}"
+RUN_SNP_ANCESTRY="${RUN_SNP_ANCESTRY:-1}"
+RUN_SNP_GENE_WINDOWS="${RUN_SNP_GENE_WINDOWS:-1}"
+RUN_SNP_ILLUMINA_GSA="${RUN_SNP_ILLUMINA_GSA:-1}"
 GENOMICS_BIN="${GENOMICS_BIN:-genomics}"
 
 export WANDB_MODE="${WANDB_MODE:-offline}"
@@ -148,5 +151,12 @@ run_if_missing "$RUN_CNN2" cnn2_train results/genotype_based_predictor/icann/run
 run_if_missing "$RUN_SEARCH_RF_XGBOOST" rf_xgboost_search results/genotype_based_predictor/icann/search/rf_xgboost/best_summary.json "$GENOMICS_BIN" genotype search configs/predictors/genotype_based/icann/search_rf_xgboost.yaml
 run_if_missing "$RUN_SEARCH_CNN2" cnn2_ablation_search results/genotype_based_predictor/icann/search/cnn2_ablation/search_results.csv "$GENOMICS_BIN" genotype search configs/predictors/genotype_based/icann/search_cnn2_ablation.yaml
 run_if_missing "$RUN_Y_RANDOMIZATION" cnn2_y_randomization_train results/genotype_based_predictor/icann/y_randomization/runs/cnn2_superpopulation_yrand_rna_seq_H1_raw_center_crop_32768_log_s1k6x32f16_s2f32_s3f64_gpavg_fc256_L100-40_relu_0.5_adam/val_best_accuracy_results.json "$GENOMICS_BIN" genotype train configs/predictors/genotype_based/icann/genes_1000_all_cnn2_y_randomization.yaml
+
+if [ "$RUN_SNP_ANCESTRY" = "1" ]; then
+  run_if_missing "$RUN_SNP_GENE_WINDOWS" snp_gene_windows_h1_mlc results/snp_ancestry_predictor/icann/ancestry_results_gene_windows_h1/predictions_mle_superpopulation.json "$GENOMICS_BIN" snp-ancestry run configs/predictors/snp_ancestry/icann/gene_windows_h1_mlc.yaml
+  run_if_missing "$RUN_SNP_ILLUMINA_GSA" snp_illumina_gsa_diploid_mlc results/snp_ancestry_predictor/icann/ancestry_results_illumina_gsa_diploid/predictions_mle_superpopulation.json "$GENOMICS_BIN" snp-ancestry run configs/predictors/snp_ancestry/icann/illumina_gsa_diploid_mlc.yaml
+else
+  log "Skipping SNP ancestry experiments"
+fi
 
 log "Finished. Summary: $SUMMARY_FILE"

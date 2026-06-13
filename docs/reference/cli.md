@@ -26,7 +26,6 @@ genomics
 | `alphagenome ...` | Run AlphaGenome analysis/integration utilities |
 | `genotype ...` | Dense/aligned genotype predictor workflows |
 | `variant ...` | Sparse variant transformer workflows |
-| `neural ...` | Deprecated neural ancestry reproducibility commands |
 
 ## Examples
 
@@ -80,9 +79,9 @@ genomics genotype single-gene-screen configs/predictors/genotype_based/neural_le
 ## SNP Ancestry Commands
 
 ```bash
-genomics snp-ancestry run --config configs/predictors/snp_ancestry/default.yaml
-genomics snp-ancestry run --config configs/predictors/snp_ancestry/icann/gene_windows_h1_mlc.yaml
-genomics snp-ancestry run --config configs/predictors/snp_ancestry/chr15_aims.yaml
+genomics snp-ancestry run configs/predictors/snp_ancestry/default.yaml
+genomics snp-ancestry run configs/predictors/snp_ancestry/icann/gene_windows_h1_mlc.yaml
+genomics snp-ancestry run configs/predictors/snp_ancestry/chr15_aims.yaml
 genomics snp-ancestry markers --config configs/predictors/snp_ancestry/chr15_aims.yaml --top 500 --output results/snp_ancestry_predictor/chr15/aims_top500.tsv
 genomics snp-ancestry prune --markers results/snp_ancestry_predictor/chr15/aims_top500.tsv --window-bp 50000 --output results/snp_ancestry_predictor/chr15/aims_top500_pruned_50kb.tsv
 genomics snp-ancestry train-ml --config configs/predictors/snp_ancestry/chr15_aims.yaml --markers results/snp_ancestry_predictor/chr15/aims_top500.tsv --models logistic random_forest --output-dir results/snp_ancestry_predictor/chr15/ml
@@ -90,7 +89,7 @@ genomics snp-ancestry ablate --config configs/predictors/snp_ancestry/chr15_aims
 genomics snp-ancestry plot --ml-dir results/snp_ancestry_predictor/chr15/ml --ablation-dir results/snp_ancestry_predictor/chr15/ablation --output-dir results/snp_ancestry_predictor/chr15/plots
 ```
 
-`genomics snp-ancestry run` preserves the existing conversion, statistics, and prediction pipeline. `genomics snp-ancestry markers` is an optional post-processing command: it reads the statistics JSON produced by `run`, ranks markers by `fst`, `maf`, or `max_delta_frequency`, and writes an audit-friendly TSV with per-class allele frequencies. `genomics snp-ancestry prune` removes lower-ranked markers within a configured base-pair window of already kept markers, preserving the TSV columns and recalculating ranks. `genomics snp-ancestry train-ml` consumes an AIM TSV and the same per-individual 23andMe files to train sklearn `logistic` and/or `random_forest` baselines, writing metrics, predictions, feature importance, and `model.joblib` artifacts. `genomics snp-ancestry ablate` uses the same inputs, removes ranked marker prefixes such as the top 1, 5, or 10 AIMs, retrains the selected sklearn models, and writes `ablation.tsv` plus `summary.json` for measuring robustness to top-marker removal. `genomics snp-ancestry plot` turns those outputs into PNG confusion matrices, top-feature bar charts, and ablation curves.
+`genomics snp-ancestry run` preserves the existing conversion, statistics, and prediction pipeline. The legacy `--config`/`-c` form is still accepted. `genomics snp-ancestry markers` is an optional post-processing command: it reads the statistics JSON produced by `run`, ranks markers by `fst`, `maf`, or `max_delta_frequency`, and writes an audit-friendly TSV with per-class allele frequencies. `genomics snp-ancestry prune` removes lower-ranked markers within a configured base-pair window of already kept markers, preserving the TSV columns and recalculating ranks. `genomics snp-ancestry train-ml` consumes an AIM TSV and the same per-individual 23andMe files to train sklearn `logistic` and/or `random_forest` baselines, writing metrics, predictions, feature importance, and `model.joblib` artifacts. `genomics snp-ancestry ablate` uses the same inputs, removes ranked marker prefixes such as the top 1, 5, or 10 AIMs, retrains the selected sklearn models, and writes `ablation.tsv` plus `summary.json` for measuring robustness to top-marker removal. `genomics snp-ancestry plot` turns those outputs into PNG confusion matrices, top-feature bar charts, and ablation curves.
 
 ## Variant Commands
 
@@ -130,17 +129,6 @@ genomics dataset-builders non-longevous visualize configs/workflows/non_longevou
 ```
 
 `build-window` forwards arguments to the window builder module. Use `-- --help` to inspect the forwarded module's options.
-
-## Legacy Neural Commands
-
-```bash
-genomics neural train legacy/neural_ancestry_predictor_deprecated/configs/genes_1000_all.yaml
-genomics neural test legacy/neural_ancestry_predictor_deprecated/configs/genes_1000_all.yaml
-genomics neural summarize legacy/neural_ancestry_predictor_deprecated/configs/genes_1000_all.yaml
-genomics neural pca-cache legacy/neural_ancestry_predictor_deprecated/configs/genes_1000_all.yaml
-```
-
-These commands are for historical reproducibility only. New ancestry or genotype experiments should use active predictor configs under `configs/predictors/`.
 
 Use `--help` at any level:
 

@@ -39,7 +39,7 @@ conversion:
   genotype_encoding: "gt"
   annotate_dbsnp: false
   genome_build: "GRCh38"
-  ref_dir: "refs"
+  ref_dir: "results/snp_ancestry_predictor/refs"
   parallel_chroms: "auto"
 
 statistics:

@@ -15,7 +15,7 @@ conversion:
   annotate_dbsnp: true
   genome_build: "GRCh38"
   filter_by_chip_panel: true
-  ref_dir: "refs"
+  ref_dir: "results/snp_ancestry_predictor/refs"
   snp_panel: null
   parallel_chroms: 1
   output_filename: "{sample_id}_chr15_aims_23andme.txt"

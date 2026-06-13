@@ -435,7 +435,7 @@ def _write_regions_bed(regions: List[Tuple[str, int, int, str]], tag_payload: di
     digest = hashlib.sha1(
         json.dumps(tag_payload, sort_keys=True).encode("utf-8")
     ).hexdigest()[:12]
-    out_dir = DEFAULT_ASSET_DIR / "refs" / "generated_regions"
+    out_dir = DEFAULT_RESULTS_DIR / "refs" / "generated_regions"
     out_dir.mkdir(parents=True, exist_ok=True)
     prefix = str(tag_payload.get("prefix", "genotype_windows"))
     bed_path = out_dir / f"{prefix}_{digest}.bed"
@@ -928,7 +928,7 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
         panel = load_snp_panel(panel_path_for_workers)
         console.print(f"  SNP panel: {len(panel):,} SNPs")
     elif conv.get("filter_by_chip_panel", False):
-        ref_dir = conv.get("ref_dir", str(DEFAULT_ASSET_DIR / "refs"))
+        ref_dir = conv.get("ref_dir", str(DEFAULT_RESULTS_DIR / "refs"))
         panel_file = ensure_chip_panel_available(fmt_version, ref_dir)
         panel_path_for_workers = str(panel_file)
         panel = load_snp_panel(panel_path_for_workers)
@@ -969,7 +969,7 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
     dbsnp_vcf: Optional[str] = None
     if conv.get("annotate_dbsnp", False):
         build = conv.get("genome_build", "GRCh38")
-        ref_dir = conv.get("ref_dir", str(DEFAULT_ASSET_DIR / "refs"))
+        ref_dir = conv.get("ref_dir", str(DEFAULT_RESULTS_DIR / "refs"))
         vcf_style = detect_vcf_chrom_style(first_vcf)
         console.print(f"  Preparing dbSNP ({build}) for rsID annotation...")
         dbsnp_path = ensure_dbsnp_available(build, Path(ref_dir), vcf_style)

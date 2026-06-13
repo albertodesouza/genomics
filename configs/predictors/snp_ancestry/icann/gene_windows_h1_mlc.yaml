@@ -33,13 +33,13 @@ conversion:
   annotate_dbsnp: true
   genome_build: "GRCh38"
   filter_by_chip_panel: true
-  ref_dir: "refs"
+  ref_dir: "results/snp_ancestry_predictor/refs"
   snp_panel: null
   parallel_chroms: "auto"
   output_filename: "{sample_id}_icann_gene_windows_h1_23andme.txt"
 
 statistics:
-  output_dir: "../../../results/snp_ancestry_predictor/icann/statistics_gene_windows_h1"
+  output_dir: "results/snp_ancestry_predictor/icann/statistics_gene_windows_h1"
   reference_subsets:
     - "train"
   min_maf: 0.001
@@ -54,7 +54,7 @@ prediction:
     - "train"
     - "val"
     - "test"
-  results_dir: "../../../results/snp_ancestry_predictor/icann/ancestry_results_gene_windows_h1"
+  results_dir: "results/snp_ancestry_predictor/icann/ancestry_results_gene_windows_h1"
   admixture_em:
     max_iter: 1000
     tol: 1.0e-7

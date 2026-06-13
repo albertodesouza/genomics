@@ -77,7 +77,7 @@ conversion:
   filter_by_chip_panel: true
 
   # Directory where downloaded reference files (dbSNP, chip panel) are cached.
-  ref_dir: "refs"
+  ref_dir: "results/snp_ancestry_predictor/refs"
 
   # Optional: restrict output to a custom set of SNPs (one rsID per line).
   # Overrides filter_by_chip_panel when set. Set to null to use chip panel.
@@ -119,7 +119,7 @@ statistics:
   # Restrict statistics to a predefined set of SNPs.
   # Should match the panel used in Step 1 to avoid accumulating millions
   # of unused SNPs in memory (which can trigger OOM kills).
-  snp_panel: "refs/panel_23andme_V5_genes_1000_w32768.txt"
+  snp_panel: "results/snp_ancestry_predictor/refs/panel_23andme_V5_genes_1000_w32768.txt"
 
 # ── Ancestry Prediction (Step 3) ─────────────────────────────
 prediction:

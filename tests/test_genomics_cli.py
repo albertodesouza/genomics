@@ -3,6 +3,7 @@ import sys
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from genomics import cli as genomics_cli
@@ -177,6 +178,17 @@ def test_completion_bash_outputs_completion_script(capsys):
     assert "complete -F _genomics_completion genomics" in captured.out
     assert "genotype" in captured.out
     assert "test" in captured.out
+    assert " neural " not in captured.out
+
+
+def test_neural_command_is_not_registered(capsys):
+    parser = genomics_cli.build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["neural", "train", "legacy/neural_ancestry_predictor_deprecated/configs/default.yaml"])
+
+    captured = capsys.readouterr()
+    assert "invalid choice" in captured.err
 
 
 def test_genotype_test_command_parses():
@@ -215,6 +227,31 @@ def test_snp_ancestry_markers_command_parses():
     assert args.snp_ancestry_command == "markers"
     assert args.top == 500
     assert args.score == "fst"
+
+
+def test_snp_ancestry_run_accepts_positional_config():
+    args = genomics_cli.build_parser().parse_args([
+        "snp-ancestry",
+        "run",
+        "configs/predictors/snp_ancestry/icann/gene_windows_h1_mlc.yaml",
+    ])
+
+    assert args.snp_ancestry_command == "run"
+    assert str(args.config).endswith("gene_windows_h1_mlc.yaml")
+    assert args.config_flag is None
+
+
+def test_snp_ancestry_run_accepts_legacy_config_flag():
+    args = genomics_cli.build_parser().parse_args([
+        "snp-ancestry",
+        "run",
+        "--config",
+        "configs/predictors/snp_ancestry/icann/gene_windows_h1_mlc.yaml",
+    ])
+
+    assert args.snp_ancestry_command == "run"
+    assert args.config is None
+    assert str(args.config_flag).endswith("gene_windows_h1_mlc.yaml")
 
 
 def test_snp_ancestry_prune_command_parses():
