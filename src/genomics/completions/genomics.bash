@@ -12,7 +12,7 @@ _genomics_completion()
         cword=$COMP_CWORD
     fi
 
-    local commands="audit-configs audit-data config convert snp-ancestry genomes-analyzer dataset-builders alphagenome genotype variant neural completion"
+    local commands="audit-configs audit-data config convert snp-ancestry genomes-analyzer dataset-builders alphagenome genotype variant completion"
     local config="describe schema validate"
     local genotype="prepare-cache split train test search stability confidence-intervals evaluate pca-variance workbench sync-bcftools-artifacts single-gene-screen"
     local variant="materialize train evaluate analyze-counts"
@@ -22,7 +22,6 @@ _genomics_completion()
     local dataset_builders="non-longevous"
     local non_longevous="build build-window visualize"
     local alphagenome="analyze integrate tracks"
-    local neural="train test summarize pca-cache"
     local completion="bash"
 
     _genomics_filedir()
@@ -92,9 +91,6 @@ _genomics_completion()
         alphagenome)
             if [[ ${cword} -eq 2 ]]; then COMPREPLY=( $(compgen -W "$alphagenome" -- "$cur") ); return; fi
             _genomics_filedir; return ;;
-        neural)
-            if [[ ${cword} -eq 2 ]]; then COMPREPLY=( $(compgen -W "$neural" -- "$cur") ); return; fi
-            _genomics_yaml_configs; return ;;
         completion)
             if [[ ${cword} -eq 2 ]]; then COMPREPLY=( $(compgen -W "$completion" -- "$cur") ); return; fi
             ;;

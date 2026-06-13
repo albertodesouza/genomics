@@ -10,12 +10,8 @@ Este módulo implementa uma rede neural configurável via YAML que prediz
 ancestralidade (superpopulation, population ou FROG likelihood) a partir
 de predições AlphaGenome armazenadas em um dataset PyTorch.
 
-Uso:
-    # Treino
-    genomics neural train legacy/neural_ancestry_predictor_deprecated/configs/default.yaml
-
-    # Teste
-    genomics neural test legacy/neural_ancestry_predictor_deprecated/configs/default.yaml
+Uso legado direto:
+    python -m legacy.neural_ancestry_predictor_deprecated.neural_ancestry_predictor_deprecated --config legacy/neural_ancestry_predictor_deprecated/configs/default.yaml --mode train
 
 Author: ChatGPT (for Alberto)
 Created: 2025-11-14

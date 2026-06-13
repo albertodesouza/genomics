@@ -6,13 +6,7 @@ Legacy code is kept under `legacy/` for reproducibility. New development should 
 
 Path: `legacy/neural_ancestry_predictor_deprecated/`
 
-CLI wrapper:
-
-```bash
-genomics neural train legacy/neural_ancestry_predictor_deprecated/configs/genes_1000_all.yaml
-genomics neural test legacy/neural_ancestry_predictor_deprecated/configs/genes_1000_all.yaml
-genomics neural pca-cache legacy/neural_ancestry_predictor_deprecated/configs/genes_1000_all.yaml
-```
+There is no supported `genomics neural` CLI entrypoint. The code and configs remain in `legacy/` only for historical inspection and reproducibility work.
 
 For new ancestry/model experiments, prefer:
 
@@ -24,7 +18,7 @@ For new ancestry/model experiments, prefer:
 
 | Module | Purpose |
 |---|---|
-| `neural_ancestry_predictor_deprecated.py` | Historical monolithic CLI entrypoint now delegated by `genomics neural` |
+| `neural_ancestry_predictor_deprecated.py` | Historical monolithic script preserved in legacy code |
 | `config.py` | Legacy YAML parsing and dataset path resolution |
 | `data_pipeline.py` | Legacy processed-cache creation and loading |
 | `models.py` | Historical NN/CNN model definitions |

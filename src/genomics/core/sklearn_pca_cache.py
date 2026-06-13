@@ -6,9 +6,8 @@ Cache em disco de StandardScaler + IncrementalPCA para baselines sklearn.
 O cache é compartilhado entre experimentos com o mesmo dataset processado
 (mesmo diretório em datasets/) e o mesmo pca_components pedido.
 
-CLI (após o cache do dataset existir):
-    genomics neural pca-cache legacy/neural_ancestry_predictor_deprecated/configs/genes_1000.yaml
-    genomics neural pca-cache legacy/neural_ancestry_predictor_deprecated/configs/genes_1000.yaml --force
+This module remains for legacy sklearn PCA cache helpers; it is not exposed
+through a supported public CLI command.
 """
 
 from __future__ import annotations

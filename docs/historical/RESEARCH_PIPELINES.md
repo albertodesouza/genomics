@@ -140,13 +140,7 @@ genomics variant analyze-counts /dados/GENOMICS_DATA/variant_transformer/superpo
 
 ### neural_ancestry_predictor_deprecated
 
-Este pipeline e legado/monolitico. A CLI comum apenas delega para o script preservado, e seu uso deve ficar restrito a reproducibilidade historica.
-
-```bash
-genomics neural train legacy/neural_ancestry_predictor_deprecated/configs/genes_1000_all.yaml
-genomics neural test legacy/neural_ancestry_predictor_deprecated/configs/genes_1000_all.yaml
-genomics neural pca-cache legacy/neural_ancestry_predictor_deprecated/configs/genes_1000_all.yaml
-```
+Este pipeline e legado/monolitico. O codigo permanece preservado em `legacy/neural_ancestry_predictor_deprecated/`, mas nao ha mais entrypoint `genomics neural`; novos experimentos devem usar `genomics genotype` ou `genomics snp-ancestry`.
 
 ## Migração dos configs históricos
 
