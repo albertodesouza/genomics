@@ -200,6 +200,99 @@ def test_genotype_split_command_parses():
     assert args.genotype_command == "split"
 
 
+def test_snp_ancestry_markers_command_parses():
+    args = genomics_cli.build_parser().parse_args([
+        "snp-ancestry",
+        "markers",
+        "--config",
+        "configs/predictors/snp_ancestry/chr15_aims.yaml",
+        "--top",
+        "500",
+        "--output",
+        "results/snp_ancestry_predictor/chr15/aims_top500.tsv",
+    ])
+
+    assert args.snp_ancestry_command == "markers"
+    assert args.top == 500
+    assert args.score == "fst"
+
+
+def test_snp_ancestry_prune_command_parses():
+    args = genomics_cli.build_parser().parse_args([
+        "snp-ancestry",
+        "prune",
+        "--markers",
+        "results/snp_ancestry_predictor/chr15/aims_top500.tsv",
+        "--window-bp",
+        "50000",
+        "--output",
+        "results/snp_ancestry_predictor/chr15/aims_top500_pruned_50kb.tsv",
+    ])
+
+    assert args.snp_ancestry_command == "prune"
+    assert args.window_bp == 50000
+    assert args.max_markers is None
+
+
+def test_snp_ancestry_train_ml_command_parses():
+    args = genomics_cli.build_parser().parse_args([
+        "snp-ancestry",
+        "train-ml",
+        "--config",
+        "configs/predictors/snp_ancestry/chr15_aims.yaml",
+        "--markers",
+        "results/snp_ancestry_predictor/chr15/aims_top500.tsv",
+        "--models",
+        "logistic",
+        "--output-dir",
+        "results/snp_ancestry_predictor/chr15/ml",
+    ])
+
+    assert args.snp_ancestry_command == "train-ml"
+    assert args.models == ["logistic"]
+    assert args.random_seed == 13
+
+
+def test_snp_ancestry_ablate_command_parses():
+    args = genomics_cli.build_parser().parse_args([
+        "snp-ancestry",
+        "ablate",
+        "--config",
+        "configs/predictors/snp_ancestry/chr15_aims.yaml",
+        "--markers",
+        "results/snp_ancestry_predictor/chr15/aims_top500.tsv",
+        "--remove-top",
+        "0",
+        "10",
+        "50",
+        "--output-dir",
+        "results/snp_ancestry_predictor/chr15/ablation",
+    ])
+
+    assert args.snp_ancestry_command == "ablate"
+    assert args.remove_top == [0, 10, 50]
+    assert args.models == ["logistic"]
+
+
+def test_snp_ancestry_plot_command_parses():
+    args = genomics_cli.build_parser().parse_args([
+        "snp-ancestry",
+        "plot",
+        "--ml-dir",
+        "results/snp_ancestry_predictor/chr15/ml",
+        "--ablation-dir",
+        "results/snp_ancestry_predictor/chr15/ablation",
+        "--splits",
+        "test",
+        "--output-dir",
+        "results/snp_ancestry_predictor/chr15/plots",
+    ])
+
+    assert args.snp_ancestry_command == "plot"
+    assert args.splits == ["test"]
+    assert args.top_features == 50
+
+
 def test_genotype_search_command_parses():
     args = genomics_cli.build_parser().parse_args([
         "genotype",

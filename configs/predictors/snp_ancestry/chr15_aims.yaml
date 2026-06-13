@@ -1,0 +1,50 @@
+# Chromosome 15 AIM discovery baseline.
+#
+# This config intentionally uses the existing SNP ancestry pipeline. The extra
+# marker-analysis commands consume the statistics JSON produced by this run.
+
+input:
+  dataset_id: "1kg_high_coverage"
+  genotype_cache_dir: "../../../results/cache/genotype_based_predictor/datasets/rna_seq_H1+H2_32768_ds1_log_shuf_ont3_view9d9f894aa231"
+  chromosomes:
+    - "chr15"
+
+conversion:
+  format_version: "V5"
+  skip_no_rsid: true
+  annotate_dbsnp: true
+  genome_build: "GRCh38"
+  filter_by_chip_panel: true
+  ref_dir: "refs"
+  snp_panel: null
+  parallel_chroms: 1
+  output_filename: "{sample_id}_chr15_aims_23andme.txt"
+
+statistics:
+  output_dir: "../../../results/snp_ancestry_predictor/chr15/statistics"
+  reference_subsets:
+    - "train"
+  min_maf: 0.01
+  max_snps: 5000
+  snp_panel: null
+
+prediction:
+  level: "superpopulation"
+  haplotype_mode: "H1+H2"
+  method: "mle"
+  evaluation_subsets:
+    - "train"
+    - "val"
+    - "test"
+  results_dir: "../../../results/snp_ancestry_predictor/chr15/ancestry_results"
+  admixture_em:
+    max_iter: 1000
+    tol: 1.0e-7
+  admixture_mle:
+    n_restarts: 20
+
+pipeline:
+  steps:
+    generate_23andme: true
+    compute_statistics: true
+    predict_ancestry: true

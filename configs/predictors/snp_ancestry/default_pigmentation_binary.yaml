@@ -17,7 +17,7 @@
 input:
   dataset_id: "1kg_high_coverage"
   # Family-aware splits generated/cached by neural_ancestry_predictor.
-  genotype_cache_dir: "/dados/GENOMICS_DATA/v1/1kG_high_coverage_runs/datasets/rna_seq_H1+H2_32768_ds1_log_shuf_ont3_view9d9f894aa231"
+  genotype_cache_dir: "../../../results/cache/genotype_based_predictor/datasets/rna_seq_H1+H2_32768_ds1_log_shuf_ont3_view9d9f894aa231"
 
   # Multi-sample VCF pattern defaults to dataset_id metadata.
 

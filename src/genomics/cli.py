@@ -361,6 +361,99 @@ def cmd_snp_ancestry_run(args: argparse.Namespace) -> int:
     return _run_module("genomics.predictors.snp_ancestry", command_args)
 
 
+def cmd_snp_ancestry_markers(args: argparse.Namespace) -> int:
+    command_args: list[PathLike] = ["--config", args.config, "--output", args.output]
+    if args.statistics:
+        command_args.extend(["--statistics", args.statistics])
+    if args.score:
+        command_args.extend(["--score", args.score])
+    if args.top is not None:
+        command_args.extend(["--top", str(args.top)])
+    if args.min_maf is not None:
+        command_args.extend(["--min-maf", str(args.min_maf)])
+    if args.min_score is not None:
+        command_args.extend(["--min-score", str(args.min_score)])
+    return _run_module("genomics.predictors.snp_ancestry.markers", command_args)
+
+
+def cmd_snp_ancestry_prune(args: argparse.Namespace) -> int:
+    command_args: list[PathLike] = [
+        "--markers",
+        args.markers,
+        "--output",
+        args.output,
+        "--window-bp",
+        str(args.window_bp),
+    ]
+    if args.max_markers is not None:
+        command_args.extend(["--max-markers", str(args.max_markers)])
+    if args.summary:
+        command_args.extend(["--summary", args.summary])
+    return _run_module("genomics.predictors.snp_ancestry.prune", command_args)
+
+
+def cmd_snp_ancestry_train_ml(args: argparse.Namespace) -> int:
+    command_args: list[PathLike] = [
+        "--config",
+        args.config,
+        "--markers",
+        args.markers,
+        "--output-dir",
+        args.output_dir,
+        "--random-seed",
+        str(args.random_seed),
+    ]
+    if args.statistics:
+        command_args.extend(["--statistics", args.statistics])
+    if args.models:
+        command_args.append("--models")
+        command_args.extend(args.models)
+    if args.top_markers is not None:
+        command_args.extend(["--top-markers", str(args.top_markers)])
+    return _run_module("genomics.predictors.snp_ancestry.train_ml", command_args)
+
+
+def cmd_snp_ancestry_ablate(args: argparse.Namespace) -> int:
+    command_args: list[PathLike] = [
+        "--config",
+        args.config,
+        "--markers",
+        args.markers,
+        "--output-dir",
+        args.output_dir,
+        "--metric-split",
+        args.metric_split,
+        "--random-seed",
+        str(args.random_seed),
+    ]
+    if args.statistics:
+        command_args.extend(["--statistics", args.statistics])
+    if args.models:
+        command_args.append("--models")
+        command_args.extend(args.models)
+    if args.remove_top:
+        command_args.append("--remove-top")
+        command_args.extend(str(value) for value in args.remove_top)
+    if args.top_markers is not None:
+        command_args.extend(["--top-markers", str(args.top_markers)])
+    return _run_module("genomics.predictors.snp_ancestry.ablate", command_args)
+
+
+def cmd_snp_ancestry_plot(args: argparse.Namespace) -> int:
+    command_args: list[PathLike] = ["--output-dir", args.output_dir, "--top-features", str(args.top_features)]
+    if args.ml_dir:
+        command_args.extend(["--ml-dir", args.ml_dir])
+    if args.ablation_dir:
+        command_args.extend(["--ablation-dir", args.ablation_dir])
+    if args.splits:
+        command_args.append("--splits")
+        command_args.extend(args.splits)
+    if args.metrics:
+        command_args.append("--metrics")
+        command_args.extend(args.metrics)
+    return _run_module("genomics.predictors.snp_ancestry.plots", command_args)
+
+
 def cmd_genomes_analyzer_run(args: argparse.Namespace) -> int:
     return _run_module("genomics.workflows.genomes_analyzer", ["--config", args.config])
 
@@ -801,6 +894,50 @@ def build_parser() -> argparse.ArgumentParser:
     snp_run.add_argument("--config", type=Path, required=True)
     snp_run.add_argument("--individual", type=Path, default=None)
     snp_run.set_defaults(func=cmd_snp_ancestry_run)
+    snp_markers = snp_sub.add_parser("markers", help="Export ranked ancestry-informative markers from computed statistics")
+    snp_markers.add_argument("--config", type=Path, required=True)
+    snp_markers.add_argument("--statistics", type=Path, default=None)
+    snp_markers.add_argument("--output", type=Path, required=True)
+    snp_markers.add_argument("--score", choices=["fst", "maf", "max_delta_frequency"], default="fst")
+    snp_markers.add_argument("--top", type=int, default=None)
+    snp_markers.add_argument("--min-maf", type=float, default=None)
+    snp_markers.add_argument("--min-score", type=float, default=None)
+    snp_markers.set_defaults(func=cmd_snp_ancestry_markers)
+    snp_prune = snp_sub.add_parser("prune", help="Positionally prune ranked ancestry-informative markers")
+    snp_prune.add_argument("--markers", type=Path, required=True)
+    snp_prune.add_argument("--output", type=Path, required=True)
+    snp_prune.add_argument("--window-bp", type=int, default=50000)
+    snp_prune.add_argument("--max-markers", type=int, default=None)
+    snp_prune.add_argument("--summary", type=Path, default=None)
+    snp_prune.set_defaults(func=cmd_snp_ancestry_prune)
+    snp_train_ml = snp_sub.add_parser("train-ml", help="Train sklearn ancestry classifiers from exported AIMs")
+    snp_train_ml.add_argument("--config", type=Path, required=True)
+    snp_train_ml.add_argument("--markers", type=Path, required=True)
+    snp_train_ml.add_argument("--output-dir", type=Path, required=True)
+    snp_train_ml.add_argument("--statistics", type=Path, default=None)
+    snp_train_ml.add_argument("--models", nargs="+", choices=["logistic", "random_forest"], default=["logistic", "random_forest"])
+    snp_train_ml.add_argument("--top-markers", type=int, default=None)
+    snp_train_ml.add_argument("--random-seed", type=int, default=13)
+    snp_train_ml.set_defaults(func=cmd_snp_ancestry_train_ml)
+    snp_ablate = snp_sub.add_parser("ablate", help="Retrain sklearn baselines after removing top AIMs")
+    snp_ablate.add_argument("--config", type=Path, required=True)
+    snp_ablate.add_argument("--markers", type=Path, required=True)
+    snp_ablate.add_argument("--output-dir", type=Path, required=True)
+    snp_ablate.add_argument("--statistics", type=Path, default=None)
+    snp_ablate.add_argument("--models", nargs="+", choices=["logistic", "random_forest"], default=["logistic"])
+    snp_ablate.add_argument("--remove-top", nargs="+", type=int, default=[0, 1, 5, 10, 50, 100])
+    snp_ablate.add_argument("--top-markers", type=int, default=None)
+    snp_ablate.add_argument("--metric-split", choices=["auto", "train", "val", "test"], default="auto")
+    snp_ablate.add_argument("--random-seed", type=int, default=13)
+    snp_ablate.set_defaults(func=cmd_snp_ancestry_ablate)
+    snp_plot = snp_sub.add_parser("plot", help="Plot SNP ancestry ML and AIM-ablation artifacts")
+    snp_plot.add_argument("--ml-dir", type=Path, default=None)
+    snp_plot.add_argument("--ablation-dir", type=Path, default=None)
+    snp_plot.add_argument("--output-dir", type=Path, required=True)
+    snp_plot.add_argument("--splits", nargs="+", choices=["train", "val", "test"], default=["test", "val", "train"])
+    snp_plot.add_argument("--top-features", type=int, default=50)
+    snp_plot.add_argument("--metrics", nargs="+", choices=["accuracy", "balanced_accuracy", "macro_f1", "weighted_f1"], default=["accuracy", "balanced_accuracy", "macro_f1"])
+    snp_plot.set_defaults(func=cmd_snp_ancestry_plot)
 
     genomes_analyzer = subparsers.add_parser("genomes-analyzer", help="Pipeline operacional FASTQ/BAM/CRAM/VCF")
     genomes_analyzer_sub = genomes_analyzer.add_subparsers(dest="genomes_analyzer_command", required=True)

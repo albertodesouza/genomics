@@ -36,9 +36,11 @@ variant = [
     "torch",
 ]
 snp-ancestry = [
+    "matplotlib",
     "numpy",
     "PyYAML",
     "rich",
+    "scikit-learn",
     "scipy",
 ]
 legacy = [

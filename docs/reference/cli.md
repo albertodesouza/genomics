@@ -16,6 +16,11 @@ genomics
 | `completion bash` | Print Bash completion script |
 | `convert vcf-to-23andme` | Convert VCF to 23andMe raw format |
 | `snp-ancestry run` | Run SNP ancestry pipeline |
+| `snp-ancestry markers` | Export ranked ancestry-informative markers from computed SNP ancestry statistics |
+| `snp-ancestry prune` | Positionally prune ranked ancestry-informative markers |
+| `snp-ancestry train-ml` | Train sklearn ancestry classifiers from exported AIMs |
+| `snp-ancestry ablate` | Retrain sklearn baselines after removing top AIMs |
+| `snp-ancestry plot` | Plot ML metrics, feature importance, and AIM-ablation curves |
 | `genomes-analyzer run` | Run FASTQ/BAM/CRAM/VCF operational workflow |
 | `dataset-builders non-longevous ...` | Build derived 1000G/AlphaGenome datasets |
 | `alphagenome ...` | Run AlphaGenome analysis/integration utilities |
@@ -71,6 +76,21 @@ genomics genotype single-gene-screen configs/predictors/genotype_based/neural_le
 `genomics genotype sync-bcftools-artifacts` previews or applies hardlink/symlink/copy operations for consensus and chain artifacts required by the aligned `haplotype_channels` layout. Add `--apply` only after reviewing the preview.
 
 `genomics genotype single-gene-screen` expands a base config into per-gene or per-ontology runs. Use `--dry-run` first to inspect generated commands and output paths.
+
+## SNP Ancestry Commands
+
+```bash
+genomics snp-ancestry run --config configs/predictors/snp_ancestry/default.yaml
+genomics snp-ancestry run --config configs/predictors/snp_ancestry/icann/gene_windows_h1_mlc.yaml
+genomics snp-ancestry run --config configs/predictors/snp_ancestry/chr15_aims.yaml
+genomics snp-ancestry markers --config configs/predictors/snp_ancestry/chr15_aims.yaml --top 500 --output results/snp_ancestry_predictor/chr15/aims_top500.tsv
+genomics snp-ancestry prune --markers results/snp_ancestry_predictor/chr15/aims_top500.tsv --window-bp 50000 --output results/snp_ancestry_predictor/chr15/aims_top500_pruned_50kb.tsv
+genomics snp-ancestry train-ml --config configs/predictors/snp_ancestry/chr15_aims.yaml --markers results/snp_ancestry_predictor/chr15/aims_top500.tsv --models logistic random_forest --output-dir results/snp_ancestry_predictor/chr15/ml
+genomics snp-ancestry ablate --config configs/predictors/snp_ancestry/chr15_aims.yaml --markers results/snp_ancestry_predictor/chr15/aims_top500.tsv --remove-top 0 1 5 10 50 100 --output-dir results/snp_ancestry_predictor/chr15/ablation
+genomics snp-ancestry plot --ml-dir results/snp_ancestry_predictor/chr15/ml --ablation-dir results/snp_ancestry_predictor/chr15/ablation --output-dir results/snp_ancestry_predictor/chr15/plots
+```
+
+`genomics snp-ancestry run` preserves the existing conversion, statistics, and prediction pipeline. `genomics snp-ancestry markers` is an optional post-processing command: it reads the statistics JSON produced by `run`, ranks markers by `fst`, `maf`, or `max_delta_frequency`, and writes an audit-friendly TSV with per-class allele frequencies. `genomics snp-ancestry prune` removes lower-ranked markers within a configured base-pair window of already kept markers, preserving the TSV columns and recalculating ranks. `genomics snp-ancestry train-ml` consumes an AIM TSV and the same per-individual 23andMe files to train sklearn `logistic` and/or `random_forest` baselines, writing metrics, predictions, feature importance, and `model.joblib` artifacts. `genomics snp-ancestry ablate` uses the same inputs, removes ranked marker prefixes such as the top 1, 5, or 10 AIMs, retrains the selected sklearn models, and writes `ablation.tsv` plus `summary.json` for measuring robustness to top-marker removal. `genomics snp-ancestry plot` turns those outputs into PNG confusion matrices, top-feature bar charts, and ablation curves.
 
 ## Variant Commands
 

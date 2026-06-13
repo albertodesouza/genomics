@@ -8,6 +8,11 @@ For the reproduction branch that uses classical VCF/SNP classification instead o
 
 ```bash
 genomics snp-ancestry run --config configs/predictors/snp_ancestry/default.yaml
+genomics snp-ancestry markers --config configs/predictors/snp_ancestry/chr15_aims.yaml --top 500 --output results/snp_ancestry_predictor/chr15/aims_top500.tsv
+genomics snp-ancestry prune --markers results/snp_ancestry_predictor/chr15/aims_top500.tsv --window-bp 50000 --output results/snp_ancestry_predictor/chr15/aims_top500_pruned_50kb.tsv
+genomics snp-ancestry train-ml --config configs/predictors/snp_ancestry/chr15_aims.yaml --markers results/snp_ancestry_predictor/chr15/aims_top500.tsv --output-dir results/snp_ancestry_predictor/chr15/ml
+genomics snp-ancestry ablate --config configs/predictors/snp_ancestry/chr15_aims.yaml --markers results/snp_ancestry_predictor/chr15/aims_top500.tsv --remove-top 0 1 5 10 50 100 --output-dir results/snp_ancestry_predictor/chr15/ablation
+genomics snp-ancestry plot --ml-dir results/snp_ancestry_predictor/chr15/ml --ablation-dir results/snp_ancestry_predictor/chr15/ablation --output-dir results/snp_ancestry_predictor/chr15/plots
 ```
 
 ## Code And Configs
@@ -29,10 +34,87 @@ genomics snp-ancestry run --config configs/predictors/snp_ancestry/default.yaml
 | Module | Responsibility |
 |---|---|
 | `pipeline.py` | End-to-end conversion, frequency computation, prediction, reporting |
+| `markers.py` | Optional AIM ranking/export from computed statistics |
+| `prune.py` | Optional positional pruning for ranked AIM TSVs |
+| `train_ml.py` | Optional sklearn baselines over exported AIMs |
+| `ablate.py` | Optional robustness study that removes top AIMs and retrains sklearn baselines |
+| `plots.py` | Optional PNG plots for ML metrics, feature importance, and ablation curves |
 | `generate_regions.py` | Utility for generating region/panel files from configured windows |
 | `__main__.py` | Module entrypoint used by the `genomics` CLI delegation |
 
 The implementation reuses the VCF-to-23andMe converter for normalization, chip-panel handling, dbSNP annotation, chromosome naming, and output formatting.
+
+## AIM Export
+
+The existing `run` command is unchanged and remains the supported path for configs such as `configs/predictors/snp_ancestry/icann/gene_windows_h1_mlc.yaml` and `configs/predictors/snp_ancestry/icann/illumina_gsa_diploid_mlc.yaml`. Marker analysis is an opt-in post-processing step over the statistics JSON produced by `run`:
+
+```bash
+genomics snp-ancestry run --config configs/predictors/snp_ancestry/chr15_aims.yaml
+genomics snp-ancestry markers \
+  --config configs/predictors/snp_ancestry/chr15_aims.yaml \
+  --score fst \
+  --top 500 \
+  --output results/snp_ancestry_predictor/chr15/aims_top500.tsv
+```
+
+The TSV contains `rsid`, genomic position, tracked allele, `maf`, the same multi-class Fst-like score used during statistics top-N selection, maximum allele-frequency delta across classes, and one `freq_<class>` column per ancestry class. This makes the AIM set auditable before downstream ML, ablation, or functional annotation.
+
+## Positional Pruning
+
+Ranked AIMs can contain nearby redundant SNPs. Use positional pruning to keep the highest-ranked marker in each local window:
+
+```bash
+genomics snp-ancestry prune \
+  --markers results/snp_ancestry_predictor/chr15/aims_top500.tsv \
+  --window-bp 50000 \
+  --output results/snp_ancestry_predictor/chr15/aims_top500_pruned_50kb.tsv
+```
+
+The command reads the AIM TSV in rank order. For each chromosome, it keeps a marker if it is more than `--window-bp` base pairs away from every already kept marker on that chromosome. Lower-ranked markers inside the window are removed, original TSV columns are preserved, and `rank` is recalculated. A small JSON summary is written next to the output TSV by default.
+
+## ML Baselines
+
+After exporting AIMs, train sklearn classifiers with:
+
+```bash
+genomics snp-ancestry train-ml \
+  --config configs/predictors/snp_ancestry/chr15_aims.yaml \
+  --markers results/snp_ancestry_predictor/chr15/aims_top500.tsv \
+  --models logistic random_forest \
+  --output-dir results/snp_ancestry_predictor/chr15/ml
+```
+
+`train-ml` reuses the same split metadata, 23andMe files, tracked alleles, and `haplotype_mode` as the allele-frequency model. Missing marker doses are imputed with train-set marker means. Each model writes `metrics.json`, `predictions_<split>.tsv`, `feature_importance.tsv`, and `model.joblib` under its model-specific output directory.
+
+## AIM Ablation
+
+To test whether performance depends on a small number of top-ranked AIMs, remove ranked prefixes from the marker TSV and retrain the same sklearn baselines:
+
+```bash
+genomics snp-ancestry ablate \
+  --config configs/predictors/snp_ancestry/chr15_aims.yaml \
+  --markers results/snp_ancestry_predictor/chr15/aims_top500.tsv \
+  --models logistic random_forest \
+  --remove-top 0 1 5 10 50 100 \
+  --output-dir results/snp_ancestry_predictor/chr15/ablation
+```
+
+The `0` condition is the baseline with no marker removal. Larger `--remove-top` values drop that many rows from the ranked AIM TSV before retraining. The command writes `ablation.tsv` with one row per model/removal condition and `summary.json` with full split metrics. By default, the headline metric comes from the test split when present, then validation, then train.
+
+## Plots
+
+Generate visual summaries from `train-ml` and `ablate` outputs with:
+
+```bash
+genomics snp-ancestry plot \
+  --ml-dir results/snp_ancestry_predictor/chr15/ml \
+  --ablation-dir results/snp_ancestry_predictor/chr15/ablation \
+  --splits test val \
+  --top-features 50 \
+  --output-dir results/snp_ancestry_predictor/chr15/plots
+```
+
+When `--ml-dir` is supplied, the command reads each model's `metrics.json` and `feature_importance.tsv`, then writes `confusion_matrix_<split>.png` and `feature_importance_topN.png`. When `--ablation-dir` is supplied, it reads `ablation.tsv` and writes `ablation_curves.png` for the selected metrics. Plotting is deliberately separate from training so non-graphical runs do not require importing matplotlib.
 
 ## Config Sections
 

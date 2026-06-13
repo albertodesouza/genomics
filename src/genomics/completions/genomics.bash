@@ -17,7 +17,7 @@ _genomics_completion()
     local genotype="prepare-cache split train test search stability confidence-intervals evaluate pca-variance workbench sync-bcftools-artifacts single-gene-screen"
     local variant="materialize train evaluate analyze-counts"
     local convert="vcf-to-23andme"
-    local snp="run"
+    local snp="run markers prune train-ml ablate plot"
     local genomes_analyzer="run"
     local dataset_builders="non-longevous"
     local non_longevous="build build-window visualize"
