@@ -73,6 +73,7 @@ data_loading:
 
 training:
   optimizer: "adam"
+  random_seed: 13
   learning_rate: 0.001
   weight_decay: 0.0001
   loss_function: "cross_entropy"

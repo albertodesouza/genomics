@@ -418,6 +418,7 @@ class TrainingConfig(BaseModel):
     """Hiperparâmetros de treinamento."""
 
     optimizer: Literal["adam", "adamw", "sgd"] = "adam"
+    random_seed: Optional[int] = None
     learning_rate: float = 0.001
     weight_decay: float = 0.0
     loss_function: Literal["cross_entropy", "mse"] = "cross_entropy"
@@ -904,6 +905,9 @@ def generate_experiment_name(config: PipelineConfig) -> str:
     dr = m.dropout_rate
     opt = config.training.optimizer
     ablation = "_yrand" if config.label_permutation.enabled else ""
+    train_seed = config.training.random_seed
+    split_seed = config.data_split.random_seed
+    seed_tag = "" if train_seed is None or train_seed == split_seed else f"_tseed{train_seed}"
 
     if model_type == "cnn":
         c = m.cnn
@@ -911,13 +915,13 @@ def generate_experiment_name(config: PipelineConfig) -> str:
         st = f"s{c.stride[0]}x{c.stride[1]}" if isinstance(c.stride, list) else f"s{c.stride}"
         pad = f"p{c.padding[0]}x{c.padding[1]}" if isinstance(c.padding, list) else f"p{c.padding}"
         pool = f"pool{c.pool_size[0]}x{c.pool_size[1]}_" if c.pool_size else ""
-        return f"cnn_{target}{ablation}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{ks}_f{c.num_filters}_{st}_{pad}_{pool}{hl}_{act}_{dr}_{opt}"
+        return f"cnn_{target}{ablation}{seed_tag}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{ks}_f{c.num_filters}_{st}_{pad}_{pool}{hl}_{act}_{dr}_{opt}"
 
     elif model_type == "cnn2":
         c2 = m.cnn2
         ks1 = c2.kernel_stage1
         return (
-            f"cnn2_{target}{ablation}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_"
+            f"cnn2_{target}{ablation}{seed_tag}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_"
             f"s1k{ks1[0]}x{ks1[1]}f{c2.num_filters_stage1}_"
             f"s2f{c2.num_filters_stage2}_s3f{c2.num_filters_stage3}_"
             f"gp{c2.global_pool_type}_fc{c2.fc_hidden_size}_"
@@ -942,8 +946,8 @@ def generate_experiment_name(config: PipelineConfig) -> str:
             xgb = sk.xgboost
             lr = str(xgb.learning_rate).replace(".", "p")
             tag = f"xgb_nt{xgb.n_estimators}_md{xgb.max_depth}_lr{lr}"
-        return f"{model_type}_{target}{ablation}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{pca}_{tag}"
+        return f"{model_type}_{target}{ablation}{seed_tag}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{pca}_{tag}"
 
     else:
         # NN (default)
-        return f"nn_{target}{ablation}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{hl}_{act}_{dr}_{opt}"
+        return f"nn_{target}{ablation}{seed_tag}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{hl}_{act}_{dr}_{opt}"

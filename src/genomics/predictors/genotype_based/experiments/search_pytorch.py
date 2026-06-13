@@ -168,8 +168,11 @@ def _train_candidate(
         candidate_config.checkpointing.load_checkpoint = str(latest_checkpoint.resolve())
         console.print(f"[yellow]Retomando candidato {symbol} de:[/yellow] {latest_checkpoint}")
 
-    if candidate_config.data_split.random_seed is not None and candidate_config.data_split.random_seed != -1:
-        set_random_seeds(candidate_config.data_split.random_seed, candidate_config.data_split.strict_determinism)
+    training_seed = candidate_config.training.random_seed
+    if training_seed is None:
+        training_seed = candidate_config.data_split.random_seed
+    if training_seed is not None and training_seed != -1:
+        set_random_seeds(training_seed, candidate_config.data_split.strict_determinism)
 
     temp_config_path = search_dir / "candidate_configs" / f"{rank_index:03d}_{symbol}.json"
     save_config(candidate_config, temp_config_path)
@@ -194,6 +197,8 @@ def _train_candidate(
         update_manifest(
             experiment_dir,
             status="interrupted" if history.get("interrupted") else "completed",
+            training_random_seed=training_seed,
+            split_random_seed=candidate_config.data_split.random_seed,
             **training_manifest_fields(history),
             search_symbol=symbol,
             search_description=candidate.description,

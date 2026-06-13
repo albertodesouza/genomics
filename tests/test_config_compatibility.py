@@ -60,3 +60,19 @@ def test_genotype_y_randomization_config_loads(monkeypatch, tmp_path):
     assert generate_dataset_name(config) != generate_dataset_name(
         load_genotype_config(Path("configs/predictors/genotype_based/icann/genes_1000_all_cnn2.yaml"))
     )
+
+
+def test_genotype_training_seed_is_independent_from_split_seed(monkeypatch, tmp_path):
+    monkeypatch.setenv("GENOMICS_DATA_ROOT", str(tmp_path / "data"))
+    config = load_genotype_config(Path("configs/predictors/genotype_based/icann/genes_1000_all_cnn2.yaml"))
+    original_dataset_name = generate_dataset_name(config)
+    original_experiment_name = generate_experiment_name(config)
+
+    payload = config.model_dump(mode="python")
+    payload["training"]["random_seed"] = 17
+    varied = type(config).model_validate(payload)
+
+    assert varied.data_split.random_seed == config.data_split.random_seed
+    assert generate_dataset_name(varied) == original_dataset_name
+    assert generate_experiment_name(varied) != original_experiment_name
+    assert "tseed17" in generate_experiment_name(varied)

@@ -72,8 +72,11 @@ def main() -> None:
     interrupt_state.interrupted = False
     _install_signal_handlers()
 
-    if config.data_split.random_seed is not None and config.data_split.random_seed != -1:
-        set_random_seeds(config.data_split.random_seed, config.data_split.strict_determinism)
+    training_seed = config.training.random_seed
+    if training_seed is None:
+        training_seed = config.data_split.random_seed
+    if training_seed is not None and training_seed != -1:
+        set_random_seeds(training_seed, config.data_split.strict_determinism)
 
     device = select_device()
     console.print(f"[green]Device:[/green] {device}")
@@ -113,6 +116,8 @@ def main() -> None:
         update_manifest(
             experiment_dir,
             status="interrupted" if history.get("interrupted") else "completed",
+            training_random_seed=training_seed,
+            split_random_seed=config.data_split.random_seed,
             **training_manifest_fields(history),
         )
 
