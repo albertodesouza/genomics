@@ -21,7 +21,7 @@ _genomics_completion()
     local genomes_analyzer="run"
     local dataset_builders="non-longevous"
     local non_longevous="build build-window visualize"
-    local alphagenome="analyze integrate tracks"
+    local alphagenome="analyze integrate tracks chr15-local"
     local completion="bash"
 
     _genomics_filedir()
@@ -90,6 +90,7 @@ _genomics_completion()
             ;;
         alphagenome)
             if [[ ${cword} -eq 2 ]]; then COMPREPLY=( $(compgen -W "$alphagenome" -- "$cur") ); return; fi
+            if [[ ${words[2]} == chr15-local ]]; then _genomics_yaml_configs; return; fi
             _genomics_filedir; return ;;
         completion)
             if [[ ${cword} -eq 2 ]]; then COMPREPLY=( $(compgen -W "$completion" -- "$cur") ); return; fi

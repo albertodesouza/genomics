@@ -116,9 +116,14 @@ genomics audit-data --dataset-id variant_transformer_superpopulation --fail-on-m
 genomics alphagenome analyze -- -i sequence.fasta -k API_KEY -o results/
 genomics alphagenome integrate -- --integrated --vcf vcf/sample.vcf.gz --ref refs/GRCh38.fa --api-key API_KEY --output integrated_analysis/
 genomics alphagenome tracks --api-key API_KEY --output configs/workflows/alphagenome/tracks.json
+genomics alphagenome chr15-local --config configs/workflows/alphagenome/chr15_local.yaml --sample HG00096 --max-windows 1 --haplotype H1 --strand plus
 ```
 
 Arguments after `--` are forwarded to the underlying AlphaGenome modules. `tracks` exports output and ontology metadata used when choosing `alphagenome_outputs` and `ontology_terms`.
+
+`chr15-local` runs the local `alphagenome_research` JAX implementation over phased 1000 Genomes haplotypes for chr15. The initial implementation uses 1,048,576 bp windows with 524,288 bp stride, applies phased SNVs only, predicts both plus and minus strands by default, and stores per-window outputs with a `window_plan.json` that records the nearest-center stitching intervals. `variants.include_indels` is present in the config but intentionally raises until coordinate remapping for indels is implemented. Use `--shard-index` and `--num-shards` to split samples across workers. Use `--max-windows 1 --haplotype H1 --strand plus` for a fast smoke test.
+
+Batching note: the public local API currently used by the workflow, `AlphaGenomeModel.predict_sequence`, accepts one sequence at a time. To reduce total runtime, the first safe production strategy is multi-process sharding with one model instance per GPU. A future optimization can call the lower-level `AlphaGenomeModel._predict`/`apply_fn` path directly with a `[B, 1048576, 4]` one-hot tensor, one `organism_index` per sequence, and the same track masks used by `predict_sequence`; that avoids repeated Python overhead but relies on private APIs and needs a benchmark to choose the largest batch that fits GPU memory.
 
 ## Dataset Builder Commands
 

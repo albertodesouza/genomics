@@ -480,6 +480,23 @@ def cmd_alphagenome_tracks(args: argparse.Namespace) -> int:
     return _run_module("genomics.workflows.alphagenome.alphagenome_output_tracks", command_args)
 
 
+def cmd_alphagenome_chr15_local(args: argparse.Namespace) -> int:
+    command_args: list[PathLike] = ["--config", args.config]
+    if args.sample:
+        command_args.extend(["--sample", args.sample])
+    if args.shard_index is not None:
+        command_args.extend(["--shard-index", str(args.shard_index)])
+    if args.num_shards is not None:
+        command_args.extend(["--num-shards", str(args.num_shards)])
+    if args.max_windows is not None:
+        command_args.extend(["--max-windows", str(args.max_windows)])
+    if args.haplotype:
+        command_args.extend(["--haplotype", args.haplotype])
+    if args.strand:
+        command_args.extend(["--strand", args.strand])
+    return _run_module("genomics.workflows.alphagenome.chr15_local", command_args)
+
+
 def cmd_completion_bash(args: argparse.Namespace) -> int:
     print(resources.read_text("genomics.completions", "genomics.bash"))
     return 0
@@ -930,6 +947,15 @@ def build_parser() -> argparse.ArgumentParser:
     agt.add_argument("--api-key", default=None)
     agt.add_argument("--output", type=Path, default=None)
     agt.set_defaults(func=cmd_alphagenome_tracks)
+    agc = alphagenome_sub.add_parser("chr15-local", help="Predicoes locais AlphaGenome para chr15/1000G")
+    agc.add_argument("--config", "-c", type=Path, required=True)
+    agc.add_argument("--sample", default=None)
+    agc.add_argument("--shard-index", type=int, default=None)
+    agc.add_argument("--num-shards", type=int, default=None)
+    agc.add_argument("--max-windows", type=int, default=None)
+    agc.add_argument("--haplotype", choices=["H1", "H2"], default=None)
+    agc.add_argument("--strand", choices=["plus", "minus"], default=None)
+    agc.set_defaults(func=cmd_alphagenome_chr15_local)
 
     genotype = subparsers.add_parser("genotype", help="Pipeline genotype_based_predictor")
     genotype_sub = genotype.add_subparsers(dest="genotype_command", required=True)

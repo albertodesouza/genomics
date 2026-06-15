@@ -1,0 +1,52 @@
+# AlphaGenome local chr15 workflow for 1000 Genomes haplotypes.
+# This initial implementation is coordinate-preserving and applies phased SNVs only.
+
+alphagenome:
+  backend: local
+  alphagenome_research_dir: /home/breno/I2CA/alphagenome_research
+  checkpoint_source: huggingface  # huggingface or kaggle; ignored when checkpoint_path is set.
+  model_version: all_folds
+  checkpoint_path: null
+
+reference:
+  fasta: /path/to/GRCh38.fa
+  chromosome: chr15
+  chromosome_length: 101991189
+
+variants:
+  vcf: /path/to/1000G.chr15.vcf.gz
+  samples: all
+  phased: true
+  include_indels: false  # Reserved for a future coordinate-remapping implementation.
+
+windows:
+  window_bp: 1048576
+  stride_bp: 524288
+  keep_policy: nearest_center
+
+outputs:
+  requested_outputs:
+    - RNA_SEQ
+    - CAGE
+    - ATAC
+    - DNASE
+    - CHIP_HISTONE
+    - CHIP_TF
+  ontology_terms:
+    - CL:1000458
+    - CL:0000346
+    - CL:2000092
+  strands:
+    - plus
+    - minus
+  # plus+minus doubles the number of model calls: ~194 windows * 2 haplotypes * 2 strands per sample.
+  exclude_contact_maps: true
+
+runtime:
+  resume: true
+  batch_size: 1  # predict_sequence is unitary; see docs for batching guidance.
+
+output:
+  dataset_dir: results/alphagenome_chr15_1kg
+  compression: npz
+  dtype: native
