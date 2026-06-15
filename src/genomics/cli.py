@@ -523,6 +523,23 @@ def cmd_references_ensure_grch38(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_data_ensure_1kg_vcf(args: argparse.Namespace) -> int:
+    from genomics.core.raw_variants import KG1000_HIGH_COVERAGE_BASE_URL, default_chromosomes, ensure_kg1000_vcfs
+
+    chromosomes = default_chromosomes() if args.chromosomes == ["all"] else args.chromosomes
+    paths = ensure_kg1000_vcfs(
+        chromosomes=chromosomes,
+        dataset_id=args.dataset_id,
+        output_dir=args.output_dir,
+        base_url=args.base_url or KG1000_HIGH_COVERAGE_BASE_URL,
+        force=args.force,
+        include_index=not args.skip_index,
+    )
+    for path in paths:
+        print(str(path))
+    return 0
+
+
 def cmd_audit_configs(args: argparse.Namespace) -> int:
     roots = [
         Path("configs/predictors/genotype_based"),
@@ -857,6 +874,17 @@ def build_parser() -> argparse.ArgumentParser:
     audit_data.add_argument("--json", action="store_true")
     audit_data.add_argument("--fail-on-missing", action="store_true")
     audit_data.set_defaults(func=cmd_audit_data)
+
+    data = subparsers.add_parser("data", help="Baixa/materializa dados canonicos")
+    data_sub = data.add_subparsers(dest="data_command", required=True)
+    data_1kg = data_sub.add_parser("ensure-1kg-vcf", help="Baixa VCFs 1000G high coverage para raw_variants")
+    data_1kg.add_argument("--chrom", dest="chromosomes", action="append", default=["chr15"])
+    data_1kg.add_argument("--dataset-id", default="1kg_high_coverage")
+    data_1kg.add_argument("--output-dir", type=Path, default=None)
+    data_1kg.add_argument("--base-url", default=None)
+    data_1kg.add_argument("--force", action="store_true")
+    data_1kg.add_argument("--skip-index", action="store_true")
+    data_1kg.set_defaults(func=cmd_data_ensure_1kg_vcf)
 
     completion = subparsers.add_parser("completion", help="Gera scripts de auto-completion")
     completion_sub = completion.add_subparsers(dest="completion_shell", required=True)

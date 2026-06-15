@@ -14,6 +14,7 @@ genomics
 | `audit-data` | Validate registered dataset paths and expected artifacts |
 | `config ...` | Describe, validate, and export typed config schemas |
 | `completion bash` | Print Bash completion script |
+| `data ensure-1kg-vcf` | Download 1000 Genomes high-coverage chromosome VCFs into the canonical dataset layout |
 | `references ensure-grch38` | Download/register the canonical full GRCh38 FASTA |
 | `convert vcf-to-23andme` | Convert VCF to 23andMe raw format |
 | `snp-ancestry run` | Run SNP ancestry pipeline |
@@ -36,6 +37,7 @@ genomics audit-data --dataset-id 1kg_high_coverage --check-bcftools-chain --samp
 genomics config describe genotype
 genomics config validate configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml
 genomics references ensure-grch38
+genomics data ensure-1kg-vcf --chrom chr15
 genomics completion bash
 ```
 
@@ -132,6 +134,14 @@ genomics references ensure-grch38
 ```
 
 This writes `${GENOMICS_DATA_ROOT:-/dados/GENOMICS_DATA}/references/GRCh38_full_analysis_set_plus_decoy_hla.fa` and indexes it with `samtools faidx` unless `--skip-index` is used.
+
+If the canonical 1000 Genomes dataset exists but lacks raw chromosome VCFs, download chr15 into the registered layout with:
+
+```bash
+genomics data ensure-1kg-vcf --chrom chr15
+```
+
+This writes to `${GENOMICS_DATA_ROOT:-/dados/GENOMICS_DATA}/v1/1kG_high_coverage/raw_variants/vcf_chromosomes/`. Use `--chrom all` for chromosomes 1-22 and X.
 
 Batching note: the public local API currently used by the workflow, `AlphaGenomeModel.predict_sequence`, accepts one sequence at a time. To reduce total runtime, the first safe production strategy is multi-process sharding with one model instance per GPU. A future optimization can call the lower-level `AlphaGenomeModel._predict`/`apply_fn` path directly with a `[B, 1048576, 4]` one-hot tensor, one `organism_index` per sequence, and the same track masks used by `predict_sequence`; that avoids repeated Python overhead but relies on private APIs and needs a benchmark to choose the largest batch that fits GPU memory.
 
