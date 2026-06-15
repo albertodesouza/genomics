@@ -945,9 +945,15 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
     if genotype_encoding not in ("alleles", "gt"):
         raise ValueError("conversion.genotype_encoding must be 'alleles' or 'gt'")
 
-    first_vcf = next(
-        (find_vcf(vcf_pat, c) for c in chroms if find_vcf(vcf_pat, c)), None
-    )
+    vcf_by_chrom = {chrom: find_vcf(vcf_pat, chrom) for chrom in chroms}
+    missing_vcf_chroms = [chrom for chrom, vcf in vcf_by_chrom.items() if not vcf]
+    chroms = [chrom for chrom in chroms if vcf_by_chrom[chrom]]
+    if missing_vcf_chroms:
+        console.print(
+            f"  [yellow]Skipping {len(missing_vcf_chroms)} chromosome(s) without VCF: "
+            f"{', '.join(missing_vcf_chroms)}[/yellow]"
+        )
+    first_vcf = next((vcf_by_chrom[chrom] for chrom in chroms), None)
     if not first_vcf:
         console.print("[red]No VCF files found.[/red]")
         return
@@ -1033,7 +1039,7 @@ def step1_generate_23andme(config: dict, console: Console) -> None:
     tasks: List[Tuple[str, List[str], str, str, str, Optional[str]]] = []
     for batch in batches:
         for chrom in chroms:
-            vcf = find_vcf(vcf_pat, chrom)
+            vcf = vcf_by_chrom.get(chrom)
             if not vcf:
                 continue
             samples_needing = [
