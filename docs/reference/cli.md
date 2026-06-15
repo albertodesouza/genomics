@@ -14,6 +14,7 @@ genomics
 | `audit-data` | Validate registered dataset paths and expected artifacts |
 | `config ...` | Describe, validate, and export typed config schemas |
 | `completion bash` | Print Bash completion script |
+| `references ensure-grch38` | Download/register the canonical full GRCh38 FASTA |
 | `convert vcf-to-23andme` | Convert VCF to 23andMe raw format |
 | `snp-ancestry run` | Run SNP ancestry pipeline |
 | `snp-ancestry markers` | Export ranked ancestry-informative markers from computed SNP ancestry statistics |
@@ -34,6 +35,7 @@ genomics audit-configs --fail-on-active-legacy
 genomics audit-data --dataset-id 1kg_high_coverage --check-bcftools-chain --sample-limit 3 --fail-on-missing
 genomics config describe genotype
 genomics config validate configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml
+genomics references ensure-grch38
 genomics completion bash
 ```
 
@@ -116,12 +118,20 @@ genomics audit-data --dataset-id variant_transformer_superpopulation --fail-on-m
 genomics alphagenome analyze -- -i sequence.fasta -k API_KEY -o results/
 genomics alphagenome integrate -- --integrated --vcf vcf/sample.vcf.gz --ref refs/GRCh38.fa --api-key API_KEY --output integrated_analysis/
 genomics alphagenome tracks --api-key API_KEY --output configs/workflows/alphagenome/tracks.json
-genomics alphagenome chr15-local --config configs/workflows/alphagenome/chr15_local.yaml --sample HG00096 --ref-fasta /path/to/GRCh38.fa --outputs RNA_SEQ --max-windows 1 --haplotype H1 --strand plus
+genomics alphagenome chr15-local --config configs/workflows/alphagenome/chr15_local.yaml --sample HG00096 --outputs RNA_SEQ --max-windows 1 --haplotype H1 --strand plus
 ```
 
 Arguments after `--` are forwarded to the underlying AlphaGenome modules. `tracks` exports output and ontology metadata used when choosing `alphagenome_outputs` and `ontology_terms`.
 
 `chr15-local` runs the local `alphagenome_research` JAX implementation over phased 1000 Genomes haplotypes for chr15. The initial implementation uses 1,048,576 bp windows with 524,288 bp stride, applies phased SNVs only, predicts both plus and minus strands by default, and stores per-window outputs with a `window_plan.json` that records the nearest-center stitching intervals. `variants.include_indels` is present in the config but intentionally raises until coordinate remapping for indels is implemented. By default the chr15 VCF is resolved from `variants.dataset_id` under `raw_variants/vcf_chromosomes`. Use `--shard-index` and `--num-shards` to split samples across workers. Use `--outputs RNA_SEQ --max-windows 1 --haplotype H1 --strand plus` for a fast smoke test. The `--ref-fasta`, `--vcf`, `--output-dir`, and `--outputs` flags override the YAML without editing it.
+
+Before running `chr15-local` without `--ref-fasta`, register the canonical full reference FASTA:
+
+```bash
+genomics references ensure-grch38
+```
+
+This writes `${GENOMICS_DATA_ROOT:-/dados/GENOMICS_DATA}/references/GRCh38_full_analysis_set_plus_decoy_hla.fa` and indexes it with `samtools faidx` unless `--skip-index` is used.
 
 Batching note: the public local API currently used by the workflow, `AlphaGenomeModel.predict_sequence`, accepts one sequence at a time. To reduce total runtime, the first safe production strategy is multi-process sharding with one model instance per GPU. A future optimization can call the lower-level `AlphaGenomeModel._predict`/`apply_fn` path directly with a `[B, 1048576, 4]` one-hot tensor, one `organism_index` per sequence, and the same track masks used by `predict_sequence`; that avoids repeated Python overhead but relies on private APIs and needs a benchmark to choose the largest batch that fits GPU memory.
 

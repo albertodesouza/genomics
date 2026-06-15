@@ -510,6 +510,19 @@ def cmd_completion_bash(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_references_ensure_grch38(args: argparse.Namespace) -> int:
+    from genomics.core.reference_registry import GRCH38_FULL_ANALYSIS_URL, ensure_grch38_full_analysis
+
+    ref = ensure_grch38_full_analysis(
+        output_path=args.output,
+        url=args.url or GRCH38_FULL_ANALYSIS_URL,
+        force=args.force,
+        index=not args.skip_index,
+    )
+    print(str(ref.path))
+    return 0
+
+
 def cmd_audit_configs(args: argparse.Namespace) -> int:
     roots = [
         Path("configs/predictors/genotype_based"),
@@ -849,6 +862,15 @@ def build_parser() -> argparse.ArgumentParser:
     completion_sub = completion.add_subparsers(dest="completion_shell", required=True)
     completion_bash = completion_sub.add_parser("bash")
     completion_bash.set_defaults(func=cmd_completion_bash)
+
+    references = subparsers.add_parser("references", help="Gerencia referencias genomicas canonicas")
+    references_sub = references.add_subparsers(dest="references_command", required=True)
+    ref_grch38 = references_sub.add_parser("ensure-grch38", help="Baixa/registra GRCh38 full analysis set")
+    ref_grch38.add_argument("--output", type=Path, default=None)
+    ref_grch38.add_argument("--url", default=None)
+    ref_grch38.add_argument("--force", action="store_true")
+    ref_grch38.add_argument("--skip-index", action="store_true")
+    ref_grch38.set_defaults(func=cmd_references_ensure_grch38)
 
     config = subparsers.add_parser("config", help="Describe and validate typed config files")
     config_sub = config.add_subparsers(dest="config_command", required=True)

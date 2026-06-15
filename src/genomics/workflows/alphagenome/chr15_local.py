@@ -78,6 +78,20 @@ def _resolve_config_path(value: object, *, config_path: Path, label: str) -> Pat
     return path
 
 
+def _resolve_reference_fasta(value: object, *, config_path: Path) -> Path:
+    from genomics.core.reference_registry import grch38_full_analysis_ref
+
+    if value is None or str(value).startswith("/path/to/"):
+        ref = grch38_full_analysis_ref()
+        if ref.path.exists():
+            return ref.path
+        raise FileNotFoundError(
+            "reference.fasta nao configurado e a referencia canonica nao existe. "
+            f"Esperado: {ref.path}. Rode: genomics references ensure-grch38"
+        )
+    return _resolve_config_path(value, config_path=config_path, label="reference.fasta")
+
+
 def _resolve_dataset_chromosome_vcf(dataset_id: str, chromosome: str) -> Path:
     from genomics.core.data_registry import resolve_dataset
 
@@ -364,7 +378,7 @@ def run(
     reference_fasta = (
         ref_fasta_override.expanduser().resolve()
         if ref_fasta_override
-        else _resolve_config_path(reference_cfg.get("fasta"), config_path=config_path, label="reference.fasta")
+        else _resolve_reference_fasta(reference_cfg.get("fasta"), config_path=config_path)
     )
     if vcf_override:
         vcf_path = vcf_override.expanduser().resolve()

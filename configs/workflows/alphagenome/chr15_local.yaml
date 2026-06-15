@@ -9,8 +9,8 @@ alphagenome:
   checkpoint_path: null
 
 reference:
-  # Override with --ref-fasta, or set this to a local full GRCh38 FASTA.
-  fasta: /path/to/GRCh38.fa
+  # Null uses the canonical reference from: genomics references ensure-grch38
+  fasta: null
   chromosome: chr15
   chromosome_length: 101991189
 
