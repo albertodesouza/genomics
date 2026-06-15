@@ -484,6 +484,14 @@ def cmd_alphagenome_chr15_local(args: argparse.Namespace) -> int:
     command_args: list[PathLike] = ["--config", args.config]
     if args.sample:
         command_args.extend(["--sample", args.sample])
+    if args.ref_fasta:
+        command_args.extend(["--ref-fasta", args.ref_fasta])
+    if args.vcf:
+        command_args.extend(["--vcf", args.vcf])
+    if args.output_dir:
+        command_args.extend(["--output-dir", args.output_dir])
+    if args.outputs:
+        command_args.extend(["--outputs", args.outputs])
     if args.shard_index is not None:
         command_args.extend(["--shard-index", str(args.shard_index)])
     if args.num_shards is not None:
@@ -950,6 +958,10 @@ def build_parser() -> argparse.ArgumentParser:
     agc = alphagenome_sub.add_parser("chr15-local", help="Predicoes locais AlphaGenome para chr15/1000G")
     agc.add_argument("--config", "-c", type=Path, required=True)
     agc.add_argument("--sample", default=None)
+    agc.add_argument("--ref-fasta", type=Path, default=None)
+    agc.add_argument("--vcf", type=Path, default=None)
+    agc.add_argument("--output-dir", type=Path, default=None)
+    agc.add_argument("--outputs", default=None)
     agc.add_argument("--shard-index", type=int, default=None)
     agc.add_argument("--num-shards", type=int, default=None)
     agc.add_argument("--max-windows", type=int, default=None)

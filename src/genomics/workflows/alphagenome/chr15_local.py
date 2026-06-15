@@ -61,6 +61,23 @@ def _as_list(value: object, default: Sequence[str]) -> List[str]:
     raise ValueError("Valor de lista invalido")
 
 
+def _resolve_config_path(value: object, *, config_path: Path, label: str) -> Path:
+    if value is None:
+        raise ValueError(f"{label} nao configurado")
+    path_text = str(value)
+    if path_text.startswith("/path/to/"):
+        raise FileNotFoundError(
+            f"{label} ainda usa placeholder no YAML: {path_text}. "
+            "Passe o caminho real pela CLI ou edite o config."
+        )
+    path = Path(path_text).expanduser()
+    if not path.is_absolute():
+        path = (config_path.parent / path).resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"{label} nao encontrado: {path}")
+    return path
+
+
 def _read_fasta_chromosome(path: Path, chromosome: str) -> str:
     opener = gzip.open if path.suffix == ".gz" else open
     wanted = chromosome[3:] if chromosome.startswith("chr") else f"chr{chromosome}"
@@ -309,6 +326,10 @@ def run(
     config_path: Path,
     *,
     sample_override: Optional[str] = None,
+    ref_fasta_override: Optional[Path] = None,
+    vcf_override: Optional[Path] = None,
+    output_dir_override: Optional[Path] = None,
+    outputs_override: Optional[str] = None,
     shard_index: Optional[int] = None,
     num_shards: Optional[int] = None,
     max_windows: Optional[int] = None,
@@ -325,9 +346,17 @@ def run(
     output_cfg = _as_mapping(config, "output")
 
     chromosome = str(reference_cfg.get("chromosome", "chr15"))
-    reference_fasta = Path(str(reference_cfg["fasta"])).expanduser()
-    vcf_path = Path(str(variants_cfg["vcf"])).expanduser()
-    output_root = Path(str(output_cfg.get("dataset_dir", "results/alphagenome_chr15_1kg"))).expanduser()
+    reference_fasta = (
+        ref_fasta_override.expanduser().resolve()
+        if ref_fasta_override
+        else _resolve_config_path(reference_cfg.get("fasta"), config_path=config_path, label="reference.fasta")
+    )
+    vcf_path = (
+        vcf_override.expanduser().resolve()
+        if vcf_override
+        else _resolve_config_path(variants_cfg.get("vcf"), config_path=config_path, label="variants.vcf")
+    )
+    output_root = output_dir_override.expanduser().resolve() if output_dir_override else Path(str(output_cfg.get("dataset_dir", "results/alphagenome_chr15_1kg"))).expanduser()
     window_bp = int(windows_cfg.get("window_bp", DEFAULT_WINDOW_BP))
     stride_bp = int(windows_cfg.get("stride_bp", DEFAULT_STRIDE_BP))
     include_indels = bool(variants_cfg.get("include_indels", False))
@@ -335,7 +364,7 @@ def run(
     resume = bool(runtime_cfg.get("resume", True))
     batch_size = int(runtime_cfg.get("batch_size", 1))
     strands = _as_list(outputs_cfg.get("strands", ["plus", "minus"]), ["plus", "minus"])
-    output_names = _as_list(outputs_cfg.get("requested_outputs"), DEFAULT_OUTPUTS)
+    output_names = _as_list(outputs_override or outputs_cfg.get("requested_outputs"), DEFAULT_OUTPUTS)
     ontology_terms = _as_list(outputs_cfg.get("ontology_terms"), DEFAULT_ONTOLOGY_TERMS)
 
     if window_bp != DEFAULT_WINDOW_BP or stride_bp != DEFAULT_STRIDE_BP:
@@ -466,6 +495,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Predicoes AlphaGenome locais para o chr15 do 1000 Genomes")
     parser.add_argument("--config", "-c", type=Path, required=True)
     parser.add_argument("--sample", default=None, help="Executa somente um sample ID")
+    parser.add_argument("--ref-fasta", type=Path, default=None, help="Override de reference.fasta")
+    parser.add_argument("--vcf", type=Path, default=None, help="Override de variants.vcf")
+    parser.add_argument("--output-dir", type=Path, default=None, help="Override de output.dataset_dir")
+    parser.add_argument("--outputs", default=None, help="CSV de outputs AlphaGenome, ex: RNA_SEQ")
     parser.add_argument("--shard-index", type=int, default=None)
     parser.add_argument("--num-shards", type=int, default=None)
     parser.add_argument("--max-windows", type=int, default=None, help="Limita janelas para smoke tests")
@@ -475,6 +508,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     return run(
         args.config,
         sample_override=args.sample,
+        ref_fasta_override=args.ref_fasta,
+        vcf_override=args.vcf,
+        output_dir_override=args.output_dir,
+        outputs_override=args.outputs,
         shard_index=args.shard_index,
         num_shards=args.num_shards,
         max_windows=args.max_windows,
