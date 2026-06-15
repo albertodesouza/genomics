@@ -9,12 +9,16 @@ alphagenome:
   checkpoint_path: null
 
 reference:
+  # Override with --ref-fasta, or set this to a local full GRCh38 FASTA.
   fasta: /path/to/GRCh38.fa
   chromosome: chr15
   chromosome_length: 101991189
 
 variants:
-  vcf: /path/to/1000G.chr15.vcf.gz
+  # Uses genomics.core.data_registry to resolve:
+  # /dados/GENOMICS_DATA/v1/1kG_high_coverage/raw_variants/vcf_chromosomes/*chr15*.vcf.gz
+  dataset_id: 1kg_high_coverage
+  vcf: null
   samples: all
   phased: true
   include_indels: false  # Reserved for a future coordinate-remapping implementation.

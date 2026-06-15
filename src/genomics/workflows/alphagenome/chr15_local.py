@@ -78,6 +78,21 @@ def _resolve_config_path(value: object, *, config_path: Path, label: str) -> Pat
     return path
 
 
+def _resolve_dataset_chromosome_vcf(dataset_id: str, chromosome: str) -> Path:
+    from genomics.core.data_registry import resolve_dataset
+
+    dataset_dir = resolve_dataset(dataset_id).path
+    chrom = chromosome if chromosome.startswith("chr") else f"chr{chromosome}"
+    candidates = sorted((dataset_dir / "raw_variants" / "vcf_chromosomes").glob(f"*{chrom}*.vcf.gz"))
+    if not candidates:
+        raise FileNotFoundError(
+            f"VCF do {chromosome} nao encontrado para dataset_id={dataset_id} em "
+            f"{dataset_dir / 'raw_variants' / 'vcf_chromosomes'}"
+        )
+    exact = [path for path in candidates if f".{chrom}." in path.name]
+    return exact[0] if exact else candidates[0]
+
+
 def _read_fasta_chromosome(path: Path, chromosome: str) -> str:
     opener = gzip.open if path.suffix == ".gz" else open
     wanted = chromosome[3:] if chromosome.startswith("chr") else f"chr{chromosome}"
@@ -351,11 +366,12 @@ def run(
         if ref_fasta_override
         else _resolve_config_path(reference_cfg.get("fasta"), config_path=config_path, label="reference.fasta")
     )
-    vcf_path = (
-        vcf_override.expanduser().resolve()
-        if vcf_override
-        else _resolve_config_path(variants_cfg.get("vcf"), config_path=config_path, label="variants.vcf")
-    )
+    if vcf_override:
+        vcf_path = vcf_override.expanduser().resolve()
+    elif variants_cfg.get("vcf"):
+        vcf_path = _resolve_config_path(variants_cfg.get("vcf"), config_path=config_path, label="variants.vcf")
+    else:
+        vcf_path = _resolve_dataset_chromosome_vcf(str(variants_cfg.get("dataset_id", "1kg_high_coverage")), chromosome)
     output_root = output_dir_override.expanduser().resolve() if output_dir_override else Path(str(output_cfg.get("dataset_dir", "results/alphagenome_chr15_1kg"))).expanduser()
     window_bp = int(windows_cfg.get("window_bp", DEFAULT_WINDOW_BP))
     stride_bp = int(windows_cfg.get("stride_bp", DEFAULT_STRIDE_BP))
@@ -414,6 +430,8 @@ def run(
             "haplotypes": haplotypes,
             "max_windows": max_windows,
             "samples": samples,
+            "reference_fasta": str(reference_fasta),
+            "vcf": str(vcf_path),
             "batching_note": (
                 "A API publica predict_sequence e unitaria. Para batch real, use o apply_fn "
                 "privado do alphagenome_research com tensores [B, 1048576, 4] ou paralelize "
