@@ -267,7 +267,18 @@ def _import_alphagenome(alphagenome_research_dir: Optional[Path]):
         src = alphagenome_research_dir / "src"
         if src.exists() and str(src) not in sys.path:
             sys.path.insert(0, str(src))
-    from alphagenome_research.model import dna_model  # type: ignore
+    try:
+        from alphagenome_research.model import dna_model  # type: ignore
+    except ModuleNotFoundError as exc:
+        if exc.name != "alphagenome_research":
+            raise
+        configured = str(alphagenome_research_dir) if alphagenome_research_dir else "nao configurado"
+        raise ModuleNotFoundError(
+            "alphagenome_research nao esta importavel neste ambiente. "
+            f"Diretorio configurado: {configured}. "
+            "Na DGX, rode: cd ~/I2CA && git clone https://github.com/google-deepmind/alphagenome_research.git "
+            "&& python -m pip install -e ./alphagenome_research"
+        ) from exc
 
     return dna_model
 
