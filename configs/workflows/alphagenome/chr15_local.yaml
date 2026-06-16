@@ -48,7 +48,8 @@ outputs:
 
 runtime:
   resume: true
-  batch_size: 1  # predict_sequence is unitary; see docs for batching guidance.
+  # Real JAX batch size for model._predict. Increase gradually on DGX Spark.
+  batch_size: 1
 
 output:
   dataset_dir: results/alphagenome_chr15_1kg

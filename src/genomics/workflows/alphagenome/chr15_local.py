@@ -34,6 +34,15 @@ class VariantAlleles:
     h2: str
 
 
+@dataclass(frozen=True)
+class PredictionTask:
+    sample_id: str
+    haplotype: str
+    strand: str
+    window: WindowSpec
+    sequence: str
+
+
 def _load_yaml(path: Path) -> Mapping[str, object]:
     with open(path, "r", encoding="utf-8") as f:
         payload = yaml.safe_load(f) or {}
@@ -332,6 +341,82 @@ def _save_output_npz(output_dir: Path, outputs, output_names: Sequence[str]) -> 
     return saved
 
 
+def _save_prediction_arrays(output_dir: Path, predictions: Mapping[str, object], metadata: Mapping[str, object]) -> List[str]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    saved: List[str] = []
+    import numpy as np
+
+    for output_name, values in predictions.items():
+        attr_name = output_name.lower()
+        np.savez_compressed(output_dir / f"{attr_name}.npz", values=values)
+        track_metadata = metadata.get(output_name)
+        if track_metadata is not None:
+            if hasattr(track_metadata, "to_dict"):
+                payload = track_metadata.to_dict(orient="records")
+            else:
+                payload = str(track_metadata)
+            with open(output_dir / f"{attr_name}_metadata.json", "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+        saved.append(attr_name)
+    return saved
+
+
+def _predict_sequences_batched(dna_model, model, sequences: Sequence[str], requested_outputs, ontology_terms):
+    import numpy as np
+    import jax
+    from alphagenome import tensor_utils
+    from alphagenome.data import ontology
+    from alphagenome.models import dna_model as ag_dna_model
+    from alphagenome_research.model import dna_model as ag_research_dna_model
+    from alphagenome_research.model.metadata import metadata as metadata_lib
+
+    organism = ag_dna_model.Organism.HOMO_SAPIENS
+    requested_outputs = tuple(set(requested_outputs))
+    if ontology_terms is not None:
+        ontology_terms = set(ontology.from_curie(o) if isinstance(o, str) else o for o in ontology_terms)
+    ag_metadata = model._metadata[organism]
+    track_masks = metadata_lib.create_track_masks(
+        ag_metadata,
+        requested_outputs=requested_outputs,
+        requested_ontologies=ontology_terms,
+    )
+
+    with model._device_context as device, jax.transfer_guard("disallow"):
+        sequence_batch = np.stack([np.asarray(model._one_hot_encoder.encode(sequence)) for sequence in sequences], axis=0)
+        organism_index = np.full((len(sequences),), ag_research_dna_model.convert_to_organism_index(organism), dtype=np.int32)
+        predictions = model._predict(
+            model._params,
+            model._state,
+            jax.device_put(sequence_batch, device),
+            jax.device_put(organism_index, device),
+            requested_outputs=requested_outputs,
+            negative_strand_mask=jax.device_put(np.zeros((len(sequences),), dtype=bool), device),
+            strand_reindexing=jax.device_put(ag_metadata.strand_reindexing, device),
+        )
+        predictions = ag_research_dna_model._filter_predictions(
+            predictions,
+            track_masks=jax.device_put(track_masks, device),
+        )
+        predictions = jax.tree.map(tensor_utils.upcast_floating, predictions)
+        predictions = jax.device_get(predictions)
+
+    metadata_by_name = {}
+    for output_type in requested_outputs:
+        track_metadata = ag_metadata.get(output_type)
+        if track_metadata is not None:
+            metadata_by_name[output_type.name] = track_metadata[track_masks[output_type]]
+
+    rows = []
+    for row_index in range(len(sequences)):
+        row = {}
+        for output_type in requested_outputs:
+            values = predictions.get(output_type)
+            if values is not None and not isinstance(values, dict):
+                row[output_type.name] = values[row_index]
+        rows.append(row)
+    return rows, metadata_by_name
+
+
 def _write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -362,6 +447,10 @@ def _shard(items: Sequence[str], shard_index: Optional[int], num_shards: Optiona
     return [item for i, item in enumerate(items) if i % num_shards == shard_index]
 
 
+def _chunks(items: Sequence[PredictionTask], size: int) -> Sequence[Sequence[PredictionTask]]:
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
 def run(
     config_path: Path,
     *,
@@ -377,6 +466,7 @@ def run(
     max_windows: Optional[int] = None,
     haplotype_filter: Optional[str] = None,
     strand_filter: Optional[str] = None,
+    batch_size_override: Optional[int] = None,
 ) -> int:
     config = _load_yaml(config_path)
     alphagenome_cfg = _as_mapping(config, "alphagenome")
@@ -405,18 +495,15 @@ def run(
     include_indels = bool(variants_cfg.get("include_indels", False))
     require_phased = bool(variants_cfg.get("phased", True))
     resume = bool(runtime_cfg.get("resume", True))
-    batch_size = int(runtime_cfg.get("batch_size", 1))
+    batch_size = int(batch_size_override or runtime_cfg.get("batch_size", 1))
     strands = _as_list(outputs_cfg.get("strands", ["plus", "minus"]), ["plus", "minus"])
     output_names = _as_list(outputs_override or outputs_cfg.get("requested_outputs"), DEFAULT_OUTPUTS)
     ontology_terms = _as_list(outputs_cfg.get("ontology_terms"), DEFAULT_ONTOLOGY_TERMS)
 
     if window_bp != DEFAULT_WINDOW_BP or stride_bp != DEFAULT_STRIDE_BP:
         raise ValueError("Esta configuracao inicial exige window_bp=1048576 e stride_bp=524288")
-    if batch_size != 1:
-        raise ValueError(
-            "runtime.batch_size > 1 ainda nao esta implementado na camada publica predict_sequence; "
-            "use --shard-index/--num-shards para paralelismo ou implemente a camada batched via apply_fn."
-        )
+    if batch_size <= 0:
+        raise ValueError("runtime.batch_size deve ser positivo")
 
     reference = _read_fasta_chromosome(reference_fasta, chromosome)
     chromosome_length = int(reference_cfg.get("chromosome_length") or len(reference))
@@ -463,9 +550,8 @@ def run(
             "reference_fasta": str(reference_fasta),
             "vcf": str(vcf_path),
             "batching_note": (
-                "A API publica predict_sequence e unitaria. Para batch real, use o apply_fn "
-                "privado do alphagenome_research com tensores [B, 1048576, 4] ou paralelize "
-                "processos por GPU/shard ate essa camada ser estabilizada."
+                "runtime.batch_size > 1 usa a chamada JAX interna model._predict com tensores "
+                "[B, 1048576, 4]. Aumente gradualmente ate saturar VRAM sem OOM."
             ),
         },
     )
@@ -486,6 +572,7 @@ def run(
             include_indels=include_indels,
         )
         print(f"[INFO] {sample_id}: {len(variants):,} SNVs nao-referencia", flush=True)
+        tasks: List[PredictionTask] = []
         for haplotype in haplotypes:
             for window in windows:
                 plus_sequence = _build_haplotype_window(reference, window, variants, haplotype)
@@ -496,45 +583,73 @@ def run(
                     if resume and marker.exists():
                         continue
                     sequence = plus_sequence if strand == "plus" else _reverse_complement(plus_sequence)
-                    start = time.time()
-                    outputs = model.predict_sequence(
-                        sequence,
-                        requested_outputs=requested_outputs,
-                        ontology_terms=ontology_terms,
-                    )
-                    elapsed = time.time() - start
-                    pred_dir = _prediction_path(output_root, sample_id, haplotype, strand, window.index)
-                    saved_outputs = _save_output_npz(pred_dir, outputs, output_names)
-                    _write_json(
-                        pred_dir / "window_metadata.json",
-                        {
-                            "sample_id": sample_id,
-                            "haplotype": haplotype,
-                            "strand": strand,
-                            "window": window.__dict__,
-                            "saved_outputs": saved_outputs,
-                            "elapsed_seconds": elapsed,
-                            "minus_strand_orientation": "raw_reverse_complement_sequence" if strand == "minus" else None,
-                        },
-                    )
-                    marker.parent.mkdir(parents=True, exist_ok=True)
-                    marker.write_text("ok\n", encoding="utf-8")
-                    _append_jsonl(
-                        manifest_path,
-                        {
-                            "sample_id": sample_id,
-                            "haplotype": haplotype,
-                            "strand": strand,
-                            "window_index": window.index,
-                            "prediction_dir": str(pred_dir),
-                            "elapsed_seconds": round(elapsed, 3),
-                        },
-                    )
-                    print(
-                        f"[INFO] {sample_id} {haplotype} {strand} window {window.index + 1}/{len(windows)} "
-                        f"em {elapsed:.1f}s",
-                        flush=True,
-                    )
+                    tasks.append(PredictionTask(sample_id, haplotype, strand, window, sequence))
+
+        for task_batch in _chunks(tasks, batch_size):
+            start = time.time()
+            if batch_size == 1:
+                task = task_batch[0]
+                outputs = model.predict_sequence(
+                    task.sequence,
+                    requested_outputs=requested_outputs,
+                    ontology_terms=ontology_terms,
+                )
+                elapsed = time.time() - start
+                pred_dir = _prediction_path(output_root, task.sample_id, task.haplotype, task.strand, task.window.index)
+                saved_outputs = _save_output_npz(pred_dir, outputs, output_names)
+                task_results = [(task, saved_outputs, elapsed)]
+            else:
+                prediction_rows, metadata_by_name = _predict_sequences_batched(
+                    dna_model,
+                    model,
+                    [task.sequence for task in task_batch],
+                    requested_outputs,
+                    ontology_terms,
+                )
+                elapsed = time.time() - start
+                task_results = []
+                per_task_elapsed = elapsed / max(len(task_batch), 1)
+                for task, prediction_row in zip(task_batch, prediction_rows):
+                    pred_dir = _prediction_path(output_root, task.sample_id, task.haplotype, task.strand, task.window.index)
+                    saved_outputs = _save_prediction_arrays(pred_dir, prediction_row, metadata_by_name)
+                    task_results.append((task, saved_outputs, per_task_elapsed))
+
+            for task, saved_outputs, task_elapsed in task_results:
+                pred_dir = _prediction_path(output_root, task.sample_id, task.haplotype, task.strand, task.window.index)
+                _write_json(
+                    pred_dir / "window_metadata.json",
+                    {
+                        "sample_id": task.sample_id,
+                        "haplotype": task.haplotype,
+                        "strand": task.strand,
+                        "window": task.window.__dict__,
+                        "saved_outputs": saved_outputs,
+                        "elapsed_seconds": task_elapsed,
+                        "batch_size": len(task_batch),
+                        "minus_strand_orientation": "raw_reverse_complement_sequence" if task.strand == "minus" else None,
+                    },
+                )
+                marker = _marker_path(output_root, task.sample_id, task.haplotype, task.strand, task.window.index)
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.write_text("ok\n", encoding="utf-8")
+                _append_jsonl(
+                    manifest_path,
+                    {
+                        "sample_id": task.sample_id,
+                        "haplotype": task.haplotype,
+                        "strand": task.strand,
+                        "window_index": task.window.index,
+                        "prediction_dir": str(pred_dir),
+                        "elapsed_seconds": round(task_elapsed, 3),
+                        "batch_size": len(task_batch),
+                    },
+                )
+                print(
+                    f"[INFO] {task.sample_id} {task.haplotype} {task.strand} "
+                    f"window {task.window.index + 1}/{len(windows)} em {task_elapsed:.1f}s "
+                    f"(batch={len(task_batch)})",
+                    flush=True,
+                )
     print(f"[DONE] Dataset inicial escrito em {output_root}")
     return 0
 
@@ -554,6 +669,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--max-windows", type=int, default=None, help="Limita janelas para smoke tests")
     parser.add_argument("--haplotype", choices=["H1", "H2"], default=None, help="Limita a um haplotipo")
     parser.add_argument("--strand", choices=["plus", "minus"], default=None, help="Limita a uma strand")
+    parser.add_argument("--batch-size", type=int, default=None, help="Batch JAX real de sequencias 1 MiB")
     args = parser.parse_args(argv)
     return run(
         args.config,
@@ -569,6 +685,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         max_windows=args.max_windows,
         haplotype_filter=args.haplotype,
         strand_filter=args.strand,
+        batch_size_override=args.batch_size,
     )
 
 

@@ -506,6 +506,8 @@ def cmd_alphagenome_chr15_local(args: argparse.Namespace) -> int:
         command_args.extend(["--haplotype", args.haplotype])
     if args.strand:
         command_args.extend(["--strand", args.strand])
+    if args.batch_size is not None:
+        command_args.extend(["--batch-size", str(args.batch_size)])
     return _run_module("genomics.workflows.alphagenome.chr15_local", command_args)
 
 
@@ -1024,6 +1026,7 @@ def build_parser() -> argparse.ArgumentParser:
     agc.add_argument("--max-windows", type=int, default=None)
     agc.add_argument("--haplotype", choices=["H1", "H2"], default=None)
     agc.add_argument("--strand", choices=["plus", "minus"], default=None)
+    agc.add_argument("--batch-size", type=int, default=None)
     agc.set_defaults(func=cmd_alphagenome_chr15_local)
 
     genotype = subparsers.add_parser("genotype", help="Pipeline genotype_based_predictor")
