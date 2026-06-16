@@ -597,7 +597,7 @@ def run(
                 elapsed = time.time() - start
                 pred_dir = _prediction_path(output_root, task.sample_id, task.haplotype, task.strand, task.window.index)
                 saved_outputs = _save_output_npz(pred_dir, outputs, output_names)
-                task_results = [(task, saved_outputs, elapsed)]
+                task_results = [(task, saved_outputs, elapsed, elapsed)]
             else:
                 prediction_rows, metadata_by_name = _predict_sequences_batched(
                     dna_model,
@@ -612,9 +612,9 @@ def run(
                 for task, prediction_row in zip(task_batch, prediction_rows):
                     pred_dir = _prediction_path(output_root, task.sample_id, task.haplotype, task.strand, task.window.index)
                     saved_outputs = _save_prediction_arrays(pred_dir, prediction_row, metadata_by_name)
-                    task_results.append((task, saved_outputs, per_task_elapsed))
+                    task_results.append((task, saved_outputs, per_task_elapsed, elapsed))
 
-            for task, saved_outputs, task_elapsed in task_results:
+            for task, saved_outputs, task_elapsed, batch_elapsed in task_results:
                 pred_dir = _prediction_path(output_root, task.sample_id, task.haplotype, task.strand, task.window.index)
                 _write_json(
                     pred_dir / "window_metadata.json",
@@ -625,6 +625,7 @@ def run(
                         "window": task.window.__dict__,
                         "saved_outputs": saved_outputs,
                         "elapsed_seconds": task_elapsed,
+                        "batch_elapsed_seconds": batch_elapsed,
                         "batch_size": len(task_batch),
                         "minus_strand_orientation": "raw_reverse_complement_sequence" if task.strand == "minus" else None,
                     },
@@ -641,13 +642,14 @@ def run(
                         "window_index": task.window.index,
                         "prediction_dir": str(pred_dir),
                         "elapsed_seconds": round(task_elapsed, 3),
+                        "batch_elapsed_seconds": round(batch_elapsed, 3),
                         "batch_size": len(task_batch),
                     },
                 )
                 print(
                     f"[INFO] {task.sample_id} {task.haplotype} {task.strand} "
-                    f"window {task.window.index + 1}/{len(windows)} em {task_elapsed:.1f}s "
-                    f"(batch={len(task_batch)})",
+                    f"window {task.window.index + 1}/{len(windows)} em {task_elapsed:.1f}s/janela "
+                    f"(batch={len(task_batch)}, batch_total={batch_elapsed:.1f}s)",
                     flush=True,
                 )
     print(f"[DONE] Dataset inicial escrito em {output_root}")
