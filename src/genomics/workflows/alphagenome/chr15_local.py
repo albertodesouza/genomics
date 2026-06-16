@@ -372,6 +372,8 @@ def run(
     outputs_override: Optional[str] = None,
     shard_index: Optional[int] = None,
     num_shards: Optional[int] = None,
+    window_shard_index: Optional[int] = None,
+    num_window_shards: Optional[int] = None,
     max_windows: Optional[int] = None,
     haplotype_filter: Optional[str] = None,
     strand_filter: Optional[str] = None,
@@ -426,6 +428,7 @@ def run(
         if max_windows <= 0:
             raise ValueError("max_windows deve ser positivo")
         windows = windows[:max_windows]
+    windows = _shard(windows, window_shard_index, num_window_shards)
 
     haplotypes = [haplotype_filter] if haplotype_filter else ["H1", "H2"]
     if any(haplotype not in {"H1", "H2"} for haplotype in haplotypes):
@@ -454,6 +457,8 @@ def run(
             "strands": strands,
             "haplotypes": haplotypes,
             "max_windows": max_windows,
+            "window_shard_index": window_shard_index,
+            "num_window_shards": num_window_shards,
             "samples": samples,
             "reference_fasta": str(reference_fasta),
             "vcf": str(vcf_path),
@@ -544,6 +549,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--outputs", default=None, help="CSV de outputs AlphaGenome, ex: RNA_SEQ")
     parser.add_argument("--shard-index", type=int, default=None)
     parser.add_argument("--num-shards", type=int, default=None)
+    parser.add_argument("--window-shard-index", type=int, default=None)
+    parser.add_argument("--num-window-shards", type=int, default=None)
     parser.add_argument("--max-windows", type=int, default=None, help="Limita janelas para smoke tests")
     parser.add_argument("--haplotype", choices=["H1", "H2"], default=None, help="Limita a um haplotipo")
     parser.add_argument("--strand", choices=["plus", "minus"], default=None, help="Limita a uma strand")
@@ -557,6 +564,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         outputs_override=args.outputs,
         shard_index=args.shard_index,
         num_shards=args.num_shards,
+        window_shard_index=args.window_shard_index,
+        num_window_shards=args.num_window_shards,
         max_windows=args.max_windows,
         haplotype_filter=args.haplotype,
         strand_filter=args.strand,

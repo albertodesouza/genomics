@@ -496,6 +496,10 @@ def cmd_alphagenome_chr15_local(args: argparse.Namespace) -> int:
         command_args.extend(["--shard-index", str(args.shard_index)])
     if args.num_shards is not None:
         command_args.extend(["--num-shards", str(args.num_shards)])
+    if args.window_shard_index is not None:
+        command_args.extend(["--window-shard-index", str(args.window_shard_index)])
+    if args.num_window_shards is not None:
+        command_args.extend(["--num-window-shards", str(args.num_window_shards)])
     if args.max_windows is not None:
         command_args.extend(["--max-windows", str(args.max_windows)])
     if args.haplotype:
@@ -1015,6 +1019,8 @@ def build_parser() -> argparse.ArgumentParser:
     agc.add_argument("--outputs", default=None)
     agc.add_argument("--shard-index", type=int, default=None)
     agc.add_argument("--num-shards", type=int, default=None)
+    agc.add_argument("--window-shard-index", type=int, default=None)
+    agc.add_argument("--num-window-shards", type=int, default=None)
     agc.add_argument("--max-windows", type=int, default=None)
     agc.add_argument("--haplotype", choices=["H1", "H2"], default=None)
     agc.add_argument("--strand", choices=["plus", "minus"], default=None)
