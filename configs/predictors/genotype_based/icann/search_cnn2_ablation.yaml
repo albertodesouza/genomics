@@ -140,65 +140,111 @@ hyperparameter_search:
           model.cnn2.kernel_stage1: [6, 8]
           model.cnn2.stride_stage1: [6, 8]
       - symbol: "K12"
-        description: "CNN Stage 1 kernels (6 x 32) and strides (6 x 32)"
+        description: "CNN Stage 1 kernels (6 x 256) and strides (6 x 256)"
         baseline: true
         overrides:
-          model.cnn2.kernel_stage1: [6, 32]
-          model.cnn2.stride_stage1: [6, 32]
+          model.cnn2.kernel_stage1: [6, 256]
+          model.cnn2.stride_stage1: [6, 256]
       - symbol: "K13"
-        description: "CNN Stage 1 kernels (6 x 128) and strides (6 x 128)"
+        description: "CNN Stage 1 kernels (6 x 512) and strides (6 x 512)"
         overrides:
-          model.cnn2.kernel_stage1: [6, 128]
-          model.cnn2.stride_stage1: [6, 128]
+          model.cnn2.kernel_stage1: [6, 512]
+          model.cnn2.stride_stage1: [6, 512]
       - symbol: "K21"
         description: "CNN Stage 2 and 3 kernels (1 x 2) and strides (1 x 2)"
         overrides:
+          model.cnn2.kernel_stage1: [6, 256]
+          model.cnn2.stride_stage1: [6, 256]
           model.cnn2.kernel_stages23: [1, 2]
           model.cnn2.stride_stages23: [1, 2]
           model.cnn2.padding_stages23: [0, 1]
       - symbol: "K22"
-        description: "CNN Stage 2 and 3 kernels (1 x 5) and strides (1 x 2)"
+        description: "CNN Stage 2 and 3 kernels (1 x 11) and strides (1 x 2)"
         baseline: true
         overrides:
-          model.cnn2.kernel_stages23: [1, 5]
-          model.cnn2.stride_stages23: [1, 2]
-          model.cnn2.padding_stages23: [0, 2]
-      - symbol: "K23"
-        description: "CNN Stage 2 and 3 kernels (1 x 11) and strides (1 x 2)"
-        overrides:
+          model.cnn2.kernel_stage1: [6, 256]
+          model.cnn2.stride_stage1: [6, 256]
           model.cnn2.kernel_stages23: [1, 11]
           model.cnn2.stride_stages23: [1, 2]
           model.cnn2.padding_stages23: [0, 5]
+      - symbol: "K23"
+        description: "CNN Stage 2 and 3 kernels (1 x 25) and strides (1 x 2)"
+        overrides:
+          model.cnn2.kernel_stage1: [6, 256]
+          model.cnn2.stride_stage1: [6, 256]
+          model.cnn2.kernel_stages23: [1, 25]
+          model.cnn2.stride_stages23: [1, 2]
+          model.cnn2.padding_stages23: [0, 12]
       - symbol: "FC128"
         description: "CNN Fully Connected hidden layer - 128 neurons"
         overrides:
+          model.cnn2.kernel_stage1: [6, 256]
+          model.cnn2.stride_stage1: [6, 256]
+          model.cnn2.kernel_stages23: [1, 11]
+          model.cnn2.stride_stages23: [1, 2]
+          model.cnn2.padding_stages23: [0, 5]
           model.cnn2.fc_hidden_size: 128
       - symbol: "FC256"
         description: "CNN Fully Connected hidden layer - 256 neurons"
         baseline: true
         overrides:
+          model.cnn2.kernel_stage1: [6, 256]
+          model.cnn2.stride_stage1: [6, 256]
+          model.cnn2.kernel_stages23: [1, 11]
+          model.cnn2.stride_stages23: [1, 2]
+          model.cnn2.padding_stages23: [0, 5]
           model.cnn2.fc_hidden_size: 256
       - symbol: "FC512"
         description: "CNN Fully Connected hidden layer - 512 neurons"
         overrides:
+          model.cnn2.kernel_stage1: [6, 256]
+          model.cnn2.stride_stage1: [6, 256]
+          model.cnn2.kernel_stages23: [1, 11]
+          model.cnn2.stride_stages23: [1, 2]
+          model.cnn2.padding_stages23: [0, 5]
           model.cnn2.fc_hidden_size: 512
       - symbol: "W8"
         description: "CNN input window size - 8192"
         overrides:
+          model.cnn2.kernel_stage1: [6, 256]
+          model.cnn2.stride_stage1: [6, 256]
+          model.cnn2.kernel_stages23: [1, 11]
+          model.cnn2.stride_stages23: [1, 2]
+          model.cnn2.padding_stages23: [0, 5]
+          model.cnn2.fc_hidden_size: 256
           dataset_input.window_center_size: 8192
       - symbol: "W32"
         description: "CNN input window size - 32768"
         baseline: true
         overrides:
+          model.cnn2.kernel_stage1: [6, 256]
+          model.cnn2.stride_stage1: [6, 256]
+          model.cnn2.kernel_stages23: [1, 11]
+          model.cnn2.stride_stages23: [1, 2]
+          model.cnn2.padding_stages23: [0, 5]
+          model.cnn2.fc_hidden_size: 256
           dataset_input.window_center_size: 32768
       - symbol: "W128"
         description: "CNN input window size - 131072"
         overrides:
+          model.cnn2.kernel_stage1: [6, 256]
+          model.cnn2.stride_stage1: [6, 256]
+          model.cnn2.kernel_stages23: [1, 11]
+          model.cnn2.stride_stages23: [1, 2]
+          model.cnn2.padding_stages23: [0, 5]
+          model.cnn2.fc_hidden_size: 256
           dataset_input.window_center_size: 131072
       - symbol: "AG"
         description: "All genes (11 genes)"
         baseline: true
         overrides:
+          model.cnn2.kernel_stage1: [6, 256]
+          model.cnn2.stride_stage1: [6, 256]
+          model.cnn2.kernel_stages23: [1, 11]
+          model.cnn2.stride_stages23: [1, 2]
+          model.cnn2.padding_stages23: [0, 5]
+          model.cnn2.fc_hidden_size: 256
+          dataset_input.window_center_size: 32768
           dataset_input.genes_to_use:
             - "MC1R"
             - "TYRP1"
@@ -214,6 +260,13 @@ hyperparameter_search:
       - symbol: "9G"
         description: "9 genes (-DDB1 and -EDAR)"
         overrides:
+          model.cnn2.kernel_stage1: [6, 256]
+          model.cnn2.stride_stage1: [6, 256]
+          model.cnn2.kernel_stages23: [1, 11]
+          model.cnn2.stride_stages23: [1, 2]
+          model.cnn2.padding_stages23: [0, 5]
+          model.cnn2.fc_hidden_size: 256
+          dataset_input.window_center_size: 32768
           dataset_input.genes_to_use:
             - "MC1R"
             - "TYRP1"
@@ -227,6 +280,13 @@ hyperparameter_search:
       - symbol: "7G"
         description: "7 genes (-DDB1, -EDAR, -HERC2, -MC1R)"
         overrides:
+          model.cnn2.kernel_stage1: [6, 256]
+          model.cnn2.stride_stage1: [6, 256]
+          model.cnn2.kernel_stages23: [1, 11]
+          model.cnn2.stride_stages23: [1, 2]
+          model.cnn2.padding_stages23: [0, 5]
+          model.cnn2.fc_hidden_size: 256
+          dataset_input.window_center_size: 32768
           dataset_input.genes_to_use:
             - "TYRP1"
             - "TYR"
@@ -238,11 +298,25 @@ hyperparameter_search:
       - symbol: "1G"
         description: "OCA2 only"
         overrides:
+          model.cnn2.kernel_stage1: [6, 256]
+          model.cnn2.stride_stage1: [6, 256]
+          model.cnn2.kernel_stages23: [1, 11]
+          model.cnn2.stride_stages23: [1, 2]
+          model.cnn2.padding_stages23: [0, 5]
+          model.cnn2.fc_hidden_size: 256
+          dataset_input.window_center_size: 32768
           dataset_input.genes_to_use:
             - "OCA2"
       - symbol: "1GR"
         description: "FBXO5 only"
         overrides:
+          model.cnn2.kernel_stage1: [6, 256]
+          model.cnn2.stride_stage1: [6, 256]
+          model.cnn2.kernel_stages23: [1, 11]
+          model.cnn2.stride_stages23: [1, 2]
+          model.cnn2.padding_stages23: [0, 5]
+          model.cnn2.fc_hidden_size: 256
+          dataset_input.window_center_size: 32768
           dataset_input.genes_to_use:
             - "FBXO5"
 
