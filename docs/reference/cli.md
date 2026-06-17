@@ -57,6 +57,7 @@ genomics genotype stability configs/predictors/genotype_based/icann/genes_1000_a
 genomics genotype confidence-intervals configs/predictors/genotype_based/icann/search_rf_xgboost.yaml --experiment-dir results/genotype_based_predictor/icann/search/rf_xgboost_pca300/best --split test
 genomics genotype evaluate configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml --checkpoint best_accuracy --split test
 genomics genotype pca-variance configs/predictors/genotype_based/icann/genes_1000_all_rf.yaml --output results/pca_variance.png --json-output results/pca_variance.json
+genomics genotype compare-aligned-signals configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml --max-samples 100 --max-pairs 500 --output-dir results/genotype_based_predictor/analysis/aligned_signal_similarity
 genomics genotype workbench --host 127.0.0.1 --port 8780
 genomics genotype sync-bcftools-artifacts --source-dir /path/to/consensus --target-dir /path/to/canonical --link-mode hardlink
 genomics genotype single-gene-screen configs/predictors/genotype_based/neural_legacy/pigmentation_binary_single_gene_screen.yaml --dry-run
@@ -73,6 +74,8 @@ genomics genotype single-gene-screen configs/predictors/genotype_based/neural_le
 `genomics genotype confidence-intervals` recomputes metrics and configured bootstrap confidence intervals for a saved model artifact/checkpoint without retraining.
 
 `genomics genotype pca-variance` computes and plots sklearn PCA explained variance for the selected processed dataset/config. Use `--force` to rebuild existing outputs.
+
+`genomics genotype compare-aligned-signals` reads the processed aligned tensor cache and compares AlphaGenome signal channels between pairs of individuals using only positions where both individuals have `valid_mask=1`. It writes global pairwise similarity, top absolute differences, per-position superpopulation effects (`eta_squared`, group mean delta, standardized delta), a sparse top-effect pairwise summary, and `summary.json`. Use `--max-samples` and `--max-pairs` for a fast pilot run; add `--permutations 1000` to test the global between-vs-within superpopulation MAD difference.
 
 `genomics genotype workbench` launches the local genotype workbench apps for inspecting datasets, aligned tensors, AlphaGenome tracks, and experiment outputs.
 

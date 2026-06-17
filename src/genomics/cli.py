@@ -214,6 +214,39 @@ def cmd_genotype_pca_variance(args: argparse.Namespace) -> int:
     return _run_module("genomics.predictors.genotype_based.analysis.plot_sklearn_pca_variance", command_args)
 
 
+def cmd_genotype_compare_aligned_signals(args: argparse.Namespace) -> int:
+    config_path = _genotype_config_with_overrides(args)
+    command_args: list[PathLike] = [
+        config_path,
+        "--output-dir",
+        args.output_dir,
+        "--splits",
+        *args.splits,
+    ]
+    if args.cache_dir:
+        command_args.extend(["--cache-dir", args.cache_dir])
+    if args.dataset_dir:
+        command_args.extend(["--dataset-dir", args.dataset_dir])
+    if args.sample_ids:
+        command_args.append("--sample-ids")
+        command_args.extend(args.sample_ids)
+    if args.max_samples is not None:
+        command_args.extend(["--max-samples", str(args.max_samples)])
+    if args.max_pairs is not None:
+        command_args.extend(["--max-pairs", str(args.max_pairs)])
+    command_args.extend(["--min-valid-positions", str(args.min_valid_positions)])
+    command_args.extend(["--top-k", str(args.top_k)])
+    command_args.extend(["--effect-top-k", str(args.effect_top_k)])
+    command_args.extend(["--effect-min-samples", str(args.effect_min_samples)])
+    command_args.extend(["--effect-min-groups", str(args.effect_min_groups)])
+    if args.write_all_position_effects:
+        command_args.append("--write-all-position-effects")
+    if args.permutations:
+        command_args.extend(["--permutations", str(args.permutations)])
+    command_args.extend(["--permutation-seed", str(args.permutation_seed)])
+    return _run_module("genomics.predictors.genotype_based.analysis.compare_aligned_signals", command_args)
+
+
 def cmd_genotype_workbench(args: argparse.Namespace) -> int:
     command_args: list[PathLike] = [
         "--dataset-dir",
@@ -1073,6 +1106,23 @@ def build_parser() -> argparse.ArgumentParser:
     gp_pca.add_argument("--max-components", type=int, default=None)
     gp_pca.add_argument("--force", action="store_true")
     gp_pca.set_defaults(func=cmd_genotype_pca_variance)
+    gp_compare = genotype_sub.add_parser("compare-aligned-signals", help="Compara sinais AlphaGenome alinhados usando apenas posicoes validas nos dois individuos")
+    _add_genotype_config_args(gp_compare)
+    gp_compare.add_argument("--cache-dir", type=Path, default=None)
+    gp_compare.add_argument("--splits", nargs="+", choices=["train", "val", "test"], default=["train", "val", "test"])
+    gp_compare.add_argument("--sample-ids", nargs="*", default=None)
+    gp_compare.add_argument("--max-samples", type=int, default=None)
+    gp_compare.add_argument("--max-pairs", type=int, default=None)
+    gp_compare.add_argument("--min-valid-positions", type=int, default=10)
+    gp_compare.add_argument("--top-k", type=int, default=1000)
+    gp_compare.add_argument("--effect-top-k", type=int, default=1000)
+    gp_compare.add_argument("--effect-min-samples", type=int, default=10)
+    gp_compare.add_argument("--effect-min-groups", type=int, default=2)
+    gp_compare.add_argument("--write-all-position-effects", action="store_true")
+    gp_compare.add_argument("--permutations", type=int, default=0)
+    gp_compare.add_argument("--permutation-seed", type=int, default=13)
+    gp_compare.add_argument("--output-dir", type=Path, required=True)
+    gp_compare.set_defaults(func=cmd_genotype_compare_aligned_signals)
     gp_workbench = genotype_sub.add_parser("workbench")
     gp_workbench.add_argument("--dataset-dir", type=Path, default=DEFAULT_DATASET_DIR)
     gp_workbench.add_argument("--runs-root", type=Path, default=DEFAULT_GENOTYPE_RUNS_ROOT)

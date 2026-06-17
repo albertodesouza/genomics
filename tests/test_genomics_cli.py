@@ -361,6 +361,24 @@ def test_genotype_confidence_intervals_command_parses():
     assert args.split == "test"
 
 
+def test_genotype_compare_aligned_signals_command_parses(tmp_path):
+    args = genomics_cli.build_parser().parse_args([
+        "genotype",
+        "compare-aligned-signals",
+        "configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml",
+        "--max-samples",
+        "10",
+        "--max-pairs",
+        "20",
+        "--output-dir",
+        str(tmp_path / "out"),
+    ])
+
+    assert args.genotype_command == "compare-aligned-signals"
+    assert args.max_samples == 10
+    assert args.max_pairs == 20
+
+
 def test_config_describe_genotype_lists_known_fields(capsys):
     rc = genomics_cli.main(["config", "describe", "genotype"])
     captured = capsys.readouterr()

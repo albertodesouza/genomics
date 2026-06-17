@@ -139,17 +139,26 @@ hyperparameter_search:
         overrides:
           model.cnn2.kernel_stage1: [6, 8]
           model.cnn2.stride_stage1: [6, 8]
+          model.cnn2.kernel_stages23: [1, 11]
+          model.cnn2.stride_stages23: [1, 2]
+          model.cnn2.padding_stages23: [0, 5]
       - symbol: "K12"
         description: "CNN Stage 1 kernels (6 x 256) and strides (6 x 256)"
         baseline: true
         overrides:
           model.cnn2.kernel_stage1: [6, 256]
           model.cnn2.stride_stage1: [6, 256]
+          model.cnn2.kernel_stages23: [1, 11]
+          model.cnn2.stride_stages23: [1, 2]
+          model.cnn2.padding_stages23: [0, 5]
       - symbol: "K13"
         description: "CNN Stage 1 kernels (6 x 512) and strides (6 x 512)"
         overrides:
           model.cnn2.kernel_stage1: [6, 512]
           model.cnn2.stride_stage1: [6, 512]
+          model.cnn2.kernel_stages23: [1, 11]
+          model.cnn2.stride_stages23: [1, 2]
+          model.cnn2.padding_stages23: [0, 5]
       - symbol: "K21"
         description: "CNN Stage 2 and 3 kernels (1 x 2) and strides (1 x 2)"
         overrides:
