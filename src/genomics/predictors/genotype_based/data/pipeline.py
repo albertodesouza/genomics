@@ -107,6 +107,29 @@ def _materialize_cache_chunk(
     }
 
 
+def _retry_materialize_cache_chunk_serial(
+    config_dict: Dict[str, Any],
+    split_name: str,
+    batch_id: int,
+    batch_indices: list[int],
+    normalization_params: Dict[str, Any],
+    temp_dir: Path,
+    alignment_sample_ids: list[str],
+):
+    retry_path = str(temp_dir / f"{split_name}_data_shard_{batch_id:05d}_retry.pt")
+    console.print(
+        f"[yellow]Retentando batch_id={batch_id} de {split_name} em modo serial: "
+        f"{len(batch_indices)} amostras[/yellow]"
+    )
+    return _materialize_cache_chunk(
+        config_dict,
+        batch_indices,
+        normalization_params,
+        retry_path,
+        alignment_sample_ids,
+    )
+
+
 def _load_external_normalization_params(config: PipelineConfig) -> Optional[Dict]:
     norm_path = config.dataset_input.normalization_params_path
     if not norm_path:
@@ -703,7 +726,31 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                                         )
                                 except Exception as e:
                                     console.print(f"[yellow]Erro ao processar batch_id={batch_id}: {e}[/yellow]")
-                                    batch_errors.append((batch_id, e))
+                                    try:
+                                        result = _retry_materialize_cache_chunk_serial(
+                                            config_dict,
+                                            split_name,
+                                            batch_id,
+                                            batch_indices,
+                                            processed_dataset.normalization_params,
+                                            temp_dir,
+                                            alignment_sample_ids,
+                                        )
+                                        batch_results[batch_id] = result
+                                        completed_samples += len(batch_indices)
+                                        progress.advance(task, advance=len(batch_indices))
+                                        for key in ds_profile_totals:
+                                            ds_profile_totals[key] += result["profile_stats"].get(key, 0)
+                                        for key in align_profile_totals:
+                                            align_profile_totals[key] += result["aligner_profile_stats"].get(key, 0)
+                                        for key in chain_profile_totals:
+                                            chain_profile_totals[key] += result.get("chain_mapper_profile_stats", {}).get(key, 0)
+                                        console.print(f"[green]✓ batch_id={batch_id} recuperado em modo serial[/green]")
+                                    except Exception as retry_error:
+                                        console.print(
+                                            f"[red]Retry serial falhou para batch_id={batch_id}: {retry_error}[/red]"
+                                        )
+                                        batch_errors.append((batch_id, retry_error))
 
                         if batch_errors:
                             first_batch_id, first_error = batch_errors[0]
