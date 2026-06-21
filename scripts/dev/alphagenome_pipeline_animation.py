@@ -6,15 +6,16 @@ from manim import *
 
 ASSET_DIR = Path(__file__).resolve().parents[2] / "assets" / "pipeline_animation" / "ppt_media"
 
-BG = "#070B1A"
-CYAN = "#41D9FF"
-BLUE = "#4E7BFF"
-PURPLE = "#9B5CFF"
-PINK = "#FF4FA3"
-GREEN = "#59E39B"
-YELLOW = "#FFD166"
-ORANGE = "#FF9F1C"
-MUTED = "#8EA0C5"
+BG = "#F7EFE3"
+WHITE = "#3A2D26"
+CYAN = "#7FA99B"
+BLUE = "#6F8FA8"
+PURPLE = "#A48A7B"
+PINK = "#C76D57"
+GREEN = "#8C9A64"
+YELLOW = "#D6A34A"
+ORANGE = "#C9824A"
+MUTED = "#8F7D6D"
 
 
 class AlphaGenomePipelineAnimation(Scene):
@@ -84,35 +85,51 @@ class AlphaGenomePipelineAnimation(Scene):
         axis = Line([-width / 2, -height / 2, 0], [width / 2, -height / 2, 0], color=MUTED, stroke_opacity=0.4, stroke_width=1)
         return VGroup(axis, graph)
 
+    def _strand_from_points(self, points, letters, color=CYAN, letter_offset=UP * 0.18, font_size=13, stroke_width=3):
+        curve = VMobject(color=color, stroke_width=stroke_width)
+        curve.set_points_smoothly(points)
+        labels = VGroup()
+        for i, (point, letter) in enumerate(zip(points, letters)):
+            label_color = color if i % 5 else PINK
+            labels.add(Text(letter, font_size=font_size, color=label_color).move_to(np.array(point) + letter_offset))
+        strand = VGroup(curve, labels)
+        strand.curve = curve
+        strand.bases = labels
+        return strand
+
+    def _linear_strand(self, sequence, start, end, color=CYAN, letter_offset=RIGHT * 0.22, font_size=17, stroke_width=5):
+        points = [interpolate(np.array(start), np.array(end), alpha) for alpha in np.linspace(0, 1, len(sequence))]
+        return self._strand_from_points(points, sequence, color=color, letter_offset=letter_offset, font_size=font_size, stroke_width=stroke_width)
+
     def _dna(self, width=5.2, bases=18):
         pair_groups = VGroup()
         xs = np.linspace(-width / 2, width / 2, bases)
         pairs = [("A", "T"), ("C", "G"), ("G", "C"), ("T", "A")]
         top_points = []
         bot_points = []
+        top_letters = []
+        bottom_letters = []
         for i, x in enumerate(xs):
             y = 0.28 * np.sin(i * 0.9)
             top_points.append([x, y, 0])
             bot_points.append([x, -y, 0])
-            rung = Line([x, y, 0], [x, -y, 0], color=BLUE, stroke_width=1.5, stroke_opacity=0.65)
             top_base, bottom_base = pairs[i % len(pairs)]
-            top_offset = 0.16 if y >= 0 else -0.16
-            bottom_offset = -0.16 if y >= 0 else 0.16
-            top_label = Text(top_base, font_size=13, color=CYAN if i % 5 else PINK).move_to([x, y + top_offset, 0])
-            bottom_label = Text(bottom_base, font_size=13, color=PURPLE if i % 5 else PINK).move_to([x, -y + bottom_offset, 0])
-            pair_groups.add(VGroup(rung, top_label, bottom_label))
-        top = VMobject(color=CYAN, stroke_width=3)
-        bottom = VMobject(color=PURPLE, stroke_width=3)
-        top.set_points_smoothly(top_points)
-        bottom.set_points_smoothly(bot_points)
+            top_letters.append(top_base)
+            bottom_letters.append(bottom_base)
+            pair_groups.add(Line([x, y, 0], [x, -y, 0], color=BLUE, stroke_width=1.5, stroke_opacity=0.65))
+        top = self._strand_from_points(top_points, top_letters, color=CYAN, letter_offset=UP * 0.16)
+        bottom = self._strand_from_points(bot_points, bottom_letters, color=PURPLE, letter_offset=DOWN * 0.16)
         group = VGroup(top, bottom, pair_groups)
+        group.top_strand = top
+        group.bottom_strand = bottom
         group.strands = VGroup(top, bottom)
         group.base_pairs = pair_groups
         return group
 
     def _dna_growth(self, dna, run_time=1.5):
         return AnimationGroup(
-            Create(dna.strands, lag_ratio=0.0),
+            Create(VGroup(dna.top_strand.curve, dna.bottom_strand.curve), lag_ratio=0.0),
+            LaggedStart(*[FadeIn(base, scale=0.9) for base in VGroup(dna.top_strand.bases, dna.bottom_strand.bases)], lag_ratio=0.035),
             LaggedStart(*[FadeIn(pair, scale=0.9) for pair in dna.base_pairs], lag_ratio=0.045),
             lag_ratio=0.0,
             run_time=run_time,
@@ -227,51 +244,75 @@ class AlphaGenomePipelineAnimation(Scene):
         heading = self._label("Reconstruct individual H1 haplotype sequences", 33, WHITE, BOLD).to_edge(UP, buff=0.45)
         vcf = self._badge("VCF variants", BLUE, width=2.0).shift(LEFT * 4.25 + UP * 0.55)
         ref = self._badge("reference genome", MUTED, width=2.35).shift(LEFT * 4.25 + DOWN * 0.45)
-        strands = VGroup()
-        strand_colors = [CYAN, GREEN, YELLOW, PINK, PURPLE, ORANGE, BLUE, CYAN, GREEN]
-        for i, color in enumerate(strand_colors):
-            strand = self._single_strand(width=4.15, bases=16, color=color).scale(0.42)
-            strand.shift(RIGHT * 1.35 + UP * (1.35 - i * 0.32))
-            strands.add(strand)
-        h1 = self._badge("H1 haplotype sequences", PINK, width=2.8).next_to(strands, DOWN, buff=0.34)
-        brace = Brace(strands, RIGHT, color=YELLOW)
-        count = Text("3,202 individuals", font_size=24, color=YELLOW, weight=BOLD).next_to(brace, RIGHT, buff=0.16)
-        arrows = VGroup(self._flow_arrow(vcf.get_right(), strands.get_left() + UP * 0.45), self._flow_arrow(ref.get_right(), strands.get_left() + DOWN * 0.45, MUTED))
+        merge_point = LEFT * 1.75
+        h1_sequences = VGroup()
+        helix_colors = [CYAN, GREEN, YELLOW, PINK, PURPLE, ORANGE, BLUE, CYAN, GREEN]
+        for i, color in enumerate(helix_colors):
+            helix = self._dna(width=2.25, bases=10).scale(0.34)
+            helix.top_strand.curve.set_color(color)
+            helix.bottom_strand.curve.set_color(color)
+            row, col = divmod(i, 3)
+            helix.move_to([0.25 + col * 1.85, 1.15 - row * 0.78, 0])
+            h1_sequences.add(helix)
+        h1 = self._badge("H1 haplotype sequences", PINK, width=2.8).next_to(h1_sequences, DOWN, buff=0.34)
+        count = Text("3,202 individual H1 sequences", font_size=24, color=YELLOW, weight=BOLD).next_to(h1, DOWN, buff=0.20)
         self.play(Write(heading), FadeIn(vcf), FadeIn(ref), run_time=1.0)
-        self.play(Create(arrows), run_time=0.9)
-        self.play(LaggedStart(*[self._single_strand_growth(strand, run_time=0.75) for strand in strands], lag_ratio=0.11), FadeIn(h1), run_time=1.7)
-        self.play(Create(brace), FadeIn(count), run_time=0.8)
+        self.play(vcf.animate.move_to(merge_point + UP * 0.20), ref.animate.move_to(merge_point + DOWN * 0.20), run_time=0.9)
+        self.play(vcf.animate.scale(0.78).set_opacity(0.0), ref.animate.scale(0.78).set_opacity(0.0), run_time=0.45)
+        self.play(LaggedStart(*[self._dna_growth(helix, run_time=0.8) for helix in h1_sequences], lag_ratio=0.09), FadeIn(h1), run_time=1.9)
+        self.play(FadeIn(count, shift=UP * 0.08), run_time=0.55)
         self.wait(1.8)
-        self.play(FadeOut(VGroup(heading, vcf, ref, arrows, strands, h1, brace, count)), run_time=0.7)
+        self.play(FadeOut(VGroup(heading, vcf, ref, h1_sequences, h1, count)), run_time=0.7)
 
     def alphagenome_scene(self):
         heading = self._label("AlphaGenome: one strand in, 5930 human tracks out", 32, WHITE, BOLD).to_edge(UP, buff=0.45)
-        helix = self._dna(width=2.9, bases=12).scale(0.58).shift(LEFT * 4.65 + UP * 1.05)
-        plus = self._single_strand(width=3.1, bases=13, color=CYAN).scale(0.82).move_to(helix).shift(DOWN * 1.25)
-        plus_label = self._badge("+ strand pass", BLUE, width=1.65).next_to(plus, DOWN, buff=0.12)
-        minus_label = self._badge("- strand later", PURPLE, width=1.6).next_to(plus_label, DOWN, buff=0.16)
-        model = RoundedRectangle(corner_radius=0.18, width=2.55, height=1.35, stroke_color=CYAN, fill_color=PURPLE, fill_opacity=0.18)
-        model_text = VGroup(Text("AlphaGenome", font_size=27, color=WHITE, weight=BOLD), Text("single-strand pass", font_size=16, color=MUTED)).arrange(DOWN, buff=0.12)
-        model_text.move_to(model)
-        model_group = VGroup(model, model_text)
-        model_group.shift(RIGHT * 0.25)
-        tracks = VGroup()
+        helix = self._dna(width=2.9, bases=12).scale(0.58).shift(LEFT * 4.95)
+        plus_sequence = "ACGTACGTACGT"
+        minus_sequence = "TGCATGCATGCA"
+        plus = self._linear_strand(plus_sequence, UP * 0.95, DOWN * 0.95, color=CYAN).shift(LEFT * 1.85 + UP * 1.25)
+        minus = self._linear_strand(minus_sequence, UP * 0.95, DOWN * 0.95, color=PURPLE).shift(LEFT * 1.85 + DOWN * 1.25)
+        models = VGroup()
+        for y in [1.25, -1.25]:
+            model = RoundedRectangle(corner_radius=0.18, width=2.55, height=1.1, stroke_color=CYAN, fill_color=PURPLE, fill_opacity=0.18)
+            model_text = VGroup(Text("AlphaGenome", font_size=25, color=WHITE, weight=BOLD), Text("strand model", font_size=15, color=MUTED)).arrange(DOWN, buff=0.10)
+            model_text.move_to(model)
+            model_group = VGroup(model, model_text).shift(RIGHT * 0.45 + UP * y)
+            models.add(model_group)
+        top_tracks = VGroup()
+        bottom_tracks = VGroup()
         track_colors = [CYAN, GREEN, YELLOW, PINK, PURPLE, ORANGE, BLUE]
         for i, color in enumerate(track_colors):
-            tr = self._signal_track(width=2.95, height=0.34, color=color, phase=i).scale(0.74).shift(RIGHT * 4.55 + UP * (1.7 - i * 0.38))
-            tracks.add(tr)
-        count = self._badge("5930 human tracks", ORANGE, width=2.35).next_to(tracks, DOWN, buff=0.22)
-        ellipsis = Text("...", font_size=34, color=MUTED).next_to(tracks[-1], DOWN, buff=0.02)
-        arrow_in = self._flow_arrow(plus.get_right(), model_group.get_left(), BLUE)
-        arrow_out = self._flow_arrow(model_group.get_right(), tracks.get_left(), CYAN)
+            top_tracks.add(self._signal_track(width=2.35, height=0.24, color=color, phase=i).scale(0.58).shift(RIGHT * 4.65 + UP * (2.05 - i * 0.19)))
+            bottom_tracks.add(self._signal_track(width=2.35, height=0.24, color=color, phase=i + 0.7).scale(0.58).shift(RIGHT * 4.65 + DOWN * (0.45 + i * 0.19)))
+        top_count = self._badge("5930 tracks", ORANGE, width=1.62).next_to(top_tracks, DOWN, buff=0.14)
+        bottom_count = self._badge("5930 tracks", ORANGE, width=1.62).next_to(bottom_tracks, DOWN, buff=0.14)
+        ellipses = VGroup(Text("...", font_size=26, color=MUTED).next_to(top_tracks[-1], DOWN, buff=0.01), Text("...", font_size=26, color=MUTED).next_to(bottom_tracks[-1], DOWN, buff=0.01))
         self.play(Write(heading), self._dna_growth(helix), run_time=1.0)
-        self.play(ReplacementTransform(helix.strands[0].copy(), plus.strand), LaggedStart(*[FadeIn(b) for b in plus.bases], lag_ratio=0.04), FadeIn(plus_label), FadeIn(minus_label), run_time=1.3)
-        aligned = plus.copy().scale(0.78).next_to(model_group, LEFT, buff=0.35)
-        self.play(FadeIn(model_group, scale=0.96), Transform(plus, aligned), plus_label.animate.next_to(aligned, DOWN, buff=0.12), run_time=1.0)
-        self.play(Create(arrow_in), plus.animate.move_to(model_group), plus.animate.set_opacity(0.0), run_time=1.0)
-        self.play(Create(arrow_out), LaggedStart(*[Create(t) for t in tracks], lag_ratio=0.08), FadeIn(ellipsis), FadeIn(count, shift=UP * 0.15), run_time=1.8)
+        self.play(
+            FadeOut(helix.base_pairs),
+            helix.top_strand.animate.shift(UP * 0.24),
+            helix.bottom_strand.animate.shift(DOWN * 0.24),
+            run_time=0.55,
+        )
+        self.play(
+            Transform(helix.top_strand, plus),
+            Transform(helix.bottom_strand, minus),
+            run_time=1.3,
+        )
+        plus = helix.top_strand
+        minus = helix.bottom_strand
+        self.play(FadeIn(models, scale=0.96), run_time=0.75)
+        self.play(plus.animate.move_to(models[0]).set_opacity(0.0), minus.animate.move_to(models[1]).set_opacity(0.0), run_time=1.0)
+        self.play(
+            LaggedStart(*[Create(t) for t in top_tracks], lag_ratio=0.08),
+            LaggedStart(*[Create(t) for t in bottom_tracks], lag_ratio=0.08),
+            FadeIn(ellipses),
+            FadeIn(top_count, shift=UP * 0.12),
+            FadeIn(bottom_count, shift=UP * 0.12),
+            run_time=1.8,
+        )
         self.wait(1.8)
-        self.play(FadeOut(VGroup(heading, helix, plus, plus_label, minus_label, model_group, tracks, ellipsis, count, arrow_in, arrow_out)), run_time=0.7)
+        self.play(FadeOut(VGroup(heading, helix, plus, minus, models, top_tracks, bottom_tracks, ellipses, top_count, bottom_count)), run_time=0.7)
 
     def track_selection_scene(self):
         heading = self._label("Filter 5930 human tracks to three RNA-seq tissue ontologies", 30, WHITE, BOLD).to_edge(UP, buff=0.45)
