@@ -211,9 +211,9 @@ class AlphaGenomePipelineAnimation(Scene):
         subtitle = Text("Inferring superpopulation labels from individual DNA variation", font_size=24, color=MUTED)
         dna = self._dna(width=7.0, bases=28).scale(0.9).shift(DOWN * 1.0)
         group = VGroup(title, subtitle).arrange(DOWN, buff=0.22).shift(UP * 1.35)
-        self.play(FadeIn(group, shift=UP * 0.25), self._dna_growth(dna), run_time=2.2)
-        self.wait(2.5)
-        self.play(FadeOut(group), FadeOut(dna), run_time=0.8)
+        self.play(FadeIn(group, shift=UP * 0.25), self._dna_growth(dna), run_time=2.8)
+        self.wait(3.6)
+        self.play(FadeOut(group), FadeOut(dna), run_time=1.0)
 
     def cohort_matrix_scene(self):
         heading = self._label("Build cohort DNA windows before modeling", 32, WHITE, BOLD).to_edge(UP, buff=0.42)
@@ -231,10 +231,11 @@ class AlphaGenomePipelineAnimation(Scene):
         ]
         gene_to_color = {gene: colors[i % len(colors)] for i, gene in enumerate(genes)}
         label_offsets = {
-            "OCA2": LEFT * 0.28,
-            "HERC2": RIGHT * 0.34,
+            "OCA2": LEFT * 0.30,
+            "HERC2": RIGHT * 0.34 + UP * 0.04,
             "MC1R": LEFT * 0.30,
             "MFSD12": RIGHT * 0.34,
+            "TYR": LEFT * 0.18,
         }
         window_offsets = {"MC1R": LEFT * 0.10}
 
@@ -256,7 +257,7 @@ class AlphaGenomePipelineAnimation(Scene):
                 x = -4.05 + position * 6.15
                 color = gene_to_color[gene]
                 tick = Line([x, y - 0.10, 0], [x, y + 0.22, 0], color=color, stroke_width=3.4)
-                gene_label = Text(gene, font_size=11, color=color).next_to(tick, UP, buff=0.08).shift(label_offsets.get(gene, ORIGIN))
+                gene_label = Text(gene, font_size=8, color=color).next_to(tick, UP, buff=0.05).shift(label_offsets.get(gene, ORIGIN))
                 gene_ticks.add(tick)
                 gene_labels.add(gene_label)
                 gene_marks.add(VGroup(tick, gene_label))
@@ -307,10 +308,6 @@ class AlphaGenomePipelineAnimation(Scene):
             vcf_cards.add(card)
             vcf_by_chromosome[chromosome] = card
 
-        individual_labels = VGroup()
-        individual_xs = [3.05, 3.95, 4.85, 5.75]
-        for label, x in zip(["I1", "I2", "...", "I3202"], individual_xs):
-            individual_labels.add(Text(label, font_size=16, color=YELLOW if label != "..." else MUTED, weight=BOLD).move_to([x, 1.68, 0]))
         h1_title = Text("H1 windows by individual", font_size=18, color=PINK, weight=BOLD)
         output_frame = RoundedRectangle(
             corner_radius=0.12,
@@ -321,6 +318,11 @@ class AlphaGenomePipelineAnimation(Scene):
             fill_color=CYAN,
             fill_opacity=0.045,
         ).move_to([4.42, 0.08, 0])
+        individual_labels = VGroup()
+        individual_xs = [3.05, 3.95, 4.85, 5.75]
+        label_y = output_frame.get_top()[1] + 0.24
+        for label, x in zip(["I1", "I2", "...", "I3202"], individual_xs):
+            individual_labels.add(Text(label, font_size=16, color=YELLOW if label != "..." else MUTED, weight=BOLD).move_to([x, label_y, 0]))
         h1_title.next_to(output_frame, DOWN, buff=0.12)
         h1_rows = VGroup()
         h1_by_gene = {}
@@ -344,9 +346,9 @@ class AlphaGenomePipelineAnimation(Scene):
         split_colors = {"train": GREEN, "val": YELLOW, "test": PINK}
         split_circles = VGroup()
         split_targets = {
-            "train": np.array([-3.05, -0.40, 0]),
-            "val": np.array([-0.35, -0.40, 0]),
-            "test": np.array([2.35, -0.40, 0]),
+            "train": np.array([-4.05, -0.40, 0]),
+            "val": np.array([-1.35, -0.40, 0]),
+            "test": np.array([1.35, -0.40, 0]),
         }
         for split, center in split_targets.items():
             circle = Circle(radius=0.72, stroke_color=split_colors[split], stroke_width=2.0, fill_color=split_colors[split], fill_opacity=0.10).move_to(center)
@@ -354,11 +356,9 @@ class AlphaGenomePipelineAnimation(Scene):
             split_circles.add(VGroup(circle, label))
         family_box = self._badge("family members grouped in the same split", ORANGE, width=4.85).move_to([0, -2.18, 0])
         def h1_individual_column(label, x, source_col):
-            column = VGroup(Text(label, font_size=16, color=YELLOW if label != "..." else MUTED, weight=BOLD))
+            column = VGroup(individual_labels[source_col].copy())
             for row_group in h1_rows:
                 column.add(row_group[source_col].copy())
-            column.arrange(DOWN, buff=0.035).scale(0.72)
-            column.move_to([x, 0.05, 0])
             return column
 
         split_individual_columns = VGroup(
@@ -367,13 +367,18 @@ class AlphaGenomePipelineAnimation(Scene):
             h1_individual_column("I3202", individual_xs[3], 3),
         )
         split_assignment = ["train", "val", "test"]
-        multiplied_split_columns = VGroup()
+        transit_split_columns = VGroup()
         for i, column in enumerate(split_individual_columns):
             split = split_assignment[i]
-            center = split_targets[split]
-            offsets = [LEFT * 0.20 + DOWN * 0.12, RIGHT * 0.20 + DOWN * 0.12]
-            for offset in offsets:
-                multiplied_split_columns.add(column.copy().scale(0.36).move_to(center + offset).set_opacity(0.78))
+            source = column.get_center()
+            for start_offset, end_offset in [
+                (LEFT * 0.08 + DOWN * 0.04, LEFT * 0.22 + DOWN * 0.14),
+                (RIGHT * 0.08 + DOWN * 0.04, RIGHT * 0.22 + DOWN * 0.14),
+            ]:
+                companion = column.copy().scale(0.82).move_to(source + start_offset).set_opacity(0.0)
+                companion.target_split = split
+                companion.target_offset = end_offset
+                transit_split_columns.add(companion)
 
         matrix = VGroup()
         shown_genes = ["DDB1", "EDAR", "HERC2", "...", "TYRP1"]
@@ -381,7 +386,7 @@ class AlphaGenomePipelineAnimation(Scene):
         matrix.add(Text("11 gene windows", font_size=19, color=YELLOW, weight=BOLD).move_to([0.55, 1.35, 0]))
         for i, gene in enumerate(shown_genes):
             matrix.add(Text(gene, font_size=14, color=colors[i % len(colors)] if gene != "..." else MUTED).move_to([x_positions[i], 0.98, 0]))
-        split_rows = [("train", 0.45, GREEN, "many rows"), ("val", -0.35, YELLOW, "held-out"), ("test", -1.15, PINK, "held-out")]
+        split_rows = [("train", 0.45, GREEN, "Many rows"), ("val", -0.35, YELLOW, "Held-Out"), ("test", -1.15, PINK, "Held-Out")]
         for row, (split, y, color, note) in enumerate(split_rows):
             band = RoundedRectangle(corner_radius=0.10, width=6.15, height=0.58, stroke_color=color, stroke_width=1.0, fill_color=color, fill_opacity=0.075).move_to([0.0, y, 0])
             matrix.add(band)
@@ -401,13 +406,14 @@ class AlphaGenomePipelineAnimation(Scene):
         matrix_note = self._badge("split × individual × gene × double-stranded H1 window", CYAN, width=6.25).next_to(matrix, DOWN, buff=0.18)
         matrix_count = Text("3,202 individuals; family members never cross splits", font_size=19, color=MUTED).next_to(matrix_note, DOWN, buff=0.14)
 
-        self.play(Write(heading), FadeIn(ref_label, shift=UP * 0.12), LaggedStart(*[Create(chrom_groups[chromosome][1]) for chromosome, _ in chromosome_rows], lag_ratio=0.05), run_time=1.0)
-        self.play(LaggedStart(*[FadeIn(chrom_groups[chromosome][0], shift=RIGHT * 0.06) for chromosome, _ in chromosome_rows], lag_ratio=0.04), run_time=0.45)
-        self.play(LaggedStart(*[FadeIn(mark, shift=UP * 0.08) for mark in gene_marks], lag_ratio=0.05), run_time=1.2)
-        self.play(LaggedStart(*[Create(window) for window in windows], lag_ratio=0.04), FadeIn(size_bracket, shift=DOWN * 0.06), gene_ticks.animate.set_opacity(0.70), run_time=0.9)
+        self.play(Write(heading), FadeIn(ref_label, shift=UP * 0.12), LaggedStart(*[Create(chrom_groups[chromosome][1]) for chromosome, _ in chromosome_rows], lag_ratio=0.05), run_time=1.4)
+        self.play(LaggedStart(*[FadeIn(chrom_groups[chromosome][0], shift=RIGHT * 0.06) for chromosome, _ in chromosome_rows], lag_ratio=0.04), run_time=0.6)
+        self.play(LaggedStart(*[FadeIn(mark, shift=UP * 0.08) for mark in gene_marks], lag_ratio=0.05), run_time=1.5)
+        self.play(LaggedStart(*[Create(window) for window in windows], lag_ratio=0.04), FadeIn(size_bracket, shift=DOWN * 0.06), gene_ticks.animate.set_opacity(0.70), run_time=1.1)
+        self.wait(2.0)
         self.play(
             left_reference.animate.scale(0.74).move_to([-4.18, 0.00, 0]),
-            run_time=1.0,
+            run_time=1.1,
         )
         for row, (chromosome, _) in enumerate(chromosome_rows):
             vcf_by_chromosome[chromosome].move_to([0.62, 1.18 - row * 0.31, 0])
@@ -415,13 +421,13 @@ class AlphaGenomePipelineAnimation(Scene):
             FadeIn(collection_box),
             FadeIn(collection_title, shift=LEFT * 0.10),
             LaggedStart(*[FadeIn(card, shift=RIGHT * 0.14) for card in vcf_cards], lag_ratio=0.07),
-            run_time=1.0,
+            run_time=1.2,
         )
         self.play(
             FadeIn(output_frame),
             FadeIn(h1_title, shift=UP * 0.05),
             FadeIn(individual_labels, shift=DOWN * 0.08),
-            run_time=0.7,
+            run_time=0.9,
         )
         for gene in genes:
             chromosome = gene_to_chromosome[gene]
@@ -431,24 +437,30 @@ class AlphaGenomePipelineAnimation(Scene):
                 windows_by_gene[gene].animate.set_opacity(0.20),
                 moving.animate.move_to(collection_box.get_center()).scale(0.34).set_opacity(0.0),
                 FadeIn(h1_by_gene[gene], shift=DOWN * 0.06),
-                run_time=0.22,
+                run_time=0.35,
             )
             self.remove(moving)
-        self.play(FadeOut(VGroup(left_reference, collection_box, collection_title, vcf_cards)), run_time=0.7)
-        self.play(FadeOut(VGroup(output_frame, h1_title)), VGroup(h1_rows, individual_labels).animate.set_opacity(0.18), run_time=0.45)
-        self.play(FadeIn(split_circles, shift=UP * 0.14), FadeIn(family_box, shift=UP * 0.10), run_time=0.8)
+        self.wait(1.6)
+        self.play(FadeOut(VGroup(left_reference, collection_box, collection_title, vcf_cards)), run_time=0.8)
+        self.play(FadeIn(split_circles, shift=UP * 0.14), FadeIn(family_box, shift=UP * 0.10), run_time=1.0)
+        self.add(split_individual_columns, transit_split_columns)
+        visible_h1_rows = VGroup(*[h1_by_gene[gene] for gene in genes])
+        self.remove(visible_h1_rows, individual_labels)
         self.play(
             *[
-                column.animate.move_to(split_targets[split_assignment[i]] + UP * 0.10).scale(0.44)
+                column.animate.move_to(split_targets[split_assignment[i]] + UP * 0.10).scale(0.44).set_opacity(0.80)
                 for i, column in enumerate(split_individual_columns)
             ],
-            VGroup(h1_rows, individual_labels).animate.set_opacity(0.0),
-            run_time=1.0,
+            *[
+                column.animate.move_to(split_targets[column.target_split] + column.target_offset).scale(0.40).set_opacity(0.58)
+                for column in transit_split_columns
+            ],
+            run_time=1.6,
         )
-        self.play(FadeIn(multiplied_split_columns, scale=0.95), split_individual_columns.animate.set_opacity(0.72), run_time=0.55)
-        self.wait(0.8)
-        remaining = VGroup(heading, split_circles, family_box, split_individual_columns, multiplied_split_columns)
-        self.play(FadeOut(remaining), run_time=0.7)
+        self.play(FadeOut(VGroup(output_frame, h1_title)), run_time=0.6)
+        self.wait(2.2)
+        remaining = VGroup(heading, split_circles, family_box, split_individual_columns, transit_split_columns)
+        self.play(FadeOut(remaining), run_time=0.8)
         self.remove(
             left_reference,
             collection_box,
@@ -461,7 +473,7 @@ class AlphaGenomePipelineAnimation(Scene):
             split_circles,
             family_box,
             split_individual_columns,
-            multiplied_split_columns,
+            transit_split_columns,
             heading,
         )
 
@@ -475,7 +487,7 @@ class AlphaGenomePipelineAnimation(Scene):
         models = VGroup()
         for y in [1.25, -1.25]:
             model = RoundedRectangle(corner_radius=0.18, width=2.55, height=1.1, stroke_color=CYAN, fill_color=PURPLE, fill_opacity=0.18)
-            model_text = VGroup(Text("AlphaGenome", font_size=25, color=WHITE, weight=BOLD), Text("strand model", font_size=15, color=MUTED)).arrange(DOWN, buff=0.10)
+            model_text = VGroup(Text("AlphaGenome", font_size=25, color=WHITE, weight=BOLD)).arrange(DOWN, buff=0.10)
             model_text.move_to(model)
             model_group = VGroup(model, model_text).shift(LEFT * 1.70 + UP * y)
             models.add(model_group)
@@ -505,30 +517,30 @@ class AlphaGenomePipelineAnimation(Scene):
         selected_heatmap = self._heatmap_tile(rows=6, cols=22, cell=0.056, phase=1.1).move_to([4.72, 0.42, 0])
         heatmap_label = self._badge("6 selected tracks as one heatmap", GREEN, width=3.18).scale(0.64).next_to(selected_heatmap, DOWN, buff=0.18)
         heatmap_group = VGroup(selected_heatmap, heatmap_label)
-        self.play(Write(heading), self._dna_growth(helix), run_time=1.0)
+        self.play(Write(heading), self._dna_growth(helix), FadeIn(models, scale=0.96), run_time=1.8)
         self.play(
             FadeOut(helix.base_pairs),
             helix.top_strand.animate.shift(UP * 0.24),
             helix.bottom_strand.animate.shift(DOWN * 0.24),
-            run_time=0.55,
+            run_time=0.8,
         )
         self.play(
             Transform(helix.top_strand, plus),
             Transform(helix.bottom_strand, minus),
-            run_time=1.3,
+            run_time=1.6,
         )
         plus = helix.top_strand
         minus = helix.bottom_strand
-        self.play(FadeIn(models, scale=0.96), run_time=0.75)
-        self.play(plus.animate.move_to(models[0]).set_opacity(0.0), minus.animate.move_to(models[1]).set_opacity(0.0), run_time=1.0)
+        self.play(plus.animate.move_to(models[0]).set_opacity(0.0), minus.animate.move_to(models[1]).set_opacity(0.0), run_time=1.3)
         self.play(
             LaggedStart(*[Create(t) for t in top_tracks], lag_ratio=0.08),
             LaggedStart(*[Create(t) for t in bottom_tracks], lag_ratio=0.08),
             FadeIn(ellipses),
             FadeIn(top_count, shift=UP * 0.12),
             FadeIn(bottom_count, shift=UP * 0.12),
-            run_time=1.8,
+            run_time=2.2,
         )
+        self.wait(1.4)
         self.play(
             *[
                 track.animate.set_color(MUTED).set_opacity(0.16)
@@ -544,16 +556,16 @@ class AlphaGenomePipelineAnimation(Scene):
             top_count.animate.set_opacity(0.35),
             bottom_count.animate.set_opacity(0.35),
             FadeIn(selected_labels, shift=LEFT * 0.12),
-            run_time=1.3,
+            run_time=1.5,
         )
         self.play(
             *[
                 (top_tracks[index] if strand == "top" else bottom_tracks[index]).animate.move_to(target).scale(1.12)
                 for strand, index, target in selected_targets
             ],
-            run_time=1.2,
+            run_time=1.5,
         )
-        self.wait(0.9)
+        self.wait(2.2)
         self.play(
             ReplacementTransform(
                 VGroup(
@@ -564,11 +576,10 @@ class AlphaGenomePipelineAnimation(Scene):
             ),
             FadeIn(heatmap_label, shift=UP * 0.06),
             FadeOut(VGroup(top_tracks, bottom_tracks, selected_labels, ellipses, top_count, bottom_count)),
-            run_time=1.3,
+            run_time=1.6,
         )
-        self.play(FadeOut(VGroup(heading, helix, plus, minus, models)), run_time=0.65)
-        self.wait(1.2)
-        self.play(FadeOut(heatmap_group), run_time=0.7)
+        self.wait(2.6)
+        self.play(FadeOut(VGroup(models, heatmap_group, heading)), run_time=0.8)
 
     def track_selection_scene(self):
         heading = self._label("Filter 5930 human tracks to three RNA-seq tissue ontologies", 30, WHITE, BOLD).to_edge(UP, buff=0.45)
@@ -582,12 +593,11 @@ class AlphaGenomePipelineAnimation(Scene):
             tracks.add(tr)
         source = self._badge("5930 human AlphaGenome tracks", ORANGE, width=3.6).shift(DOWN * 1.45)
         labels = VGroup(*[self._badge(s, [CYAN, GREEN, YELLOW][i], width=1.6) for i, s in enumerate(selected)]).arrange(RIGHT, buff=0.35).shift(DOWN * 2.08)
-        strands = VGroup(self._badge("+ strand", BLUE, width=1.4), self._badge("- strand", PURPLE, width=1.4)).arrange(RIGHT, buff=0.45).next_to(labels, DOWN, buff=0.3)
         self.play(Write(heading), LaggedStart(*[Create(t) for t in tracks], lag_ratio=0.06), run_time=1.5)
         self.play(FadeIn(source, shift=UP * 0.2), run_time=0.6)
-        self.play(tracks.animate.scale(0.92), source.animate.set_opacity(0.22), FadeIn(labels, shift=UP * 0.2), FadeIn(strands, shift=UP * 0.2), run_time=1.3)
+        self.play(tracks.animate.scale(0.92), source.animate.set_opacity(0.22), FadeIn(labels, shift=UP * 0.2), run_time=1.3)
         self.wait(1.8)
-        self.play(FadeOut(VGroup(heading, tracks, source, labels, strands)), run_time=0.7)
+        self.play(FadeOut(VGroup(heading, tracks, source, labels)), run_time=0.7)
 
     def training_matrix_scene(self):
         heading = self._label("Build the training matrix from strand-specific AlphaGenome tracks", 29, WHITE, BOLD).to_edge(UP, buff=0.42)
@@ -614,11 +624,11 @@ class AlphaGenomePipelineAnimation(Scene):
         gene_labels = VGroup()
         input_columns = VGroup()
         col_xs = [-5.35, -4.85, -4.35, -3.85]
-        row_ys = np.linspace(1.42, -1.55, len(genes))
+        row_ys = np.linspace(1.32, -1.65, len(genes))
         for gene, y in zip(genes, row_ys):
             gene_labels.add(Text(gene, font_size=9, color=MUTED).move_to([-6.02, y, 0]))
         for col, (individual, x) in enumerate(zip(individuals, col_xs)):
-            column = VGroup(Text(individual, font_size=13, color=YELLOW if individual != "..." else MUTED, weight=BOLD).move_to([x, 1.78, 0]))
+            column = VGroup(Text(individual, font_size=13, color=YELLOW if individual != "..." else MUTED, weight=BOLD).move_to([x, 1.6, 0]))
             for row, y in enumerate(row_ys):
                 if individual == "...":
                     column.add(Text("...", font_size=10, color=MUTED).move_to([x, y, 0]))
@@ -637,14 +647,14 @@ class AlphaGenomePipelineAnimation(Scene):
             models.add(VGroup(block, text))
 
         output_frame = RoundedRectangle(corner_radius=0.12, width=3.62, height=3.72, stroke_color=GREEN, stroke_width=1.2, fill_color=GREEN, fill_opacity=0.04).move_to([3.95, -0.06, 0])
-        output_title = self._badge("training matrix: compact image columns", GREEN, width=3.55).scale(0.68).next_to(output_frame, UP, buff=0.10)
+        output_title = self._badge("Training matrix: compact image columns", GREEN, width=3.55).scale(0.68).next_to(output_frame, UP, buff=0.10)
         output_columns = VGroup()
         out_xs = [2.78, 3.56, 4.34, 5.12]
         row_gap = 0.265
         for individual, x in zip(individuals, out_xs):
-            column = VGroup(Text(individual, font_size=13, color=YELLOW if individual != "..." else MUTED, weight=BOLD).move_to([x, 1.78, 0]))
+            column = VGroup(Text(individual, font_size=13, color=YELLOW if individual != "..." else MUTED, weight=BOLD).move_to([x, 1.6, 0]))
             for row in range(len(genes)):
-                y = 1.30 - row * row_gap
+                y = 1.10 - row * row_gap
                 if individual == "...":
                     tile = RoundedRectangle(corner_radius=0.025, width=0.48, height=0.18, stroke_color=MUTED, stroke_width=0.7, fill_color=MUTED, fill_opacity=0.08).move_to([x, y, 0])
                     dots = Text("...", font_size=9, color=MUTED).move_to(tile)
@@ -657,9 +667,10 @@ class AlphaGenomePipelineAnimation(Scene):
         track_note = self._badge("11 heatmap tiles: each tile encodes 6 selected tracks", ORANGE, width=4.25).scale(0.62).next_to(output_frame, DOWN, buff=0.10)
         output_group = VGroup(output_frame, output_title, output_columns, track_note)
 
-        self.play(Write(heading), FadeIn(input_group, shift=RIGHT * 0.10), run_time=1.2)
-        self.play(FadeIn(models, scale=0.96), FadeIn(VGroup(output_frame, output_title), shift=LEFT * 0.10), run_time=0.9)
-        self.play(FadeIn(VGroup(*[column[0] for column in output_columns])), FadeIn(track_note, shift=UP * 0.08), run_time=0.5)
+        self.play(Write(heading), FadeIn(input_group, shift=RIGHT * 0.10), run_time=1.3)
+        self.play(FadeIn(models, scale=0.96), FadeIn(VGroup(output_frame, output_title), shift=LEFT * 0.10), run_time=1.0)
+        self.play(FadeIn(VGroup(*[column[0] for column in output_columns])), FadeIn(track_note, shift=UP * 0.08), run_time=0.7)
+        self.wait(1.0)
 
         def output_tile_for(col, row):
             return output_columns[col][row + 1]
@@ -671,22 +682,22 @@ class AlphaGenomePipelineAnimation(Scene):
             tile = output_tile_for(col, row)
             gene_label = gene_labels[row]
             focus_label = self._badge(f"{individuals[col]} / {genes[row]}", YELLOW, width=1.70).scale(0.62).move_to([-2.45, -1.26, 0])
-            self.play(gene_label.animate.set_color(YELLOW).scale(1.18), MoveToTarget(source), FadeIn(focus_label, shift=UP * 0.05), run_time=0.65 if detailed else 0.22)
+            self.play(gene_label.animate.set_color(YELLOW).scale(1.18), MoveToTarget(source), FadeIn(focus_label, shift=UP * 0.05), run_time=0.8 if detailed else 0.22)
             self.play(
                 FadeOut(source.base_pairs),
                 source.top_strand.animate.shift(UP * (0.32 if detailed else 0.18)),
                 source.bottom_strand.animate.shift(DOWN * (0.32 if detailed else 0.18)),
-                run_time=0.55 if detailed else 0.14,
+                run_time=0.6 if detailed else 0.14,
             )
             plus = self._linear_strand("ACGTAC", UP * 0.30, DOWN * 0.30, color=CYAN, font_size=7, stroke_width=2).scale(0.74 if detailed else 0.50).move_to(models[0])
             minus = self._linear_strand("TGCATG", UP * 0.30, DOWN * 0.30, color=PURPLE, font_size=7, stroke_width=2).scale(0.74 if detailed else 0.50).move_to(models[1])
-            self.play(Transform(source.top_strand, plus), Transform(source.bottom_strand, minus), run_time=0.75 if detailed else 0.16)
-            self.play(source.top_strand.animate.move_to(models[0]).set_opacity(0.0), source.bottom_strand.animate.move_to(models[1]).set_opacity(0.0), run_time=0.42 if detailed else 0.10)
+            self.play(Transform(source.top_strand, plus), Transform(source.bottom_strand, minus), run_time=0.8 if detailed else 0.16)
+            self.play(source.top_strand.animate.move_to(models[0]).set_opacity(0.0), source.bottom_strand.animate.move_to(models[1]).set_opacity(0.0), run_time=0.5 if detailed else 0.10)
             heatmap_burst = self._heatmap_tile(rows=6, cols=14, cell=0.055 if detailed else 0.037, phase=row + col).move_to([0.95, 0.18, 0])
             burst_label = Text("heatmap", font_size=12 if detailed else 8, color=GREEN).next_to(heatmap_burst, DOWN, buff=0.05)
-            self.play(FadeIn(VGroup(heatmap_burst, burst_label), shift=RIGHT * 0.10), run_time=0.42 if detailed else 0.10)
-            self.play(FadeOut(heatmap_burst, scale=0.75), tile.animate.set_opacity(1.0), FadeOut(VGroup(source, focus_label, burst_label)), run_time=0.75 if detailed else 0.18)
-            self.play(gene_label.animate.set_color(MUTED).scale(1 / 1.18), run_time=0.18 if detailed else 0.07)
+            self.play(FadeIn(VGroup(heatmap_burst, burst_label), shift=RIGHT * 0.10), run_time=0.5 if detailed else 0.10)
+            self.play(FadeOut(heatmap_burst, scale=0.75), tile.animate.set_opacity(1.0), FadeOut(VGroup(source, focus_label, burst_label)), run_time=0.8 if detailed else 0.18)
+            self.play(gene_label.animate.set_color(MUTED).scale(1 / 1.18), run_time=0.2 if detailed else 0.07)
 
         animate_helix(0, 0, detailed=True)
         animate_helix(0, 1, detailed=True)
@@ -717,30 +728,30 @@ class AlphaGenomePipelineAnimation(Scene):
         self.play(
             LaggedStart(*[gene_labels[row].animate.set_color(YELLOW) for _, row in remaining_steps[:9]], lag_ratio=0.03),
             FadeIn(remaining_sources, shift=RIGHT * 0.12),
-            run_time=0.9,
+            run_time=1.0,
         )
         self.play(
             FadeOut(remaining_sources, scale=0.78),
             FadeIn(plus_cloud, shift=UP * 0.10),
             FadeIn(minus_cloud, shift=DOWN * 0.10),
-            run_time=0.75,
+            run_time=0.8,
         )
         self.play(
             FadeOut(VGroup(plus_cloud, minus_cloud), scale=0.70),
             FadeIn(heatmap_cloud, scale=0.95),
-            run_time=0.65,
+            run_time=0.8,
         )
         self.play(
             FadeOut(heatmap_cloud, scale=0.85),
             remaining_tiles.animate.set_opacity(1.0),
             VGroup(*output_columns[2][1:]).animate.set_opacity(0.35),
-            run_time=1.05,
+            run_time=1.2,
         )
         self.play(gene_labels.animate.set_color(MUTED), run_time=0.25)
 
         scene_group = VGroup(heading, input_group, models, output_group)
-        self.wait(1.4)
-        self.play(scene_group.animate.set_opacity(0.0), run_time=0.45)
+        self.wait(2.4)
+        self.play(scene_group.animate.set_opacity(0.0), run_time=0.7)
         self.remove(scene_group, heatmap_cloud, remaining_sources, plus_cloud, minus_cloud)
 
     def normalization_scene(self):
@@ -757,94 +768,109 @@ class AlphaGenomePipelineAnimation(Scene):
             label = self._badge(x_label, color, width=3.05).scale(0.70).next_to(stack, UP, buff=0.18)
             return VGroup(stack, label)
 
-        raw = heatmap_stack(32, 0.029, [-3.65, 0.30, 0], [0.2, 1.1, 2.0], "individuals × 66 × 512k", CYAN)
+        raw = heatmap_stack(32, 0.029, [-3.65, 0.30, 0], [0.2, 1.1, 2.0], "Individuals × 66 × 512k", CYAN)
         crop = Rectangle(width=0.86, height=1.28, stroke_color=YELLOW, stroke_width=3.0, fill_color=YELLOW, fill_opacity=0.08).move_to(raw[0])
         crop_label = Text("center 32 kbp", font_size=19, color=YELLOW, weight=BOLD).next_to(crop, DOWN, buff=0.15)
-        cropped = heatmap_stack(16, 0.041, [0.00, 0.30, 0], [0.7, 1.6, 2.5], "individuals × 66 × 32k", YELLOW)
-        normalized = heatmap_stack(16, 0.041, [3.55, 0.30, 0], [1.2, 2.1, 3.0], "same shape after normalization", GREEN)
+        cropped = heatmap_stack(16, 0.041, [0.00, 0.30, 0], [0.7, 1.6, 2.5], "Individuals × 66 × 32k", YELLOW)
+        normalized = heatmap_stack(16, 0.041, [3.55, 0.30, 0], [1.2, 2.1, 3.0], "Same shape after normalization", GREEN)
         track_guides = VGroup()
         for i in range(6):
             y = normalized[0][0].get_center()[1] + 0.55 - i * 0.18
             track_guides.add(Line([3.00, y, 0], [4.24, y, 0], color=interpolate_color(ManimColor(BLUE), ManimColor(PINK), i / 5), stroke_width=1.6, stroke_opacity=0.65))
         formula = MathTex(r"x_{norm}=\frac{\ln(x+1)}{\ln(x_{max,track}+1)}", font_size=36, color=WHITE).shift(DOWN * 1.45)
-        self.play(Write(heading), FadeIn(raw, shift=UP * 0.10), run_time=1.1)
-        self.play(Create(crop), FadeIn(crop_label), run_time=0.8)
-        self.play(FadeIn(cropped, shift=RIGHT * 0.15), raw.animate.set_opacity(0.28), run_time=1.0)
-        self.play(FadeIn(normalized, shift=RIGHT * 0.15), cropped.animate.set_opacity(0.55), FadeIn(track_guides), Write(formula), run_time=1.2)
-        self.wait(1.8)
-        self.play(FadeOut(VGroup(heading, raw, crop, crop_label, cropped, normalized, track_guides, formula)), run_time=0.7)
+        self.play(Write(heading), FadeIn(raw, shift=UP * 0.10), run_time=1.4)
+        self.wait(0.8)
+        self.play(Create(crop), FadeIn(crop_label), run_time=1.0)
+        self.wait(1.0)
+        self.play(FadeIn(cropped, shift=RIGHT * 0.15), raw.animate.set_opacity(0.28), run_time=1.2)
+        self.wait(1.0)
+        self.play(FadeIn(normalized, shift=RIGHT * 0.15), cropped.animate.set_opacity(0.55), FadeIn(track_guides), Write(formula), run_time=1.4)
+        self.wait(6.0)
+        self.play(FadeOut(VGroup(heading, raw, crop, crop_label, cropped, normalized, track_guides, formula)), run_time=0.8)
 
     def dataset_scene(self):
-        heading = self._label("Train and evaluate a CNN on individual all-gene heatmaps", 30, WHITE, BOLD).to_edge(UP, buff=0.45)
+        heading = self._label("Train and evaluate a CNN", 32, WHITE, BOLD).to_edge(UP, buff=0.45)
         labels = ["AFR", "AMR", "EAS", "EUR", "SAS"]
         label_colors = [PINK, ORANGE, YELLOW, CYAN, GREEN]
 
-        def individual_image(phase, label, color):
-            tiles = VGroup(*[self._heatmap_tile(rows=6, cols=12, cell=0.034, phase=phase + i * 0.45) for i in range(11)])
-            tiles.arrange(DOWN, buff=0.018)
-            frame = RoundedRectangle(corner_radius=0.08, width=tiles.width + 0.12, height=tiles.height + 0.12, stroke_color=color, stroke_width=1.2, fill_color=color, fill_opacity=0.035).move_to(tiles)
-            badge = self._badge(label, color, width=0.82).scale(0.68).next_to(frame, DOWN, buff=0.12)
-            return VGroup(frame, tiles, badge)
+        heatmap_tiles = VGroup(*[self._heatmap_tile(rows=6, cols=14, cell=0.038, phase=0.4 + i * 0.48) for i in range(11)])
+        heatmap_tiles.arrange(DOWN, buff=0.018)
+        heatmap_frame = RoundedRectangle(
+            corner_radius=0.12,
+            width=heatmap_tiles.width + 0.24,
+            height=heatmap_tiles.height + 0.24,
+            stroke_color=CYAN,
+            stroke_width=1.5,
+            fill_color=CYAN,
+            fill_opacity=0.045,
+        ).move_to(heatmap_tiles)
+        input_card = VGroup(heatmap_frame, heatmap_tiles).scale(1.02).move_to([-4.20, -0.10, 0])
+        input_label = VGroup(
+            Text("held-out individual", font_size=19, color=MUTED),
+            Text("66 × 32768", font_size=23, color=CYAN, weight=BOLD),
+        ).arrange(DOWN, buff=0.08).next_to(input_card, DOWN, buff=0.18)
 
-        samples = VGroup()
-        for i, (label, color) in enumerate(zip(labels, label_colors)):
-            sample = individual_image(i * 0.8, label, color).scale(0.74).move_to([-5.15 + i * 0.78, 0.28 + (0.20 if i % 2 else -0.04), 0])
-            samples.add(sample)
-        input_note = self._badge("input: 11 gene heatmaps, each cropped to 32 kbp", CYAN, width=4.25).scale(0.66).move_to([-3.55, -2.15, 0])
+        cnn_box = RoundedRectangle(corner_radius=0.22, width=2.10, height=1.35, stroke_color=PINK, stroke_width=2.0, fill_color=PINK, fill_opacity=0.13).move_to([-0.70, -0.05, 0])
+        cnn_text = Text("CNN", font_size=38, color=WHITE, weight=BOLD).move_to(cnn_box)
+        cnn_note = Text("Learned Filters → Class Scores", font_size=15, color=MUTED).next_to(cnn_box, DOWN, buff=0.16)
+        cnn_group = VGroup(cnn_box, cnn_text, cnn_note)
 
-        def cnn_layer(text, color, width=0.78, height=1.10, depth=4):
-            slices = VGroup()
-            for i in range(depth - 1, -1, -1):
-                slices.add(
-                    RoundedRectangle(
-                        corner_radius=0.045,
-                        width=width,
-                        height=height,
-                        stroke_color=color,
-                        stroke_width=0.75,
-                        fill_color=color,
-                        fill_opacity=0.07 + i * 0.018,
-                    ).shift(RIGHT * i * 0.035 + UP * i * 0.018)
-                )
-            label = Text(text, font_size=8.5, color=WHITE, weight=BOLD, line_spacing=0.82).next_to(slices, DOWN, buff=0.08)
-            return VGroup(slices, label)
+        probabilities = VGroup()
+        probability_values = [("AFR", 0.07, PINK), ("AMR", 0.10, ORANGE), ("EAS", 0.08, YELLOW), ("EUR", 0.61, CYAN), ("SAS", 0.14, GREEN)]
+        for label, value, color in probability_values:
+            name = Text(label, font_size=18, color=color, weight=BOLD)
+            rail = RoundedRectangle(corner_radius=0.04, width=1.85, height=0.14, stroke_width=0, fill_color=MUTED, fill_opacity=0.16)
+            bar = RoundedRectangle(corner_radius=0.04, width=1.85 * value / 0.61, height=0.14, stroke_width=0, fill_color=color, fill_opacity=0.86).align_to(rail, LEFT)
+            value_text = Text(f"{value:.2f}", font_size=15, color=WHITE if label == "EUR" else MUTED)
+            row = VGroup(name, VGroup(rail, bar), value_text).arrange(RIGHT, buff=0.14)
+            probabilities.add(row)
+        probabilities.arrange(DOWN, aligned_edge=LEFT, buff=0.16).move_to([3.05, 0.10, 0])
+        prob_title = Text("Superpopulation Probabilities", font_size=20, color=WHITE, weight=BOLD).next_to(probabilities, UP, buff=0.22)
+        comparison = VGroup(
+            VGroup(Text("top", font_size=16, color=MUTED), Text("EUR", font_size=28, color=CYAN, weight=BOLD)).arrange(DOWN, buff=0.03),
+            Text("=", font_size=28, color=MUTED),
+            VGroup(Text("true", font_size=16, color=MUTED), Text("EUR", font_size=28, color=GREEN, weight=BOLD)).arrange(DOWN, buff=0.03),
+        ).arrange(RIGHT, buff=0.28).move_to([3.05, -1.75, 0])
+        match_box = RoundedRectangle(corner_radius=0.10, width=1.18, height=0.38, stroke_color=GREEN, stroke_width=1.1, fill_color=GREEN, fill_opacity=0.14).next_to(comparison, RIGHT, buff=0.28)
+        match_text = Text("match", font_size=18, color=GREEN, weight=BOLD).move_to(match_box)
+        match_group = VGroup(match_box, match_text)
 
-        cnn_layers = VGroup(
-            cnn_layer("Input\n66 × 32768", CYAN, width=0.98, height=0.58, depth=1),
-            cnn_layer("Stage 1\n16 × 11 × 1024\nConv k=(6,32)", PINK, width=0.68, height=1.28, depth=5),
-            cnn_layer("Stage 2\n32 × 11 × 512\nConv k=(1,5)", PINK, width=0.62, height=1.10, depth=6),
-            cnn_layer("Stage 3\n64 × 11 × 256\nConv k=(1,5)", PINK, width=0.56, height=0.94, depth=7),
-            cnn_layer("Global pool\n64 × 11 × 1", BLUE, width=0.42, height=0.82, depth=5),
-            cnn_layer("Flatten\n704", PURPLE, width=0.28, height=1.00, depth=1),
-            cnn_layer("FC\n256", PURPLE, width=0.34, height=0.86, depth=2),
-            cnn_layer("Output\n5 classes", ORANGE, width=0.40, height=0.78, depth=1),
-        ).arrange(RIGHT, buff=0.22).scale(0.84).move_to([1.10, 0.45, 0])
-        cnn_label = self._badge("CNN2AncestryPredictor", PURPLE, width=2.85).scale(0.68).next_to(cnn_layers, UP, buff=0.24)
-        train_eval = VGroup(
-            self._badge("train", GREEN, width=0.92),
-            self._badge("val", YELLOW, width=0.82),
-            self._badge("test", PINK, width=0.88),
-        ).arrange(RIGHT, buff=0.18).scale(0.72).next_to(cnn_layers, DOWN, buff=0.50)
+        architecture_title = Text("CNN architecture", font_size=17, color=MUTED, weight=BOLD).move_to([0, -2.32, 0])
+        architecture_steps = [
+            ("Input\n66 × 32768", CYAN, 0.96),
+            ("Conv1\n16 × 11 × 1024", PINK, 1.05),
+            ("Conv2\n32 × 11 × 512", PINK, 1.05),
+            ("Conv3\n64 × 11 × 256", PINK, 1.05),
+            ("Pool\n64 × 11 × 1", BLUE, 0.92),
+            ("Flatten\n704", PURPLE, 0.72),
+            ("FC\n256", PURPLE, 0.62),
+            ("Output\n5 classes", ORANGE, 0.82),
+        ]
+        architecture = VGroup()
+        for text, color, width in architecture_steps:
+            box = RoundedRectangle(corner_radius=0.06, width=width, height=0.42, stroke_color=color, stroke_width=0.8, fill_color=color, fill_opacity=0.075)
+            label = Text(text, font_size=8.5, color=WHITE, weight=BOLD, line_spacing=0.72).move_to(box)
+            architecture.add(VGroup(box, label))
+        architecture.arrange(RIGHT, buff=0.08).move_to([0, -2.82, 0])
+        architecture_lines = VGroup()
+        for left, right in zip(architecture[:-1], architecture[1:]):
+            architecture_lines.add(Line(left.get_right(), right.get_left(), color=MUTED, stroke_width=1.2, stroke_opacity=0.55))
+        architecture_group = VGroup(architecture_title, architecture_lines, architecture)
 
-        outputs = VGroup()
-        for i, (label, color) in enumerate(zip(labels, label_colors)):
-            bar = Rectangle(width=0.28, height=0.36 + 0.20 * ((i * 2 + 1) % 4), stroke_width=0, fill_color=color, fill_opacity=0.82)
-            txt = Text(label, font_size=14, color=WHITE).next_to(bar, DOWN, buff=0.06)
-            outputs.add(VGroup(bar, txt))
-        outputs.arrange(RIGHT, buff=0.18).move_to([5.45, 0.35, 0])
-        output_title = self._badge("expected output: superpopulation", ORANGE, width=3.15).scale(0.72).next_to(outputs, UP, buff=0.26)
-        architecture_note = Text("kernel/stride follow the trained CNN: (6,32), then (1,5), global max pool", font_size=15, color=MUTED).move_to([1.10, -1.74, 0])
-        evaluation_note = Text("evaluate held-out individuals by predicted superpopulation label", font_size=18, color=MUTED).move_to([2.20, -2.25, 0])
-
-        self.play(Write(heading), LaggedStart(*[FadeIn(sample, shift=UP * 0.16) for sample in samples], lag_ratio=0.10), FadeIn(input_note, shift=UP * 0.08), run_time=1.5)
-        self.play(samples.animate.arrange(RIGHT, buff=0.12).scale(0.72).move_to([-4.35, 0.20, 0]), FadeIn(cnn_label), LaggedStart(*[FadeIn(layer, shift=RIGHT * 0.10) for layer in cnn_layers], lag_ratio=0.08), FadeIn(train_eval), FadeIn(architecture_note, shift=UP * 0.06), run_time=1.7)
-        self.play(FadeIn(output_title, shift=UP * 0.10), LaggedStart(*[FadeIn(out, shift=UP * 0.15) for out in outputs], lag_ratio=0.08), run_time=1.0)
-        self.play(FadeIn(evaluation_note, shift=UP * 0.08), run_time=0.6)
+        moving_heatmap = input_card.copy()
+        self.play(Write(heading), run_time=1.2)
+        self.play(FadeIn(input_card, shift=UP * 0.10), FadeIn(input_label, shift=UP * 0.06), FadeIn(cnn_group, scale=0.96), FadeIn(architecture_group, shift=UP * 0.08), run_time=1.4)
+        self.wait(3.0)
+        self.add(moving_heatmap)
+        self.play(moving_heatmap.animate.scale(0.28).move_to(cnn_box).set_opacity(0.0), cnn_box.animate.set_fill(PINK, opacity=0.22), run_time=1.2)
+        self.play(FadeIn(VGroup(prob_title, probabilities), shift=LEFT * 0.12), run_time=1.1)
         self.wait(2.0)
-        self.play(FadeOut(VGroup(heading, samples, input_note, cnn_layers, cnn_label, train_eval, outputs, output_title, architecture_note, evaluation_note)), run_time=0.7)
+        self.play(FadeIn(comparison, shift=UP * 0.10), FadeIn(match_group, shift=UP * 0.10), run_time=0.8)
+        self.wait(5.5)
+        self.play(FadeOut(VGroup(heading, input_card, input_label, cnn_group, moving_heatmap, prob_title, probabilities, comparison, match_group, architecture_group)), run_time=0.8)
 
     def closing_scene(self):
-        heading = self._label("Functional-signal pipeline", 34, WHITE, BOLD).to_edge(UP, buff=0.4)
+        heading = self._label("Pipeline overview and test performance", 34, WHITE, BOLD).to_edge(UP, buff=0.38)
         steps = [
             ("1000G VCFs", BLUE),
             ("H1 windows", CYAN),
@@ -854,19 +880,34 @@ class AlphaGenomePipelineAnimation(Scene):
             ("CNN", PINK),
             ("Superpopulation", ORANGE),
         ]
-        nodes = VGroup(*[self._badge(text, color, width=1.55 if len(text) < 12 else 1.9) for text, color in steps]).arrange(RIGHT, buff=0.2).scale(0.68)
-        nodes.shift(UP * 0.65)
-        arrows = VGroup()
-        for left, right in zip(nodes[:-1], nodes[1:]):
-            arrows.add(self._flow_arrow(left.get_right(), right.get_left(), CYAN).scale(0.8))
-        classifier = VGroup()
-        for i, label in enumerate(["AFR", "AMR", "EAS", "EUR", "SAS"]):
-            bar = Rectangle(width=0.35, height=0.35 + 0.22 * ((i * 3) % 5), fill_color=[PINK, ORANGE, YELLOW, CYAN, GREEN][i], fill_opacity=0.8, stroke_width=0)
-            txt = Text(label, font_size=16, color=WHITE).next_to(bar, DOWN, buff=0.08)
-            classifier.add(VGroup(bar, txt))
-        classifier.arrange(RIGHT, buff=0.22).shift(DOWN * 1.45)
-        message = Text("DNA variation transformed into predicted function, then learned as ancestry-informative signal", font_size=23, color=WHITE).to_edge(DOWN, buff=0.45)
-        self.play(Write(heading), LaggedStart(*[FadeIn(n, scale=0.92) for n in nodes], lag_ratio=0.08), run_time=1.5)
-        self.play(LaggedStart(*[Create(a) for a in arrows], lag_ratio=0.08), run_time=0.9)
-        self.play(FadeIn(classifier, shift=UP * 0.25), Write(message), run_time=1.3)
-        self.wait(8.5)
+        nodes = VGroup()
+        for i, (text, color) in enumerate(steps):
+            dot = Circle(radius=0.055, stroke_width=0, fill_color=color, fill_opacity=0.90)
+            label = Text(text, font_size=14, color=WHITE if i in [0, 2, 5, 6] else MUTED, weight=BOLD if i in [0, 2, 5, 6] else NORMAL)
+            node = VGroup(dot, label).arrange(DOWN, buff=0.08)
+            nodes.add(node)
+        nodes.arrange(RIGHT, buff=0.42).move_to([0, 1.95, 0])
+        rail = Line(nodes[0][0].get_center(), nodes[-1][0].get_center(), color=MUTED, stroke_width=2.0, stroke_opacity=0.35)
+        pipeline_group = VGroup(rail, nodes)
+
+        card = RoundedRectangle(corner_radius=0.18, width=8.00, height=3.30, stroke_color=CYAN, stroke_width=1.4, fill_color=CYAN, fill_opacity=0.045).move_to([0, -0.55, 0])
+        result_title = Text("Classification performance on the test set", font_size=25, color=WHITE, weight=BOLD).move_to([0, 0.74, 0])
+        result_note = Text('"W-" denotes weighted-average.', font_size=16, color=MUTED).next_to(result_title, DOWN, buff=0.12)
+        metrics = [
+            ("W-Precision", "0.75", CYAN),
+            ("W-Recall", "0.74", GREEN),
+            ("W-F1-score", "0.74", YELLOW),
+            ("Accuracy", "0.74", PINK),
+        ]
+        table = VGroup()
+        for metric, value, color in metrics:
+            value_text = Text(value, font_size=34, color=color, weight=BOLD)
+            metric_text = Text(metric, font_size=16, color=WHITE, weight=BOLD).next_to(value_text, DOWN, buff=0.10)
+            cell = VGroup(value_text, metric_text)
+            halo = RoundedRectangle(corner_radius=0.12, width=1.28, height=0.96, stroke_color=color, stroke_width=0.8, fill_color=color, fill_opacity=0.075).move_to(cell)
+            table.add(VGroup(halo, cell))
+        table.arrange(RIGHT, buff=0.22).move_to([0, -0.88, 0])
+        result_group = VGroup(card, result_title, result_note, table)
+        self.play(Write(heading), Create(rail), LaggedStart(*[FadeIn(n, scale=0.92) for n in nodes], lag_ratio=0.08), run_time=1.6)
+        self.play(FadeIn(result_group, shift=UP * 0.18), run_time=1.4)
+        self.wait(11.0)
