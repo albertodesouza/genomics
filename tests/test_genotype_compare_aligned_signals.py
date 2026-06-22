@@ -77,6 +77,7 @@ def test_compare_aligned_signals_uses_pairwise_valid_positions(tmp_path):
             write_all_position_effects=True,
             permutations=5,
             permutation_seed=13,
+            reference_superpopulation="AFR",
             output_dir=output_dir,
         )
     )
@@ -102,3 +103,22 @@ def test_compare_aligned_signals_uses_pairwise_valid_positions(tmp_path):
     summary = json.loads((output_dir / "summary.json").read_text())
     assert summary["sparse_top_eta_pairwise_summary"]["enabled"] is True
     assert summary["permutation_test"]["enabled"] is True
+    assert (output_dir / "eta_squared_distribution.json").exists()
+    eta_dist = json.loads((output_dir / "eta_squared_distribution.json").read_text())
+    assert eta_dist["enabled"] is True
+    assert summary["outputs"]["eta_squared_distribution_json"].endswith("eta_squared_distribution.json")
+    manifest_path = output_dir / "eta_squared_by_position" / "manifest.json"
+    assert manifest_path.exists()
+    manifest = json.loads(manifest_path.read_text())
+    assert summary["outputs"]["eta_squared_by_position_manifest"].endswith("manifest.json")
+    assert "enabled" in manifest
+    assert (output_dir / "top_positions_superpopulation_mean_rna_seq.csv").exists()
+    assert summary["outputs"]["top_positions_superpopulation_mean_rna_seq_csv"].endswith(
+        "top_positions_superpopulation_mean_rna_seq.csv"
+    )
+    assert summary["top_positions_superpopulation_mean_rna_seq"]["reference_superpopulation"] == "AFR"
+    assert "std_dev_plot" in summary["top_positions_superpopulation_mean_rna_seq"]
+    assert "top_positions_superpopulation_mean_rna_seq_with_std_dev_plot" in summary["outputs"]
+    with open(output_dir / "top_positions_superpopulation_mean_rna_seq.csv") as f:
+        mean_rows = list(csv.DictReader(f))
+    assert "plot_rank" in mean_rows[0]

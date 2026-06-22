@@ -75,7 +75,7 @@ genomics genotype single-gene-screen configs/predictors/genotype_based/neural_le
 
 `genomics genotype pca-variance` computes and plots sklearn PCA explained variance for the selected processed dataset/config. Use `--force` to rebuild existing outputs.
 
-`genomics genotype compare-aligned-signals` reads the processed aligned tensor cache and compares AlphaGenome signal channels between pairs of individuals using only positions where both individuals have `valid_mask=1`. It writes global pairwise similarity, top absolute differences, per-position superpopulation effects (`eta_squared`, group mean delta, standardized delta), a sparse top-effect pairwise summary, and `summary.json`. Use `--max-samples` and `--max-pairs` for a fast pilot run; add `--permutations 1000` to test the global between-vs-within superpopulation MAD difference.
+`genomics genotype compare-aligned-signals` reads the processed aligned tensor cache and compares AlphaGenome signal channels between pairs of individuals using only positions where both individuals have `valid_mask=1`. By default it analyzes the `train` split only; pass `--splits train val test` to include other splits deliberately. It writes global pairwise similarity, top absolute differences, per-position superpopulation effects (`eta_squared`, group mean delta, standardized delta), a sparse top-effect pairwise summary, and `summary.json`. Use `--max-samples` and `--max-pairs` for a fast pilot run; add `--permutations 1000` to test the global between-vs-within superpopulation MAD difference.
 
 `genomics genotype workbench` launches the local genotype workbench apps for inspecting datasets, aligned tensors, AlphaGenome tracks, and experiment outputs.
 

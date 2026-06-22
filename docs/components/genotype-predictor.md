@@ -498,6 +498,325 @@ Typical files are:
 
 Use the per-run PCA directories to inspect intermediate PCA artifacts for each repeated split.
 
+### Aligned Signal Similarity Analysis
+
+`genomics genotype compare-aligned-signals` is a cache-level diagnostic for checking whether aligned AlphaGenome signal channels differ across individuals and whether those differences are structured by superpopulation. It reads the processed `haplotype_channels` cache and compares only AlphaGenome signal rows at positions where both individuals have `valid_mask=1`; mask channels themselves are not included in the signal similarity metrics.
+
+Run a fast train-split pilot with:
+
+```bash
+genomics genotype compare-aligned-signals configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml \
+  --max-samples 100 \
+  --max-pairs 500 \
+  --effect-top-k 1000 \
+  --output-dir results/genotype_based_predictor/analysis/aligned_signal_similarity
+```
+
+By default, the command analyzes the `train` split only. Include other splits explicitly when that is the intended diagnostic:
+
+```bash
+genomics genotype compare-aligned-signals configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml \
+  --splits train val test \
+  --max-samples 100 \
+  --max-pairs 500 \
+  --effect-top-k 1000 \
+  --output-dir results/genotype_based_predictor/analysis/aligned_signal_similarity_all_splits
+```
+
+The output directory contains:
+
+| File | Meaning |
+|---|---|
+| `summary.json` | Aggregate pairwise, sparse top-effect, and optional permutation summaries |
+| `pairwise_valid_signal_similarity.csv` | Pairwise Pearson/cosine/MAD/RMSE per haplotype, gene, and signal track using only pairwise-valid positions |
+| `top_valid_signal_differences.csv` | Largest pairwise absolute signal differences and the sample/superpopulation pair where they occur |
+| `top_positions_by_eta_squared.csv` | Positions whose signal values are most explained by superpopulation labels |
+| `top_positions_by_group_delta.csv` | Positions with the largest difference between superpopulation mean signals |
+| `eta_squared_distribution.png` | Histogram of per-position `eta_squared`, with the top-k cutoff marked when available |
+| `eta_squared_distribution.json` | Histogram bins, quantiles, and top-k cutoff for `eta_squared` |
+| `eta_squared_by_position/` | Per-gene/per-haplotype plots with aligned position on the x-axis and `eta_squared` on the y-axis |
+| `eta_squared_by_position/manifest.json` | Manifest listing the generated position plots |
+| `top_positions_superpopulation_mean_rna_seq.png` | Line plot where x is the selected top-position set ordered by a reference superpopulation mean signal and y is mean aligned RNA-seq signal for each superpopulation at that position |
+| `top_positions_superpopulation_mean_rna_seq_with_std_dev.png` | Same line plot with shaded bands showing plus/minus one standard deviation for each superpopulation at each plotted top position |
+| `top_positions_superpopulation_mean_rna_seq.csv` | Source table for the superpopulation mean RNA-seq line plot, one row per plotted position and superpopulation, including original top rank, plot rank, mean, standard deviation, and standard error |
+| `position_superpopulation_effects.csv` | Optional full per-position effect table when `--write-all-position-effects` is used |
+
+The global pairwise metrics usually stay high because most aligned RNA-seq signal is shared human background. For ancestry-related signal, prioritize the sparse and per-position metrics:
+
+| Metric | Interpretation |
+|---|---|
+| `between_within_mad_ratio` in `sparse_top_eta_pairwise_summary` | How much more different pairs from different superpopulations are than pairs from the same superpopulation after restricting to the top `eta_squared` positions |
+| `between_minus_within_mad` | Absolute MAD increase for between-superpopulation pairs in the same sparse top-effect set |
+| `eta_squared` | Fraction of per-position signal variance explained by superpopulation groups |
+| `max_group_mean_delta` | Difference between the highest and lowest superpopulation mean at a position |
+| `standardized_group_delta` | `max_group_mean_delta` scaled by within-group variability |
+
+For example, a result like this indicates sparse superpopulation structure even when global Pearson/cosine remain high:
+
+```json
+{
+  "sparse_top_eta_pairwise_summary": {
+    "between_within_mad_ratio": 1.218,
+    "same_superpopulation": {
+      "false": {"mad": 0.044},
+      "true": {"mad": 0.036}
+    }
+  }
+}
+```
+
+This means that, among the top superpopulation-associated positions, different-superpopulation pairs have about 21.8% larger mean absolute signal difference than same-superpopulation pairs. It does not mean the full aligned signal tensor is 21.8% different; the effect is sparse and would be diluted by genome-wide/background-like positions.
+
+High sparse Pearson/cosine values can still occur because the top positions are selected for group-associated variance, not for making every pair dissimilar. A shared baseline component can remain large inside the selected coordinates, and the between-superpopulation effect can be a moderate shift on top of that shared signal. In this setting, `between_within_mad_ratio`, `between_minus_within_mad`, `eta_squared`, and group mean deltas are usually more informative than raw Pearson/cosine.
+
+Use `eta_squared_distribution.png` to check whether the selected top positions are an extreme tail or only slightly above the background distribution. The `top_eta_threshold` field in `eta_squared_distribution.json` records the minimum `eta_squared` included in the selected top-k set.
+
+Use the plots under `eta_squared_by_position/` to inspect whether superpopulation-associated signal is concentrated in narrow local peaks or spread across a broader region. Each plot corresponds to one `(gene, haplotype)` pair, uses aligned center-window position on the x-axis, and overlays the selected AlphaGenome signal tracks as separate lines. A dashed horizontal line marks the top-k `eta_squared` cutoff when available.
+
+Use `top_positions_superpopulation_mean_rna_seq.png` to inspect the mean RNA-seq signal for each superpopulation after restricting to the selected top `eta_squared` positions. The selected positions are ordered so that the reference superpopulation has monotonically increasing mean signal across the x-axis; every other superpopulation is plotted on that same ordered x-axis. The default reference is `EUR` when present, or the first available superpopulation otherwise. Override it with `--reference-superpopulation AFR` or another available label. The source CSV includes both `top_rank` (rank by `eta_squared`) and `plot_rank` (rank after ordering by the reference mean), plus the original `(haplotype, gene, signal, position)` coordinate.
+
+Use `top_positions_superpopulation_mean_rna_seq_with_std_dev.png` to inspect dispersion around those mean curves. The shaded band is mean plus/minus one standard deviation computed from valid individuals in that superpopulation at that top position.
+
+Use `--effect-min-samples` to avoid overinterpreting high `eta_squared` positions with few valid individuals. A robust follow-up is:
+
+```bash
+genomics genotype compare-aligned-signals configs/predictors/genotype_based/genes_1000_all_3ontologies.yaml \
+  --max-samples 100 \
+  --max-pairs 500 \
+  --effect-top-k 1000 \
+  --effect-min-samples 80 \
+  --permutations 1000 \
+  --output-dir results/genotype_based_predictor/analysis/aligned_signal_similarity_train_min80
+```
+
+Important caveats:
+
+- `sparse_top_eta_pairwise_summary` selects top positions and measures pairwise separation on the same loaded samples. Treat it as exploratory unless the selected coordinates are evaluated on held-out samples.
+- Very high `eta_squared` with low `n_samples` can be unstable because only a few individuals were valid at that aligned position.
+- Large pairwise absolute differences can occur within the same superpopulation; use `eta_squared`, group means, and permutation tests to distinguish group structure from individual outliers.
+- If `--permutations` is not set, `permutation_test.enabled` remains `false` in `summary.json`.
+
+#### Mathematical Definitions
+
+For a fixed haplotype $h$, gene $g$, AlphaGenome signal track $t$, and aligned position $p$, let:
+
+$$
+x_i(h,g,t,p) = \text{aligned AlphaGenome signal for individual } i
+$$
+
+$$
+v_i(h,g,p) =
+\begin{cases}
+1, & \text{if position } p \text{ is valid for individual } i \text{ after alignment} \\
+0, & \text{otherwise}
+\end{cases}
+$$
+
+$$
+y_i = \text{superpopulation label for individual } i
+$$
+
+The signal rows are compared only where the alignment is valid. For a pair of individuals $(i, j)$, the pairwise-valid position set is:
+
+$$
+P_{ij}(h,g) = \{p : v_i(h,g,p) = 1 \land v_j(h,g,p) = 1\}
+$$
+
+All pairwise signal metrics for $(i, j, h, g, t)$ are computed on:
+
+$$
+X = \left[x_i(h,g,t,p) : p \in P_{ij}(h,g)\right]
+$$
+
+$$
+Z = \left[x_j(h,g,t,p) : p \in P_{ij}(h,g)\right]
+$$
+
+The main pairwise metrics are:
+
+$$
+\operatorname{MAD}(i,j,h,g,t) = \frac{1}{|P_{ij}|}\sum_{p \in P_{ij}} |X_p - Z_p|
+$$
+
+$$
+\operatorname{RMSE}(i,j,h,g,t) = \sqrt{\frac{1}{|P_{ij}|}\sum_{p \in P_{ij}} (X_p - Z_p)^2}
+$$
+
+$$
+\operatorname{cosine}(i,j,h,g,t) = \frac{X \cdot Z}{\|X\|_2\|Z\|_2}
+$$
+
+$$
+\operatorname{pearson}(i,j,h,g,t) = \operatorname{corr}(X,Z)
+$$
+
+The global `pairwise_summary` groups these rows by whether the two individuals have the same superpopulation:
+
+$$
+\operatorname{same}(i,j) =
+\begin{cases}
+1, & y_i = y_j \\
+0, & y_i \neq y_j
+\end{cases}
+$$
+
+For a metric `m`, the within- and between-superpopulation summaries are simple averages over pairwise rows:
+
+$$
+\operatorname{within}_m = \operatorname{mean}\left\{m(i,j,h,g,t) : y_i = y_j\right\}
+$$
+
+$$
+\operatorname{between}_m = \operatorname{mean}\left\{m(i,j,h,g,t) : y_i \neq y_j\right\}
+$$
+
+For each fixed $(h, g, t, p)$, the per-position superpopulation effect uses all individuals where that aligned position is valid:
+
+$$
+I_p = \{i : v_i(h,g,p) = 1\}
+$$
+
+Let:
+
+$$
+n = |I_p|
+$$
+
+$$
+\mu = \frac{1}{n}\sum_{i \in I_p} x_i(h,g,t,p)
+$$
+
+$$
+G = \{y_i : i \in I_p\}
+$$
+
+$$
+I_{p,k} = \{i \in I_p : y_i = k\}
+$$
+
+$$
+n_k = |I_{p,k}|
+$$
+
+$$
+\mu_k = \frac{1}{n_k}\sum_{i \in I_{p,k}} x_i(h,g,t,p)
+$$
+
+The total, between-group, and within-group sums of squares are:
+
+$$
+SS_{\text{total}} = \sum_{i \in I_p}\left(x_i(h,g,t,p) - \mu\right)^2
+$$
+
+$$
+SS_{\text{between}} = \sum_{k \in G} n_k(\mu_k - \mu)^2
+$$
+
+$$
+SS_{\text{within}} = \sum_{k \in G}\sum_{i \in I_{p,k}}\left(x_i(h,g,t,p) - \mu_k\right)^2
+$$
+
+The reported variance columns divide by `n`:
+
+$$
+\operatorname{total\_variance} = \frac{SS_{\text{total}}}{n}
+$$
+
+$$
+\operatorname{between\_superpopulation\_variance} = \frac{SS_{\text{between}}}{n}
+$$
+
+$$
+\operatorname{within\_superpopulation\_variance} = \frac{SS_{\text{within}}}{n}
+$$
+
+The primary group-association metric is:
+
+$$
+\eta^2 = \operatorname{eta\_squared} = \frac{SS_{\text{between}}}{SS_{\text{total}}}
+$$
+
+Interpretation:
+
+$\eta^2 = 0$ means the group means explain none of the signal variance. $\eta^2 = 1$ means all observed signal variance is explained by group means.
+
+The group mean delta metrics are:
+
+$$
+k_{\text{top}} = \operatorname*{arg\,max}_{k \in G}\mu_k
+$$
+
+$$
+k_{\text{bottom}} = \operatorname*{arg\,min}_{k \in G}\mu_k
+$$
+
+$$
+\operatorname{max\_group\_mean\_delta} = \mu_{k_{\text{top}}} - \mu_{k_{\text{bottom}}}
+$$
+
+The standardized delta scales the group-mean spread by pooled within-group standard deviation:
+
+$$
+\operatorname{pooled\_std} = \sqrt{\frac{SS_{\text{within}}}{\max(n - |G|, 1)}}
+$$
+
+$$
+\operatorname{standardized\_group\_delta} = \frac{\operatorname{max\_group\_mean\_delta}}{\operatorname{pooled\_std}}
+$$
+
+`top_positions_by_eta_squared.csv` ranks positions by `eta_squared`. `top_positions_by_group_delta.csv` ranks positions by `max_group_mean_delta`. These rankings answer different questions:
+
+- high $\eta^2$: group labels explain a large fraction of local variance.
+- high `max_group_mean_delta`: absolute difference between group means is large.
+
+The sparse top-effect summary first selects the top `K = --effect-top-k` positions by `eta_squared`:
+
+$$
+T_K = \operatorname{TopK}_{(h,g,t,p)}\left(\eta^2(h,g,t,p)\right)
+$$
+
+For every pair of individuals, it then computes MAD/RMSE/Pearson/cosine only on coordinates in `T_K` where both individuals are valid:
+
+$$
+T_{ij} = \{(h,g,t,p) \in T_K : v_i(h,g,p) = 1 \land v_j(h,g,p) = 1\}
+$$
+
+The key sparse summary statistics are:
+
+$$
+\operatorname{between\_minus\_within\_mad} = \overline{\operatorname{MAD}}_{\text{between},T_K} - \overline{\operatorname{MAD}}_{\text{within},T_K}
+$$
+
+$$
+\operatorname{between\_within\_mad\_ratio} = \frac{\overline{\operatorname{MAD}}_{\text{between},T_K}}{\overline{\operatorname{MAD}}_{\text{within},T_K}}
+$$
+
+This is why `between_within_mad_ratio` can be clearly above 1 even when global Pearson/cosine remain high: the ratio is computed only on the top superpopulation-associated positions, while global similarity is dominated by background-like positions.
+
+When `--permutations N` is used, the command tests the global pairwise MAD separation by repeatedly shuffling superpopulation labels across sample IDs. The observed statistic is:
+
+$$
+\Delta_{\text{observed}} = \overline{\operatorname{MAD}}_{\text{between}} - \overline{\operatorname{MAD}}_{\text{within}}
+$$
+
+For each permutation `b`, labels are shuffled and the same statistic is recomputed:
+
+$$
+\Delta_b = \overline{\operatorname{MAD}}_{\text{between}}\left(\pi_b(y)\right) - \overline{\operatorname{MAD}}_{\text{within}}\left(\pi_b(y)\right)
+$$
+
+The reported one-sided p-value is:
+
+$$
+p_{\geq} = \frac{1 + \sum_{b=1}^{N}\mathbf{1}\left[\Delta_b \geq \Delta_{\text{observed}}\right]}{1 + N}
+$$
+
+The z-score is:
+
+$$
+z = \frac{\Delta_{\text{observed}} - \operatorname{mean}_{b}(\Delta_b)}{\operatorname{std}_{b}(\Delta_b)}
+$$
+
 ## BCFtools Chain Alignment
 
 The `alignment/bcftools_chain_mapper.py` path rebuilds haplotype consensus sequences and reads BCFtools chain files to map AlphaGenome predictions back to a global aligned coordinate system. `sync-bcftools-artifacts` copies or links the required consensus and chain artifacts into the canonical dataset tree.
@@ -580,6 +899,7 @@ genomics genotype test configs/predictors/genotype_based/icann/genes_1000_all_rf
 | `train` | Train a model from config |
 | `evaluate` | Evaluate a checkpoint on a split |
 | `pca-variance` | Analyze PCA variance for sklearn baselines |
+| `compare-aligned-signals` | Compare aligned AlphaGenome signal similarity and superpopulation-associated positions |
 | `workbench` | Launch interactive workbench/dashboard |
 | `sync-bcftools-artifacts` | Materialize chain/consensus artifacts |
 | `single-gene-screen` | Run single-gene ablation/screen experiments |

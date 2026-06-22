@@ -5,6 +5,8 @@ import csv
 import itertools
 import json
 import math
+import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -13,6 +15,10 @@ import numpy as np
 import torch
 
 from genomics.predictors.genotype_based.config import get_dataset_cache_dir, load_config
+
+
+def _log(message: str) -> None:
+    print(f"[compare-aligned-signals] {message}", file=sys.stderr, flush=True)
 
 
 @dataclass(frozen=True)
@@ -429,6 +435,139 @@ def _trim_top_rows(rows: List[Dict], key: str, top_k: int) -> None:
     del rows[top_k:]
 
 
+def _write_eta_squared_distribution(
+    *,
+    eta_values: Sequence[float],
+    top_eta_rows: Sequence[Dict],
+    output_dir: Path,
+    bins: int,
+) -> Dict:
+    values = np.asarray([float(v) for v in eta_values if math.isfinite(float(v))], dtype=np.float64)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = output_dir / "eta_squared_distribution.json"
+    plot_path = output_dir / "eta_squared_distribution.png"
+    if values.size == 0:
+        payload = {"enabled": False, "reason": "no_eta_squared_values"}
+        _write_json(json_path, payload)
+        return {**payload, "json": str(json_path), "plot": None}
+
+    hist, edges = np.histogram(values, bins=int(bins), range=(0.0, 1.0))
+    top_threshold = None
+    if top_eta_rows:
+        top_threshold = float(min(float(row.get("eta_squared") or 0.0) for row in top_eta_rows))
+    payload = {
+        "enabled": True,
+        "count": int(values.size),
+        "min": float(np.min(values)),
+        "max": float(np.max(values)),
+        "mean": float(np.mean(values)),
+        "median": float(np.median(values)),
+        "quantiles": {
+            "0.90": float(np.quantile(values, 0.90)),
+            "0.95": float(np.quantile(values, 0.95)),
+            "0.99": float(np.quantile(values, 0.99)),
+            "0.999": float(np.quantile(values, 0.999)),
+        },
+        "top_eta_threshold": top_threshold,
+        "histogram": {
+            "bins": [float(x) for x in edges.tolist()],
+            "counts": [int(x) for x in hist.tolist()],
+        },
+    }
+    _write_json(json_path, payload)
+
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.hist(values, bins=int(bins), range=(0.0, 1.0), color="#3b6ea8", alpha=0.85)
+        if top_threshold is not None:
+            ax.axvline(top_threshold, color="#c43c39", linestyle="--", linewidth=2, label=f"top-k cutoff = {top_threshold:.4f}")
+            ax.legend()
+        ax.set_xlabel("eta_squared")
+        ax.set_ylabel("position count")
+        ax.set_title("Distribution of per-position superpopulation eta_squared")
+        fig.tight_layout()
+        fig.savefig(plot_path, dpi=160)
+        plt.close(fig)
+        return {**payload, "json": str(json_path), "plot": str(plot_path)}
+    except Exception as exc:
+        payload["plot_error"] = str(exc)
+        _write_json(json_path, payload)
+        return {**payload, "json": str(json_path), "plot": None}
+
+
+def _safe_plot_name(value: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value)
+
+
+def _write_eta_by_position_plots(
+    *,
+    series: Dict[Tuple[str, str, str], List[Tuple[int, float]]],
+    layout: ChannelLayout,
+    output_dir: Path,
+    top_eta_threshold: Optional[float],
+) -> Dict:
+    plot_dir = output_dir / "eta_squared_by_position"
+    manifest_path = plot_dir / "manifest.json"
+    if not series:
+        payload = {"enabled": False, "reason": "no_eta_squared_series"}
+        _write_json(manifest_path, payload)
+        return {**payload, "manifest": str(manifest_path), "plot_dir": str(plot_dir)}
+
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        payload = {"enabled": False, "reason": "matplotlib_unavailable", "plot_error": str(exc)}
+        _write_json(manifest_path, payload)
+        return {**payload, "manifest": str(manifest_path), "plot_dir": str(plot_dir)}
+
+    plot_dir.mkdir(parents=True, exist_ok=True)
+    plots = []
+    for haplotype in ("H1", "H2"):
+        for gene in layout.genes:
+            fig, ax = plt.subplots(figsize=(11, 4.8))
+            plotted = 0
+            for signal_name in layout.signal_names:
+                points = series.get((haplotype, gene, signal_name), [])
+                if not points:
+                    continue
+                points = sorted(points, key=lambda item: item[0])
+                positions = [pos for pos, _eta in points]
+                eta_values = [eta for _pos, eta in points]
+                ax.plot(positions, eta_values, linewidth=0.8, alpha=0.85, label=signal_name)
+                plotted += 1
+            if plotted == 0:
+                plt.close(fig)
+                continue
+            if top_eta_threshold is not None:
+                ax.axhline(top_eta_threshold, color="#c43c39", linestyle="--", linewidth=1.2, label="top-k cutoff")
+            ax.set_xlabel("aligned center-window position")
+            ax.set_ylabel("eta_squared")
+            ax.set_ylim(0.0, 1.0)
+            ax.set_title(f"eta_squared by position: {gene} {haplotype}")
+            ax.legend(loc="upper right", fontsize="small")
+            fig.tight_layout()
+            path = plot_dir / f"{_safe_plot_name(gene)}_{haplotype}_eta_squared_by_position.png"
+            fig.savefig(path, dpi=160)
+            plt.close(fig)
+            plots.append({"gene": gene, "haplotype": haplotype, "path": str(path), "signals": list(layout.signal_names)})
+
+    payload = {
+        "enabled": True,
+        "plot_dir": str(plot_dir),
+        "top_eta_threshold": top_eta_threshold,
+        "plots": plots,
+    }
+    _write_json(manifest_path, payload)
+    return {**payload, "manifest": str(manifest_path)}
+
 def _write_position_effects(
     *,
     samples: Sequence[SampleItem],
@@ -439,14 +578,26 @@ def _write_position_effects(
     min_groups: int,
     write_all: bool,
 ) -> Dict:
+    t0 = time.perf_counter()
     labels = np.asarray([sample.superpopulation for sample in samples], dtype=object)
     superpopulations = sorted({str(label) for label in labels if str(label) and str(label) != "UNK"})
     if len(superpopulations) < min_groups:
+        _log(
+            "Skipping per-position effects: "
+            f"found {len(superpopulations)} superpopulation groups, min required is {min_groups}."
+        )
         return {"enabled": True, "reason": "fewer_than_min_groups", "superpopulations": superpopulations}
 
+    _log(
+        "Computing per-position superpopulation effects "
+        f"for {len(samples)} samples, {len(layout.genes)} genes, "
+        f"{len(layout.signal_names)} signal tracks, groups={superpopulations}."
+    )
     feature_arrays = [sample.features.numpy() for sample in samples]
     top_eta_rows: List[Dict] = []
     top_delta_rows: List[Dict] = []
+    eta_values: List[float] = []
+    eta_position_series: Dict[Tuple[str, str, str], List[Tuple[int, float]]] = {}
     all_count = 0
     all_path = output_dir / "position_superpopulation_effects.csv"
     top_eta_path = output_dir / "top_positions_by_eta_squared.csv"
@@ -467,7 +618,10 @@ def _write_position_effects(
     try:
         for hap_idx, hap_name in enumerate(("H1", "H2")):
             for gene_idx, gene in enumerate(layout.genes):
+                gene_t0 = time.perf_counter()
+                _log(f"Effect scan: haplotype={hap_name} gene={gene}.")
                 valid_stack = np.stack([_valid_mask(arr, hap_idx, gene_idx, layout) for arr in feature_arrays], axis=0)
+                gene_rows_before = all_count
                 for signal_idx, signal_name in enumerate(layout.signal_names):
                     values = np.stack(
                         [_signal_row(arr, hap_idx, gene_idx, signal_idx, layout) for arr in feature_arrays],
@@ -498,10 +652,17 @@ def _write_position_effects(
                         all_count += 1
                         if all_writer is not None:
                             all_writer.writerow(row)
+                        eta_value = float(row["eta_squared"])
+                        eta_values.append(eta_value)
+                        eta_position_series.setdefault((hap_name, gene, signal_name), []).append((int(position), eta_value))
                         top_eta_rows.append(row)
                         top_delta_rows.append(row)
                         _trim_top_rows(top_eta_rows, "eta_squared", top_k)
                         _trim_top_rows(top_delta_rows, "max_group_mean_delta", top_k)
+                _log(
+                    f"Effect scan complete: haplotype={hap_name} gene={gene}, "
+                    f"rows={all_count - gene_rows_before}, elapsed={time.perf_counter() - gene_t0:.1f}s."
+                )
     finally:
         if all_file is not None:
             all_file.close()
@@ -516,15 +677,46 @@ def _write_position_effects(
         finally:
             f.close()
 
+    eta_distribution = _write_eta_squared_distribution(
+        eta_values=eta_values,
+        top_eta_rows=top_eta_rows[:top_k],
+        output_dir=output_dir,
+        bins=80,
+    )
+    _log(
+        "Wrote eta_squared distribution: "
+        f"json={eta_distribution.get('json')} plot={eta_distribution.get('plot')}."
+    )
+    eta_position_plots = _write_eta_by_position_plots(
+        series=eta_position_series,
+        layout=layout,
+        output_dir=output_dir,
+        top_eta_threshold=eta_distribution.get("top_eta_threshold"),
+    )
+    _log(
+        "Wrote eta_squared-by-position plots: "
+        f"dir={eta_position_plots.get('plot_dir')} plots={len(eta_position_plots.get('plots', []))}."
+    )
+    _log(
+        f"Per-position effects complete: rows={all_count}, "
+        f"elapsed={time.perf_counter() - t0:.1f}s."
+    )
+
     return {
         "enabled": True,
         "position_rows_considered": all_count,
         "superpopulations": superpopulations,
+        "eta_squared_distribution": eta_distribution,
+        "eta_squared_by_position_plots": eta_position_plots,
         "top_eta_squared": top_eta_rows[:top_k],
         "outputs": {
             "top_positions_by_eta_squared": str(top_eta_path),
             "top_positions_by_group_delta": str(top_delta_path),
             "position_superpopulation_effects": str(all_path) if write_all else None,
+            "eta_squared_distribution_json": eta_distribution.get("json"),
+            "eta_squared_distribution_plot": eta_distribution.get("plot"),
+            "eta_squared_by_position_plot_dir": eta_position_plots.get("plot_dir"),
+            "eta_squared_by_position_manifest": eta_position_plots.get("manifest"),
         },
     }
 
@@ -537,7 +729,12 @@ def _sparse_pairwise_summary(
     max_pairs: Optional[int],
 ) -> Dict:
     if not top_effect_rows:
+        _log("Skipping sparse top-effect pairwise summary: no top effect rows.")
         return {"enabled": False, "reason": "no_top_effect_rows"}
+    _log(
+        "Computing sparse top-effect pairwise summary "
+        f"using {len(top_effect_rows)} top eta_squared positions."
+    )
     gene_to_idx = {gene: idx for idx, gene in enumerate(layout.genes)}
     signal_to_idx = {signal: idx for idx, signal in enumerate(layout.signal_names)}
     hap_to_idx = {"H1": 0, "H2": 1}
@@ -553,6 +750,7 @@ def _sparse_pairwise_summary(
         except (KeyError, ValueError):
             continue
     if not coordinates:
+        _log("Skipping sparse top-effect pairwise summary: no valid coordinates.")
         return {"enabled": False, "reason": "no_valid_coordinates"}
 
     feature_arrays = [sample.features.numpy() for sample in samples]
@@ -581,6 +779,7 @@ def _sparse_pairwise_summary(
         by_same[same_key]["pearson"].append(_pearson(x, y))
         by_same[same_key]["cosine"].append(_cosine(x, y))
         pair_count += 1
+    _log(f"Sparse top-effect pairwise summary complete: pairs={pair_count}.")
     summary = {key: {metric: _mean(vals) for metric, vals in metrics.items()} for key, metrics in by_same.items()}
     within = summary.get("true", {}).get("mad")
     between = summary.get("false", {}).get("mad")
@@ -594,9 +793,194 @@ def _sparse_pairwise_summary(
     }
 
 
+def _write_top_position_superpopulation_mean_plot(
+    *,
+    samples: Sequence[SampleItem],
+    layout: ChannelLayout,
+    top_effect_rows: Sequence[Dict],
+    output_dir: Path,
+    reference_superpopulation: Optional[str],
+) -> Dict:
+    if not top_effect_rows:
+        _log("Skipping top-position superpopulation mean plot: no top effect rows.")
+        return {"enabled": False, "reason": "no_top_effect_rows"}
+
+    _log(
+        "Computing mean RNA-seq signal by superpopulation over "
+        f"{len(top_effect_rows)} top eta_squared positions."
+    )
+    gene_to_idx = {gene: idx for idx, gene in enumerate(layout.genes)}
+    signal_to_idx = {signal: idx for idx, signal in enumerate(layout.signal_names)}
+    hap_to_idx = {"H1": 0, "H2": 1}
+    coordinates = []
+    for rank, row in enumerate(top_effect_rows, start=1):
+        try:
+            coordinates.append((
+                rank,
+                str(row["haplotype"]),
+                str(row["gene"]),
+                str(row["signal"]),
+                int(row["position"]),
+                float(row.get("eta_squared") or 0.0),
+                hap_to_idx[str(row["haplotype"])],
+                gene_to_idx[str(row["gene"])],
+                signal_to_idx[str(row["signal"])],
+                int(row["position"]),
+            ))
+        except (KeyError, ValueError):
+            continue
+    if not coordinates:
+        return {"enabled": False, "reason": "no_valid_coordinates"}
+
+    superpopulations = sorted({sample.superpopulation for sample in samples if sample.superpopulation and sample.superpopulation != "UNK"})
+    if not superpopulations:
+        return {"enabled": False, "reason": "no_superpopulations"}
+    reference = reference_superpopulation or ("EUR" if "EUR" in superpopulations else superpopulations[0])
+    if reference not in superpopulations:
+        _log(
+            f"Requested reference superpopulation {reference!r} is absent; "
+            f"using {superpopulations[0]!r} instead."
+        )
+        reference = superpopulations[0]
+    feature_arrays = [(sample.superpopulation, sample.features.numpy()) for sample in samples]
+    csv_path = output_dir / "top_positions_superpopulation_mean_rna_seq.csv"
+    plot_path = output_dir / "top_positions_superpopulation_mean_rna_seq.png"
+    std_plot_path = output_dir / "top_positions_superpopulation_mean_rna_seq_with_std_dev.png"
+    fieldnames = [
+        "plot_rank", "top_rank", "haplotype", "gene", "signal", "position", "eta_squared",
+        "superpopulation", "n_values", "mean", "std", "sem",
+    ]
+    rows = []
+    for rank, haplotype, gene, signal_name, position_label, eta_squared, hap_idx, gene_idx, signal_idx, position in coordinates:
+        for group in superpopulations:
+            values = []
+            for sample_group, arr in feature_arrays:
+                if sample_group != group:
+                    continue
+                if not _valid_mask(arr, hap_idx, gene_idx, layout)[position]:
+                    continue
+                value = float(_signal_row(arr, hap_idx, gene_idx, signal_idx, layout)[position])
+                if math.isfinite(value):
+                    values.append(value)
+            vals = np.asarray(values, dtype=np.float64)
+            rows.append({
+                "plot_rank": None,
+                "top_rank": rank,
+                "haplotype": haplotype,
+                "gene": gene,
+                "signal": signal_name,
+                "position": position_label,
+                "eta_squared": eta_squared,
+                "superpopulation": group,
+                "n_values": int(vals.size),
+                "mean": float(np.mean(vals)) if vals.size else None,
+                "std": float(np.std(vals)) if vals.size else None,
+                "sem": float(np.std(vals) / math.sqrt(vals.size)) if vals.size > 1 else None,
+            })
+
+    reference_means = {
+        int(row["top_rank"]): row["mean"]
+        for row in rows
+        if row["superpopulation"] == reference and row["mean"] is not None
+    }
+    sorted_top_ranks = sorted(
+        [coord[0] for coord in coordinates],
+        key=lambda rank: (
+            reference_means.get(rank) is None,
+            reference_means.get(rank, float("inf")),
+            rank,
+        ),
+    )
+    plot_rank_by_top_rank = {top_rank: plot_rank for plot_rank, top_rank in enumerate(sorted_top_ranks, start=1)}
+    for row in rows:
+        row["plot_rank"] = plot_rank_by_top_rank.get(int(row["top_rank"]))
+
+    f, writer = _open_csv(csv_path, fieldnames)
+    try:
+        for row in sorted(rows, key=lambda r: (int(r["plot_rank"] or 0), r["superpopulation"])):
+            writer.writerow(row)
+    finally:
+        f.close()
+
+    plot = None
+    std_plot = None
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        color_cycle = plt.rcParams["axes.prop_cycle"].by_key().get("color", [])
+        colors = {group: color_cycle[idx % len(color_cycle)] for idx, group in enumerate(superpopulations)} if color_cycle else {}
+        fig, ax = plt.subplots(figsize=(13, 5.5))
+        plot_ranks = list(range(1, len(sorted_top_ranks) + 1))
+        for group in superpopulations:
+            means_by_plot_rank = {int(row["plot_rank"]): row["mean"] for row in rows if row["superpopulation"] == group}
+            means = [means_by_plot_rank.get(rank, np.nan) if means_by_plot_rank.get(rank, None) is not None else np.nan for rank in plot_ranks]
+            alpha = 0.8 if group == reference else 0.38
+            linewidth = 1.6 if group == reference else 1.0
+            ax.plot(plot_ranks, means, linewidth=linewidth, alpha=alpha, label=group, color=colors.get(group))
+        ax.set_ylabel("mean aligned RNA-seq signal")
+        ax.set_xlabel(f"top positions ordered by {reference} mean RNA-seq signal")
+        ax.set_title("Mean RNA-seq signal by superpopulation at top eta_squared positions")
+        ax.legend(fontsize="small")
+        ax.grid(alpha=0.25, linewidth=0.5)
+        fig.tight_layout()
+        fig.savefig(plot_path, dpi=160)
+        plt.close(fig)
+        plot = str(plot_path)
+
+        fig, ax = plt.subplots(figsize=(13, 5.5))
+        x_values = np.asarray(plot_ranks, dtype=np.float64)
+        for group in superpopulations:
+            group_rows = {int(row["plot_rank"]): row for row in rows if row["superpopulation"] == group}
+            means = np.asarray([
+                group_rows.get(rank, {}).get("mean") if group_rows.get(rank, {}).get("mean") is not None else np.nan
+                for rank in plot_ranks
+            ], dtype=np.float64)
+            stds = np.asarray([
+                group_rows.get(rank, {}).get("std") if group_rows.get(rank, {}).get("std") is not None else np.nan
+                for rank in plot_ranks
+            ], dtype=np.float64)
+            color = colors.get(group)
+            alpha = 0.85 if group == reference else 0.45
+            linewidth = 1.6 if group == reference else 1.0
+            ax.plot(x_values, means, linewidth=linewidth, alpha=alpha, label=group, color=color)
+            lower = means - stds
+            upper = means + stds
+            valid = np.isfinite(means) & np.isfinite(stds)
+            ax.fill_between(x_values, lower, upper, where=valid, interpolate=False, alpha=0.10, color=color)
+        ax.set_ylabel("mean aligned RNA-seq signal")
+        ax.set_xlabel(f"top positions ordered by {reference} mean RNA-seq signal")
+        ax.set_title("Mean RNA-seq signal by superpopulation at top eta_squared positions (±1 std dev)")
+        ax.legend(fontsize="small")
+        ax.grid(alpha=0.25, linewidth=0.5)
+        fig.tight_layout()
+        fig.savefig(std_plot_path, dpi=160)
+        plt.close(fig)
+        std_plot = str(std_plot_path)
+    except Exception as exc:
+        _log(f"Could not write top-position superpopulation mean plot: {exc}")
+
+    _log(f"Wrote top-position superpopulation mean RNA-seq data: plot={plot} std_plot={std_plot} csv={csv_path}.")
+    return {
+        "enabled": True,
+        "top_positions": len(coordinates),
+        "csv": str(csv_path),
+        "plot": plot,
+        "std_dev_plot": std_plot,
+        "superpopulations": superpopulations,
+        "reference_superpopulation": reference,
+        "x_axis": f"top_positions_ordered_by_{reference}_mean_rna_seq_signal",
+        "y_axis": "mean_aligned_rna_seq_signal_by_superpopulation_at_position",
+    }
+
+
 def _permutation_test(pairwise_path: Path, samples: Sequence[SampleItem], permutations: int, seed: int) -> Dict:
     if permutations <= 0:
+        _log("Skipping permutation test: --permutations was not set.")
         return {"enabled": False}
+    _log(f"Running permutation test with {permutations} permutations and seed={seed}.")
     labels_by_sample = {sample.sample_id: sample.superpopulation for sample in samples}
     sample_ids = [sample.sample_id for sample in samples]
     labels = [labels_by_sample[sample_id] for sample_id in sample_ids]
@@ -611,6 +995,7 @@ def _permutation_test(pairwise_path: Path, samples: Sequence[SampleItem], permut
             if math.isfinite(mad):
                 rows.append((row["sample_a"], row["sample_b"], mad))
     if not rows:
+        _log("Permutation test skipped: no pairwise rows with finite MAD.")
         return {"enabled": True, "reason": "no_pairwise_rows"}
 
     def delta(label_map: Dict[str, str]) -> float:
@@ -635,6 +1020,7 @@ def _permutation_test(pairwise_path: Path, samples: Sequence[SampleItem], permut
         if math.isfinite(value):
             permuted.append(value)
     if not permuted or not math.isfinite(observed):
+        _log("Permutation test incomplete: insufficient finite permutation statistics.")
         return {"enabled": True, "observed_between_minus_within_mad": _safe_float(observed), "reason": "insufficient_permutations"}
     arr = np.asarray(permuted, dtype=np.float64)
     p_value = float((np.sum(arr >= observed) + 1) / (arr.size + 1))
@@ -651,18 +1037,34 @@ def _permutation_test(pairwise_path: Path, samples: Sequence[SampleItem], permut
 
 
 def run(args: argparse.Namespace) -> int:
+    run_t0 = time.perf_counter()
+    _log(f"Loading config: {Path(args.config)}")
     config = load_config(Path(args.config))
     cache_dir = Path(args.cache_dir) if args.cache_dir else get_dataset_cache_dir(config)
     dataset_dir = Path(args.dataset_dir) if args.dataset_dir else Path(config.dataset_input.dataset_dir)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    _log(f"Resolved cache_dir: {cache_dir}")
+    _log(f"Resolved dataset_dir: {dataset_dir}")
+    _log(f"Output directory: {output_dir}")
 
+    _log("Validating processed cache files.")
     _validate_processed_cache(cache_dir)
 
     layout = _build_layout(config, cache_dir)
+    _log(
+        "Decoded tensor layout: "
+        f"genes={len(layout.genes)}, signal_tracks={layout.signal_channels_per_gene}, "
+        f"mask_channels_per_gene={layout.mask_channels_per_gene}, valid_mask_offset={layout.valid_mask_offset}."
+    )
     sample_filter = None
     if args.sample_ids:
         sample_filter = {str(item) for item in args.sample_ids}
+        _log(f"Using explicit sample filter with {len(sample_filter)} sample IDs.")
+    _log(
+        "Loading cached samples: "
+        f"splits={args.splits}, max_samples={args.max_samples}, sample_filter={bool(sample_filter)}."
+    )
     samples = _load_samples(
         cache_dir=cache_dir,
         dataset_dir=dataset_dir,
@@ -673,6 +1075,10 @@ def run(args: argparse.Namespace) -> int:
     )
     if len(samples) < 2:
         raise SystemExit("Menos de 2 individuos carregados para comparacao")
+    superpop_counts: Dict[str, int] = {}
+    for sample in samples:
+        superpop_counts[sample.superpopulation] = superpop_counts.get(sample.superpopulation, 0) + 1
+    _log(f"Loaded {len(samples)} samples. Superpopulation counts: {superpop_counts}")
 
     pairwise_fields = [
         "split_a", "split_b", "sample_a", "sample_b", "superpopulation_a", "superpopulation_b",
@@ -690,7 +1096,12 @@ def run(args: argparse.Namespace) -> int:
 
     max_pairs = args.max_pairs
     pair_count = 0
+    _log(
+        "Computing pairwise valid-position signal similarity "
+        f"with max_pairs={max_pairs}, min_valid_positions={args.min_valid_positions}."
+    )
     pair_file, pair_writer = _open_csv(pairwise_path, pairwise_fields)
+    pair_t0 = time.perf_counter()
     try:
         for a, b in itertools.combinations(samples, 2):
             if max_pairs is not None and pair_count >= max_pairs:
@@ -701,8 +1112,11 @@ def run(args: argparse.Namespace) -> int:
                 wrote_pair = True
             if wrote_pair:
                 pair_count += 1
+                if pair_count == 1 or pair_count % 100 == 0:
+                    _log(f"Pairwise progress: pairs={pair_count}, elapsed={time.perf_counter() - pair_t0:.1f}s.")
     finally:
         pair_file.close()
+    _log(f"Pairwise similarity complete: pairs={pair_count}, output={pairwise_path}.")
 
     top_differences.sort(key=lambda row: float(row["abs_diff"]), reverse=True)
     top_file, top_writer = _open_csv(top_path, top_fields)
@@ -711,6 +1125,7 @@ def run(args: argparse.Namespace) -> int:
             top_writer.writerow(row)
     finally:
         top_file.close()
+    _log(f"Wrote top pairwise signal differences: output={top_path}, rows={min(len(top_differences), args.top_k)}.")
 
     position_effects = _write_position_effects(
         samples=samples,
@@ -727,6 +1142,13 @@ def run(args: argparse.Namespace) -> int:
         layout=layout,
         top_effect_rows=top_effect_rows,
         max_pairs=max_pairs,
+    )
+    top_position_superpop_means = _write_top_position_superpopulation_mean_plot(
+        samples=samples,
+        layout=layout,
+        top_effect_rows=top_effect_rows,
+        output_dir=output_dir,
+        reference_superpopulation=args.reference_superpopulation,
     )
     permutation_summary = _permutation_test(pairwise_path, samples, args.permutations, args.permutation_seed)
 
@@ -749,15 +1171,21 @@ def run(args: argparse.Namespace) -> int:
             "pairwise_valid_signal_similarity": str(pairwise_path),
             "top_valid_signal_differences": str(top_path),
             **position_effects.get("outputs", {}),
+            "top_positions_superpopulation_mean_rna_seq_csv": top_position_superpop_means.get("csv"),
+            "top_positions_superpopulation_mean_rna_seq_plot": top_position_superpop_means.get("plot"),
+            "top_positions_superpopulation_mean_rna_seq_with_std_dev_plot": top_position_superpop_means.get("std_dev_plot"),
         },
         "pairwise_summary": _summarize_pairwise(pairwise_path),
         "position_effects_summary": {
             key: value for key, value in position_effects.items() if key not in {"top_eta_squared", "outputs"}
         },
         "sparse_top_eta_pairwise_summary": sparse_summary,
+        "top_positions_superpopulation_mean_rna_seq": top_position_superpop_means,
         "permutation_test": permutation_summary,
     }
     _write_json(output_dir / "summary.json", summary)
+    _log(f"Wrote summary: {output_dir / 'summary.json'}")
+    _log(f"compare-aligned-signals complete: elapsed={time.perf_counter() - run_t0:.1f}s.")
     print(json.dumps(summary, indent=2))
     return 0
 
@@ -769,7 +1197,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("config", type=Path)
     parser.add_argument("--cache-dir", type=Path, default=None, help="Processed dataset cache dir. Defaults to config-derived cache.")
     parser.add_argument("--dataset-dir", type=Path, default=None, help="Dataset dir for sample metadata. Defaults to config dataset_dir.")
-    parser.add_argument("--splits", nargs="+", choices=["train", "val", "test"], default=["train", "val", "test"])
+    parser.add_argument("--splits", nargs="+", choices=["train", "val", "test"], default=["train"])
     parser.add_argument("--sample-ids", nargs="*", default=None)
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--max-pairs", type=int, default=None)
@@ -781,6 +1209,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--write-all-position-effects", action="store_true", help="Write all per-position effects, not only top rankings.")
     parser.add_argument("--permutations", type=int, default=0, help="Permutation count for global between-vs-within MAD test.")
     parser.add_argument("--permutation-seed", type=int, default=13)
+    parser.add_argument("--reference-superpopulation", default=None, help="Reference superpopulation used to order top-position mean RNA-seq line plots. Defaults to EUR when present.")
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser
 

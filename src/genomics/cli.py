@@ -244,6 +244,8 @@ def cmd_genotype_compare_aligned_signals(args: argparse.Namespace) -> int:
     if args.permutations:
         command_args.extend(["--permutations", str(args.permutations)])
     command_args.extend(["--permutation-seed", str(args.permutation_seed)])
+    if args.reference_superpopulation:
+        command_args.extend(["--reference-superpopulation", args.reference_superpopulation])
     return _run_module("genomics.predictors.genotype_based.analysis.compare_aligned_signals", command_args)
 
 
@@ -1109,7 +1111,7 @@ def build_parser() -> argparse.ArgumentParser:
     gp_compare = genotype_sub.add_parser("compare-aligned-signals", help="Compara sinais AlphaGenome alinhados usando apenas posicoes validas nos dois individuos")
     _add_genotype_config_args(gp_compare)
     gp_compare.add_argument("--cache-dir", type=Path, default=None)
-    gp_compare.add_argument("--splits", nargs="+", choices=["train", "val", "test"], default=["train", "val", "test"])
+    gp_compare.add_argument("--splits", nargs="+", choices=["train", "val", "test"], default=["train"])
     gp_compare.add_argument("--sample-ids", nargs="*", default=None)
     gp_compare.add_argument("--max-samples", type=int, default=None)
     gp_compare.add_argument("--max-pairs", type=int, default=None)
@@ -1121,6 +1123,7 @@ def build_parser() -> argparse.ArgumentParser:
     gp_compare.add_argument("--write-all-position-effects", action="store_true")
     gp_compare.add_argument("--permutations", type=int, default=0)
     gp_compare.add_argument("--permutation-seed", type=int, default=13)
+    gp_compare.add_argument("--reference-superpopulation", default=None)
     gp_compare.add_argument("--output-dir", type=Path, required=True)
     gp_compare.set_defaults(func=cmd_genotype_compare_aligned_signals)
     gp_workbench = genotype_sub.add_parser("workbench")

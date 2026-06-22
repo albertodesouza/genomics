@@ -370,6 +370,8 @@ def test_genotype_compare_aligned_signals_command_parses(tmp_path):
         "10",
         "--max-pairs",
         "20",
+        "--reference-superpopulation",
+        "AFR",
         "--output-dir",
         str(tmp_path / "out"),
     ])
@@ -377,6 +379,8 @@ def test_genotype_compare_aligned_signals_command_parses(tmp_path):
     assert args.genotype_command == "compare-aligned-signals"
     assert args.max_samples == 10
     assert args.max_pairs == 20
+    assert args.splits == ["train"]
+    assert args.reference_superpopulation == "AFR"
 
 
 def test_config_describe_genotype_lists_known_fields(capsys):
