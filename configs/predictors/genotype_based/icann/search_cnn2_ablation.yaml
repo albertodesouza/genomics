@@ -331,6 +331,8 @@ hyperparameter_search:
           model.cnn2.stride_stages23: [1, 2]
           model.cnn2.padding_stages23: [0, 5]
           model.cnn2.fc_hidden_size: 64
+          dataset_input.dataset_id: null
+          dataset_input.dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_fbxo5"
           dataset_input.window_center_size: 32768
           dataset_input.genes_to_use:
             - "FBXO5"

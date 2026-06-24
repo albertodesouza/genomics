@@ -445,7 +445,6 @@ class AlphaGenomePipelineAnimation(Scene):
         self.play(FadeIn(split_circles, shift=UP * 0.14), FadeIn(family_box, shift=UP * 0.10), run_time=1.0)
         self.add(split_individual_columns, transit_split_columns)
         visible_h1_rows = VGroup(*[h1_by_gene[gene] for gene in genes])
-        self.remove(visible_h1_rows, individual_labels)
         self.play(
             *[
                 column.animate.move_to(split_targets[split_assignment[i]] + UP * 0.10).scale(0.44).set_opacity(0.80)
@@ -455,8 +454,11 @@ class AlphaGenomePipelineAnimation(Scene):
                 column.animate.move_to(split_targets[column.target_split] + column.target_offset).scale(0.40).set_opacity(0.58)
                 for column in transit_split_columns
             ],
+            FadeOut(visible_h1_rows),
+            FadeOut(individual_labels),
             run_time=1.6,
         )
+        self.remove(*[h1_by_gene[gene] for gene in genes], h1_rows, individual_labels)
         self.play(FadeOut(VGroup(output_frame, h1_title)), run_time=0.6)
         self.wait(2.2)
         remaining = VGroup(heading, split_circles, family_box, split_individual_columns, transit_split_columns)
