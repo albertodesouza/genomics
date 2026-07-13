@@ -15,4 +15,5 @@ media/
 assets/pipeline_animation/ppt_media/
 
 notebooks/.cache
+notebooks/data/
 .ipynb_checkpoints/
