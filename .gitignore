@@ -13,3 +13,6 @@ results/
 site/
 media/
 assets/pipeline_animation/ppt_media/
+
+notebooks/.cache
+.ipynb_checkpoints/
