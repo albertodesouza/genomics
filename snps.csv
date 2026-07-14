@@ -1,11 +1,3 @@
-# Skin-pigmentation benchmark variant set for AlphaGenome in-silico perturbation pipeline
-# Curated from primary literature (see source_key -> references at bottom). Build: GRCh38/hg38 (AlphaGenome native).
-# IMPORTANT: rsIDs are the stable identifiers. Confirm GRCh38 coordinates + window membership with annotate_benchmark.py.
-# "expected_rnaseq_signal": VISIBLE   = acts via expression/splicing/accessibility -> POSITIVE control (pipeline SHOULD flag it)
-#                           NULL_CODING = missense/LoF acting at protein level -> NEGATIVE control (pipeline SHOULD return ~null)
-#                           (see notes for eQTL-by-LD caveats)
-# control_class: POS = positive control ; NEG = negative control ; SUPP = supporting/region-level
-#
 rsid,window,gene,consequence,protein_change,effect_allele,allele_effect,population_context,expected_rnaseq_signal,control_class,source_key,notes
 rs1426654,SLC24A5,SLC24A5,missense,p.Ala111Thr,A,lightening,European/South-Asian; introgressed into East Africa,NULL_CODING,NEG,Lamason2005;Crawford2017,"Largest single EUR-vs-AFR effect; derived allele near-fixed in Europe. Protein-level -> expected null in RNA-seq. Key negative control."
 rs16891982,SLC45A2,SLC45A2,missense,p.Phe374Leu,G,lightening,European,NULL_CODING,NEG,Chaitanya2018;LonaDurazo2019,"Coding, BUT reported associated with SLC45A2 EXPRESSION (derived G -> higher expression). Informative test: in-silico perturbation of the coding base itself should be ~null unless it alters a regulatory element; a population eQTL by LD should NOT move the in-silico score. Watch this one."

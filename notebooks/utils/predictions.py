@@ -120,6 +120,37 @@ def load_rna_seq(npz_path: Path, meta_path: Path):
     return track_data.TrackData(values=values, metadata=metadata, resolution=meta["resolution"], interval=interval)
 
 
+def predict_reference_interval(client, *, gene: str, interval, requested_outputs: list, ontology_terms: list, cache_dir: Path):
+    """Cached `client.predict_interval(...)` on the unmodified reference sequence --
+    used by the notebook's reference-only overview plots (one call per gene, no
+    per-individual consensus). Keyed on gene + interval bounds + ontology terms, so a
+    top-to-bottom notebook re-run reuses the cache instead of re-spending API calls on
+    predictions that can't change."""
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    key = f"{gene}.{interval.start}-{interval.end}.{'_'.join(ontology_terms)}"
+    npz_path, meta_path = cache_dir / f"{key}.npz", cache_dir / f"{key}.json"
+
+    if npz_path.exists() and meta_path.exists():
+        return load_rna_seq(npz_path, meta_path)
+
+    output = client.predict_interval(
+        interval=interval,
+        requested_outputs=requested_outputs,
+        ontology_terms=ontology_terms,
+    )
+    save_rna_seq(output.rna_seq, npz_path, meta_path)
+    return output.rna_seq
+
+def predict_variant_effect(client, *, gene: str, interval, variant, requested_outputs: list, ontology_terms: list):
+    output = client.predict_variant(
+        interval=interval,
+        variant=variant,
+        requested_outputs=requested_outputs,
+        ontology_terms=ontology_terms,
+    )
+    return output.reference.rna_seq, output.alternate.rna_seq
+
 def generate_predictions(
     client,
     *,
