@@ -14,6 +14,7 @@ alphagenome = [
     "matplotlib",
     "numpy",
     "pandas",
+    "plotnine",
     "rich",
 ]
 genotype = [
@@ -64,6 +65,7 @@ all = [
     "mkdocs-material>=9.5",
     "numpy",
     "pandas",
+    "plotnine",
     "psutil",
     "pydantic>=2",
     "pytest",

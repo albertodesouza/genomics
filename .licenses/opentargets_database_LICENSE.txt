@@ -1,0 +1,4 @@
+Open Targets Platform API usage notification
+Recorded: 2026-07-18
+User notified that Open Targets Platform data/API usage is subject to terms at:
+https://platform-docs.opentargets.org/licence
