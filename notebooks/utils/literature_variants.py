@@ -23,6 +23,7 @@ import warnings
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import numpy as np
 import pandas as pd
 
 GTEX_CLI = Path(__file__).resolve().parent.parent.parent / ".claude" / "skills" / "gtex_database" / "scripts" / "gtex_cli.py"
@@ -91,37 +92,38 @@ def _parse_variant_id(variant_id: str) -> tuple:
     return chrom, int(pos), ref, alt
 
 
-def get_literature_variants(
+def get_literature_variants_for_window(
     gene: str,
-    windows_df: pd.DataFrame,
+    window_chrom: str,
+    window_start: int,
+    window_end: int,
     cache_dir: Path,
     tissues: str = SKIN_TISSUES,
     top_n: Optional[int] = DEFAULT_TOP_N,
     force_refresh: bool = False,
 ) -> pd.DataFrame:
     """Literature-known variants for `gene` with a signed direction of effect on RNA-seq
-    expression, from GTEx skin-tissue eQTLs.
+    expression, from GTEx skin-tissue eQTLs, restricted to an explicit window.
 
     Returns a DataFrame with columns: gene, variant ("chr19:3565601:T>C"), direction
     ("enhance" if nes>0 else "diminish"), nes, p_value, tissue, n_tissues -- sorted by
-    p_value ascending (most statistically confident first), capped to `top_n` rows.
+    p_value ascending (most statistically confident first), capped to `top_n` rows (pass
+    `top_n=None` for the full count, e.g. when using this as a gene-ranking metric).
 
     Variants seen in multiple tissues are deduplicated (keeping the most-significant
     tissue's nes/p_value); a variant with a sign *conflict* across tissues is dropped
     with a warning rather than silently picking one direction.
 
-    Candidates are filtered to `gene`'s own prediction window (`windows_df`), since
+    Candidates are filtered to `(window_chrom, window_start, window_end)`, since
     `score_variants` scores each variant against an interval centered on *the variant*,
     not the gene -- an eQTL far outside the gene's own window would silently vanish from
-    downstream `tidy_scores` filtering by gene name.
+    downstream `tidy_scores` filtering by gene name. Callers with an already-built
+    `windows_df` (the staged, active gene panel) should use `get_literature_variants`
+    instead; this window-explicit form also works for candidate genes that haven't been
+    staged into the pipeline yet (e.g. during gene-selection ranking), since it only needs
+    a GTF-derived window, not a fully materialized dataset.
     """
     raw = fetch_gene_eqtls_raw(gene, cache_dir, tissues=tissues, force_refresh=force_refresh)
-
-    gene_row = windows_df.loc[windows_df["gene"] == gene]
-    if gene_row.empty:
-        raise ValueError(f"{gene!r} not found in windows_df")
-    gene_row = gene_row.iloc[0]
-    window_chrom, window_start, window_end = gene_row["chrom"], gene_row["start"], gene_row["end"]
 
     by_variant: Dict[str, dict] = {}
     conflicts = set()
@@ -170,6 +172,26 @@ def get_literature_variants(
     return df
 
 
+def get_literature_variants(
+    gene: str,
+    windows_df: pd.DataFrame,
+    cache_dir: Path,
+    tissues: str = SKIN_TISSUES,
+    top_n: Optional[int] = DEFAULT_TOP_N,
+    force_refresh: bool = False,
+) -> pd.DataFrame:
+    """`get_literature_variants_for_window` for a gene already staged in `windows_df` (the
+    active gene panel) -- resolves the window from there instead of taking it explicitly."""
+    gene_row = windows_df.loc[windows_df["gene"] == gene]
+    if gene_row.empty:
+        raise ValueError(f"{gene!r} not found in windows_df")
+    gene_row = gene_row.iloc[0]
+    return get_literature_variants_for_window(
+        gene, gene_row["chrom"], gene_row["start"], gene_row["end"], cache_dir,
+        tissues=tissues, top_n=top_n, force_refresh=force_refresh,
+    )
+
+
 def get_literature_variants_all_genes(
     genes: List[str],
     windows_df: pd.DataFrame,
@@ -202,3 +224,33 @@ def literature_variant_strings(
         gene, windows_df, cache_dir, tissues=tissues, top_n=top_n, force_refresh=force_refresh,
     )
     return df["variant"].tolist()
+
+
+def add_phenotype_direction(df: pd.DataFrame, gene_coefficient_sign: float) -> pd.DataFrame:
+    """Adds a `phenotype_direction` column ("pro-pigmentation"/"anti-pigmentation") derived from
+    each variant's expression-direction (the `direction` column: "enhance"/"diminish", from GTEx
+    NES) combined with `gene_coefficient_sign` -- the sign of this gene's own coefficient in a
+    classifier trained to predict "strong pigmentation" (the African-ancestry-population-proxy
+    class used throughout this notebook series) from this gene's expression. A positive
+    coefficient means higher expression of this gene is, empirically, in this study's own data,
+    associated with the "strong pigmentation" class; negative means the opposite.
+
+    "pro-pigmentation" = a variant whose effect on expression (enhance/diminish) points the same
+    way this gene's expression already points toward "strong pigmentation" in the trained model
+    (i.e. `direction == "enhance"` and `gene_coefficient_sign > 0`, or `direction == "diminish"`
+    and `gene_coefficient_sign < 0`). Every other combination is "anti-pigmentation".
+
+    Note on interpretation: this labels a variant's *predicted phenotype direction according to
+    this study's own trained classifier*, not an independent ground truth -- there is no external
+    per-gene "does more expression mean more pigmentation" table involved (deliberately: that
+    would need error-prone manual special-casing, e.g. ASIP is an MC1R antagonist and would flip
+    sign relative to most other genes here). Cross-checking a variant's predicted RNA-seq shift
+    against this label is by construction non-circular for `score_variants`' raw_score and for
+    `gene_span_model`/`nn_model` (different features/model than the one the sign convention was
+    drawn from), but partially circular for `mane_exon_model`'s own logit, since that is the exact
+    model `gene_coefficient_sign` came from.
+    """
+    df = df.copy()
+    increases_pigmentation_class = (df["direction"] == "enhance") == (gene_coefficient_sign > 0)
+    df["phenotype_direction"] = np.where(increases_pigmentation_class, "pro-pigmentation", "anti-pigmentation")
+    return df
