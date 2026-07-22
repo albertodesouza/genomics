@@ -65,8 +65,9 @@ conversion:
 
   # The _all individuals dir contains multiple 23andMe variants per sample
   # (e.g. {sample_id}_23andme.txt was generated with a small AISNP panel).
-  # Use the V5 files (a strict superset of the gene-window panel applied in
-  # statistics.snp_panel below).
+  # Use the V5 files: they hold the full V5 chip panel (~271K SNPs/individual)
+  # and serve both whole-genome runs and any gene-window subset configured
+  # via statistics.snp_panel below — no Step 1 rerun needed when switching.
   output_filename: "{sample_id}_v5_23andme.txt"
 
 # ── Statistics Computation (Step 2) ──────────────────────────
@@ -77,7 +78,17 @@ statistics:
     - "train"
   min_maf: 0.001
   max_snps: 500000
-  snp_panel: "/dados/GENOMICS_DATA/top3/refs/panel_23andme_V5_genes_1000_w32768.txt"
+
+  # Whole-genome mode: Step 2 uses every rsID present in the 23andMe files
+  # (the V5 chip panel — ~271K SNPs/individual). No need to re-run Step 1:
+  # the existing {sid}_v5_23andme.txt files already contain the V5 panel.
+  # The statistics filename auto-encodes the panel choice, so this run
+  # produces a NEW JSON next to the gene-window one.
+  snp_panel: null
+
+  # Gene-window mode (40 rsIDs intersecting the 32 kb central windows of the
+  # pigmentation genes). Uncomment to restrict Step 2/3 to this subset:
+  # snp_panel: "/dados/GENOMICS_DATA/top3/refs/panel_23andme_V5_genes_1000_w32768.txt"
 
 # ── Ancestry / Derived Prediction (Step 3) ───────────────────
 prediction:
