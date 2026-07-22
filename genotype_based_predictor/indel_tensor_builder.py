@@ -31,29 +31,26 @@ def compute_center_window_slice(
     haplotypes: Sequence[str] = ("H1", "H2"),
 ) -> CenterWindowSlice:
     center_half = center_window_size // 2
-    center_ref_start = max(0, (ref_length // 2) - center_half)
+    center_ref_idx = ref_length // 2
+    center_ref_start = max(0, center_ref_idx - center_half)
     center_ref_end = min(ref_length, center_ref_start + center_window_size)
-
-    expanded_indices_covering_center: List[int] = []
-    for sample_payload in gene_mapping.get("samples", {}).values():
-        for haplotype in haplotypes:
-            hap_entry = sample_payload.get(haplotype)
-            if hap_entry is None:
-                continue
-            for source_idx, target_idx in zip(hap_entry.get("copy_from_indices", []), hap_entry.get("expanded_indices", [])):
-                if center_ref_start <= int(source_idx) < center_ref_end:
-                    expanded_indices_covering_center.append(int(target_idx))
-            for target_idx in hap_entry.get("deletion_indices", []):
-                expanded_indices_covering_center.append(int(target_idx))
-
-    if not expanded_indices_covering_center:
-        raise RuntimeError("Nao foi possivel localizar indices expandidos para a janela central.")
+    expanded_index_map = gene_mapping.get("expanded_index_map", {})
+    center_expanded_idx = int(expanded_index_map.get(center_ref_idx, center_ref_idx))
+    expanded_length = int(gene_mapping.get("expanded_length", ref_length))
+    center_expanded_start = center_expanded_idx - center_half
+    center_expanded_end = center_expanded_start + center_window_size
+    if center_expanded_start < 0:
+        center_expanded_end -= center_expanded_start
+        center_expanded_start = 0
+    if center_expanded_end > expanded_length:
+        center_expanded_start = max(0, center_expanded_start - (center_expanded_end - expanded_length))
+        center_expanded_end = expanded_length
 
     return CenterWindowSlice(
         center_ref_start=center_ref_start,
         center_ref_end=center_ref_end,
-        center_expanded_start=min(expanded_indices_covering_center),
-        center_expanded_end=max(expanded_indices_covering_center) + 1,
+        center_expanded_start=center_expanded_start,
+        center_expanded_end=center_expanded_end,
     )
 
 
@@ -63,6 +60,7 @@ def build_aligned_haplotype_tensor(
     expanded_length: int,
     neutral_value: float = 0.0,
     include_valid_mask: bool = True,
+    include_snp_mask: bool = False,
     expanded_slice: Optional[Tuple[int, int]] = None,
 ) -> np.ndarray:
     if expanded_slice is None:
@@ -76,6 +74,7 @@ def build_aligned_haplotype_tensor(
     valid_mask = np.zeros(local_length, dtype=np.float32)
     ins_mask = np.zeros(local_length, dtype=np.float32)
     del_mask = np.zeros(local_length, dtype=np.float32)
+    snp_mask = np.zeros(local_length, dtype=np.float32)
 
     copy_from = entry.get("copy_from_indices", [])
     copy_to = entry.get("expanded_indices", [])
@@ -101,9 +100,17 @@ def build_aligned_haplotype_tensor(
         if slice_start <= target_idx < slice_end:
             del_mask[target_idx - slice_start] = 1.0
 
+    if include_snp_mask:
+        for target_idx in entry.get("snp_indices", []):
+            target_idx = int(target_idx)
+            if slice_start <= target_idx < slice_end:
+                snp_mask[target_idx - slice_start] = 1.0
+
     output_rows = [values, ins_mask, del_mask]
     if include_valid_mask:
         output_rows.append(valid_mask)
+    if include_snp_mask:
+        output_rows.append(snp_mask)
     return np.vstack(output_rows)
 
 

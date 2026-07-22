@@ -3,12 +3,13 @@
 dataset.py — ProcessedGenomicDataset e CachedProcessedDataset.
 """
 
+import hashlib
 import json
 import math
 import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import torch
@@ -17,6 +18,7 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeEl
 from torch.utils.data import Dataset
 
 from genotype_based_predictor.config import PipelineConfig
+from genotype_based_predictor.bcftools_chain_mapper import BcftoolsChainMapper
 from genotype_based_predictor.dynamic_indel_alignment import DynamicIndelAligner
 from genotype_based_predictor.indel_tensor_builder import build_aligned_haplotype_tensor
 from genotype_based_predictor.normalization import (
@@ -74,25 +76,49 @@ class ProcessedGenomicDataset(Dataset):
         self.normalization_method = di.normalization_method
         self.normalization_value = di.normalization_value
         self.selected_track_index = di.selected_track_index
+        self.feature_mode = di.feature_mode
+        self.alphagenome_signal_variant_mask = di.alphagenome_signal_variant_mask
+        self.alphagenome_signal_transform = di.alphagenome_signal_transform
+        self.reference_predictions_dataset_dir = Path(di.reference_predictions_dataset_dir) if di.reference_predictions_dataset_dir else None
+        self.reference_predictions_sample_id = di.reference_predictions_sample_id
         self.genes_to_use = set(di.genes_to_use or [])
         self.indel_neutral_value = di.indel_neutral_value
         self.indel_include_valid_mask = di.indel_include_valid_mask
+        self.indel_include_snp_mask = di.indel_include_snp_mask
+        self.alignment_mapping = di.alignment_mapping
+        self.consensus_dataset_dir = Path(di.consensus_dataset_dir) if di.consensus_dataset_dir else None
         out = config.output
         self.prediction_target = out.prediction_target
         self.derived_targets = out.derived_targets
         self._derived_target_config = self.derived_targets.get(self.prediction_target)
         self.dataset_metadata = getattr(self.base_dataset, "dataset_metadata", {}) or {}
+        if not self.dataset_metadata and hasattr(self.base_dataset, "dataset"):
+            self.dataset_metadata = getattr(self.base_dataset.dataset, "dataset_metadata", {}) or {}
         self.dataset_dir = Path(di.dataset_dir)
         self.individuals = self.dataset_metadata.get("individuals", [])
         self.selected_sample_ids = self._resolve_selected_sample_ids()
         self.dynamic_indel_aligner = DynamicIndelAligner(
             Path(di.dataset_dir),
             selected_sample_ids=self.selected_sample_ids,
+            center_window_size=di.window_center_size,
         )
+        self.bcftools_chain_mapper: Optional[BcftoolsChainMapper] = None
+        if self.alignment_mapping == "bcftools_chain":
+            if self.consensus_dataset_dir is None:
+                raise ValueError("dataset_input.consensus_dataset_dir é obrigatório para alignment_mapping='bcftools_chain'")
+            self.bcftools_chain_mapper = BcftoolsChainMapper(
+                dataset_dir=Path(di.dataset_dir),
+                consensus_dataset_dir=self.consensus_dataset_dir,
+                aligner=self.dynamic_indel_aligner,
+            )
         self._base_item_cache: OrderedDict[int, Tuple[Any, Any]] = OrderedDict()
         self._base_item_cache_limit = 4
         self._processed_item_cache: OrderedDict[int, Tuple[torch.Tensor, torch.Tensor]] = OrderedDict()
         self._processed_item_cache_limit = 8
+        self._global_variation_mask_cache: Dict[str, np.ndarray] = {}
+        self._reference_prediction_cache: Dict[Tuple[str, str, int], np.ndarray] = {}
+        self._reference_prediction_metadata_cache: Dict[Tuple[str, str], Optional[List[Dict]]] = {}
+        self._global_variation_mask_cache_dir = self.dataset_dir / "alignment_cache" / "global_variation_masks_v1"
         self.profile_stats = {
             "base_fetch_s": 0.0,
             "window_process_s": 0.0,
@@ -114,7 +140,7 @@ class ProcessedGenomicDataset(Dataset):
 
         self._create_target_mappings()
 
-    def _resolve_selected_sample_ids(self) -> Optional[set[str]]:
+    def _resolve_selected_sample_ids(self) -> Optional[Set[str]]:
         di = self.config.dataset_input
         selected = set(di.sample_ids or [])
 
@@ -134,15 +160,101 @@ class ProcessedGenomicDataset(Dataset):
             return None
         return selected
 
+    def _source_index_for_base_index(self, base_idx: int) -> int:
+        indices = getattr(self.base_dataset, "indices", None)
+        if indices is not None and 0 <= base_idx < len(indices):
+            return int(indices[base_idx])
+        return int(base_idx)
+
+    def _sample_id_for_base_index(self, base_idx: int) -> Optional[str]:
+        source_idx = self._source_index_for_base_index(base_idx)
+        if 0 <= source_idx < len(self.individuals):
+            return str(self.individuals[source_idx])
+        return None
+
+    def _global_variation_sample_ids(self) -> List[str]:
+        if self.selected_sample_ids:
+            return sorted(str(sample_id) for sample_id in self.selected_sample_ids)
+
+        di = self.config.dataset_input
+        superpops = set(di.superpopulations_to_use or [])
+        pops = set(di.populations_to_use or [])
+        pedigree = self.dataset_metadata.get("individuals_pedigree", {}) or {}
+        if superpops or pops:
+            sample_ids = []
+            for sample_id in self.individuals:
+                ped = pedigree.get(sample_id, {})
+                if superpops and ped.get("superpopulation") not in superpops:
+                    continue
+                if pops and ped.get("population") not in pops:
+                    continue
+                sample_ids.append(str(sample_id))
+            return sample_ids
+
+        return [str(sample_id) for sample_id in self.individuals]
+
+    def prepare_alignment_cache(
+        self,
+        sample_ids: Optional[List[str]] = None,
+        entry_sample_ids: Optional[List[str]] = None,
+    ) -> None:
+        if sample_ids is None:
+            sample_ids = []
+            for base_idx in self.valid_sample_indices:
+                sample_id = self._sample_id_for_base_index(base_idx)
+                if sample_id:
+                    sample_ids.append(sample_id)
+        sample_ids = [str(sample_id) for sample_id in sample_ids if sample_id]
+        if self.alphagenome_signal_variant_mask:
+            sample_ids = list(dict.fromkeys(sample_ids + self._global_variation_sample_ids()))
+        if not sample_ids:
+            return
+        if entry_sample_ids is None:
+            entry_sample_ids = sample_ids
+        entry_sample_ids = [str(sample_id) for sample_id in entry_sample_ids if sample_id]
+        self.dynamic_indel_aligner.selected_sample_ids = set(sample_ids)
+        for gene_name in sorted(self.genes_to_use):
+            self.dynamic_indel_aligner.build_alignment_axis_for_gene(gene_name, sample_ids)
+        if self.bcftools_chain_mapper is not None:
+            total = len(entry_sample_ids) * len(self.genes_to_use) * 2
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("{task.description}"),
+                BarColumn(),
+                TextColumn("{task.completed}/{task.total}"),
+                TimeElapsedColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task(
+                    f"Preparando bcftools_chain entries ({len(entry_sample_ids)} samples x {len(self.genes_to_use)} genes x 2 haps)...",
+                    total=total,
+                )
+                for gene_name in sorted(self.genes_to_use):
+                    for sample_id in entry_sample_ids:
+                        self.bcftools_chain_mapper.get_haplotype_entry(gene_name, sample_id, "H1")
+                        progress.update(task, advance=1)
+                        self.bcftools_chain_mapper.get_haplotype_entry(gene_name, sample_id, "H2")
+                        progress.update(task, advance=1)
+                    self.bcftools_chain_mapper.clear_memory_cache()
+                    cache = self.dynamic_indel_aligner._sample_entry_cache.get(gene_name)
+                    if cache is not None:
+                        cache.clear()
+
     # ------------------------------------------------------------------
     # Normalização
     # ------------------------------------------------------------------
 
     def _compute_normalization_params(self) -> Dict:
+        if self.feature_mode == "masks_only":
+            return {"method": "none", "per_track": False, "mean": 0.0, "std": 1.0}
+
+        if self.alphagenome_signal_variant_mask:
+            self.prepare_alignment_cache(self._global_variation_sample_ids(), entry_sample_ids=[])
+
         if self.normalization_method in {"log", "minmax_keep_zero"} and self.normalization_value not in (0, 0.0, None):
             num_genes = len(self.config.dataset_input.genes_to_use or []) or 1
-            num_ontologies = len(self.ontology_terms) if self.ontology_terms else 1
-            num_tracks = (2 * num_ontologies + 6) * num_genes
+            num_haplotypes = 2 if self.haplotype_mode == "H1+H2" else 1
+            num_tracks = num_haplotypes * self._rows_per_gene() * num_genes
             if self.normalization_method == "log":
                 track_params = [{"log_max": float(self.normalization_value)} for _ in range(num_tracks)]
             else:
@@ -416,11 +528,21 @@ class ProcessedGenomicDataset(Dataset):
             raise ValueError("tensor_layout='haplotype_channels' nao suporta downsample_factor diferente de 1")
         if self.window_center_size <= 0:
             raise ValueError("tensor_layout='haplotype_channels' requer window_center_size > 0")
-        entry = self.dynamic_indel_aligner.get_haplotype_entry(window_name, sample_id, haplotype)
+        if self.feature_mode == "masks_only" and not self.indel_include_valid_mask:
+            raise ValueError("feature_mode='masks_only' requer indel_include_valid_mask=true para produzir 3 mascaras")
+        if self.bcftools_chain_mapper is not None:
+            entry = self.bcftools_chain_mapper.get_haplotype_entry(window_name, sample_id, haplotype)
+        else:
+            entry = self.dynamic_indel_aligner.get_haplotype_entry(window_name, sample_id, haplotype)
         if entry is None:
             return None
 
-        expanded_length = self.dynamic_indel_aligner.get_expanded_length(window_name)
+        axis = self.dynamic_indel_aligner.get_alignment_axis(window_name)
+        expanded_length = int(axis["expanded_length"])
+        source_start_idx = int(entry.get("source_start_idx", axis.get("ref_start_offset", 0)))
+        ref_length = int(axis.get("ref_length", 0))
+        center_slice = self.dynamic_indel_aligner.get_reference_centered_expanded_slice(window_name, self.window_center_size)
+        expanded_slice = (int(center_slice["expanded_start"]), int(center_slice["expanded_end"]))
         signal_rows = []
         shared_masks = None
         if array.ndim == 2:
@@ -428,41 +550,125 @@ class ProcessedGenomicDataset(Dataset):
                 track_indices = self._filter_track_indices(output_type, track_meta)
             else:
                 track_indices = [self.selected_track_index]
-            for track_index in track_indices:
+            for track_position, track_index in enumerate(track_indices):
                 if not (0 <= track_index < array.shape[1]):
                     raise ValueError(f"selected_track_index={track_index} fora do limite para {output_type} com shape={array.shape}")
                 row = np.asarray(array[:, track_index], dtype=np.float32)
+                if self.alignment_mapping != "bcftools_chain" and ref_length > 0:
+                    row = row[source_start_idx:source_start_idx + ref_length]
                 aligned = build_aligned_haplotype_tensor(
                     row=row,
                     entry=entry,
                     expanded_length=expanded_length,
                     neutral_value=self.indel_neutral_value,
                     include_valid_mask=True,
+                    include_snp_mask=self.indel_include_snp_mask,
+                    expanded_slice=expanded_slice,
                 )
-                signal_rows.append(aligned[0:1, :])
+                signal_row = aligned[0]
+                if self.alphagenome_signal_transform == "delta_reference":
+                    reference_row = self._aligned_reference_signal_row(
+                        window_name=window_name,
+                        output_type=output_type,
+                        track_index=track_index,
+                        filtered_position=track_position,
+                        expanded_length=expanded_length,
+                        expanded_slice=expanded_slice,
+                    )
+                    signal_row = signal_row - reference_row
+                signal_rows.append(signal_row[None, :])
                 if shared_masks is None:
                     shared_masks = aligned[1:, :]
         else:
             row = np.asarray(array.flatten() if array.ndim > 1 else array, dtype=np.float32)
+            if self.alignment_mapping != "bcftools_chain" and ref_length > 0:
+                row = row[source_start_idx:source_start_idx + ref_length]
             aligned = build_aligned_haplotype_tensor(
                 row=row,
                 entry=entry,
                 expanded_length=expanded_length,
                 neutral_value=self.indel_neutral_value,
                 include_valid_mask=True,
+                include_snp_mask=self.indel_include_snp_mask,
+                expanded_slice=expanded_slice,
             )
-            signal_rows.append(aligned[0:1, :])
+            signal_row = aligned[0]
+            if self.alphagenome_signal_transform == "delta_reference":
+                reference_row = self._aligned_reference_signal_row(
+                    window_name=window_name,
+                    output_type=output_type,
+                    track_index=self.selected_track_index,
+                    filtered_position=0,
+                    expanded_length=expanded_length,
+                    expanded_slice=expanded_slice,
+                )
+                signal_row = signal_row - reference_row
+            signal_rows.append(signal_row[None, :])
             shared_masks = aligned[1:, :]
 
         if not signal_rows or shared_masks is None:
             return None
 
         signals = np.concatenate(signal_rows, axis=0)
-        center = signals.shape[1] // 2
-        half = self.window_center_size // 2
-        start = max(0, center - half)
-        end = min(signals.shape[1], start + self.window_center_size)
-        return signals[:, start:end], shared_masks[:, start:end]
+        return signals, shared_masks
+
+    def _entry_variation_mask(self, entry: Dict[str, object], expanded_slice: Tuple[int, int]) -> np.ndarray:
+        slice_start, slice_end = expanded_slice
+        variation = np.zeros(max(int(slice_end) - int(slice_start), 0), dtype=bool)
+        for key in ("insertion_indices", "deletion_indices", "snp_indices"):
+            for target_idx in entry.get(key, []):
+                target_idx = int(target_idx)
+                if slice_start <= target_idx < slice_end:
+                    variation[target_idx - slice_start] = True
+        return variation
+
+    def _global_variation_mask_for_gene(self, gene_name: str, expanded_slice: Tuple[int, int]) -> np.ndarray:
+        cached = self._global_variation_mask_cache.get(gene_name)
+        if cached is not None and cached.shape[0] == max(int(expanded_slice[1]) - int(expanded_slice[0]), 0):
+            return cached
+
+        sample_ids = self._global_variation_sample_ids()
+        cache_path = self._global_variation_mask_cache_path(gene_name, expanded_slice, sample_ids)
+        if cache_path.exists():
+            variation = np.load(cache_path).astype(bool)
+            self._global_variation_mask_cache[gene_name] = variation
+            return variation
+
+        variation = np.zeros(max(int(expanded_slice[1]) - int(expanded_slice[0]), 0), dtype=bool)
+        for sample_id in sample_ids:
+            for haplotype in ("H1", "H2"):
+                if self.bcftools_chain_mapper is not None:
+                    entry = self.bcftools_chain_mapper.get_haplotype_entry(gene_name, sample_id, haplotype)
+                else:
+                    entry = self.dynamic_indel_aligner.get_haplotype_entry(gene_name, sample_id, haplotype)
+                if entry is not None:
+                    variation |= self._entry_variation_mask(entry, expanded_slice)
+
+        self._global_variation_mask_cache[gene_name] = variation
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = cache_path.with_suffix(cache_path.suffix + f".tmp.{time.time_ns()}")
+        np.save(tmp_path, variation)
+        saved_tmp_path = tmp_path if tmp_path.exists() else tmp_path.with_suffix(tmp_path.suffix + ".npy")
+        saved_tmp_path.replace(cache_path)
+        return variation
+
+    def _global_variation_mask_cache_path(
+        self,
+        gene_name: str,
+        expanded_slice: Tuple[int, int],
+        sample_ids: List[str],
+    ) -> Path:
+        payload = {
+            "alignment_mapping": self.alignment_mapping,
+            "consensus_dataset_dir": str(self.consensus_dataset_dir.resolve()) if self.consensus_dataset_dir else None,
+            "gene_name": gene_name,
+            "sample_ids": sorted(str(sample_id) for sample_id in sample_ids),
+            "expanded_slice": [int(expanded_slice[0]), int(expanded_slice[1])],
+            "window_center_size": int(self.window_center_size),
+            "mask_kind": "snp_indel_union_v1",
+        }
+        digest = hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+        return self._global_variation_mask_cache_dir / self.alignment_mapping / gene_name / f"{digest}.npy"
 
     def _filter_track_indices(self, output_type: str, track_metadata: List[Dict]) -> List[int]:
         if not self.ontology_terms:
@@ -470,7 +676,7 @@ class ProcessedGenomicDataset(Dataset):
         requested = set(self.ontology_terms)
         indices = [
             i for i, m in enumerate(track_metadata)
-            if m.get("ontology_curie") in requested and m.get("strand", "+") == "+"
+            if m.get("ontology_curie") in requested
         ]
         if not indices:
             available = sorted({m.get("ontology_curie", "") for m in track_metadata})
@@ -502,6 +708,124 @@ class ProcessedGenomicDataset(Dataset):
             return None
         metadata = payload.get("metadata")
         return metadata if isinstance(metadata, list) else None
+
+    def _resolve_reference_sample_id(self) -> str:
+        if self.reference_predictions_sample_id:
+            return self.reference_predictions_sample_id
+        if self.reference_predictions_dataset_dir is None:
+            raise ValueError("reference_predictions_dataset_dir nao configurado")
+        individuals_dir = self.reference_predictions_dataset_dir / "individuals"
+        if not individuals_dir.exists():
+            raise FileNotFoundError(f"Diretorio de individuos da referencia nao encontrado: {individuals_dir}")
+        sample_dirs = sorted(path.name for path in individuals_dir.iterdir() if path.is_dir())
+        if not sample_dirs:
+            raise FileNotFoundError(f"Nenhum individuo encontrado em {individuals_dir}")
+        self.reference_predictions_sample_id = sample_dirs[0]
+        return self.reference_predictions_sample_id
+
+    def _load_reference_prediction_array(self, window_name: str, output_type: str) -> np.ndarray:
+        if self.reference_predictions_dataset_dir is None:
+            raise ValueError("reference_predictions_dataset_dir nao configurado para delta_reference")
+        sample_id = self._resolve_reference_sample_id()
+        pred_path = (
+            self.reference_predictions_dataset_dir
+            / "individuals"
+            / sample_id
+            / "windows"
+            / window_name
+            / "predictions_H1"
+            / f"{output_type}.npz"
+        )
+        if not pred_path.exists():
+            raise FileNotFoundError(f"Predicao de referencia nao encontrada: {pred_path}")
+        with np.load(pred_path) as data:
+            if "values" in data:
+                return np.asarray(data["values"], dtype=np.float32)
+            keys = list(data.keys())
+            if not keys:
+                raise ValueError(f"Arquivo de predicao de referencia sem arrays: {pred_path}")
+            return np.asarray(data[keys[0]], dtype=np.float32)
+
+    def _load_reference_track_metadata(self, window_name: str, output_type: str) -> Optional[List[Dict]]:
+        cache_key = (window_name, output_type)
+        if cache_key in self._reference_prediction_metadata_cache:
+            return self._reference_prediction_metadata_cache[cache_key]
+        if self.reference_predictions_dataset_dir is None:
+            return None
+        sample_id = self._resolve_reference_sample_id()
+        meta_path = (
+            self.reference_predictions_dataset_dir
+            / "individuals"
+            / sample_id
+            / "windows"
+            / window_name
+            / "predictions_H1"
+            / f"{output_type}_metadata.json"
+        )
+        metadata = None
+        if meta_path.exists():
+            with open(meta_path) as f:
+                payload = json.load(f)
+            loaded = payload.get("metadata")
+            metadata = loaded if isinstance(loaded, list) else None
+        self._reference_prediction_metadata_cache[cache_key] = metadata
+        return metadata
+
+    def _reference_track_index(self, window_name: str, output_type: str, sample_track_index: int, filtered_position: int = 0) -> int:
+        if not self.ontology_terms:
+            return sample_track_index
+        ref_meta = self._load_reference_track_metadata(window_name, output_type)
+        if not ref_meta:
+            return sample_track_index
+        indices = self._filter_track_indices(output_type, ref_meta)
+        if 0 <= filtered_position < len(indices):
+            return indices[filtered_position]
+        return indices[0]
+
+    def _aligned_reference_signal_row(
+        self,
+        *,
+        window_name: str,
+        output_type: str,
+        track_index: int,
+        filtered_position: int,
+        expanded_length: int,
+        expanded_slice: Tuple[int, int],
+    ) -> np.ndarray:
+        cache_key = (window_name, output_type, int(track_index))
+        cached = self._reference_prediction_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        ref_array = self._load_reference_prediction_array(window_name, output_type)
+        if ref_array.ndim == 2:
+            ref_track_index = self._reference_track_index(window_name, output_type, track_index, filtered_position)
+            if not (0 <= ref_track_index < ref_array.shape[1]):
+                raise ValueError(f"track de referencia {ref_track_index} fora do limite para {output_type} shape={ref_array.shape}")
+            row = np.asarray(ref_array[:, ref_track_index], dtype=np.float32)
+        else:
+            row = np.asarray(ref_array.flatten() if ref_array.ndim > 1 else ref_array, dtype=np.float32)
+        axis = self.dynamic_indel_aligner.get_alignment_axis(window_name)
+        ref_start_offset = int(axis.get("ref_start_offset", 0)) if self.alignment_mapping == "bcftools_chain" else 0
+        ref_length = int(axis.get("ref_length", 0))
+        expanded_index_map = {int(k): int(v) for k, v in axis.get("expanded_index_map", {}).items()}
+        reference_entry = {
+            "copy_from_indices": [ref_start_offset + ref_idx for ref_idx in range(ref_length) if ref_idx in expanded_index_map],
+            "expanded_indices": [expanded_index_map[ref_idx] for ref_idx in range(ref_length) if ref_idx in expanded_index_map],
+            "insertion_indices": [],
+            "deletion_indices": [],
+            "snp_indices": [],
+        }
+        aligned = build_aligned_haplotype_tensor(
+            row=row,
+            entry=reference_entry,
+            expanded_length=expanded_length,
+            neutral_value=self.indel_neutral_value,
+            include_valid_mask=False,
+            include_snp_mask=False,
+            expanded_slice=expanded_slice,
+        )[0]
+        self._reference_prediction_cache[cache_key] = aligned
+        return aligned
 
     def _process_windows(self, windows: Dict, sample_id: Optional[str] = None) -> np.ndarray:
         if self.config.dataset_input.tensor_layout != "haplotype_channels":
@@ -546,8 +870,28 @@ class ProcessedGenomicDataset(Dataset):
 
             h1_signals, h1_masks = h1
             h2_signals, h2_masks = h2
-            h1_rows.append(np.concatenate([h1_signals, h1_masks], axis=0))
-            h2_rows.append(np.concatenate([h2_signals, h2_masks], axis=0))
+            if self.alphagenome_signal_variant_mask and self.feature_mode != "masks_only":
+                center_slice = self.dynamic_indel_aligner.get_reference_centered_expanded_slice(gene_name, self.window_center_size)
+                expanded_slice = (int(center_slice["expanded_start"]), int(center_slice["expanded_end"]))
+                variant_positions = self._global_variation_mask_for_gene(gene_name, expanded_slice)
+                if variant_positions.shape[0] != h1_signals.shape[1]:
+                    raise ValueError(
+                        f"Mascara global de variacao para {gene_name} tem tamanho {variant_positions.shape[0]}, "
+                        f"mas sinais AlphaGenome tem tamanho {h1_signals.shape[1]}"
+                    )
+                h1_signals = h1_signals.copy()
+                h2_signals = h2_signals.copy()
+                h1_signals[:, ~variant_positions] = 0.0
+                h2_signals[:, ~variant_positions] = 0.0
+            if self.feature_mode == "masks_only":
+                h1_rows.append(h1_masks)
+                h2_rows.append(h2_masks)
+            elif self.feature_mode == "signals_only":
+                h1_rows.append(h1_signals)
+                h2_rows.append(h2_signals)
+            else:
+                h1_rows.append(np.concatenate([h1_signals, h1_masks], axis=0))
+                h2_rows.append(np.concatenate([h2_signals, h2_masks], axis=0))
 
         if not h1_rows or not h2_rows:
             return np.array([]).reshape(2, 4, 0)
@@ -586,8 +930,16 @@ class ProcessedGenomicDataset(Dataset):
         return input_data, output_data
 
     def _normalize_features_tensor(self, features_tensor: torch.Tensor) -> torch.Tensor:
+        if self.feature_mode == "masks_only":
+            return features_tensor
+
         method = self.normalization_params.get("method", "zscore")
         per_track = self.normalization_params.get("per_track", False)
+        mask_channels_per_gene = self._mask_channels_per_gene()
+        signal_channels_per_gene = 0 if self.feature_mode == "masks_only" else (2 * len(self.ontology_terms) if self.ontology_terms else 1)
+        if self.feature_mode == "signals_only":
+            mask_channels_per_gene = 0
+        channels_per_gene = signal_channels_per_gene + mask_channels_per_gene
 
         if features_tensor.ndim != 3:
             raise ValueError(f"Esperado tensor 3D (2,4,L), recebido shape={tuple(features_tensor.shape)}")
@@ -597,8 +949,14 @@ class ProcessedGenomicDataset(Dataset):
             track_params = self.normalization_params["track_params"]
             rows = []
             for ti in range(flat.shape[0]):
-                p = track_params[ti]
+                p = track_params[ti] if ti < len(track_params) else track_params[ti % len(track_params)]
                 row = flat[ti: ti + 1, :]
+                channel_idx = ti % features_tensor.shape[1]
+                gene_channel_idx = channel_idx % channels_per_gene if channels_per_gene > 0 else channel_idx
+                is_mask_channel = gene_channel_idx >= signal_channels_per_gene
+                if is_mask_channel:
+                    rows.append(row)
+                    continue
                 if method == "zscore":
                     row = zscore_normalize(row, p["mean"], p["std"])
                 elif method == "minmax_keep_zero":
@@ -611,7 +969,15 @@ class ProcessedGenomicDataset(Dataset):
             return features_tensor
 
         t0 = time.perf_counter()
-        features_tensor = apply_normalization(features_tensor, self.normalization_params)
+        normalized = features_tensor.clone()
+        for channel_idx in range(features_tensor.shape[1]):
+            gene_channel_idx = channel_idx % channels_per_gene if channels_per_gene > 0 else channel_idx
+            if gene_channel_idx >= signal_channels_per_gene:
+                continue
+            normalized[:, channel_idx:channel_idx + 1, :] = apply_normalization(
+                features_tensor[:, channel_idx:channel_idx + 1, :], self.normalization_params
+            )
+        features_tensor = normalized
         self.profile_stats["normalization_s"] += time.perf_counter() - t0
         return features_tensor
 
@@ -643,8 +1009,9 @@ class ProcessedGenomicDataset(Dataset):
         input_data, output_data = self._load_base_item(base_idx)
 
         sample_id = self._infer_sample_id_from_input(input_data)
-        if sample_id is None and base_idx < len(self.individuals):
-            sample_id = self.individuals[base_idx]
+        if sample_id is None:
+            sample_id = self._sample_id_for_base_index(base_idx)
+        if sample_id is not None:
             self._inject_sample_id_into_windows(input_data, sample_id)
 
         t0 = time.perf_counter()
@@ -704,12 +1071,23 @@ class ProcessedGenomicDataset(Dataset):
     def get_class_names(self) -> List[str]:
         return [self.idx_to_target[i] for i in range(len(self.idx_to_target))]
 
+    def _rows_per_gene(self) -> int:
+        if self.feature_mode == "masks_only":
+            return self._mask_channels_per_gene()
+        num_ontologies = len(self.ontology_terms) if self.ontology_terms else 1
+        if self.feature_mode == "signals_only":
+            return 2 * num_ontologies
+        mask_channels = self._mask_channels_per_gene()
+        return 2 * num_ontologies + mask_channels
+
+    def _mask_channels_per_gene(self) -> int:
+        return 2 + (1 if self.indel_include_valid_mask else 0) + (1 if self.indel_include_snp_mask else 0)
+
     def get_input_shape(self) -> Tuple[int, int]:
         if self.config.dataset_input.tensor_layout == "haplotype_channels":
             effective = self.window_center_size // max(self.downsample_factor, 1)
             num_genes = len(self.config.dataset_input.genes_to_use or []) or 1
-            num_ontologies = len(self.ontology_terms) if self.ontology_terms else 1
-            return ((2 * num_ontologies + 6) * num_genes, effective)
+            return (self._rows_per_gene() * num_genes, effective)
 
         for idx in range(min(64, len(self))):
             try:
@@ -722,8 +1100,7 @@ class ProcessedGenomicDataset(Dataset):
                 continue
         effective = self.window_center_size // max(self.downsample_factor, 1)
         num_genes = len(self.config.dataset_input.genes_to_use or []) or 1
-        num_ontologies = len(self.ontology_terms) if self.ontology_terms else 1
-        return ((2 * num_ontologies + 6) * num_genes, effective)
+        return (self._rows_per_gene() * num_genes, effective)
 
     def get_input_size(self) -> int:
         r, c = self.get_input_shape()
@@ -784,13 +1161,13 @@ class CachedProcessedDataset(Dataset):
             self._data_loaded = True
             console.print(f"[green]✓ {self._length} samples (preload)[/green]")
         elif self.loading_strategy == "preload" and self._shard_index is not None:
-            self._length = self._determine_length()
-            self._data_loaded = False
-            self.data = None
+            self.data = self._load_all_shards()
+            self._length = len(self.data)
+            self._data_loaded = True
             self._cache = {}
             self._cache_order = []
             self._loaded_shard_path = None
-            console.print(f"[green]✓ {self._length} samples (sharded preload-lazy)[/green]")
+            console.print(f"[green]✓ {self._length} samples (sharded preload)[/green]")
         elif self.loading_strategy == "lazy":
             self._length = self._determine_length()
             self._data_loaded = False
@@ -958,6 +1335,23 @@ class CachedProcessedDataset(Dataset):
             self._loaded_shard_path = shard_path
 
         return self.data[item_offset]
+
+    def _load_all_shards(self) -> List[Tuple[torch.Tensor, torch.Tensor]]:
+        if self._shard_index is None:
+            raise RuntimeError("Shard index ausente")
+
+        items: List[Tuple[torch.Tensor, torch.Tensor]] = []
+        for shard_name in self._shard_index["shards"]:
+            shard_path = self.data_file.parent / shard_name
+            items.extend(torch.load(shard_path))
+
+        expected = self._determine_length()
+        if len(items) != expected:
+            raise RuntimeError(
+                f"Cache sharded inconsistente para {self.split_name}: "
+                f"esperado {expected}, carregado {len(items)}"
+            )
+        return items
 
     def get_input_size(self) -> int:
         r, c = self.get_input_shape()

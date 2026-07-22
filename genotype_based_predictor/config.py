@@ -61,6 +61,21 @@ class DatasetInputConfig(BaseModel):
     tensor_layout: Literal["haplotype_channels"] = "haplotype_channels"
     """Layout canônico do tensor por amostra: (2, 4, L)."""
 
+    feature_mode: Literal["signals_and_masks", "signals_only", "masks_only"] = "signals_and_masks"
+    """Quais canais entram no tensor: sinais AlphaGenome + máscaras, apenas sinais alinhados, ou apenas máscaras INDEL."""
+
+    alphagenome_signal_variant_mask: bool = False
+    """Se True, zera sinais AlphaGenome em posições sem SNP/INDEL em nenhum indivíduo selecionado."""
+
+    alphagenome_signal_transform: Literal["absolute", "delta_reference"] = "absolute"
+    """Transformação dos sinais AlphaGenome antes da normalização."""
+
+    reference_predictions_dataset_dir: Optional[str] = None
+    """Dataset gerado com reference-only contendo as predições AlphaGenome da referência."""
+
+    reference_predictions_sample_id: Optional[str] = None
+    """ID do indivíduo/pasta dentro do dataset reference-only; se omitido usa o primeiro disponível."""
+
     window_center_size: int = 32768
     """Número de bases do trecho central de cada janela."""
 
@@ -118,12 +133,39 @@ class DatasetInputConfig(BaseModel):
     indel_include_valid_mask: bool = False
     """Se True, concatena também a máscara de validade além de inserção e deleção."""
 
+    indel_include_snp_mask: bool = False
+    """Se True, concatena uma máscara binária para SNPs em relação à referência."""
+
+    alignment_mapping: Literal["dynamic_indel", "bcftools_chain"] = "dynamic_indel"
+    """Fonte do mapa predição AlphaGenome -> eixo expandido global."""
+
+    alignment_axis_splits: List[Literal["train", "val", "test"]] = Field(default_factory=lambda: ["train", "val", "test"])
+    """Splits usados para construir o eixo global de alinhamento INDEL."""
+
+    consensus_dataset_dir: Optional[str] = None
+    """Dataset original com ref.window.fa, raw.fa e consensus_ready.vcf.gz para alignment_mapping='bcftools_chain'."""
+
     @field_validator("downsample_factor")
     @classmethod
     def downsample_must_be_positive(cls, v: int) -> int:
         if v < 1:
             raise ValueError("downsample_factor deve ser >= 1")
         return v
+
+    @field_validator("alignment_axis_splits")
+    @classmethod
+    def alignment_axis_splits_must_not_be_empty(cls, v: List[str]) -> List[str]:
+        if not v:
+            raise ValueError("alignment_axis_splits deve conter pelo menos um split")
+        return list(dict.fromkeys(v))
+
+    @model_validator(mode="after")
+    def validate_reference_signal_transform(self):
+        if self.alphagenome_signal_transform == "delta_reference" and not self.reference_predictions_dataset_dir:
+            raise ValueError("reference_predictions_dataset_dir é obrigatório quando alphagenome_signal_transform='delta_reference'")
+        if self.alphagenome_signal_transform == "delta_reference" and self.normalization_method == "log":
+            raise ValueError("alphagenome_signal_transform='delta_reference' gera valores negativos; use normalization_method='zscore'")
+        return self
 
 class DerivedTargetConfig(BaseModel):
     """Configuração de um target derivado a partir de outro campo."""
@@ -165,11 +207,13 @@ class CNN2Config(BaseModel):
     """Hiperparâmetros da CNN multi-estágio (CNN2AncestryPredictor)."""
 
     num_filters_stage1: int = 16
-    kernel_stage1: List[int] = Field(default=[6, 32])
+    kernel_stage1: List[int] = Field(default=[9, 32])
+    stride_stage1: List[int] = Field(default=[9, 32])
     num_filters_stage2: int = 32
-    kernel_stage2: int = 8
     num_filters_stage3: int = 64
-    kernel_stage3: int = 3
+    kernel_stages23: List[int] = Field(default=[1, 5])
+    stride_stages23: List[int] = Field(default=[1, 2])
+    padding_stages23: List[int] = Field(default=[0, 2])
     global_pool_type: Literal["max", "avg"] = "max"
     fc_hidden_size: int = 128
 
@@ -210,9 +254,21 @@ class SklearnConfig(BaseModel):
     pca_components: Optional[int] = None
     use_pca_cache: bool = True
     pca_align_n_train: bool = False
+    pca_backend: Literal["incremental", "randomized_streaming"] = "incremental"
+    randomized_pca_oversampling: int = 32
+    randomized_pca_n_iter: int = 2
+    randomized_pca_feature_chunk_size: int = 16384
+    randomized_pca_dtype: Literal["float32", "float64"] = "float32"
     svm: SVMConfig = Field(default_factory=SVMConfig)
     random_forest: RandomForestConfig = Field(default_factory=RandomForestConfig)
     xgboost: XGBoostConfig = Field(default_factory=XGBoostConfig)
+
+    @field_validator("randomized_pca_oversampling", "randomized_pca_n_iter", "randomized_pca_feature_chunk_size")
+    @classmethod
+    def randomized_pca_non_negative(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("Parâmetros randomized_pca_* devem ser >= 0")
+        return v
 
 
 class ModelConfig(BaseModel):
@@ -350,6 +406,9 @@ class DataLoadingConfig(BaseModel):
 
     loading_strategy: Literal["preload", "lazy"] = "preload"
     cache_size: int = 100
+    train_num_workers: Optional[int] = None
+    val_num_workers: Optional[int] = None
+    prefetch_factor: Optional[int] = None
 
 
 # ===========================================================================
@@ -514,6 +573,7 @@ def generate_dataset_name(config: PipelineConfig) -> str:
         "normalization_method": di.normalization_method,
         "selected_track_index": di.selected_track_index,
         "indel_include_valid_mask": di.indel_include_valid_mask,
+        "alignment_axis_splits": di.alignment_axis_splits,
         "prediction_target": config.output.prediction_target,
         "train_split": tr,
         "val_split": va,
@@ -522,6 +582,23 @@ def generate_dataset_name(config: PipelineConfig) -> str:
         "balancing_strategy": config.data_split.balancing_strategy,
         "family_split_mode": config.data_split.family_split_mode,
     }
+    if config.output.known_classes is not None:
+        view_payload["known_classes"] = config.output.known_classes
+    if config.output.derived_targets:
+        view_payload["derived_targets"] = {
+            name: target.model_dump(mode="python")
+            for name, target in config.output.derived_targets.items()
+        }
+    if di.feature_mode != "signals_and_masks":
+        view_payload["feature_mode"] = di.feature_mode
+    if di.alphagenome_signal_variant_mask:
+        view_payload["alphagenome_signal_variant_mask"] = di.alphagenome_signal_variant_mask
+    if di.alphagenome_signal_transform != "absolute":
+        view_payload["alphagenome_signal_transform"] = di.alphagenome_signal_transform
+        view_payload["reference_predictions_dataset_dir"] = str(Path(di.reference_predictions_dataset_dir).resolve()) if di.reference_predictions_dataset_dir else None
+        view_payload["reference_predictions_sample_id"] = di.reference_predictions_sample_id
+    if di.indel_include_snp_mask:
+        view_payload["indel_include_snp_mask"] = di.indel_include_snp_mask
     view_hash = hashlib.sha1(json.dumps(view_payload, sort_keys=True).encode("utf-8")).hexdigest()[:12]
     return f"{outputs}_{hap}_{wcs}_ds{ds}_{norm}_{bal}_ont{ont_count}_view{view_hash}"
 
@@ -565,6 +642,7 @@ def generate_experiment_name(config: PipelineConfig) -> str:
     tensor_layout = di.tensor_layout
     wcs = di.window_center_size
     norm = di.normalization_method
+    target = config.output.prediction_target
     hl = "L" + "-".join(str(h) for h in m.hidden_layers)
     act = m.activation
     dr = m.dropout_rate
@@ -576,13 +654,13 @@ def generate_experiment_name(config: PipelineConfig) -> str:
         st = f"s{c.stride[0]}x{c.stride[1]}" if isinstance(c.stride, list) else f"s{c.stride}"
         pad = f"p{c.padding[0]}x{c.padding[1]}" if isinstance(c.padding, list) else f"p{c.padding}"
         pool = f"pool{c.pool_size[0]}x{c.pool_size[1]}_" if c.pool_size else ""
-        return f"cnn_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{ks}_f{c.num_filters}_{st}_{pad}_{pool}{hl}_{act}_{dr}_{opt}"
+        return f"cnn_{target}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{ks}_f{c.num_filters}_{st}_{pad}_{pool}{hl}_{act}_{dr}_{opt}"
 
     elif model_type == "cnn2":
         c2 = m.cnn2
         ks1 = c2.kernel_stage1
         return (
-            f"cnn2_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_"
+            f"cnn2_{target}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_"
             f"s1k{ks1[0]}x{ks1[1]}f{c2.num_filters_stage1}_"
             f"s2f{c2.num_filters_stage2}_s3f{c2.num_filters_stage3}_"
             f"gp{c2.global_pool_type}_fc{c2.fc_hidden_size}_"
@@ -603,8 +681,8 @@ def generate_experiment_name(config: PipelineConfig) -> str:
             xgb = sk.xgboost
             lr = str(xgb.learning_rate).replace(".", "p")
             tag = f"xgb_nt{xgb.n_estimators}_md{xgb.max_depth}_lr{lr}"
-        return f"{model_type}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{pca}_{tag}"
+        return f"{model_type}_{target}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{pca}_{tag}"
 
     else:
         # NN (default)
-        return f"nn_{outputs}_{hap}_{wcs}_{norm}{indel_suffix}_{hl}_{act}_{dr}_{opt}"
+        return f"nn_{target}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{hl}_{act}_{dr}_{opt}"

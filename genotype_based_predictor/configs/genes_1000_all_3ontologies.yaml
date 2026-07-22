@@ -5,7 +5,11 @@ dataset_input:
   tensor_layout: "haplotype_channels"
   selected_track_index: 0
   indel_include_valid_mask: true
-  normalization_value: 4.34
+  alignment_mapping: "bcftools_chain"
+  consensus_dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all"
+  alignment_axis_splits:
+    - train
+    - val
 
 output:
   prediction_target: "superpopulation"
@@ -18,12 +22,14 @@ model:
   dropout_rate: 0.5
   cnn2:
     num_filters_stage1: 16
-    kernel_stage1: [1, 32]
+    kernel_stage1: [9, 32]
+    stride_stage1: [9, 32]
     num_filters_stage2: 32
-    kernel_stage2: 5
     num_filters_stage3: 64
-    kernel_stage3: 3
-    global_pool_type: "avg"
+    kernel_stages23: [1, 5]
+    stride_stages23: [1, 2]
+    padding_stages23: [0, 2]
+    global_pool_type: "max"
     fc_hidden_size: 256
 
 training:
@@ -31,8 +37,8 @@ training:
   learning_rate: 0.001
   weight_decay: 0.0001
   loss_function: "cross_entropy"
-  batch_size: 1
-  num_epochs: 1
+  batch_size: 512
+  num_epochs: 300
   validation_frequency: 3
   lr_scheduler:
     enabled: true
@@ -57,7 +63,7 @@ data_split:
   strict_determinism: true
 
 wandb:
-  use_wandb: false
+  use_wandb: true
   project_name: "genotype-based-predictor-genes-1000-all-3ontologies"
   run_name: null
   log_frequency: 100

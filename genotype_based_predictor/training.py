@@ -121,10 +121,14 @@ class Trainer:
         }
         self.best_val_loss = float("inf")
         self.best_val_accuracy = 0.0
+        self.start_epoch = 1
 
         models_dir = experiment_dir / "models"
         models_dir.mkdir(parents=True, exist_ok=True)
         self.models_dir = models_dir
+
+        if config.checkpointing.load_checkpoint:
+            self._load_checkpoint(config.checkpointing.load_checkpoint)
 
         if config.training.weight_decay > 0:
             console.print(f"[green]✓ Weight decay (L2): {config.training.weight_decay}[/green]")
@@ -198,13 +202,56 @@ class Trainer:
         accuracy = total_correct / max(total_samples, 1) if self.is_classification else 0.0
         return {"loss": avg_loss, "accuracy": accuracy, "samples": total_samples}
 
+    def _resolve_checkpoint_path(self, checkpoint: str) -> Path:
+        path = Path(checkpoint)
+        if path.is_absolute() or path.exists():
+            return path
+        if path.suffix != ".pt":
+            path = path.with_suffix(".pt")
+        return self.models_dir / path
+
+    def _load_checkpoint(self, checkpoint: str) -> None:
+        checkpoint_path = self._resolve_checkpoint_path(checkpoint)
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"Checkpoint nao encontrado: {checkpoint_path}")
+
+        state = torch.load(checkpoint_path, map_location=self.device)
+        self.model.load_state_dict(state.get("model_state_dict", state))
+
+        optimizer_state = state.get("optimizer_state_dict")
+        if optimizer_state is not None:
+            self.optimizer.load_state_dict(optimizer_state)
+
+        scheduler_state = state.get("scheduler_state_dict")
+        if scheduler_state is not None and self.scheduler is not None:
+            self.scheduler.load_state_dict(scheduler_state)
+
+        self.start_epoch = int(state.get("epoch", 0)) + 1
+        self.best_val_loss = float(state.get("best_val_loss", state.get("loss", self.best_val_loss)))
+        self.best_val_accuracy = float(state.get("best_val_accuracy", state.get("accuracy", self.best_val_accuracy)))
+        if "best_val_loss" not in state:
+            best_loss_path = self.models_dir / "best_loss.pt"
+            if best_loss_path.exists():
+                best_loss_state = torch.load(best_loss_path, map_location="cpu")
+                self.best_val_loss = float(best_loss_state.get("loss", self.best_val_loss))
+        if "best_val_accuracy" not in state:
+            best_accuracy_path = self.models_dir / "best_accuracy.pt"
+            if best_accuracy_path.exists():
+                best_accuracy_state = torch.load(best_accuracy_path, map_location="cpu")
+                self.best_val_accuracy = float(best_accuracy_state.get("accuracy", self.best_val_accuracy))
+        console.print(f"[green]✓ Checkpoint carregado:[/green] {checkpoint_path} (retomando em E{self.start_epoch:03d})")
+
     def _save_checkpoint(self, filename: str, epoch: int, metrics: Dict[str, float]):
-        torch.save({
+        checkpoint = {
             "epoch": epoch,
             "model_state_dict": self.model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
+            "scheduler_state_dict": self.scheduler.state_dict() if self.scheduler is not None else None,
+            "best_val_loss": self.best_val_loss,
+            "best_val_accuracy": self.best_val_accuracy,
             **metrics,
-        }, self.models_dir / filename)
+        }
+        torch.save(checkpoint, self.models_dir / filename)
 
     # ------------------------------------------------------------------
     # Public interface
@@ -223,7 +270,7 @@ class Trainer:
 
         console.print(
             f"\n[bold cyan]🚀 Iniciando treinamento "
-            f"({self.num_epochs} épocas | "
+            f"({self.start_epoch}-{self.num_epochs} épocas | "
             f"lr={self.config.training.learning_rate} | "
             f"opt={self.config.training.optimizer})[/bold cyan]"
         )
@@ -231,19 +278,28 @@ class Trainer:
         val_metrics: Dict[str, float] = {"loss": float("inf"), "accuracy": 0.0}
         no_improve = 0
         epoch = 0
+        val_frequency = max(1, int(self.config.training.validation_frequency))
 
-        for epoch in range(1, self.num_epochs + 1):
+        for epoch in range(self.start_epoch, self.num_epochs + 1):
             if interrupt_state.interrupted:
                 console.print("[yellow]⚠ Treinamento interrompido (CTRL+C)[/yellow]")
                 break
 
             train_metrics = self._run_epoch(self.train_loader, train=True)
-            val_metrics = self._run_epoch(self.val_loader, train=False)
+            should_validate = (
+                len(self.val_loader.dataset) > 0
+                and (epoch % val_frequency == 0 or epoch == self.num_epochs)
+            )
+            if should_validate:
+                val_metrics = self._run_epoch(self.val_loader, train=False)
+            elif len(self.val_loader.dataset) == 0:
+                val_metrics = {"loss": train_metrics["loss"], "accuracy": train_metrics["accuracy"], "samples": 0}
 
             # Scheduler step
             if self.scheduler is not None:
                 if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
-                    self.scheduler.step(val_metrics["loss"])
+                    if should_validate or len(self.val_loader.dataset) == 0:
+                        self.scheduler.step(val_metrics["loss"])
                 else:
                     self.scheduler.step()
 
@@ -254,39 +310,57 @@ class Trainer:
             self.history["val_loss"].append(val_metrics["loss"])
             self.history["val_accuracy"].append(val_metrics["accuracy"])
 
-            improved_acc = val_metrics["accuracy"] > self.best_val_accuracy
-            improved_loss = val_metrics["loss"] < self.best_val_loss
+            can_update_best = should_validate or len(self.val_loader.dataset) == 0
+            improved_acc = can_update_best and val_metrics["accuracy"] > self.best_val_accuracy
+            improved_loss = can_update_best and val_metrics["loss"] < self.best_val_loss
 
             if improved_acc:
                 self.best_val_accuracy = val_metrics["accuracy"]
-                self._save_checkpoint("best_accuracy.pt", epoch, val_metrics)
+                if self.config.checkpointing.save_during_training:
+                    self._save_checkpoint("best_accuracy.pt", epoch, val_metrics)
 
             if improved_loss:
                 self.best_val_loss = val_metrics["loss"]
-                self._save_checkpoint("best_loss.pt", epoch, val_metrics)
+                if self.config.checkpointing.save_during_training:
+                    self._save_checkpoint("best_loss.pt", epoch, val_metrics)
                 no_improve = 0
-            else:
+            elif can_update_best:
                 no_improve += 1
+
+            if (
+                self.config.checkpointing.save_during_training
+                and self.config.checkpointing.save_frequency > 0
+                and epoch % self.config.checkpointing.save_frequency == 0
+            ):
+                self._save_checkpoint(f"epoch_{epoch}.pt", epoch, val_metrics)
 
             lr_now = self.optimizer.param_groups[0]["lr"]
             acc_tag = " [green]✓best_acc[/green]" if improved_acc else ""
             loss_tag = " [cyan]✓best_loss[/cyan]" if improved_loss else ""
+            val_text = (
+                f"val loss={val_metrics['loss']:.4f} acc={val_metrics['accuracy']:.4f}"
+                if can_update_best else f"val skipped (freq={val_frequency})"
+            )
             console.print(
                 f"[E{epoch:03d}] "
                 f"train loss={train_metrics['loss']:.4f} acc={train_metrics['accuracy']:.4f} | "
-                f"val loss={val_metrics['loss']:.4f} acc={val_metrics['accuracy']:.4f} | "
+                f"{val_text} | "
                 f"lr={lr_now:.2e}{acc_tag}{loss_tag}"
             )
 
             if self.wandb_run:
-                self.wandb_run.log({
+                log_payload = {
                     "epoch": epoch,
                     "train/loss": train_metrics["loss"],
                     "train/accuracy": train_metrics["accuracy"],
-                    "val/loss": val_metrics["loss"],
-                    "val/accuracy": val_metrics["accuracy"],
                     "lr": lr_now,
-                })
+                }
+                if can_update_best:
+                    log_payload.update({
+                        "val/loss": val_metrics["loss"],
+                        "val/accuracy": val_metrics["accuracy"],
+                    })
+                self.wandb_run.log(log_payload)
 
             if self.early_stop_patience and no_improve >= self.early_stop_patience:
                 console.print(f"[yellow]Early stopping após {no_improve} épocas sem melhora[/yellow]")

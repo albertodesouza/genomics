@@ -3,17 +3,13 @@
 cnn2_model.py
 =============
 
-CNN multi-estágio com Global Average/Max Pooling para predição de
-ancestralidade a partir de dados genômicos 2D.
+CNN2 multi-estágio para dados organizados como genes x tracks x posições.
 
-Arquitetura
------------
-Stage1: Conv2D(kernel_stage1) → BN → ReLU × n1
-Stage2: Conv2D(1×kernel_stage2) → BN → ReLU × n2
-Stage3: Conv2D(kernel_stage3×1) → BN → ReLU × n3
-→ Global Pool → Flatten → FC → Dropout → Logits
+Arquitetura equivalente à CNN2 histórica de ``neural_ancestry_predictor``:
+Stage1 agrupa todas as tracks de um gene em uma janela local, preservando a
+altura como eixo de genes. Stages 2/3 processam apenas a dimensão genômica.
 """
-from typing import List, Tuple
+from typing import Tuple
 
 import torch
 import torch.nn as nn
@@ -26,22 +22,7 @@ console = Console()
 
 
 class CNN2AncestryPredictor(nn.Module):
-    """
-    CNN2 multi-estágio com separação de dimensões horizontais/verticais.
-
-    Stage1 captura padrões locais 2D; Stage2 integra ao longo da dimensão
-    genômica (colunas); Stage3 integra ao longo das tracks (linhas).
-    Global pooling remove dependência do tamanho de entrada.
-
-    Parameters
-    ----------
-    config : PipelineConfig
-        Configuração completa.
-    input_shape : Tuple[int, int]
-        Shape de entrada (num_rows, effective_size).
-    num_classes : int
-        Número de classes de saída.
-    """
+    """CNN2 com Stage1 k=(tracks_per_gene, width) para ver o gene completo."""
 
     def __init__(self, config: PipelineConfig, input_shape: Tuple[int, int], num_classes: int):
         super().__init__()
@@ -55,65 +36,84 @@ class CNN2AncestryPredictor(nn.Module):
 
         cnn2 = config.model.cnn2
         f1 = cnn2.num_filters_stage1
-        ks1 = cnn2.kernel_stage1
-        ks2 = cnn2.kernel_stage2
         f2 = cnn2.num_filters_stage2
-        ks3 = cnn2.kernel_stage3
         f3 = cnn2.num_filters_stage3
+        kernel_s1 = tuple(cnn2.kernel_stage1)
+        stride_s1 = tuple(cnn2.stride_stage1)
+        kernel_s23 = tuple(cnn2.kernel_stages23)
+        stride_s23 = tuple(cnn2.stride_stages23)
+        padding_s23 = tuple(cnn2.padding_stages23)
         pool_type = cnn2.global_pool_type
         fc_hidden = cnn2.fc_hidden_size
         dropout_rate = config.model.dropout_rate
-        num_classes_fc = num_classes
 
-        # Stage 1: 2D conv para capturar padrões locais
-        self.stage1 = nn.Sequential(
-            nn.Conv2d(1, f1, kernel_size=tuple(ks1), padding=(ks1[0] // 2, ks1[1] // 2), bias=False),
-            nn.BatchNorm2d(f1),
-            nn.ReLU(),
-        )
-        # Stage 2: integra na dimensão horizontal
-        self.stage2 = nn.Sequential(
-            nn.Conv2d(f1, f2, kernel_size=(1, ks2), padding=(0, ks2 // 2), bias=False),
-            nn.BatchNorm2d(f2),
-            nn.ReLU(),
-        )
-        # Stage 3: integra na dimensão vertical (tracks)
-        self.stage3 = nn.Sequential(
-            nn.Conv2d(f2, f3, kernel_size=(ks3, 1), padding=(ks3 // 2, 0), bias=False),
-            nn.BatchNorm2d(f3),
-            nn.ReLU(),
-        )
+        if len(kernel_s1) != 2 or len(stride_s1) != 2:
+            raise ValueError("cnn2.kernel_stage1 e cnn2.stride_stage1 devem ter 2 dimensoes")
+        if len(kernel_s23) != 2 or len(stride_s23) != 2 or len(padding_s23) != 2:
+            raise ValueError("cnn2.kernel/stride/padding_stages23 devem ter 2 dimensoes")
+        if num_rows % kernel_s1[0] != 0:
+            raise ValueError(
+                f"CNN2 Stage1 requer num_rows multiplo de kernel vertical ({kernel_s1[0]}), "
+                f"recebeu num_rows={num_rows}"
+            )
 
-        # Global pooling
+        conv1_h = (num_rows - kernel_s1[0]) // stride_s1[0] + 1
+        conv1_w = (effective_size - kernel_s1[1]) // stride_s1[1] + 1
+        conv2_h = (conv1_h + 2 * padding_s23[0] - kernel_s23[0]) // stride_s23[0] + 1
+        conv2_w = (conv1_w + 2 * padding_s23[1] - kernel_s23[1]) // stride_s23[1] + 1
+        conv3_h = (conv2_h + 2 * padding_s23[0] - kernel_s23[0]) // stride_s23[0] + 1
+        conv3_w = (conv2_w + 2 * padding_s23[1] - kernel_s23[1]) // stride_s23[1] + 1
+        if min(conv1_h, conv1_w, conv2_h, conv2_w, conv3_h, conv3_w) <= 0:
+            raise ValueError(
+                "CNN2 produziu dimensao invalida: "
+                f"input=({num_rows}, {effective_size}), "
+                f"stage1=({conv1_h}, {conv1_w}), stage2=({conv2_h}, {conv2_w}), "
+                f"stage3=({conv3_h}, {conv3_w})"
+            )
+
+        self.features = nn.Sequential(
+            nn.Conv2d(1, f1, kernel_size=kernel_s1, stride=stride_s1),
+            nn.ReLU(),
+            nn.Conv2d(f1, f2, kernel_size=kernel_s23, stride=stride_s23, padding=padding_s23),
+            nn.ReLU(),
+            nn.Conv2d(f2, f3, kernel_size=kernel_s23, stride=stride_s23, padding=padding_s23),
+            nn.ReLU(),
+        )
         if pool_type == "avg":
-            self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
+            self.global_pool = nn.AvgPool2d(kernel_size=(1, conv3_w))
         else:
-            self.global_pool = nn.AdaptiveMaxPool2d((1, 1))
+            self.global_pool = nn.MaxPool2d(kernel_size=(1, conv3_w))
+        self.pool_type = pool_type
 
-        # FC head
-        self.fc = nn.Sequential(
-            nn.Linear(f3, fc_hidden),
+        flattened_size = f3 * conv3_h
+        self.classifier = nn.Sequential(
+            nn.Linear(flattened_size, fc_hidden),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
-            nn.Linear(fc_hidden, num_classes_fc),
+            nn.Linear(fc_hidden, num_classes),
         )
 
         self._initialize_weights()
-        console.print(f"[green]Modelo CNN2 criado:[/green] {num_rows}×{effective_size} → s1f{f1}/s2f{f2}/s3f{f3} → gpool → fc{fc_hidden} → {num_classes}")
+        console.print("[green]Modelo CNN2 criado:[/green]")
+        console.print(f"  • Input shape efetivo: {num_rows} x {effective_size} (1 canal)")
+        console.print(f"  • Genes selecionados: {len(self.genes_selected)} genes → {num_rows} linhas")
+        console.print(f"  • Stage 1: {f1} filters, kernel={kernel_s1}, stride={stride_s1} → {f1} x {conv1_h} x {conv1_w}")
+        console.print(f"  • Stage 2: {f2} filters, kernel={kernel_s23}, stride={stride_s23}, padding={padding_s23} → {f2} x {conv2_h} x {conv2_w}")
+        console.print(f"  • Stage 3: {f3} filters, kernel={kernel_s23}, stride={stride_s23}, padding={padding_s23} → {f3} x {conv3_h} x {conv3_w}")
+        console.print(f"  • Global Pool ({pool_type}): kernel=(1, {conv3_w}) → {f3} x {conv3_h} x 1")
+        console.print(f"  • FC: {flattened_size} → {fc_hidden} → {num_classes}")
         console.print(f"  • Params: {self.count_parameters():,}")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.ndim != 4:
-            raise ValueError(f"CNN2AncestryPredictor espera entrada (B,2,4,L), recebeu shape={tuple(x.shape)}")
+            raise ValueError(f"CNN2AncestryPredictor espera entrada (B,2,rows,L), recebeu shape={tuple(x.shape)}")
         x = x.view(x.size(0), x.size(1) * x.size(2), x.size(3))
-        x = x[:, self.rows_to_use, :]  # selecionar genes
-        x = x.unsqueeze(1)             # (B, 1, rows, cols)
-        x = self.stage1(x)
-        x = self.stage2(x)
-        x = self.stage3(x)
-        x = self.global_pool(x)        # (B, f3, 1, 1)
-        x = x.view(x.size(0), -1)     # (B, f3)
-        return self.fc(x)
+        x = x[:, self.rows_to_use, :]
+        x = x.unsqueeze(1)
+        x = self.features(x)
+        x = self.global_pool(x)
+        x = x.view(x.size(0), -1)
+        return self.classifier(x)
 
     def predict_proba(self, x: torch.Tensor) -> torch.Tensor:
         return torch.softmax(self.forward(x), dim=1)
@@ -125,9 +125,8 @@ class CNN2AncestryPredictor(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.Linear):
                 nn.init.xavier_normal_(m.weight)
                 if m.bias is not None:

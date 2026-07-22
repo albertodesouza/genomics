@@ -1,0 +1,55 @@
+dataset:
+  processed_dir: "/dados/GENOMICS_DATA/variant_transformer/pigmentation_binary"
+  target: "pigmentation_binary"
+  classes: ["non_pigmentation", "pigmentation"]
+  max_sequence_length: 1024
+  truncate_policy: "keep_first"
+  loading_strategy: "lazy"
+
+variants:
+  l_max: 16
+  max_indel_size: 50
+  unphased_policy: "skip"
+
+model:
+  d_type: 32
+  d_hap: 16
+  d_gene: 64
+  d_len: 16
+  d_base: 16
+  d_allele: 128
+  d_model: 256
+  layers: 6
+  heads: 8
+  mlp_ratio: 4
+  dropout: 0.1
+  rope_base: 10000.0
+
+training:
+  batch_size: 32
+  num_epochs: 100
+  learning_rate: 0.0003
+  weight_decay: 0.01
+  optimizer: "adamw"
+  num_workers: 0
+  early_stopping_patience: null
+
+data_split:
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  random_seed: 13
+  family_split_mode: "family_aware"
+
+checkpointing:
+  save_frequency: 10
+  save_during_training: true
+  load_checkpoint: null
+
+wandb:
+  use_wandb: false
+  project_name: "variant-transformer"
+  run_name: null
+
+mode: "train"
+test_dataset: "test"

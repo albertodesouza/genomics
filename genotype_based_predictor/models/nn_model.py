@@ -28,11 +28,20 @@ def _resolve_gene_rows(config: PipelineConfig, input_shape: Tuple[int, int]) -> 
         genes_to_use = list(config.dataset_input.genes_to_use or [])
         if not genes_to_use:
             raise ValueError("tensor_layout='haplotype_channels' requer ao menos um gene em genes_to_use")
-        num_ontologies = len(config.dataset_input.ontology_terms or []) or 1
-        expected_rows = (2 * num_ontologies + 6) * len(genes_to_use)
+        mask_channels = 2 + int(config.dataset_input.indel_include_valid_mask) + int(config.dataset_input.indel_include_snp_mask)
+        if config.dataset_input.feature_mode == "masks_only":
+            rows_per_gene = mask_channels
+        elif config.dataset_input.feature_mode == "signals_only":
+            num_ontologies = len(config.dataset_input.ontology_terms or []) or 1
+            rows_per_gene = 2 * num_ontologies
+        else:
+            num_ontologies = len(config.dataset_input.ontology_terms or []) or 1
+            rows_per_gene = 2 * num_ontologies + mask_channels
+        num_haplotypes = 2 if config.dataset_input.haplotype_mode == "H1+H2" else 1
+        expected_rows = num_haplotypes * rows_per_gene * len(genes_to_use)
         if input_shape[0] != expected_rows:
             raise ValueError(
-                f"tensor_layout='haplotype_channels' espera {expected_rows} linhas derivadas de {len(genes_to_use)} gene(s) e {num_ontologies} ontologia(s), recebeu {input_shape[0]}"
+                f"tensor_layout='haplotype_channels' espera {expected_rows} linhas derivadas de {len(genes_to_use)} gene(s), feature_mode={config.dataset_input.feature_mode}, recebeu {input_shape[0]}"
             )
         return genes_to_use, list(range(input_shape[0]))
 

@@ -2,6 +2,8 @@
 """
 data_pipeline.py — Orquestra cache, DataLoaders e prepare_data().
 """
+from __future__ import annotations
+
 import json
 import os
 import shutil
@@ -27,8 +29,8 @@ from genotype_based_predictor.data_splitting import (
 from genotype_based_predictor.utils import worker_init_fn
 
 console = Console()
-SHARD_SIZE = 8
-MAX_CACHE_BUILD_WORKERS = 1
+SHARD_SIZE = 16
+MAX_CACHE_BUILD_WORKERS = 4
 
 
 def _materialize_cache_chunk(
@@ -36,6 +38,7 @@ def _materialize_cache_chunk(
     split_indices: list[int],
     normalization_params: Dict[str, Any],
     shard_path: str,
+    alignment_sample_ids: list[str],
 ):
     from genotype_based_predictor.config import PipelineConfig
     from genotype_based_predictor.dataset import ProcessedGenomicDataset
@@ -49,6 +52,8 @@ def _materialize_cache_chunk(
         normalization_params=normalization_params,
         compute_normalization=False,
     )
+    shard_sample_ids = _sample_ids_for_processed_indices(processed_dataset, split_indices)
+    processed_dataset.prepare_alignment_cache(alignment_sample_ids, entry_sample_ids=shard_sample_ids)
 
     items = processed_dataset.get_items_bulk(split_indices)
     torch.save(items, shard_path)
@@ -75,7 +80,7 @@ def _load_external_normalization_params(config: PipelineConfig) -> Optional[Dict
 
 def _build_view_definition(config: PipelineConfig) -> Dict[str, Any]:
     di = config.dataset_input
-    return {
+    view = {
         "dataset_dir": str(Path(di.dataset_dir).resolve()),
         "sample_ids": di.sample_ids,
         "sample_ids_path": di.sample_ids_path,
@@ -90,7 +95,32 @@ def _build_view_definition(config: PipelineConfig) -> Dict[str, Any]:
         "normalization_method": di.normalization_method,
         "selected_track_index": di.selected_track_index,
         "indel_include_valid_mask": di.indel_include_valid_mask,
+        "alignment_mapping": di.alignment_mapping,
+        "alignment_axis_splits": di.alignment_axis_splits,
+        "consensus_dataset_dir": di.consensus_dataset_dir,
         "tensor_layout": di.tensor_layout,
+    }
+    if di.feature_mode != "signals_and_masks":
+        view["feature_mode"] = di.feature_mode
+    if di.alphagenome_signal_variant_mask:
+        view["alphagenome_signal_variant_mask"] = di.alphagenome_signal_variant_mask
+    if di.alphagenome_signal_transform != "absolute":
+        view["alphagenome_signal_transform"] = di.alphagenome_signal_transform
+        view["reference_predictions_dataset_dir"] = str(Path(di.reference_predictions_dataset_dir).resolve()) if di.reference_predictions_dataset_dir else None
+        view["reference_predictions_sample_id"] = di.reference_predictions_sample_id
+    if di.indel_include_snp_mask:
+        view["indel_include_snp_mask"] = di.indel_include_snp_mask
+    return view
+
+
+def _target_definition(config: PipelineConfig) -> Dict[str, Any]:
+    return {
+        "prediction_target": config.output.prediction_target,
+        "known_classes": config.output.known_classes,
+        "derived_targets": {
+            name: target.model_dump(mode="python")
+            for name, target in config.output.derived_targets.items()
+        },
     }
 
 
@@ -98,11 +128,58 @@ def _build_resolved_view_definition(config: PipelineConfig, processed_dataset: P
     view = _build_view_definition(config)
     sample_ids = []
     for base_idx in processed_dataset.valid_sample_indices:
-        if base_idx < len(processed_dataset.individuals):
-            sample_ids.append(processed_dataset.individuals[base_idx])
+        sample_id = processed_dataset._sample_id_for_base_index(base_idx)
+        if sample_id:
+            sample_ids.append(sample_id)
     view["resolved_sample_ids"] = sample_ids
     view["resolved_genes"] = sorted(processed_dataset.genes_to_use) if processed_dataset.genes_to_use else None
     return view
+
+
+def _sample_ids_for_processed_indices(processed_dataset: ProcessedGenomicDataset, indices) -> list[str]:
+    sample_ids = []
+    for proc_idx in indices:
+        if 0 <= proc_idx < len(processed_dataset.valid_sample_indices):
+            base_idx = processed_dataset.valid_sample_indices[proc_idx]
+            sample_id = processed_dataset._sample_id_for_base_index(base_idx)
+            if sample_id:
+                sample_ids.append(sample_id)
+    return sample_ids
+
+
+def _alignment_indices_from_splits(config: PipelineConfig, train_indices, val_indices, test_indices) -> list[int]:
+    split_indices_by_name = {
+        "train": train_indices,
+        "val": val_indices,
+        "test": test_indices,
+    }
+    alignment_indices = []
+    for split_name in config.dataset_input.alignment_axis_splits:
+        alignment_indices.extend(split_indices_by_name[split_name])
+    if not alignment_indices:
+        raise ValueError(
+            "alignment_axis_splits nao selecionou nenhuma amostra para construir o eixo global: "
+            f"{config.dataset_input.alignment_axis_splits}"
+        )
+    return alignment_indices
+
+
+def _alignment_cache_signature(processed_dataset: ProcessedGenomicDataset) -> Dict[str, Any]:
+    signature = {}
+    for gene_name in sorted(processed_dataset.genes_to_use):
+        try:
+            axis = processed_dataset.dynamic_indel_aligner.get_alignment_axis(gene_name)
+            signature[gene_name] = {
+                "algorithm_version": axis.get("algorithm_version"),
+                "sample_set_key": axis.get("sample_set_key"),
+                "cache_dir": axis.get("cache_dir"),
+                "expanded_length": axis.get("expanded_length"),
+                "ref_length": axis.get("ref_length"),
+                "fingerprints": axis.get("fingerprints"),
+            }
+        except Exception as exc:
+            signature[gene_name] = {"error": str(exc)}
+    return signature
 
 
 def _resolve_runtime_dataset_dir(config: PipelineConfig) -> Path:
@@ -170,6 +247,7 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
             return False
 
         pp = meta.get("processing_params", {})
+        requested_view = cache_view.get("requested_view", {})
         checks = {
             "alphagenome_outputs": config.dataset_input.alphagenome_outputs,
             "haplotype_mode": config.dataset_input.haplotype_mode,
@@ -178,17 +256,76 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
             "normalization_method": config.dataset_input.normalization_method,
             "selected_track_index": config.dataset_input.selected_track_index,
             "indel_include_valid_mask": config.dataset_input.indel_include_valid_mask,
+            "alignment_mapping": config.dataset_input.alignment_mapping,
+            "alignment_axis_splits": config.dataset_input.alignment_axis_splits,
+            "consensus_dataset_dir": config.dataset_input.consensus_dataset_dir,
             "tensor_layout": config.dataset_input.tensor_layout,
             "prediction_target": config.output.prediction_target,
+            "known_classes": config.output.known_classes,
+            "derived_targets": _target_definition(config)["derived_targets"],
             "input_shape": "3D_haplotype_channels",
+            "center_window_policy": "reference_center_to_expanded_axis",
+            "mask_normalization_policy": "preserve_binary_masks_v1",
+            "strand_track_policy": "include_both_strands_v1",
+            "normalization_track_policy": "haplotype_rows_v1",
         }
+        view_fallback_keys = {"alignment_mapping", "alignment_axis_splits", "consensus_dataset_dir", "tensor_layout"}
         for k, v in checks.items():
-            if pp.get(k) != v:
-                console.print(f"[yellow]Cache inválido: {k} mudou ({pp.get(k)} → {v})[/yellow]")
+            cached_value = pp.get(k)
+            if cached_value is None and k in view_fallback_keys:
+                cached_value = requested_view.get(k)
+            if cached_value is None and k == "derived_targets":
+                cached_value = {}
+            if cached_value != v:
+                console.print(f"[yellow]Cache inválido: {k} mudou ({cached_value} → {v})[/yellow]")
                 return False
+
+        cached_feature_mode = pp.get("feature_mode", requested_view.get("feature_mode", "signals_and_masks"))
+        if cached_feature_mode != config.dataset_input.feature_mode:
+            console.print(
+                f"[yellow]Cache inválido: feature_mode mudou ({cached_feature_mode} → {config.dataset_input.feature_mode})[/yellow]"
+            )
+            return False
+
+        cached_variant_mask = pp.get(
+            "alphagenome_signal_variant_mask",
+            requested_view.get("alphagenome_signal_variant_mask", False),
+        )
+        if cached_variant_mask != config.dataset_input.alphagenome_signal_variant_mask:
+            console.print(
+                f"[yellow]Cache inválido: alphagenome_signal_variant_mask mudou ({cached_variant_mask} → {config.dataset_input.alphagenome_signal_variant_mask})[/yellow]"
+            )
+            return False
+
+        requested_ref_dir = (
+            str(Path(config.dataset_input.reference_predictions_dataset_dir).resolve())
+            if config.dataset_input.reference_predictions_dataset_dir
+            else None
+        )
+        cached_signal_transform = pp.get("alphagenome_signal_transform", requested_view.get("alphagenome_signal_transform", "absolute"))
+        cached_ref_dir = pp.get("reference_predictions_dataset_dir", requested_view.get("reference_predictions_dataset_dir"))
+        cached_ref_sample = pp.get("reference_predictions_sample_id", requested_view.get("reference_predictions_sample_id"))
+        if (
+            cached_signal_transform != config.dataset_input.alphagenome_signal_transform
+            or cached_ref_dir != requested_ref_dir
+            or cached_ref_sample != config.dataset_input.reference_predictions_sample_id
+        ):
+            console.print("[yellow]Cache inválido: transformação AlphaGenome/reference dataset mudou[/yellow]")
+            return False
+
+        cached_snp_mask = pp.get("indel_include_snp_mask", requested_view.get("indel_include_snp_mask", False))
+        if cached_snp_mask != config.dataset_input.indel_include_snp_mask:
+            console.print(
+                f"[yellow]Cache inválido: indel_include_snp_mask mudou ({cached_snp_mask} → {config.dataset_input.indel_include_snp_mask})[/yellow]"
+            )
+            return False
 
         if meta.get("splits", {}).get("random_seed") != config.data_split.random_seed:
             console.print("[yellow]Cache inválido: random_seed diferente[/yellow]")
+            return False
+
+        if not meta.get("alignment_cache_signature"):
+            console.print("[yellow]Cache inválido: sem assinatura da cache de alinhamento compartilhada[/yellow]")
             return False
 
         console.print("[green]✓ Cache válido e compatível[/green]")
@@ -287,6 +424,8 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
 
     individuals = src_meta.get("individuals", [])
     pedigree = src_meta.get("individuals_pedigree", {})
+    alignment_indices = _alignment_indices_from_splits(config, train_indices, val_indices, test_indices)
+    alignment_sample_ids = _sample_ids_for_processed_indices(processed_dataset, alignment_indices)
 
     # Desativar taint_at_runtime durante o salvamento
     original_taint = processed_dataset.config.debug.taint_at_runtime
@@ -346,12 +485,14 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                                 batch_indices,
                                 processed_dataset.normalization_params,
                                 str(temp_dir / f"{split_name}_data_shard_{batch_id:05d}.pt"),
+                                alignment_sample_ids,
                             ): (batch_id, batch_indices)
                             for batch_id, batch_indices in enumerate(batches)
                         }
 
                         batch_results: Dict[int, Any] = {}
                         completed_samples = 0
+                        batch_errors = []
                         for future in as_completed(future_to_batch):
                             batch_id, batch_indices = future_to_batch[future]
                             try:
@@ -376,16 +517,24 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                                     )
                             except Exception as e:
                                 console.print(f"[yellow]Erro ao processar batch_id={batch_id}: {e}[/yellow]")
+                                batch_errors.append((batch_id, e))
+
+                        if batch_errors:
+                            first_batch_id, first_error = batch_errors[0]
+                            raise RuntimeError(
+                                f"Falha ao materializar {len(batch_errors)} batch(es) do split {split_name}; "
+                                f"primeiro batch_id={first_batch_id}: {first_error}"
+                            )
 
                         for batch_id, batch_indices in enumerate(batches):
                             result = batch_results.get(batch_id)
                             if result is None:
-                                continue
+                                raise RuntimeError(f"Batch ausente apos materializacao: split={split_name} batch_id={batch_id}")
                             shard_names.append(Path(result["shard_path"]).name)
 
                             for idx in batch_indices:
                                 base_idx = processed_dataset.valid_sample_indices[idx]
-                                sid = individuals[base_idx] if base_idx < len(individuals) else f"sample_{base_idx}"
+                                sid = processed_dataset._sample_id_for_base_index(base_idx) or f"sample_{base_idx}"
                                 ped = pedigree.get(sid, {})
                                 split_sample_meta.append({
                                     "sample_id": sid,
@@ -397,7 +546,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                     for batch_id, batch_indices in enumerate(batches):
                         for idx in batch_indices:
                             base_idx = processed_dataset.valid_sample_indices[idx]
-                            sid = individuals[base_idx] if base_idx < len(individuals) else f"sample_{base_idx}"
+                            sid = processed_dataset._sample_id_for_base_index(base_idx) or f"sample_{base_idx}"
                             ped = pedigree.get(sid, {})
                             split_sample_meta.append({
                                 "sample_id": sid,
@@ -413,6 +562,11 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                     "num_samples": len(split_sample_meta),
                     "shards": sorted(shard_names),
                 }
+                if len(indices) > 0 and len(split_sample_meta) != len(indices):
+                    raise RuntimeError(
+                        f"Cache inconsistente para split={split_name}: esperava {len(indices)} amostras, "
+                        f"salvou {len(split_sample_meta)}"
+                    )
             splits_meta[split_name] = split_sample_meta
             split_index[split_name] = [item["sample_id"] for item in split_sample_meta]
             total_samples += len(split_sample_meta)
@@ -437,6 +591,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
         with open(temp_dir / "view_definition.json", "w") as f:
             json.dump({
                 "requested_view": _build_view_definition(config),
+                "target_definition": _target_definition(config),
                 "resolved_view": _build_resolved_view_definition(config, processed_dataset),
             }, f, indent=2)
 
@@ -449,8 +604,9 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
             "class_names": class_names,
             "dataset_dir": str(dataset_dir.resolve()),
             "gene_order": gene_order,
-            "tracks_per_gene": 2 * (len(config.dataset_input.ontology_terms or []) or 1) + 6,
+            "tracks_per_gene": processed_dataset._rows_per_gene(),
             "gene_window_metadata": gene_window_metadata,
+            "alignment_cache_signature": _alignment_cache_signature(processed_dataset),
             "processing_params": {
                 "alphagenome_outputs": config.dataset_input.alphagenome_outputs,
                 "haplotype_mode": config.dataset_input.haplotype_mode,
@@ -459,15 +615,30 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                 "normalization_method": config.dataset_input.normalization_method,
                 "selected_track_index": config.dataset_input.selected_track_index,
                 "indel_include_valid_mask": config.dataset_input.indel_include_valid_mask,
+                "indel_include_snp_mask": config.dataset_input.indel_include_snp_mask,
+                "alignment_mapping": config.dataset_input.alignment_mapping,
+                "alignment_axis_splits": config.dataset_input.alignment_axis_splits,
+                "consensus_dataset_dir": config.dataset_input.consensus_dataset_dir,
                 "indel_neutral_value": config.dataset_input.indel_neutral_value,
                 "tensor_layout": config.dataset_input.tensor_layout,
+                "feature_mode": config.dataset_input.feature_mode,
+                "alphagenome_signal_variant_mask": config.dataset_input.alphagenome_signal_variant_mask,
+                "alphagenome_signal_transform": config.dataset_input.alphagenome_signal_transform,
+                "reference_predictions_dataset_dir": str(Path(config.dataset_input.reference_predictions_dataset_dir).resolve()) if config.dataset_input.reference_predictions_dataset_dir else None,
+                "reference_predictions_sample_id": config.dataset_input.reference_predictions_sample_id,
                 "cache_processed_tensors": config.dataset_input.cache_processed_tensors,
                 "runtime_dataset_dir": str(dataset_dir.resolve()),
                 "family_split_mode": config.data_split.family_split_mode,
                 "balancing_strategy": config.data_split.balancing_strategy,
                 "dataset_dir": str(dataset_dir.resolve()),
                 "prediction_target": config.output.prediction_target,
+                "known_classes": config.output.known_classes,
+                "derived_targets": _target_definition(config)["derived_targets"],
                 "input_shape": "3D_haplotype_channels",
+                "center_window_policy": "reference_center_to_expanded_axis",
+                "mask_normalization_policy": "preserve_binary_masks_v1",
+                "strand_track_policy": "include_both_strands_v1",
+                "normalization_track_policy": "haplotype_rows_v1",
             },
             "splits": {
                 "train_size": len(splits_meta.get("train", [])),
@@ -519,7 +690,10 @@ def _make_data_loaders(train_ds, val_ds, test_ds, config: PipelineConfig):
         train_w = val_w = 0
         persistent = False
     else:
-        train_w, val_w = 4, 2
+        train_w = config.data_loading.train_num_workers
+        val_w = config.data_loading.val_num_workers
+        train_w = 4 if train_w is None else train_w
+        val_w = 2 if val_w is None else val_w
         persistent = True
 
     seed = config.data_split.random_seed
@@ -528,19 +702,35 @@ def _make_data_loaders(train_ds, val_ds, test_ds, config: PipelineConfig):
         gen = torch.Generator()
         gen.manual_seed(seed)
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                              num_workers=train_w, pin_memory=pin_mem, collate_fn=_collate_fn,
-                              persistent_workers=persistent and train_w > 0,
-                              generator=gen,
-                              worker_init_fn=worker_init_fn if train_w > 0 else None)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
-                            num_workers=val_w, pin_memory=pin_mem, collate_fn=_collate_fn,
-                            persistent_workers=persistent and val_w > 0,
-                            worker_init_fn=worker_init_fn if val_w > 0 else None)
-    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False,
-                             num_workers=val_w, pin_memory=pin_mem, collate_fn=_collate_fn,
-                             persistent_workers=persistent and val_w > 0,
-                             worker_init_fn=worker_init_fn if val_w > 0 else None)
+    train_kwargs = {
+        "batch_size": batch_size,
+        "shuffle": True,
+        "num_workers": train_w,
+        "pin_memory": pin_mem,
+        "collate_fn": _collate_fn,
+        "persistent_workers": persistent and train_w > 0,
+        "generator": gen,
+        "worker_init_fn": worker_init_fn if train_w > 0 else None,
+    }
+    val_kwargs = {
+        "batch_size": batch_size,
+        "shuffle": False,
+        "num_workers": val_w,
+        "pin_memory": pin_mem,
+        "collate_fn": _collate_fn,
+        "persistent_workers": persistent and val_w > 0,
+        "worker_init_fn": worker_init_fn if val_w > 0 else None,
+    }
+    prefetch = config.data_loading.prefetch_factor
+    if prefetch is not None:
+        if train_w > 0:
+            train_kwargs["prefetch_factor"] = prefetch
+        if val_w > 0:
+            val_kwargs["prefetch_factor"] = prefetch
+
+    train_loader = DataLoader(train_ds, **train_kwargs)
+    val_loader = DataLoader(val_ds, **val_kwargs)
+    test_loader = DataLoader(test_ds, **val_kwargs)
     return train_loader, val_loader, test_loader
 
 
@@ -565,16 +755,18 @@ def _make_runtime_processed_datasets(runtime_dataset_dir: Path, cache_dir: Path,
     )
 
     split_index = _load_split_index(cache_dir)
-    dataset_metadata = getattr(base_dataset, "dataset_metadata", {}) or {}
-    individuals = dataset_metadata.get("individuals", [])
     sample_to_processed_idx = {}
     for proc_idx, base_idx in enumerate(processed_ds.valid_sample_indices):
-        if base_idx < len(individuals):
-            sample_to_processed_idx[individuals[base_idx]] = proc_idx
+        sample_id = processed_ds._sample_id_for_base_index(base_idx)
+        if sample_id:
+            sample_to_processed_idx[sample_id] = proc_idx
 
     train_indices = [sample_to_processed_idx[sid] for sid in split_index.get("train", []) if sid in sample_to_processed_idx]
     val_indices = [sample_to_processed_idx[sid] for sid in split_index.get("val", []) if sid in sample_to_processed_idx]
     test_indices = [sample_to_processed_idx[sid] for sid in split_index.get("test", []) if sid in sample_to_processed_idx]
+    alignment_indices = _alignment_indices_from_splits(config, train_indices, val_indices, test_indices)
+    alignment_sample_ids = _sample_ids_for_processed_indices(processed_ds, alignment_indices)
+    processed_ds.prepare_alignment_cache(alignment_sample_ids, entry_sample_ids=[])
 
     train_ds = Subset(processed_ds, train_indices)
     val_ds = Subset(processed_ds, val_indices)
@@ -659,7 +851,7 @@ def prepare_data(config: PipelineConfig, experiment_dir: Path):
     proc_idx_by_base = {bi: pi for pi, bi in enumerate(valid_base_indices)}
 
     all_groups, fam_info = build_family_aware_sample_groups(base_dataset, config)
-    sample_groups = [[bi for bi in g if bi in valid_set] for g in all_groups]
+    sample_groups = [[base_idx for base_idx in group if base_idx in valid_set] for group in all_groups]
     sample_groups = [g for g in sample_groups if g]
 
     n_groups = len(sample_groups)
@@ -690,6 +882,9 @@ def prepare_data(config: PipelineConfig, experiment_dir: Path):
         norm_params = temp_ds.normalization_params
 
     processed_ds = ProcessedGenomicDataset(base_dataset, config, normalization_params=norm_params, compute_normalization=False)
+    alignment_idx = _alignment_indices_from_splits(config, train_idx, val_idx, test_idx)
+    alignment_sample_ids = _sample_ids_for_processed_indices(processed_ds, alignment_idx)
+    processed_ds.prepare_alignment_cache(alignment_sample_ids, entry_sample_ids=[])
 
     norm_path = experiment_dir / "models" / "normalization_params.json"
     norm_path.parent.mkdir(parents=True, exist_ok=True)

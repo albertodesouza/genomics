@@ -8,7 +8,9 @@ Considerando 11 genes e 6 trilhas por gene, obtém-se uma matriz de dimensão $6
 
 Entretanto, a presença de inserções e deleções (INDELs) entre indivíduos introduz desalinhamentos entre as posições correspondentes dessas matrizes, uma vez que as coordenadas das saídas do modelo passam a depender da sequência específica de cada indivíduo.
 
-Para mitigar esse problema, propomos um método de alinhamento das saídas baseado em uma referência expandida, complementado por máscaras explícitas de inserção e deleção. O objetivo é permitir que posições homólogas entre indivíduos sejam comparadas de forma consistente, mesmo quando as respectivas sequências haplotípicas contêm INDELs.
+Para mitigar esse problema, usamos um eixo de referência expandido, complementado por máscaras explícitas de inserção e deleção. A ponte entre as predições AlphaGenome e esse eixo expandido é feita, no modo recomendado, por chain files gerados pelo próprio `bcftools consensus -c`. Isso garante que o treinamento use o mesmo FASTA que foi efetivamente enviado ao AlphaGenome, em vez de tentar reproduzir a semântica do consenso apenas a partir do VCF.
+
+O modo antigo baseado apenas em `DynamicIndelAligner` ainda existe para diagnóstico, mas o pipeline principal deve usar `alignment_mapping: bcftools_chain`.
 
 ---
 
@@ -129,13 +131,13 @@ $$
 
 onde $C = 66$ corresponde aos canais resultantes da concatenação dos 11 genes e 6 tracks por gene, e $L_i$ é o comprimento efetivo da representação para o indivíduo, após considerar sua sequência haplotípica.
 
-Utilizando os arquivos VCF e a referência GRCh38, construímos uma função de mapeamento entre coordenadas da referência e coordenadas do indivíduo:
+O eixo expandido global continua sendo construído a partir dos VCFs e da referência GRCh38. Porém, o mapeamento entre a saída AlphaGenome e o eixo expandido é derivado dos FASTAs reais via chain file do `bcftools consensus`:
 
 $$
-f_i : \mathrm{pos}_{ref} \rightarrow \mathrm{pos}_{ind}
+f_i : \mathrm{pos}_{fasta} \rightarrow \mathrm{pos}_{ref/ins} \rightarrow \mathrm{pos}_{expandida}
 $$
 
-Esse mapeamento permite identificar, para cada posição do eixo expandido, se a posição corresponde a:
+Esse mapeamento permite identificar, para cada índice do FASTA/predição AlphaGenome, se a posição corresponde a:
 
 1. uma correspondência direta entre referência e indivíduo;
 2. uma deleção no indivíduo;
@@ -145,7 +147,14 @@ Esse mapeamento permite identificar, para cada posição do eixo expandido, se a
 
 ## G. Projeção das Saídas no Eixo Expandido
 
-Cada saída $X_i$ é projetada no eixo expandido, produzindo um tensor alinhado:
+Cada saída $X_i$ é indexada pelo FASTA fixo que foi enviado ao AlphaGenome. O `bcftools_chain_mapper` reconstrói o consenso com `bcftools consensus -c`, valida contra `*.window.raw.fa` e `*.window.fixed.fa`, parseia o chain e produz pares:
+
+```text
+copy_from_indices: índices absolutos no FASTA/predição AlphaGenome
+expanded_indices: índices correspondentes no eixo expandido global
+```
+
+Com esses pares, cada saída é projetada no eixo expandido, produzindo um tensor alinhado:
 
 $$
 \tilde{X}_i \in \mathbb{R}^{C \times L^*}
@@ -217,11 +226,11 @@ Para múltiplas tracks, o mesmo processo é realizado canal a canal. Assim, no l
 
 ---
 
-## J. Tratamento de Coordenadas e Bordas
+## J. Tratamento de Coordenadas, Consenso e Bordas
 
-Todas as operações devem ser realizadas em coordenadas genômicas absolutas. A janela de 32.768 posições deve ser definida em relação ao genoma de referência, e apenas INDELs que intersectam essa janela devem ser considerados.
+Todas as operações devem ser realizadas em coordenadas genômicas absolutas. A janela de 32.768 posições é definida em relação ao genoma de referência e convertida para o eixo expandido. O chain file do `bcftools consensus` é usado para conectar o índice do FASTA fixo às coordenadas da referência; em seguida, `expanded_index_map` e `insertion_slots_by_ref` conectam essas coordenadas ao eixo global.
 
-Esse cuidado é especialmente importante em regiões próximas às bordas da janela. Por exemplo, uma inserção imediatamente antes do início da janela de interesse pode deslocar os índices locais da sequência individual, mas não deve deslocar artificialmente o eixo de análise definido sobre a referência.
+Esse cuidado é especialmente importante em regiões próximas às bordas da janela. Por exemplo, uma inserção imediatamente antes do início da janela de interesse pode deslocar os índices locais do FASTA individual, mas não deve deslocar artificialmente o eixo de análise definido sobre a referência.
 
 Assim, a janela de interesse deve ser tratada como um intervalo genômico fixo, por exemplo:
 
@@ -303,3 +312,285 @@ O procedimento completo pode ser resumido da seguinte forma:
 8. Construir as máscaras de inserção, deleção e, opcionalmente, validade.
 9. Concatenar valores e máscaras para formar a entrada final da CNN.
 10. Repetir o processo separadamente para H1 e H2.
+
+### O.1 Normalizacao Local Do REF Do VCF
+
+Na implementacao atual, o `DynamicIndelAligner` usa o arquivo `ref.window.fa` como fonte local de verdade para posicionar INDELs.
+
+Para cada variante de comprimento diferente, o aligner compara o campo `REF` do VCF com a sequencia da janela. Se a posicao bruta do VCF nao bate exatamente com o `REF` local, ele procura um pequeno deslocamento local e usa a coordenada que realmente corresponde ao `REF`.
+
+Esse passo evita deslocamentos artificiais em casos como:
+
+```text
+VCF: CA -> C
+```
+
+Nessa delecao, o `C` e a base ancora e deve permanecer alinhado. O `X` deve aparecer na linha da base removida `A`:
+
+```text
+REF:        C A
+individuo: C X
+```
+
+O resultado correto no viewer fica equivalente a:
+
+```text
+540  C  C
+541  A  X
+```
+
+e nao:
+
+```text
+540  C  X
+541  A  C
+```
+
+Esse comportamento esta implementado em `dynamic_indel_alignment.py`.
+
+### O.2 Caches De Alinhamento
+
+O alinhamento dinamico e implementado uma unica vez em `DynamicIndelAligner` e reutilizado por treino, exportacao de TSVs e viewers.
+
+A cache persistente do eixo expandido global fica em:
+
+```text
+<dataset_dir>/alignment_cache/dynamic_indel_ref_window_v4/
+```
+
+Ela e separada por conjunto de amostras, pois o eixo expandido depende das insercoes observadas naquele conjunto. Portanto, uma exportacao com 5 individuos nao reaproveita o mesmo eixo de uma execucao com todos os individuos.
+
+Dentro de cada conjunto, a estrutura e:
+
+```text
+samples_<N>_<hash>/<GENE>/axis.json
+samples_<N>_<hash>/<GENE>/samples/<sample_id>.json
+```
+
+O `axis.json` guarda o eixo expandido. Os arquivos por amostra guardam `copy_from_indices`, `expanded_indices`, `insertion_indices` e `deletion_indices` para H1/H2.
+
+No modo recomendado `bcftools_chain`, o mapeamento das predicoes AlphaGenome para esse eixo fica em:
+
+```text
+<dataset_dir>/alignment_cache/bcftools_chain_mapper_v3/<GENE>/<AXIS_KEY>/<SAMPLE>/<HAP>.entry.json
+```
+
+Essa cache e derivada de `bcftools consensus -c`, validada contra `*.window.raw.fa` e `*.window.fixed.fa`, e inclui a chave do eixo usado. Isso evita reaproveitar por engano um mapa gerado para eixo completo em um treino que usa apenas a janela central.
+
+A cache processada da CNN salva uma assinatura dessa cache de alinhamento em `metadata.json`. Caches processadas antigas sem essa assinatura sao invalidadas automaticamente.
+
+### O.3 Janela 32k Centrada No Gene
+
+Ao treinar a CNN, a janela central de 32.768 posicoes deve permanecer centrada no gene de interesse, definido no eixo da referencia, e nao no centro geometrico do eixo expandido.
+
+A implementacao atual usa a seguinte regra:
+
+1. define o centro da janela do gene no eixo de referencia original;
+2. converte esse indice para o eixo expandido usando `expanded_index_map`;
+3. corta uma janela simetrica ao redor desse indice expandido.
+
+Para `window_center_size=32768`, isso produz 16.384 posicoes a esquerda e 16.384 posicoes a direita do centro de referencia mapeado para o eixo expandido, exceto se a janela bater em uma borda extrema.
+
+Essa regra evita o erro de usar simplesmente `expanded_length // 2`, que poderia deslocar o centro biologico quando ha assimetria no numero de insercoes antes e depois do gene.
+
+Por padrao, o `DynamicIndelAligner` consulta e alinha apenas essa regiao central de 32.768 bases da referencia. O comportamento antigo de consultar toda a janela de aproximadamente 512 kbp continua disponivel no export com `--full-window`.
+
+Mesmo quando a consulta e limitada a 32.768 bases de referencia, o eixo expandido do gene pode ficar ligeiramente maior que 32.768 colunas por causa de insercoes dentro da regiao. Para a CNN, a fatia final entregue ao modelo e cortada para `window_center_size`, garantindo shape fixo entre genes. Na config de 3 ontologias validada, o tensor final tem shape:
+
+```text
+(2, 99, 32768)
+```
+
+A cache processada registra essa politica como:
+
+```text
+center_window_policy = reference_center_to_expanded_axis
+```
+
+---
+
+## P. Visualização em Texto do Alinhamento de DNA
+
+Para inspecionar se o `DynamicIndelAligner` está construindo o eixo expandido corretamente, existem dois utilitários no módulo:
+
+```text
+genotype_based_predictor/export_aligned_dna.py
+genotype_based_predictor/aligned_dna_columns.py
+```
+
+O primeiro gera um arquivo TSV com a sequência alinhada da referência e dos indivíduos. O segundo converte esse TSV para uma visualização em colunas, em que cada posição alinhada ocupa uma linha e cada indivíduo/haplótipo ocupa uma coluna.
+
+### P.1 Ambiente
+
+Antes de executar os comandos, inicialize o ambiente `genomics`, que contém `bcftools`:
+
+```bash
+source scripts/start_genomics_universal.sh
+```
+
+Também é possível prefixar cada comando com `source scripts/start_genomics_universal.sh && ...`.
+
+### P.2 Arquivo TSV alinhado
+
+Exemplo para o gene `MC1R` e os 5 primeiros indivíduos da view `one_gene_10_individuals`:
+
+```bash
+source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.export_aligned_dna genotype_based_predictor/configs/one_gene_10_individuals.yaml genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.tsv --sample-limit 5
+```
+
+O formato gerado é:
+
+```text
+# gene=MC1R
+# expanded_length=524906
+sample_id    H1_aligned    H2_aligned
+REF          ...           ...
+HG00096      ...           ...
+HG00097      ...           ...
+```
+
+O caractere `X` indica uma coluna do eixo expandido que não possui base naquele haplótipo. Isso ocorre, por exemplo, quando a coluna representa uma inserção presente em outro indivíduo ou uma posição deletada no indivíduo atual.
+
+### P.3 Visualização em colunas
+
+Para converter o TSV para uma visualização comparável com `more` ou `less`:
+
+```bash
+source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.aligned_dna_columns genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.tsv genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.columns.txt
+```
+
+O formato fica:
+
+```text
+# gene=MC1R
+# expanded_length=524906
+pos    REF    HG00096_H1    HG00096_H2    HG00097_H1    HG00097_H2
+1      G      G             G             G             G
+2      C      C             C             C             C
+3      C      C             C             C             C
+```
+
+### P.4 Visualização com cores
+
+Para destacar diferenças em relação à referência e posições `X`, use `--color`:
+
+```bash
+source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.aligned_dna_columns genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.tsv genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.color.columns.txt --color
+```
+
+Convenção de cores:
+
+- `X` aparece em amarelo.
+- bases diferentes da referência aparecem em vermelho.
+- bases iguais à referência ficam sem destaque.
+
+Para abrir preservando as cores ANSI:
+
+```bash
+less -R genotype_based_predictor/aligned_dna_MC1R_ref_plus_5.color.columns.txt
+```
+
+### P.5 Todos os indivíduos de uma view
+
+Para usar todos os indivíduos definidos pela view ou, se a view não define amostras explicitamente, todos os indivíduos de `dataset_metadata.json`, use `--all-samples`:
+
+```bash
+source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.export_aligned_dna genotype_based_predictor/configs/one_gene_10_individuals.yaml genotype_based_predictor/aligned_dna_MC1R_all.tsv --gene MC1R --all-samples --batch-size 4
+```
+
+O argumento `--batch-size` controla quantos individuos sao processados por vez. Em maquinas com 16 GB RAM, recomenda-se `--batch-size 2` ou `--batch-size 4` para evitar uso excessivo de memoria.
+
+### P.6 Todos os genes de `genes_1000_all.yaml`
+
+A configuração `genotype_based_predictor/configs/genes_1000_all.yaml` usa a view `genes_1000_all`, que inclui os genes:
+
+```text
+MC1R TYRP1 TYR SLC45A2 DDB1 EDAR MFSD12 OCA2 HERC2 SLC24A5 TCHH
+```
+
+Para gerar um TSV por gene, para todos os individuos do dataset, use execucao em lotes. Evite rodar varios genes em paralelo em maquinas com pouca memoria:
+
+```bash
+source scripts/start_genomics_universal.sh
+mkdir -p genotype_based_predictor/aligned_dna_genes_1000_all
+
+for gene in MC1R TYRP1 TYR SLC45A2 DDB1 EDAR MFSD12 OCA2 HERC2 SLC24A5 TCHH; do
+  nice -n 10 python3 -m genotype_based_predictor.export_aligned_dna \
+    genotype_based_predictor/configs/genes_1000_all.yaml \
+    "genotype_based_predictor/aligned_dna_genes_1000_all/${gene}.tsv" \
+    --gene "$gene" \
+    --all-samples \
+    --batch-size 4
+done
+```
+
+Se o computador ficar lento, interrompa e reduza para `--batch-size 2`.
+
+Para gerar uma visualizacao colorida em texto de um gene ja exportado:
+
+```bash
+python3 -m genotype_based_predictor.aligned_dna_columns \
+  genotype_based_predictor/aligned_dna_genes_1000_all/MC1R.tsv \
+  genotype_based_predictor/aligned_dna_genes_1000_all/MC1R.color.columns.txt \
+  --color
+```
+
+Para abrir um gene específico:
+
+```bash
+less -R genotype_based_predictor/aligned_dna_genes_1000_all/MC1R.color.columns.txt
+```
+
+### P.7 Observações de desempenho
+
+O `DynamicIndelAligner` usa `bcftools query` quando `bcftools` está disponível no ambiente. Isso é o caminho recomendado para views grandes.
+
+Se `bcftools` não estiver disponível, o código possui um fallback que lê o `.vcf.gz` diretamente em Python. Esse fallback é útil para inspeções pequenas, mas é mais lento e não é recomendado para todos os indivíduos ou muitos genes.
+
+As visualizações em colunas podem ficar muito grandes. Para cerca de 1000 indivíduos, cada indivíduo gera duas colunas (`H1` e `H2`), além da coluna `REF` e da coluna `pos`. Portanto, cada arquivo por gene pode ter milhares de colunas e centenas de milhares de linhas. Nesses casos, prefira `less -R` em vez de `more`, ou gere subconjuntos menores com `--sample-limit`.
+
+### P.8 Interface web para TSVs alinhados
+
+Para explorar os TSVs sem converter tudo para uma tabela de texto gigante, use a interface web:
+
+```text
+genotype_based_predictor/aligned_dna_viewer.py
+```
+
+Ela lê arquivos `.tsv` gerados por `export_aligned_dna.py`, cria um índice pequeno (`.idx.json`) com os offsets das linhas e carrega apenas a janela de posições solicitada. Isso evita carregar o arquivo inteiro em memória.
+
+Para iniciar a interface usando um diretório com um `.tsv` por gene:
+
+```bash
+source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.aligned_dna_viewer genotype_based_predictor/aligned_dna_genes_1000_all --host 127.0.0.1 --port 8765
+```
+
+Depois abra no navegador:
+
+```text
+http://127.0.0.1:8765
+```
+
+Funcionalidades:
+
+- seleção do gene de interesse;
+- seleção de indivíduos por checkboxes;
+- filtros por superpopulação, população e busca textual;
+- seleção de `H1`, `H2` ou ambos;
+- escolha da posição inicial e tamanho da janela;
+- navegação por janela anterior/próxima;
+- opção de mostrar apenas posições com diferença em relação à referência;
+- coluna `index`, correspondente ao eixo alinhado/expandido;
+- coluna `ref genome pos`, correspondente à coordenada no genoma de referência;
+- célula vazia em `ref genome pos` quando a linha do `REF` contém `X`;
+- tabela de variantes do VCF contidas na janela selecionada;
+- destaque visual de diferenças em vermelho;
+- destaque de `X` em amarelo.
+
+Por padrão, a API limita a renderização a 200.000 células por requisição. Isso protege máquinas com pouca memória e evita travar o navegador. Para alterar o limite:
+
+```bash
+source scripts/start_genomics_universal.sh && python3 -m genotype_based_predictor.aligned_dna_viewer genotype_based_predictor/aligned_dna_genes_1000_all --host 127.0.0.1 --port 8765 --max-cells 300000
+```
+
+Evite selecionar todos os indivíduos com janelas muito grandes. Para uma análise ampla, use janelas menores ou ative a opção de mostrar apenas variantes.

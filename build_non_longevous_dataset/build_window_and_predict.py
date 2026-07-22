@@ -387,6 +387,14 @@ def bcftools_consensus_per_hap(ref_window_fa: Path, vcf_window_gz: Path, out_fa:
         f.write(proc.stdout)
 
 
+def _bcftools_type_filter_args(variant_filter: str) -> list:
+    if variant_filter == "all":
+        return []
+    if variant_filter == "snps":
+        return ["-v", "snps"]
+    raise ValueError(f"variant_filter invalido: {variant_filter}")
+
+
 def process_window(
     sample: str,
     target_name: str,
@@ -450,20 +458,24 @@ def process_window(
         with open(ref_window_fa, "w") as f:
             f.write(proc.stdout)
     
-    # 2) Subset VCF to sample+region
+    # 2) Subset VCF to sample+region. Optionally keep only SNPs so consensus
+    # stays reference-length and downstream DNA alignment is unnecessary.
     vcf_window = case_dir / f"{sample}.window.vcf.gz"
     vcf_window_tbi = Path(str(vcf_window) + ".tbi")
     if vcf_window.exists() and vcf_window_tbi.exists():
         print(f"[INFO] VCF window already exists: {vcf_window}")
     else:
-        print("[INFO] Subsetting VCF to sample+region ...")
-        run([
+        variant_filter = getattr(args, "variant_filter", "all")
+        print(f"[INFO] Subsetting VCF to sample+region (variant_filter={variant_filter}) ...")
+        cmd = [
             "bcftools", "view",
             "-s", sample,
             "-r", region,
+            *_bcftools_type_filter_args(variant_filter),
             "-Oz", "-o", str(vcf_window),
             str(vcf_path)
-        ], check=True)
+        ]
+        run(cmd, check=True)
         run(["bcftools", "index", "-t", str(vcf_window)], check=True)
     
     # 2b) Filter unsupported symbolic alleles for consensus
@@ -735,6 +747,8 @@ def main():
     ap.add_argument("--also-iupac", action="store_true", help="Also build an IUPAC-coded window")
     ap.add_argument("--reference-only", action="store_true", 
                     help="Use reference genome only (ignore VCFs, for debug)")
+    ap.add_argument("--variant-filter", choices=["all", "snps"], default="all",
+                    help="Variants used to build personalized FASTA. 'snps' excludes INDEL/SV before consensus.")
     ap.add_argument("--api-key", help="AlphaGenome API key (or set ALPHAGENOME_API_KEY env var)")
     ap.add_argument("--ontology", "--tissue", dest="ontology", help="Ontology CURIE(s) for tissue/cell type. Single: UBERON:0002107. Multiple (comma-separated): UBERON:0002107,CL:0002601. If not provided, uses all tissues/cells.")
     ap.add_argument("--outputs", default="RNA-seq", help="Comma-separated requested outputs (e.g., RNA-seq,ATAC-seq)")
