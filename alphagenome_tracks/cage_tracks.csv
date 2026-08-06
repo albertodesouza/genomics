@@ -1,0 +1,547 @@
+,name,strand,Assay title,ontology_curie,biosample_name,biosample_type,data_source,nonzero_mean
+0,LQhCAGE CL:0000077,+,LQhCAGE,CL:0000077,mesothelial cell,primary_cell,fantom,272.4184265136719
+1,LQhCAGE CL:0000136,+,LQhCAGE,CL:0000136,fat cell,primary_cell,fantom,41.71626663208008
+2,LQhCAGE CL:0000767,+,LQhCAGE,CL:0000767,basophil,primary_cell,fantom,59.45576095581055
+3,LQhCAGE CL:0000771,+,LQhCAGE,CL:0000771,eosinophil,primary_cell,fantom,119.22451782226562
+4,LQhCAGE CL:0000775,+,LQhCAGE,CL:0000775,neutrophil,primary_cell,fantom,339.38720703125
+5,LQhCAGE CL:0000784,+,LQhCAGE,CL:0000784,plasmacytoid dendritic cell,primary_cell,fantom,103.1607666015625
+6,LQhCAGE CL:0000840,+,LQhCAGE,CL:0000840,immature conventional dendritic cell,primary_cell,fantom,826.5433959960938
+7,LQhCAGE CL:0000895,+,LQhCAGE,CL:0000895,"naive thymus-derived CD4-positive, alpha-beta T cell",primary_cell,fantom,91.95846557617188
+8,LQhCAGE CL:0002092,+,LQhCAGE,CL:0002092,bone marrow cell,primary_cell,fantom,112.50702667236328
+9,LQhCAGE CL:0002166,+,LQhCAGE,CL:0002166,epithelial cell of Malassez,primary_cell,fantom,278.642333984375
+10,LQhCAGE CL:0002167,+,LQhCAGE,CL:0002167,olfactory epithelial cell,primary_cell,fantom,78.36111450195312
+11,LQhCAGE CL:0002193,+,LQhCAGE,CL:0002193,myelocyte,primary_cell,fantom,242.18133544921875
+12,LQhCAGE CL:0002397,+,LQhCAGE,CL:0002397,"CD14-positive, CD16-positive monocyte",primary_cell,fantom,75.36024475097656
+13,LQhCAGE CL:0002677,+,LQhCAGE,CL:0002677,naive regulatory T cell,primary_cell,fantom,60.0953369140625
+14,LQhCAGE UBERON:0012168,+,LQhCAGE,UBERON:0012168,umbilical cord blood,primary_cell,fantom,1110.8236083984375
+15,hCAGE CL:0000047,+,hCAGE,CL:0000047,neuronal stem cell,primary_cell,fantom,12.134684562683105
+16,hCAGE CL:0000062,+,hCAGE,CL:0000062,osteoblast,primary_cell,fantom,30.61863136291504
+17,hCAGE CL:0000077,+,hCAGE,CL:0000077,mesothelial cell,primary_cell,fantom,41.45215606689453
+18,hCAGE CL:0000097,+,hCAGE,CL:0000097,mast cell,primary_cell,fantom,6.240642070770264
+19,hCAGE CL:0000134,+,hCAGE,CL:0000134,mesenchymal cell,primary_cell,fantom,37.52719497680664
+20,hCAGE CL:0000138,+,hCAGE,CL:0000138,chondrocyte,primary_cell,fantom,21.439882278442383
+21,hCAGE CL:0000182,+,hCAGE,CL:0000182,hepatocyte,primary_cell,fantom,34.04872131347656
+22,hCAGE CL:0000188,+,hCAGE,CL:0000188,cell of skeletal muscle,primary_cell,fantom,24.676044464111328
+23,hCAGE CL:0000214,+,hCAGE,CL:0000214,synovial cell,primary_cell,fantom,14.118721961975098
+24,hCAGE CL:0000216,+,hCAGE,CL:0000216,Sertoli cell,primary_cell,fantom,276.9911193847656
+25,hCAGE CL:0000235,+,hCAGE,CL:0000235,macrophage,primary_cell,fantom,39.823516845703125
+26,hCAGE CL:0000307,+,hCAGE,CL:0000307,tracheal epithelial cell,primary_cell,fantom,43.87181091308594
+27,hCAGE CL:0000312,+,hCAGE,CL:0000312,keratinocyte,primary_cell,fantom,33.14148712158203
+28,hCAGE CL:0000322,+,hCAGE,CL:0000322,pneumocyte,primary_cell,fantom,134.20896911621094
+29,hCAGE CL:0000388,+,hCAGE,CL:0000388,tendon cell,primary_cell,fantom,55.28364944458008
+30,hCAGE CL:0000453,+,hCAGE,CL:0000453,Langerhans cell,primary_cell,fantom,16.974895477294922
+31,hCAGE CL:0000515,+,hCAGE,CL:0000515,skeletal muscle myoblast,primary_cell,fantom,33.86757278442383
+32,hCAGE CL:0000540,+,hCAGE,CL:0000540,neuron,primary_cell,fantom,10.895456314086914
+33,hCAGE CL:0000558,+,hCAGE,CL:0000558,reticulocyte,primary_cell,fantom,46.566463470458984
+34,hCAGE CL:0000569,+,hCAGE,CL:0000569,cardiac mesenchymal cell,primary_cell,fantom,31.969520568847656
+35,hCAGE CL:0000575,+,hCAGE,CL:0000575,corneal epithelial cell,primary_cell,fantom,100.49095153808594
+36,hCAGE CL:0000576,+,hCAGE,CL:0000576,monocyte,primary_cell,fantom,15.824190139770508
+37,hCAGE CL:0000594,+,hCAGE,CL:0000594,skeletal muscle satellite cell,primary_cell,fantom,25.070316314697266
+38,hCAGE CL:0000623,+,hCAGE,CL:0000623,natural killer cell,primary_cell,fantom,17.459035873413086
+39,hCAGE CL:0000650,+,hCAGE,CL:0000650,mesangial cell,primary_cell,fantom,88.14716339111328
+40,hCAGE CL:0000708,+,hCAGE,CL:0000708,leptomeningeal cell,primary_cell,fantom,47.9016227722168
+41,hCAGE CL:0000731,+,hCAGE,CL:0000731,urothelial cell,primary_cell,fantom,67.40660858154297
+42,hCAGE CL:0000746,+,hCAGE,CL:0000746,cardiac muscle cell,primary_cell,fantom,72.80142974853516
+43,hCAGE CL:0000767,+,hCAGE,CL:0000767,basophil,primary_cell,fantom,62.97188949584961
+44,hCAGE CL:0000775,+,hCAGE,CL:0000775,neutrophil,primary_cell,fantom,36.77899932861328
+45,hCAGE CL:0000784,+,hCAGE,CL:0000784,plasmacytoid dendritic cell,primary_cell,fantom,89.53435516357422
+46,hCAGE CL:0000798,+,hCAGE,CL:0000798,gamma-delta T cell,primary_cell,fantom,66.08777618408203
+47,hCAGE CL:0000840,+,hCAGE,CL:0000840,immature conventional dendritic cell,primary_cell,fantom,32.85494613647461
+48,hCAGE CL:0001016,+,hCAGE,CL:0001016,immature CD1a-positive Langerhans cell,primary_cell,fantom,27.767858505249023
+49,hCAGE CL:0002057,+,hCAGE,CL:0002057,"CD14-positive, CD16-negative classical monocyte",primary_cell,fantom,17.50489616394043
+50,hCAGE CL:0002138,+,hCAGE,CL:0002138,endothelial cell of lymphatic vessel,primary_cell,fantom,57.86992263793945
+51,hCAGE CL:0002140,+,hCAGE,CL:0002140,acinar cell of sebaceous gland,primary_cell,fantom,89.7684555053711
+52,hCAGE CL:0002144,+,hCAGE,CL:0002144,capillary endothelial cell,primary_cell,fantom,66.49445343017578
+53,hCAGE CL:0002166,+,hCAGE,CL:0002166,epithelial cell of Malassez,primary_cell,fantom,40.9921989440918
+54,hCAGE CL:0002167,+,hCAGE,CL:0002167,olfactory epithelial cell,primary_cell,fantom,18.670610427856445
+55,hCAGE CL:0002188,+,hCAGE,CL:0002188,glomerular endothelial cell,primary_cell,fantom,45.9676513671875
+56,hCAGE CL:0002224,+,hCAGE,CL:0002224,lens epithelial cell,primary_cell,fantom,24.04073143005371
+57,hCAGE CL:0002231,+,hCAGE,CL:0002231,epithelial cell of prostate,primary_cell,fantom,25.89071273803711
+58,hCAGE CL:0002252,+,hCAGE,CL:0002252,epithelial cell of esophagus,primary_cell,fantom,180.217529296875
+59,hCAGE CL:0002304,+,hCAGE,CL:0002304,non-pigmented ciliary epithelial cell,primary_cell,fantom,22.071800231933594
+60,hCAGE CL:0002306,+,hCAGE,CL:0002306,epithelial cell of proximal tubule,primary_cell,fantom,71.96795654296875
+61,hCAGE CL:0002327,+,hCAGE,CL:0002327,mammary gland epithelial cell,primary_cell,fantom,26.254535675048828
+62,hCAGE CL:0002328,+,hCAGE,CL:0002328,bronchial epithelial cell,primary_cell,fantom,36.56751251220703
+63,hCAGE CL:0002363,+,hCAGE,CL:0002363,keratocyte,primary_cell,fantom,73.38771057128906
+64,hCAGE CL:0002367,+,hCAGE,CL:0002367,trabecular meshwork cell,primary_cell,fantom,105.23827362060547
+65,hCAGE CL:0002368,+,hCAGE,CL:0002368,respiratory epithelial cell,primary_cell,fantom,33.22234344482422
+66,hCAGE CL:0002372,+,hCAGE,CL:0002372,myotube,primary_cell,fantom,42.713294982910156
+67,hCAGE CL:0002397,+,hCAGE,CL:0002397,"CD14-positive, CD16-positive monocyte",primary_cell,fantom,13.204062461853027
+68,hCAGE CL:0002453,+,hCAGE,CL:0002453,oligodendrocyte precursor cell,primary_cell,fantom,151.70761108398438
+69,hCAGE CL:0002504,+,hCAGE,CL:0002504,enteric smooth muscle cell,primary_cell,fantom,35.44852828979492
+70,hCAGE CL:0002521,+,hCAGE,CL:0002521,subcutaneous fat cell,primary_cell,fantom,77.64310455322266
+71,hCAGE CL:0002536,+,hCAGE,CL:0002536,amniotic epithelial cell,primary_cell,fantom,76.5748062133789
+72,hCAGE CL:0002537,+,hCAGE,CL:0002537,amnion mesenchymal stem cell,primary_cell,fantom,89.0509033203125
+73,hCAGE CL:0002539,+,hCAGE,CL:0002539,aortic smooth muscle cell,primary_cell,fantom,63.35017776489258
+74,hCAGE CL:0002540,+,hCAGE,CL:0002540,mesenchymal stem cell of the bone marrow,primary_cell,fantom,27.279977798461914
+75,hCAGE CL:0002543,+,hCAGE,CL:0002543,vein endothelial cell,primary_cell,fantom,67.78170776367188
+76,hCAGE CL:0002544,+,hCAGE,CL:0002544,aortic endothelial cell,primary_cell,fantom,64.3360824584961
+77,hCAGE CL:0002545,+,hCAGE,CL:0002545,thoracic aorta endothelial cell,primary_cell,fantom,122.50443267822266
+78,hCAGE CL:0002547,+,hCAGE,CL:0002547,fibroblast of the aortic adventitia,primary_cell,fantom,37.147178649902344
+79,hCAGE CL:0002548,+,hCAGE,CL:0002548,cardiac fibroblast,primary_cell,fantom,29.91438102722168
+80,hCAGE CL:0002549,+,hCAGE,CL:0002549,fibroblast of choroid plexus,primary_cell,fantom,71.33724975585938
+81,hCAGE CL:0002550,+,hCAGE,CL:0002550,fibroblast of the conjuctiva,primary_cell,fantom,21.54827880859375
+82,hCAGE CL:0002551,+,hCAGE,CL:0002551,fibroblast of dermis,primary_cell,fantom,19.51736068725586
+83,hCAGE CL:0002552,+,hCAGE,CL:0002552,fibroblast of gingiva,primary_cell,fantom,9.673295021057129
+84,hCAGE CL:0002553,+,hCAGE,CL:0002553,lung fibroblast,primary_cell,fantom,47.210205078125
+85,hCAGE CL:0002554,+,hCAGE,CL:0002554,fibroblast of lymphatic vessel,primary_cell,fantom,165.5852508544922
+86,hCAGE CL:0002555,+,hCAGE,CL:0002555,fibroblast of mammary gland,primary_cell,fantom,183.86680603027344
+87,hCAGE CL:0002556,+,hCAGE,CL:0002556,fibroblast of periodontium,primary_cell,fantom,27.91110610961914
+88,hCAGE CL:0002557,+,hCAGE,CL:0002557,fibroblast of pulmonary artery,primary_cell,fantom,62.941715240478516
+89,hCAGE CL:0002558,+,hCAGE,CL:0002558,fibroblast of villous mesenchyme,primary_cell,fantom,87.75638580322266
+90,hCAGE CL:0002561,+,hCAGE,CL:0002561,outer root sheath cell,primary_cell,fantom,96.74041748046875
+91,hCAGE CL:0002563,+,hCAGE,CL:0002563,intestinal epithelial cell,primary_cell,fantom,69.25311279296875
+92,hCAGE CL:0002564,+,hCAGE,CL:0002564,nucleus pulposus cell of intervertebral disc,primary_cell,fantom,50.26506423950195
+93,hCAGE CL:0002565,+,hCAGE,CL:0002565,iris pigment epithelial cell,primary_cell,fantom,41.941837310791016
+94,hCAGE CL:0002566,+,hCAGE,CL:0002566,dark melanocyte,primary_cell,fantom,33.85832595825195
+95,hCAGE CL:0002567,+,hCAGE,CL:0002567,light melanocyte,primary_cell,fantom,91.54637908935547
+96,hCAGE CL:0002568,+,hCAGE,CL:0002568,mesenchymal stem cell of Wharton's jelly,primary_cell,fantom,74.28569030761719
+97,hCAGE CL:0002569,+,hCAGE,CL:0002569,mesenchymal stem cell of umbilical cord,primary_cell,fantom,57.37498474121094
+98,hCAGE CL:0002570,+,hCAGE,CL:0002570,mesenchymal stem cell of adipose,primary_cell,fantom,36.561710357666016
+99,hCAGE CL:0002571,+,hCAGE,CL:0002571,hepatic mesenchymal stem cell,primary_cell,fantom,18.6415958404541
+100,hCAGE CL:0002572,+,hCAGE,CL:0002572,vertebral mesenchymal stem cell,primary_cell,fantom,157.3568572998047
+101,hCAGE CL:0002573,+,hCAGE,CL:0002573,Schwann cell,primary_cell,fantom,67.37821960449219
+102,hCAGE CL:0002574,+,hCAGE,CL:0002574,stromal cell of pancreas,primary_cell,fantom,54.611366271972656
+103,hCAGE CL:0002575,+,hCAGE,CL:0002575,central nervous system pericyte,primary_cell,fantom,59.45750427246094
+104,hCAGE CL:0002576,+,hCAGE,CL:0002576,perineural cell,primary_cell,fantom,47.03921127319336
+105,hCAGE CL:0002577,+,hCAGE,CL:0002577,placental epithelial cell,primary_cell,fantom,76.00321197509766
+106,hCAGE CL:0002579,+,hCAGE,CL:0002579,omentum preadipocyte,primary_cell,fantom,26.805828094482422
+107,hCAGE CL:0002580,+,hCAGE,CL:0002580,preadipocyte of the breast,primary_cell,fantom,62.83474349975586
+108,hCAGE CL:0002581,+,hCAGE,CL:0002581,perirenal preadipocyte,primary_cell,fantom,397.037353515625
+109,hCAGE CL:0002582,+,hCAGE,CL:0002582,visceral preadipocyte,primary_cell,fantom,23.0330753326416
+110,hCAGE CL:0002583,+,hCAGE,CL:0002583,subcutaneous preadipocyte,primary_cell,fantom,33.97900390625
+111,hCAGE CL:0002584,+,hCAGE,CL:0002584,renal cortical epithelial cell,primary_cell,fantom,41.12630081176758
+112,hCAGE CL:0002586,+,hCAGE,CL:0002586,retinal pigment epithelial cell,primary_cell,fantom,59.10931396484375
+113,hCAGE CL:0002588,+,hCAGE,CL:0002588,smooth muscle cell of the umbilical vein,primary_cell,fantom,48.645050048828125
+114,hCAGE CL:0002589,+,hCAGE,CL:0002589,smooth muscle cell of the brachiocephalic vasculature,primary_cell,fantom,26.21996307373047
+115,hCAGE CL:0002590,+,hCAGE,CL:0002590,smooth muscle cell of the brain vasculature,primary_cell,fantom,54.19729995727539
+116,hCAGE CL:0002591,+,hCAGE,CL:0002591,smooth muscle cell of the pulmonary artery,primary_cell,fantom,60.34335708618164
+117,hCAGE CL:0002592,+,hCAGE,CL:0002592,smooth muscle cell of the coronary artery,primary_cell,fantom,75.50702667236328
+118,hCAGE CL:0002593,+,hCAGE,CL:0002593,smooth muscle cell of the internal thoracic artery,primary_cell,fantom,30.01109504699707
+119,hCAGE CL:0002594,+,hCAGE,CL:0002594,smooth muscle cell of the umbilical artery,primary_cell,fantom,48.85675048828125
+120,hCAGE CL:0002595,+,hCAGE,CL:0002595,smooth muscle cell of the subclavian artery,primary_cell,fantom,84.72882843017578
+121,hCAGE CL:0002596,+,hCAGE,CL:0002596,smooth muscle cell of the carotid artery,primary_cell,fantom,107.90396118164062
+122,hCAGE CL:0002597,+,hCAGE,CL:0002597,smooth muscle cell of bladder,primary_cell,fantom,305.0801696777344
+123,hCAGE CL:0002598,+,hCAGE,CL:0002598,bronchial smooth muscle cell,primary_cell,fantom,157.73635864257812
+124,hCAGE CL:0002599,+,hCAGE,CL:0002599,smooth muscle cell of the esophagus,primary_cell,fantom,41.33835220336914
+125,hCAGE CL:0002600,+,hCAGE,CL:0002600,smooth muscle cell of trachea,primary_cell,fantom,57.2053108215332
+126,hCAGE CL:0002601,+,hCAGE,CL:0002601,uterine smooth muscle cell,primary_cell,fantom,74.29872131347656
+127,hCAGE CL:0002602,+,hCAGE,CL:0002602,annulus pulposus cell,primary_cell,fantom,65.11280059814453
+128,hCAGE CL:0002603,+,hCAGE,CL:0002603,astrocyte of the cerebellum,primary_cell,fantom,51.632850646972656
+129,hCAGE CL:0002605,+,hCAGE,CL:0002605,astrocyte of the cerebral cortex,primary_cell,fantom,28.462190628051758
+130,hCAGE CL:0002615,+,hCAGE,CL:0002615,adipocyte of omentum tissue,primary_cell,fantom,49.05179214477539
+131,hCAGE CL:0002616,+,hCAGE,CL:0002616,perirenal adipocyte cell,primary_cell,fantom,215.66867065429688
+132,hCAGE CL:0002617,+,hCAGE,CL:0002617,adipocyte of breast,primary_cell,fantom,44.72285842895508
+133,hCAGE CL:0002618,+,hCAGE,CL:0002618,endothelial cell of umbilical vein,primary_cell,fantom,32.87194061279297
+134,hCAGE CL:0002620,+,hCAGE,CL:0002620,skin fibroblast,primary_cell,fantom,16.08747100830078
+135,hCAGE CL:0002621,+,hCAGE,CL:0002621,gingival epithelial cell,primary_cell,fantom,49.712242126464844
+136,hCAGE CL:0002622,+,hCAGE,CL:0002622,prostate stromal cell,primary_cell,fantom,32.768733978271484
+137,hCAGE CL:0002623,+,hCAGE,CL:0002623,acinar cell of salivary gland,primary_cell,fantom,34.9274787902832
+138,hCAGE CL:0002677,+,hCAGE,CL:0002677,naive regulatory T cell,primary_cell,fantom,61.674278259277344
+139,hCAGE CL:1000280,+,hCAGE,CL:1000280,smooth muscle cell of colon,primary_cell,fantom,36.03932189941406
+140,hCAGE CL:1000413,+,hCAGE,CL:1000413,endothelial cell of artery,primary_cell,fantom,60.48858642578125
+141,hCAGE CL:1000428,+,hCAGE,CL:1000428,stem cell of epidermis,primary_cell,fantom,120.64453125
+142,hCAGE CL:1000487,+,hCAGE,CL:1000487,smooth muscle cell of prostate,primary_cell,fantom,38.214168548583984
+143,hCAGE CL:1000494,+,hCAGE,CL:1000494,nephron tubule epithelial cell,primary_cell,fantom,40.157440185546875
+144,hCAGE EFO:0001086,+,hCAGE,EFO:0001086,A549,cell_line,fantom,98.9642562866211
+145,hCAGE EFO:0001099,+,hCAGE,EFO:0001099,Caco-2,cell_line,fantom,88.74836730957031
+146,hCAGE EFO:0001182,+,hCAGE,EFO:0001182,HEK293,cell_line,fantom,41.831764221191406
+147,hCAGE EFO:0001187,+,hCAGE,EFO:0001187,HepG2,cell_line,fantom,22.447940826416016
+148,hCAGE EFO:0001253,+,hCAGE,EFO:0001253,THP-1,cell_line,fantom,56.61591339111328
+149,hCAGE EFO:0002059,+,hCAGE,EFO:0002059,HT1080,cell_line,fantom,65.99971771240234
+150,hCAGE EFO:0002067,+,hCAGE,EFO:0002067,K562,cell_line,fantom,35.16718292236328
+151,hCAGE EFO:0002074,+,hCAGE,EFO:0002074,PC-3,cell_line,fantom,47.83613204956055
+152,hCAGE EFO:0002101,+,hCAGE,EFO:0002101,A172,cell_line,fantom,35.259254455566406
+153,hCAGE EFO:0002179,+,hCAGE,EFO:0002179,G401,cell_line,fantom,54.055908203125
+154,hCAGE EFO:0002285,+,hCAGE,EFO:0002285,NCI-H226,cell_line,fantom,86.6911849975586
+155,hCAGE EFO:0002324,+,hCAGE,EFO:0002324,Raji,cell_line,fantom,57.717403411865234
+156,hCAGE EFO:0002784,+,hCAGE,EFO:0002784,GM12878,cell_line,fantom,21.34037971496582
+157,hCAGE EFO:0002791,+,hCAGE,EFO:0002791,HeLa-S3,cell_line,fantom,23.797666549682617
+158,hCAGE EFO:0002793,+,hCAGE,EFO:0002793,HL-60,cell_line,fantom,79.93690490722656
+159,hCAGE EFO:0002796,+,hCAGE,EFO:0002796,Jurkat,cell_line,fantom,64.35321807861328
+160,hCAGE EFO:0002860,+,hCAGE,EFO:0002860,SK-N-MC,cell_line,fantom,180.7675323486328
+161,hCAGE EFO:0003044,+,hCAGE,EFO:0003044,NCI-H460,cell_line,fantom,78.24180603027344
+162,hCAGE EFO:0005441,+,hCAGE,EFO:0005441,DU 145,cell_line,fantom,57.9163932800293
+163,hCAGE UBERON:0000002,+,hCAGE,UBERON:0000002,uterine cervix,tissue,fantom,35.90520477294922
+164,hCAGE UBERON:0000007,+,hCAGE,UBERON:0000007,pituitary gland,tissue,fantom,38.91667938232422
+165,hCAGE UBERON:0000014,+,hCAGE,UBERON:0000014,zone of skin,tissue,fantom,90.9419937133789
+166,hCAGE UBERON:0000019,+,hCAGE,UBERON:0000019,camera-type eye,tissue,fantom,73.05904388427734
+167,hCAGE UBERON:0000029,+,hCAGE,UBERON:0000029,lymph node,tissue,fantom,132.45211791992188
+168,hCAGE UBERON:0000057,+,hCAGE,UBERON:0000057,urethra,tissue,fantom,21.93443489074707
+169,hCAGE UBERON:0000178,+,hCAGE,UBERON:0000178,blood,primary_cell,fantom,13.531624794006348
+170,hCAGE UBERON:0000305,+,hCAGE,UBERON:0000305,amnion,primary_cell,fantom,44.147254943847656
+171,hCAGE UBERON:0000310,+,hCAGE,UBERON:0000310,breast,tissue,fantom,203.0039520263672
+172,hCAGE UBERON:0000341,+,hCAGE,UBERON:0000341,throat,tissue,fantom,36.27021789550781
+173,hCAGE UBERON:0000473,+,hCAGE,UBERON:0000473,testis,tissue,fantom,19.597055435180664
+174,hCAGE UBERON:0000920,+,hCAGE,UBERON:0000920,egg chorion,primary_cell,fantom,31.856163024902344
+175,hCAGE UBERON:0000941,+,hCAGE,UBERON:0000941,cranial nerve II,tissue,fantom,43.41749954223633
+176,hCAGE UBERON:0000945,+,hCAGE,UBERON:0000945,stomach,tissue,fantom,149.30126953125
+177,hCAGE UBERON:0000947,+,hCAGE,UBERON:0000947,aorta,tissue,fantom,51.7029914855957
+178,hCAGE UBERON:0000948,+,hCAGE,UBERON:0000948,heart,tissue,fantom,21.7347412109375
+179,hCAGE UBERON:0000955,+,hCAGE,UBERON:0000955,brain,tissue,fantom,28.4322452545166
+180,hCAGE UBERON:0000966,+,hCAGE,UBERON:0000966,retina,tissue,fantom,32.83579635620117
+181,hCAGE UBERON:0000988,+,hCAGE,UBERON:0000988,pons,tissue,fantom,28.069860458374023
+182,hCAGE UBERON:0000989,+,hCAGE,UBERON:0000989,penis,tissue,fantom,55.62895965576172
+183,hCAGE UBERON:0000992,+,hCAGE,UBERON:0000992,female gonad,tissue,fantom,46.649906158447266
+184,hCAGE UBERON:0000995,+,hCAGE,UBERON:0000995,uterus,tissue,fantom,59.67921447753906
+185,hCAGE UBERON:0000996,+,hCAGE,UBERON:0000996,vagina,tissue,fantom,192.70404052734375
+186,hCAGE UBERON:0000998,+,hCAGE,UBERON:0000998,seminal vesicle,tissue,fantom,43.64366149902344
+187,hCAGE UBERON:0001000,+,hCAGE,UBERON:0001000,vas deferens,tissue,fantom,68.61293029785156
+188,hCAGE UBERON:0001013,+,hCAGE,UBERON:0001013,adipose tissue,tissue,fantom,21.103422164916992
+189,hCAGE UBERON:0001043,+,hCAGE,UBERON:0001043,esophagus,tissue,fantom,51.76528549194336
+190,hCAGE UBERON:0001044,+,hCAGE,UBERON:0001044,saliva-secreting gland,tissue,fantom,148.62879943847656
+191,hCAGE UBERON:0001052,+,hCAGE,UBERON:0001052,rectum,tissue,fantom,130.85585021972656
+192,hCAGE UBERON:0001103,+,hCAGE,UBERON:0001103,diaphragm,tissue,fantom,117.9341049194336
+193,hCAGE UBERON:0001134,+,hCAGE,UBERON:0001134,skeletal muscle tissue,tissue,fantom,50.37820816040039
+194,hCAGE UBERON:0001135,+,hCAGE,UBERON:0001135,smooth muscle tissue,tissue,fantom,28.285898208618164
+195,hCAGE UBERON:0001154,+,hCAGE,UBERON:0001154,vermiform appendix,tissue,fantom,80.126708984375
+196,hCAGE UBERON:0001155,+,hCAGE,UBERON:0001155,colon,tissue,fantom,35.34465789794922
+197,hCAGE UBERON:0001255,+,hCAGE,UBERON:0001255,urinary bladder,tissue,fantom,48.4241943359375
+198,hCAGE UBERON:0001264,+,hCAGE,UBERON:0001264,pancreas,tissue,fantom,188.36380004882812
+199,hCAGE UBERON:0001301,+,hCAGE,UBERON:0001301,epididymis,tissue,fantom,41.035892486572266
+200,hCAGE UBERON:0001359,+,hCAGE,UBERON:0001359,cerebrospinal fluid,tissue,fantom,66.41242980957031
+201,hCAGE UBERON:0001389,+,hCAGE,UBERON:0001389,soleus muscle,tissue,fantom,52.885318756103516
+202,hCAGE UBERON:0001602,+,hCAGE,UBERON:0001602,medial rectus extraocular muscle,tissue,fantom,72.61691284179688
+203,hCAGE UBERON:0001603,+,hCAGE,UBERON:0001603,lateral rectus extra-ocular muscle,tissue,fantom,64.0296401977539
+204,hCAGE UBERON:0001637,+,hCAGE,UBERON:0001637,artery,tissue,fantom,176.23216247558594
+205,hCAGE UBERON:0001638,+,hCAGE,UBERON:0001638,vein,tissue,fantom,73.34970092773438
+206,hCAGE UBERON:0001723,+,hCAGE,UBERON:0001723,tongue,tissue,fantom,45.90983963012695
+207,hCAGE UBERON:0001736,+,hCAGE,UBERON:0001736,submandibular gland,tissue,fantom,97.6734390258789
+208,hCAGE UBERON:0001797,+,hCAGE,UBERON:0001797,vitreous humor,tissue,fantom,51.01124954223633
+209,hCAGE UBERON:0001831,+,hCAGE,UBERON:0001831,parotid gland,tissue,fantom,186.81967163085938
+210,hCAGE UBERON:0001870,+,hCAGE,UBERON:0001870,frontal cortex,tissue,fantom,25.70257568359375
+211,hCAGE UBERON:0001871,+,hCAGE,UBERON:0001871,temporal lobe,tissue,fantom,17.146074295043945
+212,hCAGE UBERON:0001872,+,hCAGE,UBERON:0001872,parietal lobe,tissue,fantom,10.531946182250977
+213,hCAGE UBERON:0001873,+,hCAGE,UBERON:0001873,caudate nucleus,tissue,fantom,17.615751266479492
+214,hCAGE UBERON:0001874,+,hCAGE,UBERON:0001874,putamen,tissue,fantom,17.454984664916992
+215,hCAGE UBERON:0001875,+,hCAGE,UBERON:0001875,globus pallidus,tissue,fantom,8.468856811523438
+216,hCAGE UBERON:0001876,+,hCAGE,UBERON:0001876,amygdala,tissue,fantom,17.60308837890625
+217,hCAGE UBERON:0001882,+,hCAGE,UBERON:0001882,nucleus accumbens,tissue,fantom,27.704946517944336
+218,hCAGE UBERON:0001894,+,hCAGE,UBERON:0001894,diencephalon,tissue,fantom,68.8881607055664
+219,hCAGE UBERON:0001896,+,hCAGE,UBERON:0001896,medulla oblongata,tissue,fantom,13.257373809814453
+220,hCAGE UBERON:0001897,+,hCAGE,UBERON:0001897,dorsal plus ventral thalamus,tissue,fantom,11.435539245605469
+221,hCAGE UBERON:0001905,+,hCAGE,UBERON:0001905,pineal body,tissue,fantom,27.537044525146484
+222,hCAGE UBERON:0001954,+,hCAGE,UBERON:0001954,Ammon's horn,tissue,fantom,15.256468772888184
+223,hCAGE UBERON:0001987,+,hCAGE,UBERON:0001987,placenta,tissue,fantom,48.42684555053711
+224,hCAGE UBERON:0002021,+,hCAGE,UBERON:0002021,occipital lobe,tissue,fantom,9.989048957824707
+225,hCAGE UBERON:0002022,+,hCAGE,UBERON:0002022,insula,tissue,fantom,25.655611038208008
+226,hCAGE UBERON:0002037,+,hCAGE,UBERON:0002037,cerebellum,tissue,fantom,12.268932342529297
+227,hCAGE UBERON:0002038,+,hCAGE,UBERON:0002038,substantia nigra,tissue,fantom,21.84133529663086
+228,hCAGE UBERON:0002046,+,hCAGE,UBERON:0002046,thyroid gland,tissue,fantom,22.91981315612793
+229,hCAGE UBERON:0002048,+,hCAGE,UBERON:0002048,lung,tissue,fantom,30.655853271484375
+230,hCAGE UBERON:0002079,+,hCAGE,UBERON:0002079,left cardiac atrium,tissue,fantom,165.6048126220703
+231,hCAGE UBERON:0002084,+,hCAGE,UBERON:0002084,heart left ventricle,tissue,fantom,191.14132690429688
+232,hCAGE UBERON:0002106,+,hCAGE,UBERON:0002106,spleen,tissue,fantom,28.623931884765625
+233,hCAGE UBERON:0002107,+,hCAGE,UBERON:0002107,liver,tissue,fantom,63.86726379394531
+234,hCAGE UBERON:0002108,+,hCAGE,UBERON:0002108,small intestine,tissue,fantom,68.11326599121094
+235,hCAGE UBERON:0002110,+,hCAGE,UBERON:0002110,gallbladder,tissue,fantom,72.35385131835938
+236,hCAGE UBERON:0002113,+,hCAGE,UBERON:0002113,kidney,tissue,fantom,23.436513900756836
+237,hCAGE UBERON:0002114,+,hCAGE,UBERON:0002114,duodenum,tissue,fantom,62.15086364746094
+238,hCAGE UBERON:0002118,+,hCAGE,UBERON:0002118,right ovary,primary_cell,fantom,29.06232452392578
+239,hCAGE UBERON:0002119,+,hCAGE,UBERON:0002119,left ovary,primary_cell,fantom,37.69746398925781
+240,hCAGE UBERON:0002134,+,hCAGE,UBERON:0002134,tricuspid valve,tissue,fantom,33.244747161865234
+241,hCAGE UBERON:0002135,+,hCAGE,UBERON:0002135,mitral valve,tissue,fantom,50.091373443603516
+242,hCAGE UBERON:0002146,+,hCAGE,UBERON:0002146,pulmonary valve,tissue,fantom,19.755334854125977
+243,hCAGE UBERON:0002148,+,hCAGE,UBERON:0002148,locus ceruleus,tissue,fantom,9.926314353942871
+244,hCAGE UBERON:0002171,+,hCAGE,UBERON:0002171,lower lobe of right lung,tissue,fantom,65.2254638671875
+245,hCAGE UBERON:0002240,+,hCAGE,UBERON:0002240,spinal cord,tissue,fantom,15.438720703125
+246,hCAGE UBERON:0002331,+,hCAGE,UBERON:0002331,umbilical cord,tissue,fantom,234.72250366210938
+247,hCAGE UBERON:0002336,+,hCAGE,UBERON:0002336,corpus callosum,tissue,fantom,31.147842407226562
+248,hCAGE UBERON:0002360,+,hCAGE,UBERON:0002360,meninx,tissue,fantom,67.7375717163086
+249,hCAGE UBERON:0002363,+,hCAGE,UBERON:0002363,dura mater,tissue,fantom,34.17447280883789
+250,hCAGE UBERON:0002367,+,hCAGE,UBERON:0002367,prostate gland,tissue,fantom,47.3486328125
+251,hCAGE UBERON:0002369,+,hCAGE,UBERON:0002369,adrenal gland,tissue,fantom,829.8981323242188
+252,hCAGE UBERON:0002370,+,hCAGE,UBERON:0002370,thymus,tissue,fantom,22.066835403442383
+253,hCAGE UBERON:0002371,+,hCAGE,UBERON:0002371,bone marrow,tissue,fantom,23.103410720825195
+254,hCAGE UBERON:0002372,+,hCAGE,UBERON:0002372,tonsil,tissue,fantom,45.03621292114258
+255,hCAGE UBERON:0002448,+,hCAGE,UBERON:0002448,fungiform papilla,tissue,fantom,17.252410888671875
+256,hCAGE UBERON:0002581,+,hCAGE,UBERON:0002581,postcentral gyrus,tissue,fantom,30.33321762084961
+257,hCAGE UBERON:0002702,+,hCAGE,UBERON:0002702,middle frontal gyrus,tissue,fantom,15.349337577819824
+258,hCAGE UBERON:0002771,+,hCAGE,UBERON:0002771,middle temporal gyrus,tissue,fantom,10.49127197265625
+259,hCAGE UBERON:0002902,+,hCAGE,UBERON:0002902,occipital pole,tissue,fantom,36.809513092041016
+260,hCAGE UBERON:0003112,+,hCAGE,UBERON:0003112,olfactory region,tissue,fantom,32.72511672973633
+261,hCAGE UBERON:0003126,+,hCAGE,UBERON:0003126,trachea,tissue,fantom,33.11235046386719
+262,hCAGE UBERON:0003701,+,hCAGE,UBERON:0003701,calcaneal tendon,tissue,fantom,37.92416000366211
+263,hCAGE UBERON:0003729,+,hCAGE,UBERON:0003729,mouth mucosa,primary_cell,fantom,74.475830078125
+264,hCAGE UBERON:0004225,+,hCAGE,UBERON:0004225,respiratory system smooth muscle,primary_cell,fantom,21.150630950927734
+265,hCAGE UBERON:0005795,+,hCAGE,UBERON:0005795,embryonic uterus,tissue,fantom,100.48787689208984
+266,hCAGE UBERON:0006322,+,hCAGE,UBERON:0006322,inferior rectus extraocular muscle,tissue,fantom,34.49079513549805
+267,hCAGE UBERON:0006323,+,hCAGE,UBERON:0006323,superior rectus extraocular muscle,tissue,fantom,46.73567199707031
+268,hCAGE UBERON:0006659,+,hCAGE,UBERON:0006659,cruciate ligament of knee,tissue,fantom,23.395980834960938
+269,hCAGE UBERON:0007023,+,hCAGE,UBERON:0007023,adult organism,primary_cell,fantom,53.7227668762207
+270,hCAGE UBERON:0007190,+,hCAGE,UBERON:0007190,paracentral gyrus,tissue,fantom,29.09084129333496
+271,hCAGE UBERON:0008198,+,hCAGE,UBERON:0008198,nail plate,tissue,fantom,43.569461822509766
+272,hCAGE UBERON:0013777,+,hCAGE,UBERON:0013777,skin of palm of manus,tissue,fantom,43.870784759521484
+273,LQhCAGE CL:0000077,-,LQhCAGE,CL:0000077,mesothelial cell,primary_cell,fantom,272.4184265136719
+274,LQhCAGE CL:0000136,-,LQhCAGE,CL:0000136,fat cell,primary_cell,fantom,41.71626663208008
+275,LQhCAGE CL:0000767,-,LQhCAGE,CL:0000767,basophil,primary_cell,fantom,59.45576095581055
+276,LQhCAGE CL:0000771,-,LQhCAGE,CL:0000771,eosinophil,primary_cell,fantom,119.22451782226562
+277,LQhCAGE CL:0000775,-,LQhCAGE,CL:0000775,neutrophil,primary_cell,fantom,339.38720703125
+278,LQhCAGE CL:0000784,-,LQhCAGE,CL:0000784,plasmacytoid dendritic cell,primary_cell,fantom,103.1607666015625
+279,LQhCAGE CL:0000840,-,LQhCAGE,CL:0000840,immature conventional dendritic cell,primary_cell,fantom,826.5433959960938
+280,LQhCAGE CL:0000895,-,LQhCAGE,CL:0000895,"naive thymus-derived CD4-positive, alpha-beta T cell",primary_cell,fantom,91.95846557617188
+281,LQhCAGE CL:0002092,-,LQhCAGE,CL:0002092,bone marrow cell,primary_cell,fantom,112.50702667236328
+282,LQhCAGE CL:0002166,-,LQhCAGE,CL:0002166,epithelial cell of Malassez,primary_cell,fantom,278.642333984375
+283,LQhCAGE CL:0002167,-,LQhCAGE,CL:0002167,olfactory epithelial cell,primary_cell,fantom,78.36111450195312
+284,LQhCAGE CL:0002193,-,LQhCAGE,CL:0002193,myelocyte,primary_cell,fantom,242.18133544921875
+285,LQhCAGE CL:0002397,-,LQhCAGE,CL:0002397,"CD14-positive, CD16-positive monocyte",primary_cell,fantom,75.36024475097656
+286,LQhCAGE CL:0002677,-,LQhCAGE,CL:0002677,naive regulatory T cell,primary_cell,fantom,60.0953369140625
+287,LQhCAGE UBERON:0012168,-,LQhCAGE,UBERON:0012168,umbilical cord blood,primary_cell,fantom,1110.8236083984375
+288,hCAGE CL:0000047,-,hCAGE,CL:0000047,neuronal stem cell,primary_cell,fantom,12.134684562683105
+289,hCAGE CL:0000062,-,hCAGE,CL:0000062,osteoblast,primary_cell,fantom,30.61863136291504
+290,hCAGE CL:0000077,-,hCAGE,CL:0000077,mesothelial cell,primary_cell,fantom,41.45215606689453
+291,hCAGE CL:0000097,-,hCAGE,CL:0000097,mast cell,primary_cell,fantom,6.240642070770264
+292,hCAGE CL:0000134,-,hCAGE,CL:0000134,mesenchymal cell,primary_cell,fantom,37.52719497680664
+293,hCAGE CL:0000138,-,hCAGE,CL:0000138,chondrocyte,primary_cell,fantom,21.439882278442383
+294,hCAGE CL:0000182,-,hCAGE,CL:0000182,hepatocyte,primary_cell,fantom,34.04872131347656
+295,hCAGE CL:0000188,-,hCAGE,CL:0000188,cell of skeletal muscle,primary_cell,fantom,24.676044464111328
+296,hCAGE CL:0000214,-,hCAGE,CL:0000214,synovial cell,primary_cell,fantom,14.118721961975098
+297,hCAGE CL:0000216,-,hCAGE,CL:0000216,Sertoli cell,primary_cell,fantom,276.9911193847656
+298,hCAGE CL:0000235,-,hCAGE,CL:0000235,macrophage,primary_cell,fantom,39.823516845703125
+299,hCAGE CL:0000307,-,hCAGE,CL:0000307,tracheal epithelial cell,primary_cell,fantom,43.87181091308594
+300,hCAGE CL:0000312,-,hCAGE,CL:0000312,keratinocyte,primary_cell,fantom,33.14148712158203
+301,hCAGE CL:0000322,-,hCAGE,CL:0000322,pneumocyte,primary_cell,fantom,134.20896911621094
+302,hCAGE CL:0000388,-,hCAGE,CL:0000388,tendon cell,primary_cell,fantom,55.28364944458008
+303,hCAGE CL:0000453,-,hCAGE,CL:0000453,Langerhans cell,primary_cell,fantom,16.974895477294922
+304,hCAGE CL:0000515,-,hCAGE,CL:0000515,skeletal muscle myoblast,primary_cell,fantom,33.86757278442383
+305,hCAGE CL:0000540,-,hCAGE,CL:0000540,neuron,primary_cell,fantom,10.895456314086914
+306,hCAGE CL:0000558,-,hCAGE,CL:0000558,reticulocyte,primary_cell,fantom,46.566463470458984
+307,hCAGE CL:0000569,-,hCAGE,CL:0000569,cardiac mesenchymal cell,primary_cell,fantom,31.969520568847656
+308,hCAGE CL:0000575,-,hCAGE,CL:0000575,corneal epithelial cell,primary_cell,fantom,100.49095153808594
+309,hCAGE CL:0000576,-,hCAGE,CL:0000576,monocyte,primary_cell,fantom,15.824190139770508
+310,hCAGE CL:0000594,-,hCAGE,CL:0000594,skeletal muscle satellite cell,primary_cell,fantom,25.070316314697266
+311,hCAGE CL:0000623,-,hCAGE,CL:0000623,natural killer cell,primary_cell,fantom,17.459035873413086
+312,hCAGE CL:0000650,-,hCAGE,CL:0000650,mesangial cell,primary_cell,fantom,88.14716339111328
+313,hCAGE CL:0000708,-,hCAGE,CL:0000708,leptomeningeal cell,primary_cell,fantom,47.9016227722168
+314,hCAGE CL:0000731,-,hCAGE,CL:0000731,urothelial cell,primary_cell,fantom,67.40660858154297
+315,hCAGE CL:0000746,-,hCAGE,CL:0000746,cardiac muscle cell,primary_cell,fantom,72.80142974853516
+316,hCAGE CL:0000767,-,hCAGE,CL:0000767,basophil,primary_cell,fantom,62.97188949584961
+317,hCAGE CL:0000775,-,hCAGE,CL:0000775,neutrophil,primary_cell,fantom,36.77899932861328
+318,hCAGE CL:0000784,-,hCAGE,CL:0000784,plasmacytoid dendritic cell,primary_cell,fantom,89.53435516357422
+319,hCAGE CL:0000798,-,hCAGE,CL:0000798,gamma-delta T cell,primary_cell,fantom,66.08777618408203
+320,hCAGE CL:0000840,-,hCAGE,CL:0000840,immature conventional dendritic cell,primary_cell,fantom,32.85494613647461
+321,hCAGE CL:0001016,-,hCAGE,CL:0001016,immature CD1a-positive Langerhans cell,primary_cell,fantom,27.767858505249023
+322,hCAGE CL:0002057,-,hCAGE,CL:0002057,"CD14-positive, CD16-negative classical monocyte",primary_cell,fantom,17.50489616394043
+323,hCAGE CL:0002138,-,hCAGE,CL:0002138,endothelial cell of lymphatic vessel,primary_cell,fantom,57.86992263793945
+324,hCAGE CL:0002140,-,hCAGE,CL:0002140,acinar cell of sebaceous gland,primary_cell,fantom,89.7684555053711
+325,hCAGE CL:0002144,-,hCAGE,CL:0002144,capillary endothelial cell,primary_cell,fantom,66.49445343017578
+326,hCAGE CL:0002166,-,hCAGE,CL:0002166,epithelial cell of Malassez,primary_cell,fantom,40.9921989440918
+327,hCAGE CL:0002167,-,hCAGE,CL:0002167,olfactory epithelial cell,primary_cell,fantom,18.670610427856445
+328,hCAGE CL:0002188,-,hCAGE,CL:0002188,glomerular endothelial cell,primary_cell,fantom,45.9676513671875
+329,hCAGE CL:0002224,-,hCAGE,CL:0002224,lens epithelial cell,primary_cell,fantom,24.04073143005371
+330,hCAGE CL:0002231,-,hCAGE,CL:0002231,epithelial cell of prostate,primary_cell,fantom,25.89071273803711
+331,hCAGE CL:0002252,-,hCAGE,CL:0002252,epithelial cell of esophagus,primary_cell,fantom,180.217529296875
+332,hCAGE CL:0002304,-,hCAGE,CL:0002304,non-pigmented ciliary epithelial cell,primary_cell,fantom,22.071800231933594
+333,hCAGE CL:0002306,-,hCAGE,CL:0002306,epithelial cell of proximal tubule,primary_cell,fantom,71.96795654296875
+334,hCAGE CL:0002327,-,hCAGE,CL:0002327,mammary gland epithelial cell,primary_cell,fantom,26.254535675048828
+335,hCAGE CL:0002328,-,hCAGE,CL:0002328,bronchial epithelial cell,primary_cell,fantom,36.56751251220703
+336,hCAGE CL:0002363,-,hCAGE,CL:0002363,keratocyte,primary_cell,fantom,73.38771057128906
+337,hCAGE CL:0002367,-,hCAGE,CL:0002367,trabecular meshwork cell,primary_cell,fantom,105.23827362060547
+338,hCAGE CL:0002368,-,hCAGE,CL:0002368,respiratory epithelial cell,primary_cell,fantom,33.22234344482422
+339,hCAGE CL:0002372,-,hCAGE,CL:0002372,myotube,primary_cell,fantom,42.713294982910156
+340,hCAGE CL:0002397,-,hCAGE,CL:0002397,"CD14-positive, CD16-positive monocyte",primary_cell,fantom,13.204062461853027
+341,hCAGE CL:0002453,-,hCAGE,CL:0002453,oligodendrocyte precursor cell,primary_cell,fantom,151.70761108398438
+342,hCAGE CL:0002504,-,hCAGE,CL:0002504,enteric smooth muscle cell,primary_cell,fantom,35.44852828979492
+343,hCAGE CL:0002521,-,hCAGE,CL:0002521,subcutaneous fat cell,primary_cell,fantom,77.64310455322266
+344,hCAGE CL:0002536,-,hCAGE,CL:0002536,amniotic epithelial cell,primary_cell,fantom,76.5748062133789
+345,hCAGE CL:0002537,-,hCAGE,CL:0002537,amnion mesenchymal stem cell,primary_cell,fantom,89.0509033203125
+346,hCAGE CL:0002539,-,hCAGE,CL:0002539,aortic smooth muscle cell,primary_cell,fantom,63.35017776489258
+347,hCAGE CL:0002540,-,hCAGE,CL:0002540,mesenchymal stem cell of the bone marrow,primary_cell,fantom,27.279977798461914
+348,hCAGE CL:0002543,-,hCAGE,CL:0002543,vein endothelial cell,primary_cell,fantom,67.78170776367188
+349,hCAGE CL:0002544,-,hCAGE,CL:0002544,aortic endothelial cell,primary_cell,fantom,64.3360824584961
+350,hCAGE CL:0002545,-,hCAGE,CL:0002545,thoracic aorta endothelial cell,primary_cell,fantom,122.50443267822266
+351,hCAGE CL:0002547,-,hCAGE,CL:0002547,fibroblast of the aortic adventitia,primary_cell,fantom,37.147178649902344
+352,hCAGE CL:0002548,-,hCAGE,CL:0002548,cardiac fibroblast,primary_cell,fantom,29.91438102722168
+353,hCAGE CL:0002549,-,hCAGE,CL:0002549,fibroblast of choroid plexus,primary_cell,fantom,71.33724975585938
+354,hCAGE CL:0002550,-,hCAGE,CL:0002550,fibroblast of the conjuctiva,primary_cell,fantom,21.54827880859375
+355,hCAGE CL:0002551,-,hCAGE,CL:0002551,fibroblast of dermis,primary_cell,fantom,19.51736068725586
+356,hCAGE CL:0002552,-,hCAGE,CL:0002552,fibroblast of gingiva,primary_cell,fantom,9.673295021057129
+357,hCAGE CL:0002553,-,hCAGE,CL:0002553,lung fibroblast,primary_cell,fantom,47.210205078125
+358,hCAGE CL:0002554,-,hCAGE,CL:0002554,fibroblast of lymphatic vessel,primary_cell,fantom,165.5852508544922
+359,hCAGE CL:0002555,-,hCAGE,CL:0002555,fibroblast of mammary gland,primary_cell,fantom,183.86680603027344
+360,hCAGE CL:0002556,-,hCAGE,CL:0002556,fibroblast of periodontium,primary_cell,fantom,27.91110610961914
+361,hCAGE CL:0002557,-,hCAGE,CL:0002557,fibroblast of pulmonary artery,primary_cell,fantom,62.941715240478516
+362,hCAGE CL:0002558,-,hCAGE,CL:0002558,fibroblast of villous mesenchyme,primary_cell,fantom,87.75638580322266
+363,hCAGE CL:0002561,-,hCAGE,CL:0002561,outer root sheath cell,primary_cell,fantom,96.74041748046875
+364,hCAGE CL:0002563,-,hCAGE,CL:0002563,intestinal epithelial cell,primary_cell,fantom,69.25311279296875
+365,hCAGE CL:0002564,-,hCAGE,CL:0002564,nucleus pulposus cell of intervertebral disc,primary_cell,fantom,50.26506423950195
+366,hCAGE CL:0002565,-,hCAGE,CL:0002565,iris pigment epithelial cell,primary_cell,fantom,41.941837310791016
+367,hCAGE CL:0002566,-,hCAGE,CL:0002566,dark melanocyte,primary_cell,fantom,33.85832595825195
+368,hCAGE CL:0002567,-,hCAGE,CL:0002567,light melanocyte,primary_cell,fantom,91.54637908935547
+369,hCAGE CL:0002568,-,hCAGE,CL:0002568,mesenchymal stem cell of Wharton's jelly,primary_cell,fantom,74.28569030761719
+370,hCAGE CL:0002569,-,hCAGE,CL:0002569,mesenchymal stem cell of umbilical cord,primary_cell,fantom,57.37498474121094
+371,hCAGE CL:0002570,-,hCAGE,CL:0002570,mesenchymal stem cell of adipose,primary_cell,fantom,36.561710357666016
+372,hCAGE CL:0002571,-,hCAGE,CL:0002571,hepatic mesenchymal stem cell,primary_cell,fantom,18.6415958404541
+373,hCAGE CL:0002572,-,hCAGE,CL:0002572,vertebral mesenchymal stem cell,primary_cell,fantom,157.3568572998047
+374,hCAGE CL:0002573,-,hCAGE,CL:0002573,Schwann cell,primary_cell,fantom,67.37821960449219
+375,hCAGE CL:0002574,-,hCAGE,CL:0002574,stromal cell of pancreas,primary_cell,fantom,54.611366271972656
+376,hCAGE CL:0002575,-,hCAGE,CL:0002575,central nervous system pericyte,primary_cell,fantom,59.45750427246094
+377,hCAGE CL:0002576,-,hCAGE,CL:0002576,perineural cell,primary_cell,fantom,47.03921127319336
+378,hCAGE CL:0002577,-,hCAGE,CL:0002577,placental epithelial cell,primary_cell,fantom,76.00321197509766
+379,hCAGE CL:0002579,-,hCAGE,CL:0002579,omentum preadipocyte,primary_cell,fantom,26.805828094482422
+380,hCAGE CL:0002580,-,hCAGE,CL:0002580,preadipocyte of the breast,primary_cell,fantom,62.83474349975586
+381,hCAGE CL:0002581,-,hCAGE,CL:0002581,perirenal preadipocyte,primary_cell,fantom,397.037353515625
+382,hCAGE CL:0002582,-,hCAGE,CL:0002582,visceral preadipocyte,primary_cell,fantom,23.0330753326416
+383,hCAGE CL:0002583,-,hCAGE,CL:0002583,subcutaneous preadipocyte,primary_cell,fantom,33.97900390625
+384,hCAGE CL:0002584,-,hCAGE,CL:0002584,renal cortical epithelial cell,primary_cell,fantom,41.12630081176758
+385,hCAGE CL:0002586,-,hCAGE,CL:0002586,retinal pigment epithelial cell,primary_cell,fantom,59.10931396484375
+386,hCAGE CL:0002588,-,hCAGE,CL:0002588,smooth muscle cell of the umbilical vein,primary_cell,fantom,48.645050048828125
+387,hCAGE CL:0002589,-,hCAGE,CL:0002589,smooth muscle cell of the brachiocephalic vasculature,primary_cell,fantom,26.21996307373047
+388,hCAGE CL:0002590,-,hCAGE,CL:0002590,smooth muscle cell of the brain vasculature,primary_cell,fantom,54.19729995727539
+389,hCAGE CL:0002591,-,hCAGE,CL:0002591,smooth muscle cell of the pulmonary artery,primary_cell,fantom,60.34335708618164
+390,hCAGE CL:0002592,-,hCAGE,CL:0002592,smooth muscle cell of the coronary artery,primary_cell,fantom,75.50702667236328
+391,hCAGE CL:0002593,-,hCAGE,CL:0002593,smooth muscle cell of the internal thoracic artery,primary_cell,fantom,30.01109504699707
+392,hCAGE CL:0002594,-,hCAGE,CL:0002594,smooth muscle cell of the umbilical artery,primary_cell,fantom,48.85675048828125
+393,hCAGE CL:0002595,-,hCAGE,CL:0002595,smooth muscle cell of the subclavian artery,primary_cell,fantom,84.72882843017578
+394,hCAGE CL:0002596,-,hCAGE,CL:0002596,smooth muscle cell of the carotid artery,primary_cell,fantom,107.90396118164062
+395,hCAGE CL:0002597,-,hCAGE,CL:0002597,smooth muscle cell of bladder,primary_cell,fantom,305.0801696777344
+396,hCAGE CL:0002598,-,hCAGE,CL:0002598,bronchial smooth muscle cell,primary_cell,fantom,157.73635864257812
+397,hCAGE CL:0002599,-,hCAGE,CL:0002599,smooth muscle cell of the esophagus,primary_cell,fantom,41.33835220336914
+398,hCAGE CL:0002600,-,hCAGE,CL:0002600,smooth muscle cell of trachea,primary_cell,fantom,57.2053108215332
+399,hCAGE CL:0002601,-,hCAGE,CL:0002601,uterine smooth muscle cell,primary_cell,fantom,74.29872131347656
+400,hCAGE CL:0002602,-,hCAGE,CL:0002602,annulus pulposus cell,primary_cell,fantom,65.11280059814453
+401,hCAGE CL:0002603,-,hCAGE,CL:0002603,astrocyte of the cerebellum,primary_cell,fantom,51.632850646972656
+402,hCAGE CL:0002605,-,hCAGE,CL:0002605,astrocyte of the cerebral cortex,primary_cell,fantom,28.462190628051758
+403,hCAGE CL:0002615,-,hCAGE,CL:0002615,adipocyte of omentum tissue,primary_cell,fantom,49.05179214477539
+404,hCAGE CL:0002616,-,hCAGE,CL:0002616,perirenal adipocyte cell,primary_cell,fantom,215.66867065429688
+405,hCAGE CL:0002617,-,hCAGE,CL:0002617,adipocyte of breast,primary_cell,fantom,44.72285842895508
+406,hCAGE CL:0002618,-,hCAGE,CL:0002618,endothelial cell of umbilical vein,primary_cell,fantom,32.87194061279297
+407,hCAGE CL:0002620,-,hCAGE,CL:0002620,skin fibroblast,primary_cell,fantom,16.08747100830078
+408,hCAGE CL:0002621,-,hCAGE,CL:0002621,gingival epithelial cell,primary_cell,fantom,49.712242126464844
+409,hCAGE CL:0002622,-,hCAGE,CL:0002622,prostate stromal cell,primary_cell,fantom,32.768733978271484
+410,hCAGE CL:0002623,-,hCAGE,CL:0002623,acinar cell of salivary gland,primary_cell,fantom,34.9274787902832
+411,hCAGE CL:0002677,-,hCAGE,CL:0002677,naive regulatory T cell,primary_cell,fantom,61.674278259277344
+412,hCAGE CL:1000280,-,hCAGE,CL:1000280,smooth muscle cell of colon,primary_cell,fantom,36.03932189941406
+413,hCAGE CL:1000413,-,hCAGE,CL:1000413,endothelial cell of artery,primary_cell,fantom,60.48858642578125
+414,hCAGE CL:1000428,-,hCAGE,CL:1000428,stem cell of epidermis,primary_cell,fantom,120.64453125
+415,hCAGE CL:1000487,-,hCAGE,CL:1000487,smooth muscle cell of prostate,primary_cell,fantom,38.214168548583984
+416,hCAGE CL:1000494,-,hCAGE,CL:1000494,nephron tubule epithelial cell,primary_cell,fantom,40.157440185546875
+417,hCAGE EFO:0001086,-,hCAGE,EFO:0001086,A549,cell_line,fantom,98.9642562866211
+418,hCAGE EFO:0001099,-,hCAGE,EFO:0001099,Caco-2,cell_line,fantom,88.74836730957031
+419,hCAGE EFO:0001182,-,hCAGE,EFO:0001182,HEK293,cell_line,fantom,41.831764221191406
+420,hCAGE EFO:0001187,-,hCAGE,EFO:0001187,HepG2,cell_line,fantom,22.447940826416016
+421,hCAGE EFO:0001253,-,hCAGE,EFO:0001253,THP-1,cell_line,fantom,56.61591339111328
+422,hCAGE EFO:0002059,-,hCAGE,EFO:0002059,HT1080,cell_line,fantom,65.99971771240234
+423,hCAGE EFO:0002067,-,hCAGE,EFO:0002067,K562,cell_line,fantom,35.16718292236328
+424,hCAGE EFO:0002074,-,hCAGE,EFO:0002074,PC-3,cell_line,fantom,47.83613204956055
+425,hCAGE EFO:0002101,-,hCAGE,EFO:0002101,A172,cell_line,fantom,35.259254455566406
+426,hCAGE EFO:0002179,-,hCAGE,EFO:0002179,G401,cell_line,fantom,54.055908203125
+427,hCAGE EFO:0002285,-,hCAGE,EFO:0002285,NCI-H226,cell_line,fantom,86.6911849975586
+428,hCAGE EFO:0002324,-,hCAGE,EFO:0002324,Raji,cell_line,fantom,57.717403411865234
+429,hCAGE EFO:0002784,-,hCAGE,EFO:0002784,GM12878,cell_line,fantom,21.34037971496582
+430,hCAGE EFO:0002791,-,hCAGE,EFO:0002791,HeLa-S3,cell_line,fantom,23.797666549682617
+431,hCAGE EFO:0002793,-,hCAGE,EFO:0002793,HL-60,cell_line,fantom,79.93690490722656
+432,hCAGE EFO:0002796,-,hCAGE,EFO:0002796,Jurkat,cell_line,fantom,64.35321807861328
+433,hCAGE EFO:0002860,-,hCAGE,EFO:0002860,SK-N-MC,cell_line,fantom,180.7675323486328
+434,hCAGE EFO:0003044,-,hCAGE,EFO:0003044,NCI-H460,cell_line,fantom,78.24180603027344
+435,hCAGE EFO:0005441,-,hCAGE,EFO:0005441,DU 145,cell_line,fantom,57.9163932800293
+436,hCAGE UBERON:0000002,-,hCAGE,UBERON:0000002,uterine cervix,tissue,fantom,35.90520477294922
+437,hCAGE UBERON:0000007,-,hCAGE,UBERON:0000007,pituitary gland,tissue,fantom,38.91667938232422
+438,hCAGE UBERON:0000014,-,hCAGE,UBERON:0000014,zone of skin,tissue,fantom,90.9419937133789
+439,hCAGE UBERON:0000019,-,hCAGE,UBERON:0000019,camera-type eye,tissue,fantom,73.05904388427734
+440,hCAGE UBERON:0000029,-,hCAGE,UBERON:0000029,lymph node,tissue,fantom,132.45211791992188
+441,hCAGE UBERON:0000057,-,hCAGE,UBERON:0000057,urethra,tissue,fantom,21.93443489074707
+442,hCAGE UBERON:0000178,-,hCAGE,UBERON:0000178,blood,primary_cell,fantom,13.531624794006348
+443,hCAGE UBERON:0000305,-,hCAGE,UBERON:0000305,amnion,primary_cell,fantom,44.147254943847656
+444,hCAGE UBERON:0000310,-,hCAGE,UBERON:0000310,breast,tissue,fantom,203.0039520263672
+445,hCAGE UBERON:0000341,-,hCAGE,UBERON:0000341,throat,tissue,fantom,36.27021789550781
+446,hCAGE UBERON:0000473,-,hCAGE,UBERON:0000473,testis,tissue,fantom,19.597055435180664
+447,hCAGE UBERON:0000920,-,hCAGE,UBERON:0000920,egg chorion,primary_cell,fantom,31.856163024902344
+448,hCAGE UBERON:0000941,-,hCAGE,UBERON:0000941,cranial nerve II,tissue,fantom,43.41749954223633
+449,hCAGE UBERON:0000945,-,hCAGE,UBERON:0000945,stomach,tissue,fantom,149.30126953125
+450,hCAGE UBERON:0000947,-,hCAGE,UBERON:0000947,aorta,tissue,fantom,51.7029914855957
+451,hCAGE UBERON:0000948,-,hCAGE,UBERON:0000948,heart,tissue,fantom,21.7347412109375
+452,hCAGE UBERON:0000955,-,hCAGE,UBERON:0000955,brain,tissue,fantom,28.4322452545166
+453,hCAGE UBERON:0000966,-,hCAGE,UBERON:0000966,retina,tissue,fantom,32.83579635620117
+454,hCAGE UBERON:0000988,-,hCAGE,UBERON:0000988,pons,tissue,fantom,28.069860458374023
+455,hCAGE UBERON:0000989,-,hCAGE,UBERON:0000989,penis,tissue,fantom,55.62895965576172
+456,hCAGE UBERON:0000992,-,hCAGE,UBERON:0000992,female gonad,tissue,fantom,46.649906158447266
+457,hCAGE UBERON:0000995,-,hCAGE,UBERON:0000995,uterus,tissue,fantom,59.67921447753906
+458,hCAGE UBERON:0000996,-,hCAGE,UBERON:0000996,vagina,tissue,fantom,192.70404052734375
+459,hCAGE UBERON:0000998,-,hCAGE,UBERON:0000998,seminal vesicle,tissue,fantom,43.64366149902344
+460,hCAGE UBERON:0001000,-,hCAGE,UBERON:0001000,vas deferens,tissue,fantom,68.61293029785156
+461,hCAGE UBERON:0001013,-,hCAGE,UBERON:0001013,adipose tissue,tissue,fantom,21.103422164916992
+462,hCAGE UBERON:0001043,-,hCAGE,UBERON:0001043,esophagus,tissue,fantom,51.76528549194336
+463,hCAGE UBERON:0001044,-,hCAGE,UBERON:0001044,saliva-secreting gland,tissue,fantom,148.62879943847656
+464,hCAGE UBERON:0001052,-,hCAGE,UBERON:0001052,rectum,tissue,fantom,130.85585021972656
+465,hCAGE UBERON:0001103,-,hCAGE,UBERON:0001103,diaphragm,tissue,fantom,117.9341049194336
+466,hCAGE UBERON:0001134,-,hCAGE,UBERON:0001134,skeletal muscle tissue,tissue,fantom,50.37820816040039
+467,hCAGE UBERON:0001135,-,hCAGE,UBERON:0001135,smooth muscle tissue,tissue,fantom,28.285898208618164
+468,hCAGE UBERON:0001154,-,hCAGE,UBERON:0001154,vermiform appendix,tissue,fantom,80.126708984375
+469,hCAGE UBERON:0001155,-,hCAGE,UBERON:0001155,colon,tissue,fantom,35.34465789794922
+470,hCAGE UBERON:0001255,-,hCAGE,UBERON:0001255,urinary bladder,tissue,fantom,48.4241943359375
+471,hCAGE UBERON:0001264,-,hCAGE,UBERON:0001264,pancreas,tissue,fantom,188.36380004882812
+472,hCAGE UBERON:0001301,-,hCAGE,UBERON:0001301,epididymis,tissue,fantom,41.035892486572266
+473,hCAGE UBERON:0001359,-,hCAGE,UBERON:0001359,cerebrospinal fluid,tissue,fantom,66.41242980957031
+474,hCAGE UBERON:0001389,-,hCAGE,UBERON:0001389,soleus muscle,tissue,fantom,52.885318756103516
+475,hCAGE UBERON:0001602,-,hCAGE,UBERON:0001602,medial rectus extraocular muscle,tissue,fantom,72.61691284179688
+476,hCAGE UBERON:0001603,-,hCAGE,UBERON:0001603,lateral rectus extra-ocular muscle,tissue,fantom,64.0296401977539
+477,hCAGE UBERON:0001637,-,hCAGE,UBERON:0001637,artery,tissue,fantom,176.23216247558594
+478,hCAGE UBERON:0001638,-,hCAGE,UBERON:0001638,vein,tissue,fantom,73.34970092773438
+479,hCAGE UBERON:0001723,-,hCAGE,UBERON:0001723,tongue,tissue,fantom,45.90983963012695
+480,hCAGE UBERON:0001736,-,hCAGE,UBERON:0001736,submandibular gland,tissue,fantom,97.6734390258789
+481,hCAGE UBERON:0001797,-,hCAGE,UBERON:0001797,vitreous humor,tissue,fantom,51.01124954223633
+482,hCAGE UBERON:0001831,-,hCAGE,UBERON:0001831,parotid gland,tissue,fantom,186.81967163085938
+483,hCAGE UBERON:0001870,-,hCAGE,UBERON:0001870,frontal cortex,tissue,fantom,25.70257568359375
+484,hCAGE UBERON:0001871,-,hCAGE,UBERON:0001871,temporal lobe,tissue,fantom,17.146074295043945
+485,hCAGE UBERON:0001872,-,hCAGE,UBERON:0001872,parietal lobe,tissue,fantom,10.531946182250977
+486,hCAGE UBERON:0001873,-,hCAGE,UBERON:0001873,caudate nucleus,tissue,fantom,17.615751266479492
+487,hCAGE UBERON:0001874,-,hCAGE,UBERON:0001874,putamen,tissue,fantom,17.454984664916992
+488,hCAGE UBERON:0001875,-,hCAGE,UBERON:0001875,globus pallidus,tissue,fantom,8.468856811523438
+489,hCAGE UBERON:0001876,-,hCAGE,UBERON:0001876,amygdala,tissue,fantom,17.60308837890625
+490,hCAGE UBERON:0001882,-,hCAGE,UBERON:0001882,nucleus accumbens,tissue,fantom,27.704946517944336
+491,hCAGE UBERON:0001894,-,hCAGE,UBERON:0001894,diencephalon,tissue,fantom,68.8881607055664
+492,hCAGE UBERON:0001896,-,hCAGE,UBERON:0001896,medulla oblongata,tissue,fantom,13.257373809814453
+493,hCAGE UBERON:0001897,-,hCAGE,UBERON:0001897,dorsal plus ventral thalamus,tissue,fantom,11.435539245605469
+494,hCAGE UBERON:0001905,-,hCAGE,UBERON:0001905,pineal body,tissue,fantom,27.537044525146484
+495,hCAGE UBERON:0001954,-,hCAGE,UBERON:0001954,Ammon's horn,tissue,fantom,15.256468772888184
+496,hCAGE UBERON:0001987,-,hCAGE,UBERON:0001987,placenta,tissue,fantom,48.42684555053711
+497,hCAGE UBERON:0002021,-,hCAGE,UBERON:0002021,occipital lobe,tissue,fantom,9.989048957824707
+498,hCAGE UBERON:0002022,-,hCAGE,UBERON:0002022,insula,tissue,fantom,25.655611038208008
+499,hCAGE UBERON:0002037,-,hCAGE,UBERON:0002037,cerebellum,tissue,fantom,12.268932342529297
+500,hCAGE UBERON:0002038,-,hCAGE,UBERON:0002038,substantia nigra,tissue,fantom,21.84133529663086
+501,hCAGE UBERON:0002046,-,hCAGE,UBERON:0002046,thyroid gland,tissue,fantom,22.91981315612793
+502,hCAGE UBERON:0002048,-,hCAGE,UBERON:0002048,lung,tissue,fantom,30.655853271484375
+503,hCAGE UBERON:0002079,-,hCAGE,UBERON:0002079,left cardiac atrium,tissue,fantom,165.6048126220703
+504,hCAGE UBERON:0002084,-,hCAGE,UBERON:0002084,heart left ventricle,tissue,fantom,191.14132690429688
+505,hCAGE UBERON:0002106,-,hCAGE,UBERON:0002106,spleen,tissue,fantom,28.623931884765625
+506,hCAGE UBERON:0002107,-,hCAGE,UBERON:0002107,liver,tissue,fantom,63.86726379394531
+507,hCAGE UBERON:0002108,-,hCAGE,UBERON:0002108,small intestine,tissue,fantom,68.11326599121094
+508,hCAGE UBERON:0002110,-,hCAGE,UBERON:0002110,gallbladder,tissue,fantom,72.35385131835938
+509,hCAGE UBERON:0002113,-,hCAGE,UBERON:0002113,kidney,tissue,fantom,23.436513900756836
+510,hCAGE UBERON:0002114,-,hCAGE,UBERON:0002114,duodenum,tissue,fantom,62.15086364746094
+511,hCAGE UBERON:0002118,-,hCAGE,UBERON:0002118,right ovary,primary_cell,fantom,29.06232452392578
+512,hCAGE UBERON:0002119,-,hCAGE,UBERON:0002119,left ovary,primary_cell,fantom,37.69746398925781
+513,hCAGE UBERON:0002134,-,hCAGE,UBERON:0002134,tricuspid valve,tissue,fantom,33.244747161865234
+514,hCAGE UBERON:0002135,-,hCAGE,UBERON:0002135,mitral valve,tissue,fantom,50.091373443603516
+515,hCAGE UBERON:0002146,-,hCAGE,UBERON:0002146,pulmonary valve,tissue,fantom,19.755334854125977
+516,hCAGE UBERON:0002148,-,hCAGE,UBERON:0002148,locus ceruleus,tissue,fantom,9.926314353942871
+517,hCAGE UBERON:0002171,-,hCAGE,UBERON:0002171,lower lobe of right lung,tissue,fantom,65.2254638671875
+518,hCAGE UBERON:0002240,-,hCAGE,UBERON:0002240,spinal cord,tissue,fantom,15.438720703125
+519,hCAGE UBERON:0002331,-,hCAGE,UBERON:0002331,umbilical cord,tissue,fantom,234.72250366210938
+520,hCAGE UBERON:0002336,-,hCAGE,UBERON:0002336,corpus callosum,tissue,fantom,31.147842407226562
+521,hCAGE UBERON:0002360,-,hCAGE,UBERON:0002360,meninx,tissue,fantom,67.7375717163086
+522,hCAGE UBERON:0002363,-,hCAGE,UBERON:0002363,dura mater,tissue,fantom,34.17447280883789
+523,hCAGE UBERON:0002367,-,hCAGE,UBERON:0002367,prostate gland,tissue,fantom,47.3486328125
+524,hCAGE UBERON:0002369,-,hCAGE,UBERON:0002369,adrenal gland,tissue,fantom,829.8981323242188
+525,hCAGE UBERON:0002370,-,hCAGE,UBERON:0002370,thymus,tissue,fantom,22.066835403442383
+526,hCAGE UBERON:0002371,-,hCAGE,UBERON:0002371,bone marrow,tissue,fantom,23.103410720825195
+527,hCAGE UBERON:0002372,-,hCAGE,UBERON:0002372,tonsil,tissue,fantom,45.03621292114258
+528,hCAGE UBERON:0002448,-,hCAGE,UBERON:0002448,fungiform papilla,tissue,fantom,17.252410888671875
+529,hCAGE UBERON:0002581,-,hCAGE,UBERON:0002581,postcentral gyrus,tissue,fantom,30.33321762084961
+530,hCAGE UBERON:0002702,-,hCAGE,UBERON:0002702,middle frontal gyrus,tissue,fantom,15.349337577819824
+531,hCAGE UBERON:0002771,-,hCAGE,UBERON:0002771,middle temporal gyrus,tissue,fantom,10.49127197265625
+532,hCAGE UBERON:0002902,-,hCAGE,UBERON:0002902,occipital pole,tissue,fantom,36.809513092041016
+533,hCAGE UBERON:0003112,-,hCAGE,UBERON:0003112,olfactory region,tissue,fantom,32.72511672973633
+534,hCAGE UBERON:0003126,-,hCAGE,UBERON:0003126,trachea,tissue,fantom,33.11235046386719
+535,hCAGE UBERON:0003701,-,hCAGE,UBERON:0003701,calcaneal tendon,tissue,fantom,37.92416000366211
+536,hCAGE UBERON:0003729,-,hCAGE,UBERON:0003729,mouth mucosa,primary_cell,fantom,74.475830078125
+537,hCAGE UBERON:0004225,-,hCAGE,UBERON:0004225,respiratory system smooth muscle,primary_cell,fantom,21.150630950927734
+538,hCAGE UBERON:0005795,-,hCAGE,UBERON:0005795,embryonic uterus,tissue,fantom,100.48787689208984
+539,hCAGE UBERON:0006322,-,hCAGE,UBERON:0006322,inferior rectus extraocular muscle,tissue,fantom,34.49079513549805
+540,hCAGE UBERON:0006323,-,hCAGE,UBERON:0006323,superior rectus extraocular muscle,tissue,fantom,46.73567199707031
+541,hCAGE UBERON:0006659,-,hCAGE,UBERON:0006659,cruciate ligament of knee,tissue,fantom,23.395980834960938
+542,hCAGE UBERON:0007023,-,hCAGE,UBERON:0007023,adult organism,primary_cell,fantom,53.7227668762207
+543,hCAGE UBERON:0007190,-,hCAGE,UBERON:0007190,paracentral gyrus,tissue,fantom,29.09084129333496
+544,hCAGE UBERON:0008198,-,hCAGE,UBERON:0008198,nail plate,tissue,fantom,43.569461822509766
+545,hCAGE UBERON:0013777,-,hCAGE,UBERON:0013777,skin of palm of manus,tissue,fantom,43.870784759521484

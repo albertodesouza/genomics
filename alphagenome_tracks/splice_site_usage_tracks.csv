@@ -1,0 +1,735 @@
+,name,strand,Assay title,ontology_curie,biosample_name,biosample_type,biosample_life_stage,gtex_tissue,data_source
+0,usage_CL:0000047 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000047,neuronal stem cell,in_vitro_differentiated_cells,embryonic,,encode
+1,usage_CL:0000062 total RNA-seq,+,total RNA-seq,CL:0000062,osteoblast,primary_cell,adult,,encode
+2,usage_CL:0000084 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000084,T-cell,primary_cell,adult,,encode
+3,usage_CL:0000084 total RNA-seq,+,total RNA-seq,CL:0000084,T-cell,primary_cell,adult,,encode
+4,usage_CL:0000100 total RNA-seq,+,total RNA-seq,CL:0000100,motor neuron,in_vitro_differentiated_cells,adult,,encode
+5,usage_CL:0000115 total RNA-seq,+,total RNA-seq,CL:0000115,endothelial cell,in_vitro_differentiated_cells,adult,,encode
+6,usage_CL:0000121 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000121,Purkinje cell,primary_cell,child,,encode
+7,usage_CL:0000127 total RNA-seq,+,total RNA-seq,CL:0000127,astrocyte,primary_cell,unknown,,encode
+8,usage_CL:0000134 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000134,mesenchymal stem cell,in_vitro_differentiated_cells,embryonic,,encode
+9,usage_CL:0000137 total RNA-seq,+,total RNA-seq,CL:0000137,osteocyte,in_vitro_differentiated_cells,embryonic,,encode
+10,usage_CL:0000138 total RNA-seq,+,total RNA-seq,CL:0000138,chondrocyte,in_vitro_differentiated_cells,embryonic,,encode
+11,usage_CL:0000169 total RNA-seq,+,total RNA-seq,CL:0000169,type B pancreatic cell,in_vitro_differentiated_cells,embryonic,,encode
+12,usage_CL:0000182 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000182,hepatocyte,in_vitro_differentiated_cells,embryonic,,encode
+13,usage_CL:0000182 total RNA-seq,+,total RNA-seq,CL:0000182,hepatocyte,in_vitro_differentiated_cells,embryonic,,encode
+14,usage_CL:0000187 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000187,myocyte,in_vitro_differentiated_cells,adult,,encode
+15,usage_CL:0000187 total RNA-seq,+,total RNA-seq,CL:0000187,myocyte,in_vitro_differentiated_cells,adult,,encode
+16,usage_CL:0000192 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000192,smooth muscle cell,in_vitro_differentiated_cells,embryonic,,encode
+17,usage_CL:0000192 total RNA-seq,+,total RNA-seq,CL:0000192,smooth muscle cell,in_vitro_differentiated_cells,embryonic,,encode
+18,usage_CL:0000221 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000221,ectodermal cell,in_vitro_differentiated_cells,embryonic,,encode
+19,usage_CL:0000222 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000222,mesodermal cell,in_vitro_differentiated_cells,embryonic,,encode
+20,usage_CL:0000223 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000223,endodermal cell,in_vitro_differentiated_cells,embryonic,,encode
+21,usage_CL:0000223 total RNA-seq,+,total RNA-seq,CL:0000223,endodermal cell,in_vitro_differentiated_cells,embryonic,,encode
+22,usage_CL:0000236 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000236,B cell,primary_cell,adult,,encode
+23,usage_CL:0000236 total RNA-seq,+,total RNA-seq,CL:0000236,B cell,primary_cell,adult,,encode
+24,usage_CL:0000307 total RNA-seq,+,total RNA-seq,CL:0000307,tracheal epithelial cell,primary_cell,adult,,encode
+25,usage_CL:0000312 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000312,keratinocyte,primary_cell,unknown,,encode
+26,usage_CL:0000346 total RNA-seq,+,total RNA-seq,CL:0000346,hair follicle dermal papilla cell,primary_cell,adult,,encode
+27,usage_CL:0000351 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000351,trophoblast cell,in_vitro_differentiated_cells,embryonic,,encode
+28,usage_CL:0000515 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000515,skeletal muscle myoblast,primary_cell,unknown,,encode
+29,usage_CL:0000515 total RNA-seq,+,total RNA-seq,CL:0000515,skeletal muscle myoblast,primary_cell,unknown,,encode
+30,usage_CL:0000594 total RNA-seq,+,total RNA-seq,CL:0000594,skeletal muscle satellite cell,primary_cell,adult,,encode
+31,usage_CL:0000623 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000623,natural killer cell,primary_cell,adult,,encode
+32,usage_CL:0000623 total RNA-seq,+,total RNA-seq,CL:0000623,natural killer cell,primary_cell,adult,,encode
+33,usage_CL:0000624 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000624,"CD4-positive, alpha-beta T cell",primary_cell,adult,,encode
+34,usage_CL:0000624 total RNA-seq,+,total RNA-seq,CL:0000624,"CD4-positive, alpha-beta T cell",primary_cell,adult,,encode
+35,usage_CL:0000625 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000625,"CD8-positive, alpha-beta T cell",primary_cell,adult,,encode
+36,usage_CL:0000625 total RNA-seq,+,total RNA-seq,CL:0000625,"CD8-positive, alpha-beta T cell",primary_cell,adult,,encode
+37,usage_CL:0000650 total RNA-seq,+,total RNA-seq,CL:0000650,mesangial cell,primary_cell,"unknown,embryonic",,encode
+38,usage_CL:0000679 total RNA-seq,+,total RNA-seq,CL:0000679,glutamatergic neuron,in_vitro_differentiated_cells,adult,,encode
+39,usage_CL:0000746 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000746,cardiac muscle cell,in_vitro_differentiated_cells,embryonic,,encode
+40,usage_CL:0000746 total RNA-seq,+,total RNA-seq,CL:0000746,cardiac muscle cell,in_vitro_differentiated_cells,embryonic,,encode
+41,usage_CL:0000788 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000788,naive B cell,primary_cell,unknown,,encode
+42,usage_CL:0000792 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000792,"CD4-positive, CD25-positive, alpha-beta regulatory T cell",primary_cell,unknown,,encode
+43,usage_CL:0000823 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000823,immature natural killer cell,primary_cell,unknown,,encode
+44,usage_CL:0000837 total RNA-seq,+,total RNA-seq,CL:0000837,hematopoietic multipotent progenitor cell,in_vitro_differentiated_cells,unknown,,encode
+45,usage_CL:0000842 total RNA-seq,+,total RNA-seq,CL:0000842,mononuclear cell,primary_cell,adult,,encode
+46,usage_CL:0000895 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000895,"naive thymus-derived CD4-positive, alpha-beta T cell",primary_cell,unknown,,encode
+47,usage_CL:0000895 total RNA-seq,+,total RNA-seq,CL:0000895,"naive thymus-derived CD4-positive, alpha-beta T cell",primary_cell,adult,,encode
+48,usage_CL:0000897 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000897,"CD4-positive, alpha-beta memory T cell",primary_cell,unknown,,encode
+49,usage_CL:0000897 total RNA-seq,+,total RNA-seq,CL:0000897,"CD4-positive, alpha-beta memory T cell",primary_cell,adult,,encode
+50,usage_CL:0000900 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000900,"naive thymus-derived CD8-positive, alpha-beta T cell",primary_cell,unknown,,encode
+51,usage_CL:0000900 total RNA-seq,+,total RNA-seq,CL:0000900,"naive thymus-derived CD8-positive, alpha-beta T cell",primary_cell,adult,,encode
+52,usage_CL:0000909 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0000909,"CD8-positive, alpha-beta memory T cell",primary_cell,unknown,,encode
+53,usage_CL:0000909 total RNA-seq,+,total RNA-seq,CL:0000909,"CD8-positive, alpha-beta memory T cell",primary_cell,adult,,encode
+54,usage_CL:0001053 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0001053,IgD-negative memory B cell,primary_cell,unknown,,encode
+55,usage_CL:0001054 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0001054,CD14-positive monocyte,primary_cell,adult,,encode
+56,usage_CL:0001059 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0001059,"common myeloid progenitor, CD34-positive",primary_cell,adult,,encode
+57,usage_CL:0002098 total RNA-seq,+,total RNA-seq,CL:0002098,regular cardiac myocyte,primary_cell,adult,,encode
+58,usage_CL:0002188 total RNA-seq,+,total RNA-seq,CL:0002188,glomerular endothelial cell,primary_cell,embryonic,,encode
+59,usage_CL:0002306 total RNA-seq,+,total RNA-seq,CL:0002306,epithelial cell of proximal tubule,primary_cell,unknown,,encode
+60,usage_CL:0002319 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0002319,neural cell,in_vitro_differentiated_cells,embryonic,,encode
+61,usage_CL:0002324 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0002324,myoepithelial cell of mammary gland,primary_cell,adult,,encode
+62,usage_CL:0002326 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0002326,luminal epithelial cell of mammary gland,primary_cell,adult,,encode
+63,usage_CL:0002327 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0002327,mammary epithelial cell,primary_cell,adult,,encode
+64,usage_CL:0002327 total RNA-seq,+,total RNA-seq,CL:0002327,mammary epithelial cell,primary_cell,adult,,encode
+65,usage_CL:0002328 total RNA-seq,+,total RNA-seq,CL:0002328,bronchial epithelial cell,primary_cell,adult,,encode
+66,usage_CL:0002351 total RNA-seq,+,total RNA-seq,CL:0002351,progenitor cell of endocrine pancreas,in_vitro_differentiated_cells,embryonic,,encode
+67,usage_CL:0002366 total RNA-seq,+,total RNA-seq,CL:0002366,myometrial cell,primary_cell,adult,,encode
+68,usage_CL:0002368 total RNA-seq,+,total RNA-seq,CL:0002368,airway epithelial cell,primary_cell,unknown,,encode
+69,usage_CL:0002372 total RNA-seq,+,total RNA-seq,CL:0002372,myotube,in_vitro_differentiated_cells,unknown,,encode
+70,usage_CL:0002451 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0002451,mammary stem cell,primary_cell,adult,,encode
+71,usage_CL:0002518 total RNA-seq,+,total RNA-seq,CL:0002518,kidney epithelial cell,primary_cell,"embryonic,newborn",,encode
+72,usage_CL:0002539 total RNA-seq,+,total RNA-seq,CL:0002539,aortic smooth muscle cell,primary_cell,adult,,encode
+73,usage_CL:0002540 total RNA-seq,+,total RNA-seq,CL:0002540,mesenchymal stem cell of the bone marrow,primary_cell,adult,,encode
+74,usage_CL:0002543 total RNA-seq,+,total RNA-seq,CL:0002543,vein endothelial cell,primary_cell,adult,,encode
+75,usage_CL:0002545 total RNA-seq,+,total RNA-seq,CL:0002545,thoracic aorta endothelial cell,primary_cell,adult,,encode
+76,usage_CL:0002547 total RNA-seq,+,total RNA-seq,CL:0002547,fibroblast of the aortic adventitia,primary_cell,adult,,encode
+77,usage_CL:0002551 total RNA-seq,+,total RNA-seq,CL:0002551,fibroblast of dermis,primary_cell,adult,,encode
+78,usage_CL:0002553 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0002553,fibroblast of lung,primary_cell,adult,,encode
+79,usage_CL:0002553 total RNA-seq,+,total RNA-seq,CL:0002553,fibroblast of lung,primary_cell,adult,,encode
+80,usage_CL:0002558 total RNA-seq,+,total RNA-seq,CL:0002558,fibroblast of villous mesenchyme,primary_cell,newborn,,encode
+81,usage_CL:0002568 total RNA-seq,+,total RNA-seq,CL:0002568,mesenchymal stem cell of Wharton's jelly,primary_cell,newborn,,encode
+82,usage_CL:0002570 total RNA-seq,+,total RNA-seq,CL:0002570,mesenchymal stem cell of adipose,primary_cell,adult,,encode
+83,usage_CL:0002577 total RNA-seq,+,total RNA-seq,CL:0002577,placental epithelial cell,primary_cell,newborn,,encode
+84,usage_CL:0002583 total RNA-seq,+,total RNA-seq,CL:0002583,subcutaneous preadipocyte,primary_cell,adult,,encode
+85,usage_CL:0002584 total RNA-seq,+,total RNA-seq,CL:0002584,renal cortical epithelial cell,primary_cell,adult,,encode
+86,usage_CL:0002591 total RNA-seq,+,total RNA-seq,CL:0002591,smooth muscle cell of the pulmonary artery,primary_cell,adult,,encode
+87,usage_CL:0002592 total RNA-seq,+,total RNA-seq,CL:0002592,smooth muscle cell of the coronary artery,primary_cell,adult,,encode
+88,usage_CL:0002594 total RNA-seq,+,total RNA-seq,CL:0002594,smooth muscle cell of the umbilical artery,primary_cell,newborn,,encode
+89,usage_CL:0002597 total RNA-seq,+,total RNA-seq,CL:0002597,smooth muscle cell of bladder,primary_cell,adult,,encode
+90,usage_CL:0002598 total RNA-seq,+,total RNA-seq,CL:0002598,bronchial smooth muscle cell,primary_cell,adult,,encode
+91,usage_CL:0002600 total RNA-seq,+,total RNA-seq,CL:0002600,smooth muscle cell of trachea,primary_cell,adult,,encode
+92,usage_CL:0002601 total RNA-seq,+,total RNA-seq,CL:0002601,uterine smooth muscle cell,primary_cell,adult,,encode
+93,usage_CL:0002618 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0002618,endothelial cell of umbilical vein,primary_cell,newborn,,encode
+94,usage_CL:0002618 total RNA-seq,+,total RNA-seq,CL:0002618,endothelial cell of umbilical vein,primary_cell,newborn,,encode
+95,usage_CL:0010002 total RNA-seq,+,total RNA-seq,CL:0010002,epithelial cell of umbilical artery,primary_cell,newborn,,encode
+96,usage_CL:0010003 total RNA-seq,+,total RNA-seq,CL:0010003,epithelial cell of alveolus of lung,primary_cell,"unknown,embryonic",,encode
+97,usage_CL:0011012 total RNA-seq,+,total RNA-seq,CL:0011012,neural crest cell,in_vitro_differentiated_cells,embryonic,,encode
+98,usage_CL:0011019 total RNA-seq,+,total RNA-seq,CL:0011019,mesothelial cell of epicardium,in_vitro_differentiated_cells,embryonic,,encode
+99,usage_CL:0011020 total RNA-seq,+,total RNA-seq,CL:0011020,neural progenitor cell,in_vitro_differentiated_cells,embryonic,,encode
+100,usage_CL:0011022 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:0011022,fibroblast of skin of back,primary_cell,embryonic,,encode
+101,usage_CL:1000458 total RNA-seq,+,total RNA-seq,CL:1000458,melanocyte of skin,primary_cell,adult,,encode
+102,usage_CL:1001568 total RNA-seq,+,total RNA-seq,CL:1001568,pulmonary artery endothelial cell,primary_cell,adult,,encode
+103,usage_CL:1001606 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:1001606,foreskin keratinocyte,primary_cell,newborn,,encode
+104,usage_CL:1001606 total RNA-seq,+,total RNA-seq,CL:1001606,foreskin keratinocyte,primary_cell,newborn,,encode
+105,usage_CL:1001608 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:1001608,foreskin fibroblast,primary_cell,newborn,,encode
+106,usage_CL:2000001 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:2000001,peripheral blood mononuclear cell,primary_cell,adult,,encode
+107,usage_CL:2000007 total RNA-seq,+,total RNA-seq,CL:2000007,articular chondrocyte of knee joint,primary_cell,adult,,encode
+108,usage_CL:2000010 total RNA-seq,+,total RNA-seq,CL:2000010,dermis blood vessel endothelial cell,primary_cell,child,,encode
+109,usage_CL:2000011 total RNA-seq,+,total RNA-seq,CL:2000011,dermis lymphatic vessel endothelial cell,primary_cell,"child,adult",,encode
+110,usage_CL:2000013 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:2000013,fibroblast of skin of abdomen,primary_cell,embryonic,,encode
+111,usage_CL:2000016 total RNA-seq,+,total RNA-seq,CL:2000016,lung microvascular endothelial cell,primary_cell,adult,,encode
+112,usage_CL:2000018 total RNA-seq,+,total RNA-seq,CL:2000018,endothelial cell of coronary artery,primary_cell,adult,,encode
+113,usage_CL:2000040 total RNA-seq,+,total RNA-seq,CL:2000040,bladder microvascular endothelial cell,primary_cell,adult,,encode
+114,usage_CL:2000041 total RNA-seq,+,total RNA-seq,CL:2000041,dermis microvascular lymphatic vessel endothelial cell,primary_cell,adult,,encode
+115,usage_CL:2000045 polyA plus RNA-seq,+,polyA plus RNA-seq,CL:2000045,foreskin melanocyte,primary_cell,newborn,,encode
+116,usage_CL:2000066 total RNA-seq,+,total RNA-seq,CL:2000066,cardiac ventricle fibroblast,primary_cell,"adult,unknown",,encode
+117,usage_CL:2000067 total RNA-seq,+,total RNA-seq,CL:2000067,cardiac atrium fibroblast,primary_cell,child,,encode
+118,usage_CL:2000068 total RNA-seq,+,total RNA-seq,CL:2000068,pericardium fibroblast,primary_cell,"embryonic,unknown",,encode
+119,usage_CL:2000071 total RNA-seq,+,total RNA-seq,CL:2000071,mammary microvascular endothelial cell,primary_cell,adult,,encode
+120,usage_CL:2000078 total RNA-seq,+,total RNA-seq,CL:2000078,placental pericyte,primary_cell,newborn,,encode
+121,usage_CL:2000092 total RNA-seq,+,total RNA-seq,CL:2000092,hair follicular keratinocyte,primary_cell,adult,,encode
+122,usage_CL:2000093 total RNA-seq,+,total RNA-seq,CL:2000093,bronchus fibroblast of lung,primary_cell,unknown,,encode
+123,usage_CL:2000094 total RNA-seq,+,total RNA-seq,CL:2000094,nasal cavity respiratory epithelium epithelial cell of viscerocranial mucosa,primary_cell,adult,,encode
+124,usage_CLO:0007045 polyA plus RNA-seq,+,polyA plus RNA-seq,CLO:0007045,"Jurkat, Clone E6-1",cell_line,child,,encode
+125,usage_EFO:0000572 gtex Cells_EBV-transformed_lymphocytes polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0000572,lymphoblast,tissue,adult,Cells_EBV-transformed_lymphocytes,gtex
+126,usage_EFO:0001086 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0001086,A549,cell_line,adult,,encode
+127,usage_EFO:0001099 total RNA-seq,+,total RNA-seq,EFO:0001099,Caco-2,cell_line,adult,,encode
+128,usage_EFO:0001187 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0001187,HepG2,cell_line,child,,encode
+129,usage_EFO:0001187 total RNA-seq,+,total RNA-seq,EFO:0001187,HepG2,cell_line,child,,encode
+130,usage_EFO:0001193 total RNA-seq,+,total RNA-seq,EFO:0001193,HT-29,cell_line,adult,,encode
+131,usage_EFO:0001196 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0001196,IMR-90,cell_line,embryonic,,encode
+132,usage_EFO:0001196 total RNA-seq,+,total RNA-seq,EFO:0001196,IMR-90,cell_line,embryonic,,encode
+133,usage_EFO:0001200 total RNA-seq,+,total RNA-seq,EFO:0001200,MCF 10A,cell_line,adult,,encode
+134,usage_EFO:0001203 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0001203,MCF-7,cell_line,adult,,encode
+135,usage_EFO:0001203 total RNA-seq,+,total RNA-seq,EFO:0001203,MCF-7,cell_line,adult,,encode
+136,usage_EFO:0002009 gtex Cells_Cultured_fibroblasts polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0002009,fibroblast derived cell line,tissue,adult,Cells_Cultured_fibroblasts,gtex
+137,usage_EFO:0002059 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0002059,HT1080,cell_line,adult,,encode
+138,usage_EFO:0002059 total RNA-seq,+,total RNA-seq,EFO:0002059,HT1080,cell_line,adult,,encode
+139,usage_EFO:0002067 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0002067,K562,cell_line,adult,,encode
+140,usage_EFO:0002067 total RNA-seq,+,total RNA-seq,EFO:0002067,K562,cell_line,adult,,encode
+141,usage_EFO:0002074 total RNA-seq,+,total RNA-seq,EFO:0002074,PC-3,cell_line,adult,,encode
+142,usage_EFO:0002101 total RNA-seq,+,total RNA-seq,EFO:0002101,A172,cell_line,adult,,encode
+143,usage_EFO:0002103 total RNA-seq,+,total RNA-seq,EFO:0002103,A375,cell_line,adult,,encode
+144,usage_EFO:0002106 total RNA-seq,+,total RNA-seq,EFO:0002106,A673,cell_line,child,,encode
+145,usage_EFO:0002150 total RNA-seq,+,total RNA-seq,EFO:0002150,Caki2,cell_line,adult,,encode
+146,usage_EFO:0002179 total RNA-seq,+,total RNA-seq,EFO:0002179,G401,cell_line,child,,encode
+147,usage_EFO:0002184 total RNA-seq,+,total RNA-seq,EFO:0002184,H4,cell_line,adult,,encode
+148,usage_EFO:0002234 total RNA-seq,+,total RNA-seq,EFO:0002234,MG63,cell_line,child,,encode
+149,usage_EFO:0002330 total RNA-seq,+,total RNA-seq,EFO:0002330,SJSA1,cell_line,adult,,encode
+150,usage_EFO:0002713 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0002713,Panc1,cell_line,adult,,encode
+151,usage_EFO:0002713 total RNA-seq,+,total RNA-seq,EFO:0002713,Panc1,cell_line,adult,,encode
+152,usage_EFO:0002779 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0002779,BJ,cell_line,newborn,,encode
+153,usage_EFO:0002784 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0002784,GM12878,cell_line,adult,,encode
+154,usage_EFO:0002784 total RNA-seq,+,total RNA-seq,EFO:0002784,GM12878,cell_line,adult,,encode
+155,usage_EFO:0002785 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0002785,GM12891,cell_line,unknown,,encode
+156,usage_EFO:0002786 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0002786,GM12892,cell_line,unknown,,encode
+157,usage_EFO:0002791 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0002791,HeLa-S3,cell_line,adult,,encode
+158,usage_EFO:0002819 total RNA-seq,+,total RNA-seq,EFO:0002819,Calu3,cell_line,adult,,encode
+159,usage_EFO:0002824 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0002824,HCT116,cell_line,adult,,encode
+160,usage_EFO:0002824 total RNA-seq,+,total RNA-seq,EFO:0002824,HCT116,cell_line,adult,,encode
+161,usage_EFO:0002847 total RNA-seq,+,total RNA-seq,EFO:0002847,PC-9,cell_line,unknown,,encode
+162,usage_EFO:0003042 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0003042,H1,cell_line,embryonic,,encode
+163,usage_EFO:0003042 total RNA-seq,+,total RNA-seq,EFO:0003042,H1,cell_line,embryonic,,encode
+164,usage_EFO:0003044 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0003044,NCI-H460,cell_line,unknown,,encode
+165,usage_EFO:0003044 total RNA-seq,+,total RNA-seq,EFO:0003044,NCI-H460,cell_line,unknown,,encode
+166,usage_EFO:0003045 total RNA-seq,+,total RNA-seq,EFO:0003045,H9,cell_line,embryonic,,encode
+167,usage_EFO:0003072 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0003072,SK-N-SH,cell_line,child,,encode
+168,usage_EFO:0005234 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0005234,PFSK-1,cell_line,child,,encode
+169,usage_EFO:0005237 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0005237,U-87 MG,cell_line,adult,,encode
+170,usage_EFO:0005697 total RNA-seq,+,total RNA-seq,EFO:0005697,M059J,cell_line,adult,,encode
+171,usage_EFO:0005698 total RNA-seq,+,total RNA-seq,EFO:0005698,Daoy,cell_line,child,,encode
+172,usage_EFO:0005712 total RNA-seq,+,total RNA-seq,EFO:0005712,RPMI7951,cell_line,adult,,encode
+173,usage_EFO:0005714 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0005714,LHCN-M2,cell_line,adult,,encode
+174,usage_EFO:0005714 total RNA-seq,+,total RNA-seq,EFO:0005714,LHCN-M2,cell_line,adult,,encode
+175,usage_EFO:0005719 total RNA-seq,+,total RNA-seq,EFO:0005719,Karpas-422,cell_line,adult,,encode
+176,usage_EFO:0005720 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0005720,SK-MEL-5,cell_line,adult,,encode
+177,usage_EFO:0005720 total RNA-seq,+,total RNA-seq,EFO:0005720,SK-MEL-5,cell_line,adult,,encode
+178,usage_EFO:0005721 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0005721,SK-N-DZ,cell_line,child,,encode
+179,usage_EFO:0005722 total RNA-seq,+,total RNA-seq,EFO:0005722,SJCRH30,cell_line,child,,encode
+180,usage_EFO:0005723 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0005723,GM23248,cell_line,adult,,encode
+181,usage_EFO:0005723 total RNA-seq,+,total RNA-seq,EFO:0005723,GM23248,cell_line,adult,,encode
+182,usage_EFO:0005725 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0005725,BE2C,cell_line,child,,encode
+183,usage_EFO:0005904 total RNA-seq,+,total RNA-seq,EFO:0005904,H7,cell_line,embryonic,,encode
+184,usage_EFO:0006270 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0006270,AG04450,cell_line,embryonic,,encode
+185,usage_EFO:0006711 total RNA-seq,+,total RNA-seq,EFO:0006711,OCI-LY7,cell_line,adult,,encode
+186,usage_EFO:0007089 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0007089,HUES64,cell_line,embryonic,,encode
+187,usage_EFO:0007950 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0007950,GM23338,cell_line,adult,,encode
+188,usage_EFO:0007950 total RNA-seq,+,total RNA-seq,EFO:0007950,GM23338,cell_line,adult,,encode
+189,usage_EFO:0009318 total RNA-seq,+,total RNA-seq,EFO:0009318,HFFc6,cell_line,newborn,,encode
+190,usage_EFO:0009747 total RNA-seq,+,total RNA-seq,EFO:0009747,WTC11,cell_line,adult,,encode
+191,usage_EFO:0030018 polyA plus RNA-seq,+,polyA plus RNA-seq,EFO:0030018,BLaER1,cell_line,unknown,,encode
+192,usage_NTR:0000427 polyA plus RNA-seq,+,polyA plus RNA-seq,NTR:0000427,neurosphere,primary_cell,embryonic,,encode
+193,usage_NTR:0000491 total RNA-seq,+,total RNA-seq,NTR:0000491,Right ventricle myocardium inferior,tissue,adult,,encode
+194,usage_NTR:0000492 total RNA-seq,+,total RNA-seq,NTR:0000492,Right ventricle myocardium superior,tissue,adult,,encode
+195,usage_NTR:0000493 total RNA-seq,+,total RNA-seq,NTR:0000493,left ventricle myocardium inferior,tissue,adult,,encode
+196,usage_NTR:0000494 total RNA-seq,+,total RNA-seq,NTR:0000494,left ventricle myocardium superior,tissue,adult,,encode
+197,usage_NTR:0000524 polyA plus RNA-seq,+,polyA plus RNA-seq,NTR:0000524,fibroblast of skin of scalp,primary_cell,embryonic,,encode
+198,usage_NTR:0000856 polyA plus RNA-seq,+,polyA plus RNA-seq,NTR:0000856,mesendoderm,in_vitro_differentiated_cells,embryonic,,encode
+199,usage_NTR:0003013 polyA plus RNA-seq,+,polyA plus RNA-seq,NTR:0003013,placental basal plate,tissue,embryonic,,encode
+200,usage_UBERON:0000007 gtex Pituitary polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0000007,pituitary gland,tissue,adult,Pituitary,gtex
+201,usage_UBERON:0000016 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0000016,endocrine pancreas,tissue,adult,,encode
+202,usage_UBERON:0000019 total RNA-seq,+,total RNA-seq,UBERON:0000019,camera-type eye,tissue,embryonic,,encode
+203,usage_UBERON:0000056 total RNA-seq,+,total RNA-seq,UBERON:0000056,ureter,tissue,adult,,encode
+204,usage_UBERON:0000081 total RNA-seq,+,total RNA-seq,UBERON:0000081,metanephros,tissue,embryonic,,encode
+205,usage_UBERON:0000088 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0000088,trophoblast,tissue,embryonic,,encode
+206,usage_UBERON:0000305 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0000305,amnion,tissue,embryonic,,encode
+207,usage_UBERON:0000317 total RNA-seq,+,total RNA-seq,UBERON:0000317,colonic mucosa,tissue,adult,,encode
+208,usage_UBERON:0000458 gtex Cervix_Endocervix polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0000458,endocervix,tissue,adult,Cervix_Endocervix,gtex
+209,usage_UBERON:0000473 gtex Testis polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0000473,testis,tissue,adult,Testis,gtex
+210,usage_UBERON:0000473 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0000473,testis,tissue,adult,,encode
+211,usage_UBERON:0000473 total RNA-seq,+,total RNA-seq,UBERON:0000473,testis,tissue,adult,,encode
+212,usage_UBERON:0000945 gtex Stomach polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0000945,stomach,tissue,adult,Stomach,gtex
+213,usage_UBERON:0000945 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0000945,stomach,tissue,adult,,encode
+214,usage_UBERON:0000945 total RNA-seq,+,total RNA-seq,UBERON:0000945,stomach,tissue,adult,,encode
+215,usage_UBERON:0000947 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0000947,aorta,tissue,adult,,encode
+216,usage_UBERON:0000947 total RNA-seq,+,total RNA-seq,UBERON:0000947,aorta,tissue,adult,,encode
+217,usage_UBERON:0000948 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0000948,heart,tissue,adult,,encode
+218,usage_UBERON:0000948 total RNA-seq,+,total RNA-seq,UBERON:0000948,heart,tissue,adult,,encode
+219,usage_UBERON:0000955 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0000955,brain,tissue,adult,,encode
+220,usage_UBERON:0000992 gtex Ovary polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0000992,ovary,tissue,adult,Ovary,gtex
+221,usage_UBERON:0000992 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0000992,ovary,tissue,adult,,encode
+222,usage_UBERON:0000992 total RNA-seq,+,total RNA-seq,UBERON:0000992,ovary,tissue,adult,,encode
+223,usage_UBERON:0000995 gtex Uterus polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0000995,uterus,tissue,adult,Uterus,gtex
+224,usage_UBERON:0000995 total RNA-seq,+,total RNA-seq,UBERON:0000995,uterus,tissue,adult,,encode
+225,usage_UBERON:0000996 gtex Vagina polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0000996,vagina,tissue,adult,Vagina,gtex
+226,usage_UBERON:0000996 total RNA-seq,+,total RNA-seq,UBERON:0000996,vagina,tissue,adult,,encode
+227,usage_UBERON:0001013 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001013,adipose tissue,tissue,adult,,encode
+228,usage_UBERON:0001043 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001043,esophagus,tissue,adult,,encode
+229,usage_UBERON:0001072 total RNA-seq,+,total RNA-seq,UBERON:0001072,posterior vena cava,tissue,adult,,encode
+230,usage_UBERON:0001114 gtex Liver polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001114,right lobe of liver,tissue,adult,Liver,gtex
+231,usage_UBERON:0001114 total RNA-seq,+,total RNA-seq,UBERON:0001114,right lobe of liver,tissue,adult,,encode
+232,usage_UBERON:0001115 total RNA-seq,+,total RNA-seq,UBERON:0001115,left lobe of liver,tissue,adult,,encode
+233,usage_UBERON:0001134 total RNA-seq,+,total RNA-seq,UBERON:0001134,skeletal muscle tissue,tissue,embryonic,,encode
+234,usage_UBERON:0001150 gtex Pancreas polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001150,body of pancreas,tissue,adult,Pancreas,gtex
+235,usage_UBERON:0001150 total RNA-seq,+,total RNA-seq,UBERON:0001150,body of pancreas,tissue,adult,,encode
+236,usage_UBERON:0001157 gtex Colon_Transverse polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001157,transverse colon,tissue,adult,Colon_Transverse,gtex
+237,usage_UBERON:0001157 total RNA-seq,+,total RNA-seq,UBERON:0001157,transverse colon,tissue,adult,,encode
+238,usage_UBERON:0001159 gtex Colon_Sigmoid polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001159,sigmoid colon,tissue,adult,Colon_Sigmoid,gtex
+239,usage_UBERON:0001159 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001159,sigmoid colon,tissue,adult,,encode
+240,usage_UBERON:0001159 total RNA-seq,+,total RNA-seq,UBERON:0001159,sigmoid colon,tissue,adult,,encode
+241,usage_UBERON:0001211 gtex Small_Intestine_Terminal_Ileum polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001211,Peyer's patch,tissue,adult,Small_Intestine_Terminal_Ileum,gtex
+242,usage_UBERON:0001211 total RNA-seq,+,total RNA-seq,UBERON:0001211,Peyer's patch,tissue,adult,,encode
+243,usage_UBERON:0001224 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001224,renal pelvis,tissue,embryonic,,encode
+244,usage_UBERON:0001225 gtex Kidney_Cortex polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001225,cortex of kidney,tissue,adult,Kidney_Cortex,gtex
+245,usage_UBERON:0001255 gtex Bladder polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001255,urinary bladder,tissue,adult,Bladder,gtex
+246,usage_UBERON:0001255 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001255,urinary bladder,tissue,child,,encode
+247,usage_UBERON:0001255 total RNA-seq,+,total RNA-seq,UBERON:0001255,urinary bladder,tissue,embryonic,,encode
+248,usage_UBERON:0001264 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001264,pancreas,tissue,adult,,encode
+249,usage_UBERON:0001264 total RNA-seq,+,total RNA-seq,UBERON:0001264,pancreas,tissue,adult,,encode
+250,usage_UBERON:0001293 gtex Kidney_Medulla polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001293,outer medulla of kidney,tissue,adult,Kidney_Medulla,gtex
+251,usage_UBERON:0001322 total RNA-seq,+,total RNA-seq,UBERON:0001322,sciatic nerve,tissue,adult,,encode
+252,usage_UBERON:0001323 gtex Nerve_Tibial polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001323,tibial nerve,tissue,adult,Nerve_Tibial,gtex
+253,usage_UBERON:0001323 total RNA-seq,+,total RNA-seq,UBERON:0001323,tibial nerve,tissue,adult,,encode
+254,usage_UBERON:0001383 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001383,muscle of leg,tissue,embryonic,,encode
+255,usage_UBERON:0001496 gtex Artery_Aorta polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001496,ascending aorta,tissue,adult,Artery_Aorta,gtex
+256,usage_UBERON:0001496 total RNA-seq,+,total RNA-seq,UBERON:0001496,ascending aorta,tissue,adult,,encode
+257,usage_UBERON:0001499 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001499,muscle of arm,tissue,embryonic,,encode
+258,usage_UBERON:0001515 total RNA-seq,+,total RNA-seq,UBERON:0001515,thoracic aorta,tissue,adult,,encode
+259,usage_UBERON:0001621 gtex Artery_Coronary polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001621,coronary artery,tissue,adult,Artery_Coronary,gtex
+260,usage_UBERON:0001723 total RNA-seq,+,total RNA-seq,UBERON:0001723,tongue,tissue,embryonic,,encode
+261,usage_UBERON:0001774 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001774,muscle of trunk,tissue,embryonic,,encode
+262,usage_UBERON:0001870 gtex Brain_Cortex polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001870,frontal cortex,tissue,adult,Brain_Cortex,gtex
+263,usage_UBERON:0001870 total RNA-seq,+,total RNA-seq,UBERON:0001870,frontal cortex,tissue,embryonic,,encode
+264,usage_UBERON:0001871 total RNA-seq,+,total RNA-seq,UBERON:0001871,temporal lobe,tissue,embryonic,,encode
+265,usage_UBERON:0001872 total RNA-seq,+,total RNA-seq,UBERON:0001872,parietal lobe,tissue,embryonic,,encode
+266,usage_UBERON:0001873 gtex Brain_Caudate_basal_ganglia polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001873,caudate nucleus,tissue,adult,Brain_Caudate_basal_ganglia,gtex
+267,usage_UBERON:0001874 gtex Brain_Putamen_basal_ganglia polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001874,putamen,tissue,adult,Brain_Putamen_basal_ganglia,gtex
+268,usage_UBERON:0001876 gtex Brain_Amygdala polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001876,amygdala,tissue,adult,Brain_Amygdala,gtex
+269,usage_UBERON:0001882 gtex Brain_Nucleus_accumbens_basal_ganglia polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001882,nucleus accumbens,tissue,adult,Brain_Nucleus_accumbens_basal_ganglia,gtex
+270,usage_UBERON:0001894 total RNA-seq,+,total RNA-seq,UBERON:0001894,diencephalon,tissue,embryonic,,encode
+271,usage_UBERON:0001898 gtex Brain_Hypothalamus polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001898,hypothalamus,tissue,adult,Brain_Hypothalamus,gtex
+272,usage_UBERON:0001954 gtex Brain_Hippocampus polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001954,Ammon's horn,tissue,adult,Brain_Hippocampus,gtex
+273,usage_UBERON:0001987 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0001987,placenta,tissue,embryonic,,encode
+274,usage_UBERON:0001987 total RNA-seq,+,total RNA-seq,UBERON:0001987,placenta,tissue,embryonic,,encode
+275,usage_UBERON:0002021 total RNA-seq,+,total RNA-seq,UBERON:0002021,occipital lobe,tissue,embryonic,,encode
+276,usage_UBERON:0002037 gtex Brain_Cerebellum polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002037,cerebellum,tissue,adult,Brain_Cerebellum,gtex
+277,usage_UBERON:0002037 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002037,cerebellum,tissue,embryonic,,encode
+278,usage_UBERON:0002037 total RNA-seq,+,total RNA-seq,UBERON:0002037,cerebellum,tissue,embryonic,,encode
+279,usage_UBERON:0002038 gtex Brain_Substantia_nigra polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002038,substantia nigra,tissue,adult,Brain_Substantia_nigra,gtex
+280,usage_UBERON:0002046 gtex Thyroid polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002046,thyroid gland,tissue,adult,Thyroid,gtex
+281,usage_UBERON:0002046 total RNA-seq,+,total RNA-seq,UBERON:0002046,thyroid gland,tissue,adult,,encode
+282,usage_UBERON:0002048 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002048,lung,tissue,adult,,encode
+283,usage_UBERON:0002048 total RNA-seq,+,total RNA-seq,UBERON:0002048,lung,tissue,embryonic,,encode
+284,usage_UBERON:0002078 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002078,right cardiac atrium,tissue,adult,,encode
+285,usage_UBERON:0002078 total RNA-seq,+,total RNA-seq,UBERON:0002078,right cardiac atrium,tissue,adult,,encode
+286,usage_UBERON:0002079 total RNA-seq,+,total RNA-seq,UBERON:0002079,left cardiac atrium,tissue,adult,,encode
+287,usage_UBERON:0002080 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002080,heart right ventricle,tissue,adult,,encode
+288,usage_UBERON:0002080 total RNA-seq,+,total RNA-seq,UBERON:0002080,heart right ventricle,tissue,adult,,encode
+289,usage_UBERON:0002084 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002084,heart left ventricle,tissue,adult,,encode
+290,usage_UBERON:0002084 total RNA-seq,+,total RNA-seq,UBERON:0002084,heart left ventricle,tissue,adult,,encode
+291,usage_UBERON:0002097 total RNA-seq,+,total RNA-seq,UBERON:0002097,skin of body,tissue,embryonic,,encode
+292,usage_UBERON:0002099 total RNA-seq,+,total RNA-seq,UBERON:0002099,cardiac septum,tissue,adult,,encode
+293,usage_UBERON:0002106 gtex Spleen polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002106,spleen,tissue,adult,Spleen,gtex
+294,usage_UBERON:0002106 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002106,spleen,tissue,adult,,encode
+295,usage_UBERON:0002106 total RNA-seq,+,total RNA-seq,UBERON:0002106,spleen,tissue,adult,,encode
+296,usage_UBERON:0002107 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002107,liver,tissue,child,,encode
+297,usage_UBERON:0002107 total RNA-seq,+,total RNA-seq,UBERON:0002107,liver,tissue,embryonic,,encode
+298,usage_UBERON:0002108 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002108,small intestine,tissue,adult,,encode
+299,usage_UBERON:0002113 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002113,kidney,tissue,adult,,encode
+300,usage_UBERON:0002113 total RNA-seq,+,total RNA-seq,UBERON:0002113,kidney,tissue,adult,,encode
+301,usage_UBERON:0002167 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002167,right lung,tissue,embryonic,,encode
+302,usage_UBERON:0002168 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002168,left lung,tissue,embryonic,,encode
+303,usage_UBERON:0002168 total RNA-seq,+,total RNA-seq,UBERON:0002168,left lung,tissue,adult,,encode
+304,usage_UBERON:0002170 total RNA-seq,+,total RNA-seq,UBERON:0002170,upper lobe of right lung,tissue,adult,,encode
+305,usage_UBERON:0002171 total RNA-seq,+,total RNA-seq,UBERON:0002171,lower lobe of right lung,tissue,adult,,encode
+306,usage_UBERON:0002190 gtex Adipose_Subcutaneous polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002190,subcutaneous adipose tissue,tissue,adult,Adipose_Subcutaneous,gtex
+307,usage_UBERON:0002190 total RNA-seq,+,total RNA-seq,UBERON:0002190,subcutaneous adipose tissue,tissue,adult,,encode
+308,usage_UBERON:0002240 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002240,spinal cord,tissue,embryonic,,encode
+309,usage_UBERON:0002240 total RNA-seq,+,total RNA-seq,UBERON:0002240,spinal cord,tissue,embryonic,,encode
+310,usage_UBERON:0002245 gtex Brain_Cerebellar_Hemisphere polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002245,cerebellar hemisphere,tissue,adult,Brain_Cerebellar_Hemisphere,gtex
+311,usage_UBERON:0002324 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002324,muscle of back,tissue,embryonic,,encode
+312,usage_UBERON:0002331 total RNA-seq,+,total RNA-seq,UBERON:0002331,umbilical cord,tissue,embryonic,,encode
+313,usage_UBERON:0002367 gtex Prostate polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002367,prostate gland,tissue,adult,Prostate,gtex
+314,usage_UBERON:0002367 total RNA-seq,+,total RNA-seq,UBERON:0002367,prostate gland,tissue,adult,,encode
+315,usage_UBERON:0002369 gtex Adrenal_Gland polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002369,adrenal gland,tissue,adult,Adrenal_Gland,gtex
+316,usage_UBERON:0002369 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002369,adrenal gland,tissue,adult,,encode
+317,usage_UBERON:0002369 total RNA-seq,+,total RNA-seq,UBERON:0002369,adrenal gland,tissue,adult,,encode
+318,usage_UBERON:0002370 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0002370,thymus,tissue,embryonic,,encode
+319,usage_UBERON:0002469 total RNA-seq,+,total RNA-seq,UBERON:0002469,esophagus mucosa,tissue,adult,,encode
+320,usage_UBERON:0003124 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0003124,chorion,tissue,embryonic,,encode
+321,usage_UBERON:0003662 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0003662,forelimb muscle,tissue,embryonic,,encode
+322,usage_UBERON:0003663 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0003663,hindlimb muscle,tissue,embryonic,,encode
+323,usage_UBERON:0003889 gtex Fallopian_Tube polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0003889,fallopian tube,tissue,adult,Fallopian_Tube,gtex
+324,usage_UBERON:0004264 gtex Skin_Sun_Exposed_Lower_leg polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0004264,lower leg skin,tissue,adult,Skin_Sun_Exposed_Lower_leg,gtex
+325,usage_UBERON:0004264 total RNA-seq,+,total RNA-seq,UBERON:0004264,lower leg skin,tissue,adult,,encode
+326,usage_UBERON:0004538 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0004538,left kidney,tissue,embryonic,,encode
+327,usage_UBERON:0004550 gtex Esophagus_Gastroesophageal_Junction polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0004550,gastroesophageal sphincter,tissue,adult,Esophagus_Gastroesophageal_Junction,gtex
+328,usage_UBERON:0004550 total RNA-seq,+,total RNA-seq,UBERON:0004550,gastroesophageal sphincter,tissue,adult,,encode
+329,usage_UBERON:0004648 gtex Esophagus_Muscularis polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0004648,esophagus muscularis mucosa,tissue,adult,Esophagus_Muscularis,gtex
+330,usage_UBERON:0004648 total RNA-seq,+,total RNA-seq,UBERON:0004648,esophagus muscularis mucosa,tissue,adult,,encode
+331,usage_UBERON:0004992 total RNA-seq,+,total RNA-seq,UBERON:0004992,mucosa of descending colon,tissue,adult,,encode
+332,usage_UBERON:0005033 total RNA-seq,+,total RNA-seq,UBERON:0005033,mucosa of gallbladder,tissue,child,,encode
+333,usage_UBERON:0005270 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0005270,renal cortex interstitium,tissue,embryonic,,encode
+334,usage_UBERON:0006330 gtex Minor_Salivary_Gland polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0006330,anterior lingual gland,tissue,adult,Minor_Salivary_Gland,gtex
+335,usage_UBERON:0006469 gtex Brain_Spinal_cord_cervical_c-1 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0006469,C1 segment of cervical spinal cord,tissue,adult,Brain_Spinal_cord_cervical_c-1,gtex
+336,usage_UBERON:0006566 gtex Heart_Left_Ventricle polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0006566,left ventricle myocardium,tissue,adult,Heart_Left_Ventricle,gtex
+337,usage_UBERON:0006631 gtex Heart_Atrial_Appendage polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0006631,right atrium auricular region,tissue,adult,Heart_Atrial_Appendage,gtex
+338,usage_UBERON:0006631 total RNA-seq,+,total RNA-seq,UBERON:0006631,right atrium auricular region,tissue,adult,,encode
+339,usage_UBERON:0006920 gtex Esophagus_Mucosa polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0006920,esophagus squamous epithelium,tissue,adult,Esophagus_Mucosa,gtex
+340,usage_UBERON:0006920 total RNA-seq,+,total RNA-seq,UBERON:0006920,esophagus squamous epithelium,tissue,adult,,encode
+341,usage_UBERON:0007106 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0007106,chorionic villus,tissue,embryonic,,encode
+342,usage_UBERON:0007610 gtex Artery_Tibial polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0007610,tibial artery,tissue,adult,Artery_Tibial,gtex
+343,usage_UBERON:0008367 gtex Breast_Mammary_Tissue polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0008367,breast epithelium,tissue,adult,Breast_Mammary_Tissue,gtex
+344,usage_UBERON:0008367 total RNA-seq,+,total RNA-seq,UBERON:0008367,breast epithelium,tissue,adult,,encode
+345,usage_UBERON:0008450 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0008450,psoas muscle,tissue,adult,,encode
+346,usage_UBERON:0008450 total RNA-seq,+,total RNA-seq,UBERON:0008450,psoas muscle,tissue,adult,,encode
+347,usage_UBERON:0008952 gtex Lung polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0008952,upper lobe of left lung,tissue,adult,Lung,gtex
+348,usage_UBERON:0008952 total RNA-seq,+,total RNA-seq,UBERON:0008952,upper lobe of left lung,tissue,adult,,encode
+349,usage_UBERON:0008953 total RNA-seq,+,total RNA-seq,UBERON:0008953,lower lobe of left lung,tissue,adult,,encode
+350,usage_UBERON:0008971 total RNA-seq,+,total RNA-seq,UBERON:0008971,left colon,tissue,adult,,encode
+351,usage_UBERON:0009834 gtex Brain_Frontal_Cortex_BA9 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0009834,dorsolateral prefrontal cortex,tissue,adult,Brain_Frontal_Cortex_BA9,gtex
+352,usage_UBERON:0009834 total RNA-seq,+,total RNA-seq,UBERON:0009834,dorsolateral prefrontal cortex,tissue,adult,,encode
+353,usage_UBERON:0009835 gtex Brain_Anterior_cingulate_cortex_BA24 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0009835,anterior cingulate cortex,tissue,adult,Brain_Anterior_cingulate_cortex_BA24,gtex
+354,usage_UBERON:0010414 gtex Adipose_Visceral_Omentum polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0010414,omental fat pad,tissue,adult,Adipose_Visceral_Omentum,gtex
+355,usage_UBERON:0010414 total RNA-seq,+,total RNA-seq,UBERON:0010414,omental fat pad,tissue,adult,,encode
+356,usage_UBERON:0011907 gtex Muscle_Skeletal polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0011907,gastrocnemius medialis,tissue,adult,Muscle_Skeletal,gtex
+357,usage_UBERON:0011907 total RNA-seq,+,total RNA-seq,UBERON:0011907,gastrocnemius medialis,tissue,adult,,encode
+358,usage_UBERON:0012249 gtex Cervix_Ectocervix polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0012249,ectocervix,tissue,adult,Cervix_Ectocervix,gtex
+359,usage_UBERON:0013756 gtex Whole_Blood polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0013756,venous blood,tissue,adult,Whole_Blood,gtex
+360,usage_UBERON:0015143 total RNA-seq,+,total RNA-seq,UBERON:0015143,mesenteric fat pad,tissue,adult,,encode
+361,usage_UBERON:0018115 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0018115,left renal pelvis,tissue,embryonic,,encode
+362,usage_UBERON:0018116 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0018116,right renal pelvis,tissue,embryonic,,encode
+363,usage_UBERON:0018117 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0018117,left renal cortex interstitium,tissue,embryonic,,encode
+364,usage_UBERON:0018118 polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0018118,right renal cortex interstitium,tissue,embryonic,,encode
+365,usage_UBERON:0036149 gtex Skin_Not_Sun_Exposed_Suprapubic polyA plus RNA-seq,+,polyA plus RNA-seq,UBERON:0036149,suprapubic skin,tissue,adult,Skin_Not_Sun_Exposed_Suprapubic,gtex
+366,usage_UBERON:0036149 total RNA-seq,+,total RNA-seq,UBERON:0036149,suprapubic skin,tissue,adult,,encode
+367,usage_CL:0000047 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000047,neuronal stem cell,in_vitro_differentiated_cells,embryonic,,encode
+368,usage_CL:0000062 total RNA-seq,-,total RNA-seq,CL:0000062,osteoblast,primary_cell,adult,,encode
+369,usage_CL:0000084 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000084,T-cell,primary_cell,adult,,encode
+370,usage_CL:0000084 total RNA-seq,-,total RNA-seq,CL:0000084,T-cell,primary_cell,adult,,encode
+371,usage_CL:0000100 total RNA-seq,-,total RNA-seq,CL:0000100,motor neuron,in_vitro_differentiated_cells,adult,,encode
+372,usage_CL:0000115 total RNA-seq,-,total RNA-seq,CL:0000115,endothelial cell,in_vitro_differentiated_cells,adult,,encode
+373,usage_CL:0000121 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000121,Purkinje cell,primary_cell,child,,encode
+374,usage_CL:0000127 total RNA-seq,-,total RNA-seq,CL:0000127,astrocyte,primary_cell,unknown,,encode
+375,usage_CL:0000134 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000134,mesenchymal stem cell,in_vitro_differentiated_cells,embryonic,,encode
+376,usage_CL:0000137 total RNA-seq,-,total RNA-seq,CL:0000137,osteocyte,in_vitro_differentiated_cells,embryonic,,encode
+377,usage_CL:0000138 total RNA-seq,-,total RNA-seq,CL:0000138,chondrocyte,in_vitro_differentiated_cells,embryonic,,encode
+378,usage_CL:0000169 total RNA-seq,-,total RNA-seq,CL:0000169,type B pancreatic cell,in_vitro_differentiated_cells,embryonic,,encode
+379,usage_CL:0000182 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000182,hepatocyte,in_vitro_differentiated_cells,embryonic,,encode
+380,usage_CL:0000182 total RNA-seq,-,total RNA-seq,CL:0000182,hepatocyte,in_vitro_differentiated_cells,embryonic,,encode
+381,usage_CL:0000187 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000187,myocyte,in_vitro_differentiated_cells,adult,,encode
+382,usage_CL:0000187 total RNA-seq,-,total RNA-seq,CL:0000187,myocyte,in_vitro_differentiated_cells,adult,,encode
+383,usage_CL:0000192 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000192,smooth muscle cell,in_vitro_differentiated_cells,embryonic,,encode
+384,usage_CL:0000192 total RNA-seq,-,total RNA-seq,CL:0000192,smooth muscle cell,in_vitro_differentiated_cells,embryonic,,encode
+385,usage_CL:0000221 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000221,ectodermal cell,in_vitro_differentiated_cells,embryonic,,encode
+386,usage_CL:0000222 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000222,mesodermal cell,in_vitro_differentiated_cells,embryonic,,encode
+387,usage_CL:0000223 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000223,endodermal cell,in_vitro_differentiated_cells,embryonic,,encode
+388,usage_CL:0000223 total RNA-seq,-,total RNA-seq,CL:0000223,endodermal cell,in_vitro_differentiated_cells,embryonic,,encode
+389,usage_CL:0000236 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000236,B cell,primary_cell,adult,,encode
+390,usage_CL:0000236 total RNA-seq,-,total RNA-seq,CL:0000236,B cell,primary_cell,adult,,encode
+391,usage_CL:0000307 total RNA-seq,-,total RNA-seq,CL:0000307,tracheal epithelial cell,primary_cell,adult,,encode
+392,usage_CL:0000312 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000312,keratinocyte,primary_cell,unknown,,encode
+393,usage_CL:0000346 total RNA-seq,-,total RNA-seq,CL:0000346,hair follicle dermal papilla cell,primary_cell,adult,,encode
+394,usage_CL:0000351 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000351,trophoblast cell,in_vitro_differentiated_cells,embryonic,,encode
+395,usage_CL:0000515 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000515,skeletal muscle myoblast,primary_cell,unknown,,encode
+396,usage_CL:0000515 total RNA-seq,-,total RNA-seq,CL:0000515,skeletal muscle myoblast,primary_cell,unknown,,encode
+397,usage_CL:0000594 total RNA-seq,-,total RNA-seq,CL:0000594,skeletal muscle satellite cell,primary_cell,adult,,encode
+398,usage_CL:0000623 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000623,natural killer cell,primary_cell,adult,,encode
+399,usage_CL:0000623 total RNA-seq,-,total RNA-seq,CL:0000623,natural killer cell,primary_cell,adult,,encode
+400,usage_CL:0000624 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000624,"CD4-positive, alpha-beta T cell",primary_cell,adult,,encode
+401,usage_CL:0000624 total RNA-seq,-,total RNA-seq,CL:0000624,"CD4-positive, alpha-beta T cell",primary_cell,adult,,encode
+402,usage_CL:0000625 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000625,"CD8-positive, alpha-beta T cell",primary_cell,adult,,encode
+403,usage_CL:0000625 total RNA-seq,-,total RNA-seq,CL:0000625,"CD8-positive, alpha-beta T cell",primary_cell,adult,,encode
+404,usage_CL:0000650 total RNA-seq,-,total RNA-seq,CL:0000650,mesangial cell,primary_cell,"unknown,embryonic",,encode
+405,usage_CL:0000679 total RNA-seq,-,total RNA-seq,CL:0000679,glutamatergic neuron,in_vitro_differentiated_cells,adult,,encode
+406,usage_CL:0000746 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000746,cardiac muscle cell,in_vitro_differentiated_cells,embryonic,,encode
+407,usage_CL:0000746 total RNA-seq,-,total RNA-seq,CL:0000746,cardiac muscle cell,in_vitro_differentiated_cells,embryonic,,encode
+408,usage_CL:0000788 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000788,naive B cell,primary_cell,unknown,,encode
+409,usage_CL:0000792 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000792,"CD4-positive, CD25-positive, alpha-beta regulatory T cell",primary_cell,unknown,,encode
+410,usage_CL:0000823 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000823,immature natural killer cell,primary_cell,unknown,,encode
+411,usage_CL:0000837 total RNA-seq,-,total RNA-seq,CL:0000837,hematopoietic multipotent progenitor cell,in_vitro_differentiated_cells,unknown,,encode
+412,usage_CL:0000842 total RNA-seq,-,total RNA-seq,CL:0000842,mononuclear cell,primary_cell,adult,,encode
+413,usage_CL:0000895 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000895,"naive thymus-derived CD4-positive, alpha-beta T cell",primary_cell,unknown,,encode
+414,usage_CL:0000895 total RNA-seq,-,total RNA-seq,CL:0000895,"naive thymus-derived CD4-positive, alpha-beta T cell",primary_cell,adult,,encode
+415,usage_CL:0000897 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000897,"CD4-positive, alpha-beta memory T cell",primary_cell,unknown,,encode
+416,usage_CL:0000897 total RNA-seq,-,total RNA-seq,CL:0000897,"CD4-positive, alpha-beta memory T cell",primary_cell,adult,,encode
+417,usage_CL:0000900 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000900,"naive thymus-derived CD8-positive, alpha-beta T cell",primary_cell,unknown,,encode
+418,usage_CL:0000900 total RNA-seq,-,total RNA-seq,CL:0000900,"naive thymus-derived CD8-positive, alpha-beta T cell",primary_cell,adult,,encode
+419,usage_CL:0000909 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0000909,"CD8-positive, alpha-beta memory T cell",primary_cell,unknown,,encode
+420,usage_CL:0000909 total RNA-seq,-,total RNA-seq,CL:0000909,"CD8-positive, alpha-beta memory T cell",primary_cell,adult,,encode
+421,usage_CL:0001053 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0001053,IgD-negative memory B cell,primary_cell,unknown,,encode
+422,usage_CL:0001054 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0001054,CD14-positive monocyte,primary_cell,adult,,encode
+423,usage_CL:0001059 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0001059,"common myeloid progenitor, CD34-positive",primary_cell,adult,,encode
+424,usage_CL:0002098 total RNA-seq,-,total RNA-seq,CL:0002098,regular cardiac myocyte,primary_cell,adult,,encode
+425,usage_CL:0002188 total RNA-seq,-,total RNA-seq,CL:0002188,glomerular endothelial cell,primary_cell,embryonic,,encode
+426,usage_CL:0002306 total RNA-seq,-,total RNA-seq,CL:0002306,epithelial cell of proximal tubule,primary_cell,unknown,,encode
+427,usage_CL:0002319 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0002319,neural cell,in_vitro_differentiated_cells,embryonic,,encode
+428,usage_CL:0002324 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0002324,myoepithelial cell of mammary gland,primary_cell,adult,,encode
+429,usage_CL:0002326 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0002326,luminal epithelial cell of mammary gland,primary_cell,adult,,encode
+430,usage_CL:0002327 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0002327,mammary epithelial cell,primary_cell,adult,,encode
+431,usage_CL:0002327 total RNA-seq,-,total RNA-seq,CL:0002327,mammary epithelial cell,primary_cell,adult,,encode
+432,usage_CL:0002328 total RNA-seq,-,total RNA-seq,CL:0002328,bronchial epithelial cell,primary_cell,adult,,encode
+433,usage_CL:0002351 total RNA-seq,-,total RNA-seq,CL:0002351,progenitor cell of endocrine pancreas,in_vitro_differentiated_cells,embryonic,,encode
+434,usage_CL:0002366 total RNA-seq,-,total RNA-seq,CL:0002366,myometrial cell,primary_cell,adult,,encode
+435,usage_CL:0002368 total RNA-seq,-,total RNA-seq,CL:0002368,airway epithelial cell,primary_cell,unknown,,encode
+436,usage_CL:0002372 total RNA-seq,-,total RNA-seq,CL:0002372,myotube,in_vitro_differentiated_cells,unknown,,encode
+437,usage_CL:0002451 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0002451,mammary stem cell,primary_cell,adult,,encode
+438,usage_CL:0002518 total RNA-seq,-,total RNA-seq,CL:0002518,kidney epithelial cell,primary_cell,"embryonic,newborn",,encode
+439,usage_CL:0002539 total RNA-seq,-,total RNA-seq,CL:0002539,aortic smooth muscle cell,primary_cell,adult,,encode
+440,usage_CL:0002540 total RNA-seq,-,total RNA-seq,CL:0002540,mesenchymal stem cell of the bone marrow,primary_cell,adult,,encode
+441,usage_CL:0002543 total RNA-seq,-,total RNA-seq,CL:0002543,vein endothelial cell,primary_cell,adult,,encode
+442,usage_CL:0002545 total RNA-seq,-,total RNA-seq,CL:0002545,thoracic aorta endothelial cell,primary_cell,adult,,encode
+443,usage_CL:0002547 total RNA-seq,-,total RNA-seq,CL:0002547,fibroblast of the aortic adventitia,primary_cell,adult,,encode
+444,usage_CL:0002551 total RNA-seq,-,total RNA-seq,CL:0002551,fibroblast of dermis,primary_cell,adult,,encode
+445,usage_CL:0002553 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0002553,fibroblast of lung,primary_cell,adult,,encode
+446,usage_CL:0002553 total RNA-seq,-,total RNA-seq,CL:0002553,fibroblast of lung,primary_cell,adult,,encode
+447,usage_CL:0002558 total RNA-seq,-,total RNA-seq,CL:0002558,fibroblast of villous mesenchyme,primary_cell,newborn,,encode
+448,usage_CL:0002568 total RNA-seq,-,total RNA-seq,CL:0002568,mesenchymal stem cell of Wharton's jelly,primary_cell,newborn,,encode
+449,usage_CL:0002570 total RNA-seq,-,total RNA-seq,CL:0002570,mesenchymal stem cell of adipose,primary_cell,adult,,encode
+450,usage_CL:0002577 total RNA-seq,-,total RNA-seq,CL:0002577,placental epithelial cell,primary_cell,newborn,,encode
+451,usage_CL:0002583 total RNA-seq,-,total RNA-seq,CL:0002583,subcutaneous preadipocyte,primary_cell,adult,,encode
+452,usage_CL:0002584 total RNA-seq,-,total RNA-seq,CL:0002584,renal cortical epithelial cell,primary_cell,adult,,encode
+453,usage_CL:0002591 total RNA-seq,-,total RNA-seq,CL:0002591,smooth muscle cell of the pulmonary artery,primary_cell,adult,,encode
+454,usage_CL:0002592 total RNA-seq,-,total RNA-seq,CL:0002592,smooth muscle cell of the coronary artery,primary_cell,adult,,encode
+455,usage_CL:0002594 total RNA-seq,-,total RNA-seq,CL:0002594,smooth muscle cell of the umbilical artery,primary_cell,newborn,,encode
+456,usage_CL:0002597 total RNA-seq,-,total RNA-seq,CL:0002597,smooth muscle cell of bladder,primary_cell,adult,,encode
+457,usage_CL:0002598 total RNA-seq,-,total RNA-seq,CL:0002598,bronchial smooth muscle cell,primary_cell,adult,,encode
+458,usage_CL:0002600 total RNA-seq,-,total RNA-seq,CL:0002600,smooth muscle cell of trachea,primary_cell,adult,,encode
+459,usage_CL:0002601 total RNA-seq,-,total RNA-seq,CL:0002601,uterine smooth muscle cell,primary_cell,adult,,encode
+460,usage_CL:0002618 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0002618,endothelial cell of umbilical vein,primary_cell,newborn,,encode
+461,usage_CL:0002618 total RNA-seq,-,total RNA-seq,CL:0002618,endothelial cell of umbilical vein,primary_cell,newborn,,encode
+462,usage_CL:0010002 total RNA-seq,-,total RNA-seq,CL:0010002,epithelial cell of umbilical artery,primary_cell,newborn,,encode
+463,usage_CL:0010003 total RNA-seq,-,total RNA-seq,CL:0010003,epithelial cell of alveolus of lung,primary_cell,"unknown,embryonic",,encode
+464,usage_CL:0011012 total RNA-seq,-,total RNA-seq,CL:0011012,neural crest cell,in_vitro_differentiated_cells,embryonic,,encode
+465,usage_CL:0011019 total RNA-seq,-,total RNA-seq,CL:0011019,mesothelial cell of epicardium,in_vitro_differentiated_cells,embryonic,,encode
+466,usage_CL:0011020 total RNA-seq,-,total RNA-seq,CL:0011020,neural progenitor cell,in_vitro_differentiated_cells,embryonic,,encode
+467,usage_CL:0011022 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:0011022,fibroblast of skin of back,primary_cell,embryonic,,encode
+468,usage_CL:1000458 total RNA-seq,-,total RNA-seq,CL:1000458,melanocyte of skin,primary_cell,adult,,encode
+469,usage_CL:1001568 total RNA-seq,-,total RNA-seq,CL:1001568,pulmonary artery endothelial cell,primary_cell,adult,,encode
+470,usage_CL:1001606 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:1001606,foreskin keratinocyte,primary_cell,newborn,,encode
+471,usage_CL:1001606 total RNA-seq,-,total RNA-seq,CL:1001606,foreskin keratinocyte,primary_cell,newborn,,encode
+472,usage_CL:1001608 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:1001608,foreskin fibroblast,primary_cell,newborn,,encode
+473,usage_CL:2000001 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:2000001,peripheral blood mononuclear cell,primary_cell,adult,,encode
+474,usage_CL:2000007 total RNA-seq,-,total RNA-seq,CL:2000007,articular chondrocyte of knee joint,primary_cell,adult,,encode
+475,usage_CL:2000010 total RNA-seq,-,total RNA-seq,CL:2000010,dermis blood vessel endothelial cell,primary_cell,child,,encode
+476,usage_CL:2000011 total RNA-seq,-,total RNA-seq,CL:2000011,dermis lymphatic vessel endothelial cell,primary_cell,"child,adult",,encode
+477,usage_CL:2000013 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:2000013,fibroblast of skin of abdomen,primary_cell,embryonic,,encode
+478,usage_CL:2000016 total RNA-seq,-,total RNA-seq,CL:2000016,lung microvascular endothelial cell,primary_cell,adult,,encode
+479,usage_CL:2000018 total RNA-seq,-,total RNA-seq,CL:2000018,endothelial cell of coronary artery,primary_cell,adult,,encode
+480,usage_CL:2000040 total RNA-seq,-,total RNA-seq,CL:2000040,bladder microvascular endothelial cell,primary_cell,adult,,encode
+481,usage_CL:2000041 total RNA-seq,-,total RNA-seq,CL:2000041,dermis microvascular lymphatic vessel endothelial cell,primary_cell,adult,,encode
+482,usage_CL:2000045 polyA plus RNA-seq,-,polyA plus RNA-seq,CL:2000045,foreskin melanocyte,primary_cell,newborn,,encode
+483,usage_CL:2000066 total RNA-seq,-,total RNA-seq,CL:2000066,cardiac ventricle fibroblast,primary_cell,"adult,unknown",,encode
+484,usage_CL:2000067 total RNA-seq,-,total RNA-seq,CL:2000067,cardiac atrium fibroblast,primary_cell,child,,encode
+485,usage_CL:2000068 total RNA-seq,-,total RNA-seq,CL:2000068,pericardium fibroblast,primary_cell,"embryonic,unknown",,encode
+486,usage_CL:2000071 total RNA-seq,-,total RNA-seq,CL:2000071,mammary microvascular endothelial cell,primary_cell,adult,,encode
+487,usage_CL:2000078 total RNA-seq,-,total RNA-seq,CL:2000078,placental pericyte,primary_cell,newborn,,encode
+488,usage_CL:2000092 total RNA-seq,-,total RNA-seq,CL:2000092,hair follicular keratinocyte,primary_cell,adult,,encode
+489,usage_CL:2000093 total RNA-seq,-,total RNA-seq,CL:2000093,bronchus fibroblast of lung,primary_cell,unknown,,encode
+490,usage_CL:2000094 total RNA-seq,-,total RNA-seq,CL:2000094,nasal cavity respiratory epithelium epithelial cell of viscerocranial mucosa,primary_cell,adult,,encode
+491,usage_CLO:0007045 polyA plus RNA-seq,-,polyA plus RNA-seq,CLO:0007045,"Jurkat, Clone E6-1",cell_line,child,,encode
+492,usage_EFO:0000572 gtex Cells_EBV-transformed_lymphocytes polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0000572,lymphoblast,tissue,adult,Cells_EBV-transformed_lymphocytes,gtex
+493,usage_EFO:0001086 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0001086,A549,cell_line,adult,,encode
+494,usage_EFO:0001099 total RNA-seq,-,total RNA-seq,EFO:0001099,Caco-2,cell_line,adult,,encode
+495,usage_EFO:0001187 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0001187,HepG2,cell_line,child,,encode
+496,usage_EFO:0001187 total RNA-seq,-,total RNA-seq,EFO:0001187,HepG2,cell_line,child,,encode
+497,usage_EFO:0001193 total RNA-seq,-,total RNA-seq,EFO:0001193,HT-29,cell_line,adult,,encode
+498,usage_EFO:0001196 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0001196,IMR-90,cell_line,embryonic,,encode
+499,usage_EFO:0001196 total RNA-seq,-,total RNA-seq,EFO:0001196,IMR-90,cell_line,embryonic,,encode
+500,usage_EFO:0001200 total RNA-seq,-,total RNA-seq,EFO:0001200,MCF 10A,cell_line,adult,,encode
+501,usage_EFO:0001203 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0001203,MCF-7,cell_line,adult,,encode
+502,usage_EFO:0001203 total RNA-seq,-,total RNA-seq,EFO:0001203,MCF-7,cell_line,adult,,encode
+503,usage_EFO:0002009 gtex Cells_Cultured_fibroblasts polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0002009,fibroblast derived cell line,tissue,adult,Cells_Cultured_fibroblasts,gtex
+504,usage_EFO:0002059 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0002059,HT1080,cell_line,adult,,encode
+505,usage_EFO:0002059 total RNA-seq,-,total RNA-seq,EFO:0002059,HT1080,cell_line,adult,,encode
+506,usage_EFO:0002067 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0002067,K562,cell_line,adult,,encode
+507,usage_EFO:0002067 total RNA-seq,-,total RNA-seq,EFO:0002067,K562,cell_line,adult,,encode
+508,usage_EFO:0002074 total RNA-seq,-,total RNA-seq,EFO:0002074,PC-3,cell_line,adult,,encode
+509,usage_EFO:0002101 total RNA-seq,-,total RNA-seq,EFO:0002101,A172,cell_line,adult,,encode
+510,usage_EFO:0002103 total RNA-seq,-,total RNA-seq,EFO:0002103,A375,cell_line,adult,,encode
+511,usage_EFO:0002106 total RNA-seq,-,total RNA-seq,EFO:0002106,A673,cell_line,child,,encode
+512,usage_EFO:0002150 total RNA-seq,-,total RNA-seq,EFO:0002150,Caki2,cell_line,adult,,encode
+513,usage_EFO:0002179 total RNA-seq,-,total RNA-seq,EFO:0002179,G401,cell_line,child,,encode
+514,usage_EFO:0002184 total RNA-seq,-,total RNA-seq,EFO:0002184,H4,cell_line,adult,,encode
+515,usage_EFO:0002234 total RNA-seq,-,total RNA-seq,EFO:0002234,MG63,cell_line,child,,encode
+516,usage_EFO:0002330 total RNA-seq,-,total RNA-seq,EFO:0002330,SJSA1,cell_line,adult,,encode
+517,usage_EFO:0002713 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0002713,Panc1,cell_line,adult,,encode
+518,usage_EFO:0002713 total RNA-seq,-,total RNA-seq,EFO:0002713,Panc1,cell_line,adult,,encode
+519,usage_EFO:0002779 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0002779,BJ,cell_line,newborn,,encode
+520,usage_EFO:0002784 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0002784,GM12878,cell_line,adult,,encode
+521,usage_EFO:0002784 total RNA-seq,-,total RNA-seq,EFO:0002784,GM12878,cell_line,adult,,encode
+522,usage_EFO:0002785 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0002785,GM12891,cell_line,unknown,,encode
+523,usage_EFO:0002786 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0002786,GM12892,cell_line,unknown,,encode
+524,usage_EFO:0002791 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0002791,HeLa-S3,cell_line,adult,,encode
+525,usage_EFO:0002819 total RNA-seq,-,total RNA-seq,EFO:0002819,Calu3,cell_line,adult,,encode
+526,usage_EFO:0002824 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0002824,HCT116,cell_line,adult,,encode
+527,usage_EFO:0002824 total RNA-seq,-,total RNA-seq,EFO:0002824,HCT116,cell_line,adult,,encode
+528,usage_EFO:0002847 total RNA-seq,-,total RNA-seq,EFO:0002847,PC-9,cell_line,unknown,,encode
+529,usage_EFO:0003042 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0003042,H1,cell_line,embryonic,,encode
+530,usage_EFO:0003042 total RNA-seq,-,total RNA-seq,EFO:0003042,H1,cell_line,embryonic,,encode
+531,usage_EFO:0003044 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0003044,NCI-H460,cell_line,unknown,,encode
+532,usage_EFO:0003044 total RNA-seq,-,total RNA-seq,EFO:0003044,NCI-H460,cell_line,unknown,,encode
+533,usage_EFO:0003045 total RNA-seq,-,total RNA-seq,EFO:0003045,H9,cell_line,embryonic,,encode
+534,usage_EFO:0003072 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0003072,SK-N-SH,cell_line,child,,encode
+535,usage_EFO:0005234 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0005234,PFSK-1,cell_line,child,,encode
+536,usage_EFO:0005237 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0005237,U-87 MG,cell_line,adult,,encode
+537,usage_EFO:0005697 total RNA-seq,-,total RNA-seq,EFO:0005697,M059J,cell_line,adult,,encode
+538,usage_EFO:0005698 total RNA-seq,-,total RNA-seq,EFO:0005698,Daoy,cell_line,child,,encode
+539,usage_EFO:0005712 total RNA-seq,-,total RNA-seq,EFO:0005712,RPMI7951,cell_line,adult,,encode
+540,usage_EFO:0005714 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0005714,LHCN-M2,cell_line,adult,,encode
+541,usage_EFO:0005714 total RNA-seq,-,total RNA-seq,EFO:0005714,LHCN-M2,cell_line,adult,,encode
+542,usage_EFO:0005719 total RNA-seq,-,total RNA-seq,EFO:0005719,Karpas-422,cell_line,adult,,encode
+543,usage_EFO:0005720 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0005720,SK-MEL-5,cell_line,adult,,encode
+544,usage_EFO:0005720 total RNA-seq,-,total RNA-seq,EFO:0005720,SK-MEL-5,cell_line,adult,,encode
+545,usage_EFO:0005721 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0005721,SK-N-DZ,cell_line,child,,encode
+546,usage_EFO:0005722 total RNA-seq,-,total RNA-seq,EFO:0005722,SJCRH30,cell_line,child,,encode
+547,usage_EFO:0005723 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0005723,GM23248,cell_line,adult,,encode
+548,usage_EFO:0005723 total RNA-seq,-,total RNA-seq,EFO:0005723,GM23248,cell_line,adult,,encode
+549,usage_EFO:0005725 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0005725,BE2C,cell_line,child,,encode
+550,usage_EFO:0005904 total RNA-seq,-,total RNA-seq,EFO:0005904,H7,cell_line,embryonic,,encode
+551,usage_EFO:0006270 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0006270,AG04450,cell_line,embryonic,,encode
+552,usage_EFO:0006711 total RNA-seq,-,total RNA-seq,EFO:0006711,OCI-LY7,cell_line,adult,,encode
+553,usage_EFO:0007089 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0007089,HUES64,cell_line,embryonic,,encode
+554,usage_EFO:0007950 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0007950,GM23338,cell_line,adult,,encode
+555,usage_EFO:0007950 total RNA-seq,-,total RNA-seq,EFO:0007950,GM23338,cell_line,adult,,encode
+556,usage_EFO:0009318 total RNA-seq,-,total RNA-seq,EFO:0009318,HFFc6,cell_line,newborn,,encode
+557,usage_EFO:0009747 total RNA-seq,-,total RNA-seq,EFO:0009747,WTC11,cell_line,adult,,encode
+558,usage_EFO:0030018 polyA plus RNA-seq,-,polyA plus RNA-seq,EFO:0030018,BLaER1,cell_line,unknown,,encode
+559,usage_NTR:0000427 polyA plus RNA-seq,-,polyA plus RNA-seq,NTR:0000427,neurosphere,primary_cell,embryonic,,encode
+560,usage_NTR:0000491 total RNA-seq,-,total RNA-seq,NTR:0000491,Right ventricle myocardium inferior,tissue,adult,,encode
+561,usage_NTR:0000492 total RNA-seq,-,total RNA-seq,NTR:0000492,Right ventricle myocardium superior,tissue,adult,,encode
+562,usage_NTR:0000493 total RNA-seq,-,total RNA-seq,NTR:0000493,left ventricle myocardium inferior,tissue,adult,,encode
+563,usage_NTR:0000494 total RNA-seq,-,total RNA-seq,NTR:0000494,left ventricle myocardium superior,tissue,adult,,encode
+564,usage_NTR:0000524 polyA plus RNA-seq,-,polyA plus RNA-seq,NTR:0000524,fibroblast of skin of scalp,primary_cell,embryonic,,encode
+565,usage_NTR:0000856 polyA plus RNA-seq,-,polyA plus RNA-seq,NTR:0000856,mesendoderm,in_vitro_differentiated_cells,embryonic,,encode
+566,usage_NTR:0003013 polyA plus RNA-seq,-,polyA plus RNA-seq,NTR:0003013,placental basal plate,tissue,embryonic,,encode
+567,usage_UBERON:0000007 gtex Pituitary polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0000007,pituitary gland,tissue,adult,Pituitary,gtex
+568,usage_UBERON:0000016 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0000016,endocrine pancreas,tissue,adult,,encode
+569,usage_UBERON:0000019 total RNA-seq,-,total RNA-seq,UBERON:0000019,camera-type eye,tissue,embryonic,,encode
+570,usage_UBERON:0000056 total RNA-seq,-,total RNA-seq,UBERON:0000056,ureter,tissue,adult,,encode
+571,usage_UBERON:0000081 total RNA-seq,-,total RNA-seq,UBERON:0000081,metanephros,tissue,embryonic,,encode
+572,usage_UBERON:0000088 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0000088,trophoblast,tissue,embryonic,,encode
+573,usage_UBERON:0000305 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0000305,amnion,tissue,embryonic,,encode
+574,usage_UBERON:0000317 total RNA-seq,-,total RNA-seq,UBERON:0000317,colonic mucosa,tissue,adult,,encode
+575,usage_UBERON:0000458 gtex Cervix_Endocervix polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0000458,endocervix,tissue,adult,Cervix_Endocervix,gtex
+576,usage_UBERON:0000473 gtex Testis polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0000473,testis,tissue,adult,Testis,gtex
+577,usage_UBERON:0000473 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0000473,testis,tissue,adult,,encode
+578,usage_UBERON:0000473 total RNA-seq,-,total RNA-seq,UBERON:0000473,testis,tissue,adult,,encode
+579,usage_UBERON:0000945 gtex Stomach polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0000945,stomach,tissue,adult,Stomach,gtex
+580,usage_UBERON:0000945 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0000945,stomach,tissue,adult,,encode
+581,usage_UBERON:0000945 total RNA-seq,-,total RNA-seq,UBERON:0000945,stomach,tissue,adult,,encode
+582,usage_UBERON:0000947 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0000947,aorta,tissue,adult,,encode
+583,usage_UBERON:0000947 total RNA-seq,-,total RNA-seq,UBERON:0000947,aorta,tissue,adult,,encode
+584,usage_UBERON:0000948 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0000948,heart,tissue,adult,,encode
+585,usage_UBERON:0000948 total RNA-seq,-,total RNA-seq,UBERON:0000948,heart,tissue,adult,,encode
+586,usage_UBERON:0000955 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0000955,brain,tissue,adult,,encode
+587,usage_UBERON:0000992 gtex Ovary polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0000992,ovary,tissue,adult,Ovary,gtex
+588,usage_UBERON:0000992 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0000992,ovary,tissue,adult,,encode
+589,usage_UBERON:0000992 total RNA-seq,-,total RNA-seq,UBERON:0000992,ovary,tissue,adult,,encode
+590,usage_UBERON:0000995 gtex Uterus polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0000995,uterus,tissue,adult,Uterus,gtex
+591,usage_UBERON:0000995 total RNA-seq,-,total RNA-seq,UBERON:0000995,uterus,tissue,adult,,encode
+592,usage_UBERON:0000996 gtex Vagina polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0000996,vagina,tissue,adult,Vagina,gtex
+593,usage_UBERON:0000996 total RNA-seq,-,total RNA-seq,UBERON:0000996,vagina,tissue,adult,,encode
+594,usage_UBERON:0001013 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001013,adipose tissue,tissue,adult,,encode
+595,usage_UBERON:0001043 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001043,esophagus,tissue,adult,,encode
+596,usage_UBERON:0001072 total RNA-seq,-,total RNA-seq,UBERON:0001072,posterior vena cava,tissue,adult,,encode
+597,usage_UBERON:0001114 gtex Liver polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001114,right lobe of liver,tissue,adult,Liver,gtex
+598,usage_UBERON:0001114 total RNA-seq,-,total RNA-seq,UBERON:0001114,right lobe of liver,tissue,adult,,encode
+599,usage_UBERON:0001115 total RNA-seq,-,total RNA-seq,UBERON:0001115,left lobe of liver,tissue,adult,,encode
+600,usage_UBERON:0001134 total RNA-seq,-,total RNA-seq,UBERON:0001134,skeletal muscle tissue,tissue,embryonic,,encode
+601,usage_UBERON:0001150 gtex Pancreas polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001150,body of pancreas,tissue,adult,Pancreas,gtex
+602,usage_UBERON:0001150 total RNA-seq,-,total RNA-seq,UBERON:0001150,body of pancreas,tissue,adult,,encode
+603,usage_UBERON:0001157 gtex Colon_Transverse polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001157,transverse colon,tissue,adult,Colon_Transverse,gtex
+604,usage_UBERON:0001157 total RNA-seq,-,total RNA-seq,UBERON:0001157,transverse colon,tissue,adult,,encode
+605,usage_UBERON:0001159 gtex Colon_Sigmoid polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001159,sigmoid colon,tissue,adult,Colon_Sigmoid,gtex
+606,usage_UBERON:0001159 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001159,sigmoid colon,tissue,adult,,encode
+607,usage_UBERON:0001159 total RNA-seq,-,total RNA-seq,UBERON:0001159,sigmoid colon,tissue,adult,,encode
+608,usage_UBERON:0001211 gtex Small_Intestine_Terminal_Ileum polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001211,Peyer's patch,tissue,adult,Small_Intestine_Terminal_Ileum,gtex
+609,usage_UBERON:0001211 total RNA-seq,-,total RNA-seq,UBERON:0001211,Peyer's patch,tissue,adult,,encode
+610,usage_UBERON:0001224 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001224,renal pelvis,tissue,embryonic,,encode
+611,usage_UBERON:0001225 gtex Kidney_Cortex polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001225,cortex of kidney,tissue,adult,Kidney_Cortex,gtex
+612,usage_UBERON:0001255 gtex Bladder polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001255,urinary bladder,tissue,adult,Bladder,gtex
+613,usage_UBERON:0001255 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001255,urinary bladder,tissue,child,,encode
+614,usage_UBERON:0001255 total RNA-seq,-,total RNA-seq,UBERON:0001255,urinary bladder,tissue,embryonic,,encode
+615,usage_UBERON:0001264 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001264,pancreas,tissue,adult,,encode
+616,usage_UBERON:0001264 total RNA-seq,-,total RNA-seq,UBERON:0001264,pancreas,tissue,adult,,encode
+617,usage_UBERON:0001293 gtex Kidney_Medulla polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001293,outer medulla of kidney,tissue,adult,Kidney_Medulla,gtex
+618,usage_UBERON:0001322 total RNA-seq,-,total RNA-seq,UBERON:0001322,sciatic nerve,tissue,adult,,encode
+619,usage_UBERON:0001323 gtex Nerve_Tibial polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001323,tibial nerve,tissue,adult,Nerve_Tibial,gtex
+620,usage_UBERON:0001323 total RNA-seq,-,total RNA-seq,UBERON:0001323,tibial nerve,tissue,adult,,encode
+621,usage_UBERON:0001383 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001383,muscle of leg,tissue,embryonic,,encode
+622,usage_UBERON:0001496 gtex Artery_Aorta polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001496,ascending aorta,tissue,adult,Artery_Aorta,gtex
+623,usage_UBERON:0001496 total RNA-seq,-,total RNA-seq,UBERON:0001496,ascending aorta,tissue,adult,,encode
+624,usage_UBERON:0001499 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001499,muscle of arm,tissue,embryonic,,encode
+625,usage_UBERON:0001515 total RNA-seq,-,total RNA-seq,UBERON:0001515,thoracic aorta,tissue,adult,,encode
+626,usage_UBERON:0001621 gtex Artery_Coronary polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001621,coronary artery,tissue,adult,Artery_Coronary,gtex
+627,usage_UBERON:0001723 total RNA-seq,-,total RNA-seq,UBERON:0001723,tongue,tissue,embryonic,,encode
+628,usage_UBERON:0001774 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001774,muscle of trunk,tissue,embryonic,,encode
+629,usage_UBERON:0001870 gtex Brain_Cortex polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001870,frontal cortex,tissue,adult,Brain_Cortex,gtex
+630,usage_UBERON:0001870 total RNA-seq,-,total RNA-seq,UBERON:0001870,frontal cortex,tissue,embryonic,,encode
+631,usage_UBERON:0001871 total RNA-seq,-,total RNA-seq,UBERON:0001871,temporal lobe,tissue,embryonic,,encode
+632,usage_UBERON:0001872 total RNA-seq,-,total RNA-seq,UBERON:0001872,parietal lobe,tissue,embryonic,,encode
+633,usage_UBERON:0001873 gtex Brain_Caudate_basal_ganglia polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001873,caudate nucleus,tissue,adult,Brain_Caudate_basal_ganglia,gtex
+634,usage_UBERON:0001874 gtex Brain_Putamen_basal_ganglia polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001874,putamen,tissue,adult,Brain_Putamen_basal_ganglia,gtex
+635,usage_UBERON:0001876 gtex Brain_Amygdala polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001876,amygdala,tissue,adult,Brain_Amygdala,gtex
+636,usage_UBERON:0001882 gtex Brain_Nucleus_accumbens_basal_ganglia polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001882,nucleus accumbens,tissue,adult,Brain_Nucleus_accumbens_basal_ganglia,gtex
+637,usage_UBERON:0001894 total RNA-seq,-,total RNA-seq,UBERON:0001894,diencephalon,tissue,embryonic,,encode
+638,usage_UBERON:0001898 gtex Brain_Hypothalamus polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001898,hypothalamus,tissue,adult,Brain_Hypothalamus,gtex
+639,usage_UBERON:0001954 gtex Brain_Hippocampus polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001954,Ammon's horn,tissue,adult,Brain_Hippocampus,gtex
+640,usage_UBERON:0001987 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0001987,placenta,tissue,embryonic,,encode
+641,usage_UBERON:0001987 total RNA-seq,-,total RNA-seq,UBERON:0001987,placenta,tissue,embryonic,,encode
+642,usage_UBERON:0002021 total RNA-seq,-,total RNA-seq,UBERON:0002021,occipital lobe,tissue,embryonic,,encode
+643,usage_UBERON:0002037 gtex Brain_Cerebellum polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002037,cerebellum,tissue,adult,Brain_Cerebellum,gtex
+644,usage_UBERON:0002037 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002037,cerebellum,tissue,embryonic,,encode
+645,usage_UBERON:0002037 total RNA-seq,-,total RNA-seq,UBERON:0002037,cerebellum,tissue,embryonic,,encode
+646,usage_UBERON:0002038 gtex Brain_Substantia_nigra polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002038,substantia nigra,tissue,adult,Brain_Substantia_nigra,gtex
+647,usage_UBERON:0002046 gtex Thyroid polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002046,thyroid gland,tissue,adult,Thyroid,gtex
+648,usage_UBERON:0002046 total RNA-seq,-,total RNA-seq,UBERON:0002046,thyroid gland,tissue,adult,,encode
+649,usage_UBERON:0002048 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002048,lung,tissue,adult,,encode
+650,usage_UBERON:0002048 total RNA-seq,-,total RNA-seq,UBERON:0002048,lung,tissue,embryonic,,encode
+651,usage_UBERON:0002078 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002078,right cardiac atrium,tissue,adult,,encode
+652,usage_UBERON:0002078 total RNA-seq,-,total RNA-seq,UBERON:0002078,right cardiac atrium,tissue,adult,,encode
+653,usage_UBERON:0002079 total RNA-seq,-,total RNA-seq,UBERON:0002079,left cardiac atrium,tissue,adult,,encode
+654,usage_UBERON:0002080 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002080,heart right ventricle,tissue,adult,,encode
+655,usage_UBERON:0002080 total RNA-seq,-,total RNA-seq,UBERON:0002080,heart right ventricle,tissue,adult,,encode
+656,usage_UBERON:0002084 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002084,heart left ventricle,tissue,adult,,encode
+657,usage_UBERON:0002084 total RNA-seq,-,total RNA-seq,UBERON:0002084,heart left ventricle,tissue,adult,,encode
+658,usage_UBERON:0002097 total RNA-seq,-,total RNA-seq,UBERON:0002097,skin of body,tissue,embryonic,,encode
+659,usage_UBERON:0002099 total RNA-seq,-,total RNA-seq,UBERON:0002099,cardiac septum,tissue,adult,,encode
+660,usage_UBERON:0002106 gtex Spleen polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002106,spleen,tissue,adult,Spleen,gtex
+661,usage_UBERON:0002106 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002106,spleen,tissue,adult,,encode
+662,usage_UBERON:0002106 total RNA-seq,-,total RNA-seq,UBERON:0002106,spleen,tissue,adult,,encode
+663,usage_UBERON:0002107 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002107,liver,tissue,child,,encode
+664,usage_UBERON:0002107 total RNA-seq,-,total RNA-seq,UBERON:0002107,liver,tissue,embryonic,,encode
+665,usage_UBERON:0002108 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002108,small intestine,tissue,adult,,encode
+666,usage_UBERON:0002113 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002113,kidney,tissue,adult,,encode
+667,usage_UBERON:0002113 total RNA-seq,-,total RNA-seq,UBERON:0002113,kidney,tissue,adult,,encode
+668,usage_UBERON:0002167 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002167,right lung,tissue,embryonic,,encode
+669,usage_UBERON:0002168 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002168,left lung,tissue,embryonic,,encode
+670,usage_UBERON:0002168 total RNA-seq,-,total RNA-seq,UBERON:0002168,left lung,tissue,adult,,encode
+671,usage_UBERON:0002170 total RNA-seq,-,total RNA-seq,UBERON:0002170,upper lobe of right lung,tissue,adult,,encode
+672,usage_UBERON:0002171 total RNA-seq,-,total RNA-seq,UBERON:0002171,lower lobe of right lung,tissue,adult,,encode
+673,usage_UBERON:0002190 gtex Adipose_Subcutaneous polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002190,subcutaneous adipose tissue,tissue,adult,Adipose_Subcutaneous,gtex
+674,usage_UBERON:0002190 total RNA-seq,-,total RNA-seq,UBERON:0002190,subcutaneous adipose tissue,tissue,adult,,encode
+675,usage_UBERON:0002240 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002240,spinal cord,tissue,embryonic,,encode
+676,usage_UBERON:0002240 total RNA-seq,-,total RNA-seq,UBERON:0002240,spinal cord,tissue,embryonic,,encode
+677,usage_UBERON:0002245 gtex Brain_Cerebellar_Hemisphere polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002245,cerebellar hemisphere,tissue,adult,Brain_Cerebellar_Hemisphere,gtex
+678,usage_UBERON:0002324 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002324,muscle of back,tissue,embryonic,,encode
+679,usage_UBERON:0002331 total RNA-seq,-,total RNA-seq,UBERON:0002331,umbilical cord,tissue,embryonic,,encode
+680,usage_UBERON:0002367 gtex Prostate polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002367,prostate gland,tissue,adult,Prostate,gtex
+681,usage_UBERON:0002367 total RNA-seq,-,total RNA-seq,UBERON:0002367,prostate gland,tissue,adult,,encode
+682,usage_UBERON:0002369 gtex Adrenal_Gland polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002369,adrenal gland,tissue,adult,Adrenal_Gland,gtex
+683,usage_UBERON:0002369 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002369,adrenal gland,tissue,adult,,encode
+684,usage_UBERON:0002369 total RNA-seq,-,total RNA-seq,UBERON:0002369,adrenal gland,tissue,adult,,encode
+685,usage_UBERON:0002370 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0002370,thymus,tissue,embryonic,,encode
+686,usage_UBERON:0002469 total RNA-seq,-,total RNA-seq,UBERON:0002469,esophagus mucosa,tissue,adult,,encode
+687,usage_UBERON:0003124 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0003124,chorion,tissue,embryonic,,encode
+688,usage_UBERON:0003662 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0003662,forelimb muscle,tissue,embryonic,,encode
+689,usage_UBERON:0003663 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0003663,hindlimb muscle,tissue,embryonic,,encode
+690,usage_UBERON:0003889 gtex Fallopian_Tube polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0003889,fallopian tube,tissue,adult,Fallopian_Tube,gtex
+691,usage_UBERON:0004264 gtex Skin_Sun_Exposed_Lower_leg polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0004264,lower leg skin,tissue,adult,Skin_Sun_Exposed_Lower_leg,gtex
+692,usage_UBERON:0004264 total RNA-seq,-,total RNA-seq,UBERON:0004264,lower leg skin,tissue,adult,,encode
+693,usage_UBERON:0004538 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0004538,left kidney,tissue,embryonic,,encode
+694,usage_UBERON:0004550 gtex Esophagus_Gastroesophageal_Junction polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0004550,gastroesophageal sphincter,tissue,adult,Esophagus_Gastroesophageal_Junction,gtex
+695,usage_UBERON:0004550 total RNA-seq,-,total RNA-seq,UBERON:0004550,gastroesophageal sphincter,tissue,adult,,encode
+696,usage_UBERON:0004648 gtex Esophagus_Muscularis polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0004648,esophagus muscularis mucosa,tissue,adult,Esophagus_Muscularis,gtex
+697,usage_UBERON:0004648 total RNA-seq,-,total RNA-seq,UBERON:0004648,esophagus muscularis mucosa,tissue,adult,,encode
+698,usage_UBERON:0004992 total RNA-seq,-,total RNA-seq,UBERON:0004992,mucosa of descending colon,tissue,adult,,encode
+699,usage_UBERON:0005033 total RNA-seq,-,total RNA-seq,UBERON:0005033,mucosa of gallbladder,tissue,child,,encode
+700,usage_UBERON:0005270 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0005270,renal cortex interstitium,tissue,embryonic,,encode
+701,usage_UBERON:0006330 gtex Minor_Salivary_Gland polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0006330,anterior lingual gland,tissue,adult,Minor_Salivary_Gland,gtex
+702,usage_UBERON:0006469 gtex Brain_Spinal_cord_cervical_c-1 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0006469,C1 segment of cervical spinal cord,tissue,adult,Brain_Spinal_cord_cervical_c-1,gtex
+703,usage_UBERON:0006566 gtex Heart_Left_Ventricle polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0006566,left ventricle myocardium,tissue,adult,Heart_Left_Ventricle,gtex
+704,usage_UBERON:0006631 gtex Heart_Atrial_Appendage polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0006631,right atrium auricular region,tissue,adult,Heart_Atrial_Appendage,gtex
+705,usage_UBERON:0006631 total RNA-seq,-,total RNA-seq,UBERON:0006631,right atrium auricular region,tissue,adult,,encode
+706,usage_UBERON:0006920 gtex Esophagus_Mucosa polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0006920,esophagus squamous epithelium,tissue,adult,Esophagus_Mucosa,gtex
+707,usage_UBERON:0006920 total RNA-seq,-,total RNA-seq,UBERON:0006920,esophagus squamous epithelium,tissue,adult,,encode
+708,usage_UBERON:0007106 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0007106,chorionic villus,tissue,embryonic,,encode
+709,usage_UBERON:0007610 gtex Artery_Tibial polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0007610,tibial artery,tissue,adult,Artery_Tibial,gtex
+710,usage_UBERON:0008367 gtex Breast_Mammary_Tissue polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0008367,breast epithelium,tissue,adult,Breast_Mammary_Tissue,gtex
+711,usage_UBERON:0008367 total RNA-seq,-,total RNA-seq,UBERON:0008367,breast epithelium,tissue,adult,,encode
+712,usage_UBERON:0008450 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0008450,psoas muscle,tissue,adult,,encode
+713,usage_UBERON:0008450 total RNA-seq,-,total RNA-seq,UBERON:0008450,psoas muscle,tissue,adult,,encode
+714,usage_UBERON:0008952 gtex Lung polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0008952,upper lobe of left lung,tissue,adult,Lung,gtex
+715,usage_UBERON:0008952 total RNA-seq,-,total RNA-seq,UBERON:0008952,upper lobe of left lung,tissue,adult,,encode
+716,usage_UBERON:0008953 total RNA-seq,-,total RNA-seq,UBERON:0008953,lower lobe of left lung,tissue,adult,,encode
+717,usage_UBERON:0008971 total RNA-seq,-,total RNA-seq,UBERON:0008971,left colon,tissue,adult,,encode
+718,usage_UBERON:0009834 gtex Brain_Frontal_Cortex_BA9 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0009834,dorsolateral prefrontal cortex,tissue,adult,Brain_Frontal_Cortex_BA9,gtex
+719,usage_UBERON:0009834 total RNA-seq,-,total RNA-seq,UBERON:0009834,dorsolateral prefrontal cortex,tissue,adult,,encode
+720,usage_UBERON:0009835 gtex Brain_Anterior_cingulate_cortex_BA24 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0009835,anterior cingulate cortex,tissue,adult,Brain_Anterior_cingulate_cortex_BA24,gtex
+721,usage_UBERON:0010414 gtex Adipose_Visceral_Omentum polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0010414,omental fat pad,tissue,adult,Adipose_Visceral_Omentum,gtex
+722,usage_UBERON:0010414 total RNA-seq,-,total RNA-seq,UBERON:0010414,omental fat pad,tissue,adult,,encode
+723,usage_UBERON:0011907 gtex Muscle_Skeletal polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0011907,gastrocnemius medialis,tissue,adult,Muscle_Skeletal,gtex
+724,usage_UBERON:0011907 total RNA-seq,-,total RNA-seq,UBERON:0011907,gastrocnemius medialis,tissue,adult,,encode
+725,usage_UBERON:0012249 gtex Cervix_Ectocervix polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0012249,ectocervix,tissue,adult,Cervix_Ectocervix,gtex
+726,usage_UBERON:0013756 gtex Whole_Blood polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0013756,venous blood,tissue,adult,Whole_Blood,gtex
+727,usage_UBERON:0015143 total RNA-seq,-,total RNA-seq,UBERON:0015143,mesenteric fat pad,tissue,adult,,encode
+728,usage_UBERON:0018115 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0018115,left renal pelvis,tissue,embryonic,,encode
+729,usage_UBERON:0018116 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0018116,right renal pelvis,tissue,embryonic,,encode
+730,usage_UBERON:0018117 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0018117,left renal cortex interstitium,tissue,embryonic,,encode
+731,usage_UBERON:0018118 polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0018118,right renal cortex interstitium,tissue,embryonic,,encode
+732,usage_UBERON:0036149 gtex Skin_Not_Sun_Exposed_Suprapubic polyA plus RNA-seq,-,polyA plus RNA-seq,UBERON:0036149,suprapubic skin,tissue,adult,Skin_Not_Sun_Exposed_Suprapubic,gtex
+733,usage_UBERON:0036149 total RNA-seq,-,total RNA-seq,UBERON:0036149,suprapubic skin,tissue,adult,,encode

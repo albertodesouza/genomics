@@ -1,0 +1,13 @@
+,name,strand,Assay title,ontology_curie,biosample_name,biosample_type,data_source,genetically_modified,nonzero_mean
+0,ENCSR072YCM,+,PRO-cap,EFO:0002106,A673,cell_line,encode,False,13.30830192565918
+1,ENCSR182QNJ,+,PRO-cap,EFO:0001099,Caco-2,cell_line,encode,False,14.002802848815918
+2,ENCSR740IPL,+,PRO-cap,EFO:0002067,K562,cell_line,encode,False,15.765458106994629
+3,ENCSR797DEF,+,PRO-cap,EFO:0002819,Calu3,cell_line,encode,False,12.281320571899414
+4,ENCSR801ECP,+,PRO-cap,CL:0002618,endothelial cell of umbilical vein,primary_cell,encode,False,13.973691940307617
+5,ENCSR860TYZ,+,PRO-cap,EFO:0001200,MCF 10A,cell_line,encode,False,8.229501724243164
+6,ENCSR072YCM,-,PRO-cap,EFO:0002106,A673,cell_line,encode,False,13.30830192565918
+7,ENCSR182QNJ,-,PRO-cap,EFO:0001099,Caco-2,cell_line,encode,False,14.002802848815918
+8,ENCSR740IPL,-,PRO-cap,EFO:0002067,K562,cell_line,encode,False,15.765458106994629
+9,ENCSR797DEF,-,PRO-cap,EFO:0002819,Calu3,cell_line,encode,False,12.281320571899414
+10,ENCSR801ECP,-,PRO-cap,CL:0002618,endothelial cell of umbilical vein,primary_cell,encode,False,13.973691940307617
+11,ENCSR860TYZ,-,PRO-cap,EFO:0001200,MCF 10A,cell_line,encode,False,8.229501724243164
