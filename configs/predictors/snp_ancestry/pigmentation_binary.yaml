@@ -3,7 +3,13 @@
 
 input:
   dataset_id: "1kg_high_coverage"
-  genotype_cache_dir: "../../../results/cache/genotype_based_predictor/datasets/rna_seq_H1+H2_32768_ds1_log_shuf_ont3_view9d9f894aa231"
+  # Previously pointed at a stale hash (view9d9f894aa231) from an older genotype_based_predictor
+  # cache layout/location that no longer exists, so split_index.json could never be found and
+  # `genomics snp-ancestry run` failed with `KeyError: 'splits_metadata'`. Repointed at the
+  # current pigmentation dataset_input cache (same dataset_input as
+  # configs/predictors/genotype_based/pigmentation/pigmentation_binary*.yaml) so splits match
+  # exactly what the genotype_based TWAS arms were trained/evaluated on.
+  genotype_cache_dir: "../../../results/cache/genotype_based_predictor/pigmentation/datasets/rna_seq_H1+H2_32768_ds1_log_shuf_ont3_view568c1eff121a"
   validate_family_aware_splits: false
 
 conversion:
@@ -22,6 +28,13 @@ statistics:
   max_snps: 500000
   snp_panel: null
 
+# NOTE: `pipeline.py` never reads this `output:` block at all -- `sample_metadata()`/
+# `_build_statistics_path()`/`step2`/`step3` all read `level` and `derived_targets` from
+# `prediction:` below, not from here. This block was silently dead, which meant this config was
+# actually running the default "superpopulation" (AFR/EUR) classification instead of the
+# intended pigmentation binary target -- kept here only because
+# `configs/predictors/genotype_based/pigmentation/pigmentation_binary*.yaml` documents the same
+# class_map under `output:`, for cross-pipeline readability.
 output:
   prediction_target: "pigmentation"
   known_classes:
@@ -38,6 +51,14 @@ output:
 prediction:
   haplotype_mode: "H1"
   method: "mle"
+  level: "pigmentation"
+  derived_targets:
+    pigmentation:
+      source_field: "population"
+      exclude_unmapped: true
+      class_map:
+        strong pigmentation: ["YRI", "ESN", "LWK", "MSL", "GWD"]
+        weak pigmentation: ["FIN", "CEU", "GBR"]
   evaluation_subsets:
     - "train"
     - "val"

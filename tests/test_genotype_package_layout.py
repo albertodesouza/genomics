@@ -10,6 +10,7 @@ def test_genotype_subpackages_import():
         "genomics.predictors.genotype_based.data.layout",
         "genomics.predictors.genotype_based.alignment.dynamic_indel_alignment",
         "genomics.predictors.genotype_based.alignment.bcftools_chain_mapper",
+        "genomics.predictors.genotype_based.alignment.reference_realign_mapper",
         "genomics.predictors.genotype_based.tools.sync_bcftools_chain_artifacts",
         "genomics.predictors.genotype_based.analysis.plot_sklearn_pca_variance",
         "genomics.predictors.genotype_based.apps.dataset_browser",

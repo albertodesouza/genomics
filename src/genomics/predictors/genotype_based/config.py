@@ -161,14 +161,17 @@ class DatasetInputConfig(BaseModel):
     indel_include_snp_mask: bool = False
     """Se True, concatena uma máscara binária para SNPs em relação à referência."""
 
-    alignment_mapping: Literal["bcftools_chain"] = "bcftools_chain"
-    """Fonte do mapa predição AlphaGenome -> eixo expandido global; somente bcftools chain é suportado."""
+    alignment_mapping: Literal["bcftools_chain", "reference_realign"] = "bcftools_chain"
+    """Fonte do mapa predição AlphaGenome -> eixo de alinhamento: 'bcftools_chain' (eixo expandido
+    global, compartilhado pelo cohort) ou 'reference_realign' (realinhamento independente por
+    indivíduo direto sobre coordenadas de referência, sem eixo expandido de cohort)."""
 
     alignment_axis_splits: List[Literal["train", "val", "test"]] = Field(default_factory=lambda: ["train", "val", "test"])
-    """Splits usados para construir o eixo global de alinhamento INDEL."""
+    """Splits usados para construir o eixo global de alinhamento INDEL (inerte para alignment_mapping='reference_realign')."""
 
     consensus_dataset_dir: Optional[str] = None
-    """Dataset original com ref.window.fa, raw.fa e consensus_ready.vcf.gz para alignment_mapping='bcftools_chain'."""
+    """Dataset original com ref.window.fa, raw.fa e consensus_ready.vcf.gz para
+    alignment_mapping='bcftools_chain' ou 'reference_realign'."""
 
     @field_validator("downsample_factor")
     @classmethod
@@ -225,6 +228,22 @@ class DatasetInputConfig(BaseModel):
             raise ValueError("reference_predictions_dataset_dir é obrigatório quando alphagenome_signal_transform='delta_reference'")
         if self.alphagenome_signal_transform == "delta_reference" and self.normalization_method == "log":
             raise ValueError("alphagenome_signal_transform='delta_reference' gera valores negativos; use normalization_method='zscore'")
+        if self.alphagenome_signal_transform == "delta_reference" and self.alignment_mapping == "reference_realign":
+            raise ValueError("alphagenome_signal_transform='delta_reference' ainda não é suportado com alignment_mapping='reference_realign'")
+        return self
+
+    @model_validator(mode="after")
+    def validate_reference_realign_scope(self):
+        if self.alignment_mapping == "reference_realign" and self.feature_mode != "signals_only":
+            raise ValueError(
+                "alignment_mapping='reference_realign' atualmente só suporta feature_mode='signals_only' "
+                "(mascaras de INDEL ainda não implementadas para este método)"
+            )
+        if self.alignment_mapping == "reference_realign" and self.alphagenome_signal_variant_mask:
+            raise ValueError(
+                "alignment_mapping='reference_realign' ainda não suporta alphagenome_signal_variant_mask=true "
+                "(mascara global de variacao é especifica de alignment_mapping='bcftools_chain')"
+            )
         return self
 
 class DerivedTargetConfig(BaseModel):
@@ -908,6 +927,15 @@ def generate_experiment_name(config: PipelineConfig) -> str:
     train_seed = config.training.random_seed
     split_seed = config.data_split.random_seed
     seed_tag = "" if train_seed is None or train_seed == split_seed else f"_tseed{train_seed}"
+    align_tag = "" if di.alignment_mapping == "bcftools_chain" else f"_{di.alignment_mapping}"
+    mask_bits = []
+    if di.feature_mode != "signals_only":
+        mask_bits.append(di.feature_mode)
+        if di.indel_include_valid_mask:
+            mask_bits.append("valid")
+        if di.indel_include_snp_mask:
+            mask_bits.append("snp")
+    mask_tag = "" if not mask_bits else "_" + "-".join(mask_bits)
 
     if model_type == "cnn":
         c = m.cnn
@@ -915,13 +943,13 @@ def generate_experiment_name(config: PipelineConfig) -> str:
         st = f"s{c.stride[0]}x{c.stride[1]}" if isinstance(c.stride, list) else f"s{c.stride}"
         pad = f"p{c.padding[0]}x{c.padding[1]}" if isinstance(c.padding, list) else f"p{c.padding}"
         pool = f"pool{c.pool_size[0]}x{c.pool_size[1]}_" if c.pool_size else ""
-        return f"cnn_{target}{ablation}{seed_tag}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{ks}_f{c.num_filters}_{st}_{pad}_{pool}{hl}_{act}_{dr}_{opt}"
+        return f"cnn_{target}{ablation}{seed_tag}_{outputs}_{hap}_{tensor_layout}{align_tag}{mask_tag}_{wcs}_{norm}_{ks}_f{c.num_filters}_{st}_{pad}_{pool}{hl}_{act}_{dr}_{opt}"
 
     elif model_type == "cnn2":
         c2 = m.cnn2
         ks1 = c2.kernel_stage1
         return (
-            f"cnn2_{target}{ablation}{seed_tag}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_"
+            f"cnn2_{target}{ablation}{seed_tag}_{outputs}_{hap}_{tensor_layout}{align_tag}{mask_tag}_{wcs}_{norm}_"
             f"s1k{ks1[0]}x{ks1[1]}f{c2.num_filters_stage1}_"
             f"s2f{c2.num_filters_stage2}_s3f{c2.num_filters_stage3}_"
             f"gp{c2.global_pool_type}_fc{c2.fc_hidden_size}_"
@@ -946,8 +974,8 @@ def generate_experiment_name(config: PipelineConfig) -> str:
             xgb = sk.xgboost
             lr = str(xgb.learning_rate).replace(".", "p")
             tag = f"xgb_nt{xgb.n_estimators}_md{xgb.max_depth}_lr{lr}"
-        return f"{model_type}_{target}{ablation}{seed_tag}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{pca}_{tag}"
+        return f"{model_type}_{target}{ablation}{seed_tag}_{outputs}_{hap}_{tensor_layout}{align_tag}{mask_tag}_{wcs}_{norm}_{pca}_{tag}"
 
     else:
         # NN (default)
-        return f"nn_{target}{ablation}{seed_tag}_{outputs}_{hap}_{tensor_layout}_{wcs}_{norm}_{hl}_{act}_{dr}_{opt}"
+        return f"nn_{target}{ablation}{seed_tag}_{outputs}_{hap}_{tensor_layout}{align_tag}{mask_tag}_{wcs}_{norm}_{hl}_{act}_{dr}_{opt}"

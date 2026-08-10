@@ -21,6 +21,7 @@ from genomics.predictors.genotype_based.config import PipelineConfig
 from genomics.predictors.genotype_based.alignment.bcftools_chain_mapper import BcftoolsChainMapper
 from genomics.predictors.genotype_based.alignment.dynamic_indel_alignment import DynamicIndelAligner
 from genomics.predictors.genotype_based.alignment.indel_tensor_builder import build_aligned_haplotype_tensor
+from genomics.predictors.genotype_based.alignment.reference_realign_mapper import ReferenceRealignMapper
 from genomics.predictors.genotype_based.data.normalization import (
     apply_normalization,
     log_normalize,
@@ -110,14 +111,26 @@ class ProcessedGenomicDataset(Dataset):
             center_window_size=di.window_center_size,
         )
         self.bcftools_chain_mapper: Optional[BcftoolsChainMapper] = None
+        self.reference_realign_mapper: Optional[ReferenceRealignMapper] = None
         if di.tensor_layout == "haplotype_channels":
             if self.consensus_dataset_dir is None:
-                raise ValueError("dataset_input.consensus_dataset_dir é obrigatório para alignment_mapping='bcftools_chain'")
-            self.bcftools_chain_mapper = BcftoolsChainMapper(
-                dataset_dir=Path(di.dataset_dir),
-                consensus_dataset_dir=self.consensus_dataset_dir,
-                aligner=self.dynamic_indel_aligner,
-            )
+                raise ValueError(
+                    f"dataset_input.consensus_dataset_dir é obrigatório para alignment_mapping='{self.alignment_mapping}'"
+                )
+            if self.alignment_mapping == "bcftools_chain":
+                self.bcftools_chain_mapper = BcftoolsChainMapper(
+                    dataset_dir=Path(di.dataset_dir),
+                    consensus_dataset_dir=self.consensus_dataset_dir,
+                    aligner=self.dynamic_indel_aligner,
+                )
+            elif self.alignment_mapping == "reference_realign":
+                self.reference_realign_mapper = ReferenceRealignMapper(
+                    dataset_dir=Path(di.dataset_dir),
+                    consensus_dataset_dir=self.consensus_dataset_dir,
+                    window_center_size=di.window_center_size,
+                )
+            else:
+                raise ValueError(f"alignment_mapping desconhecido: {self.alignment_mapping}")
         self._base_item_cache: OrderedDict[int, Tuple[Any, Any]] = OrderedDict()
         self._base_item_cache_limit = 4
         self._processed_item_cache: OrderedDict[int, Tuple[torch.Tensor, torch.Tensor]] = OrderedDict()
@@ -220,6 +233,10 @@ class ProcessedGenomicDataset(Dataset):
         if self.alphagenome_signal_variant_mask:
             sample_ids = list(dict.fromkeys(sample_ids + self._global_variation_sample_ids()))
         if not sample_ids:
+            return
+        if self.alignment_mapping != "bcftools_chain":
+            # reference_realign needs no cohort-wide axis / per-sample entry precompute -- each
+            # sample+gene+haplotype is realigned independently, on the fly, in get_haplotype_track.
             return
         if entry_sample_ids is None:
             entry_sample_ids = sample_ids
@@ -638,6 +655,67 @@ class ProcessedGenomicDataset(Dataset):
             raise ValueError("tensor_layout='haplotype_channels' requer window_center_size > 0")
         if self.feature_mode == "masks_only" and not self.indel_include_valid_mask:
             raise ValueError("feature_mode='masks_only' requer indel_include_valid_mask=true para produzir 3 mascaras")
+
+        if self.alignment_mapping == "reference_realign":
+            return self._process_window_reference_realign(
+                sample_id, window_name, haplotype, array, track_meta, output_type,
+            )
+        return self._process_window_bcftools_chain(
+            sample_id, window_name, haplotype, array, track_meta, output_type,
+        )
+
+    def _process_window_reference_realign(
+        self,
+        sample_id: str,
+        window_name: str,
+        haplotype: str,
+        array: np.ndarray,
+        track_meta: Optional[List[Dict]],
+        output_type: str,
+    ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+        if self.reference_realign_mapper is None:
+            raise ValueError("tensor_layout='haplotype_channels' requer um mapper para alignment_mapping='reference_realign'")
+
+        signal_rows = []
+        if array.ndim == 2:
+            if track_meta:
+                track_indices = self._filter_track_indices(output_type, track_meta)
+            else:
+                track_indices = [self.selected_track_index]
+            for track_index in track_indices:
+                if not (0 <= track_index < array.shape[1]):
+                    raise ValueError(f"selected_track_index={track_index} fora do limite para {output_type} com shape={array.shape}")
+                row = np.asarray(array[:, track_index], dtype=np.float32)
+                signal_row = self.reference_realign_mapper.get_haplotype_track(window_name, sample_id, haplotype, row)
+                if signal_row is None:
+                    return None
+                signal_rows.append(signal_row[None, :])
+        else:
+            row = np.asarray(array.flatten() if array.ndim > 1 else array, dtype=np.float32)
+            signal_row = self.reference_realign_mapper.get_haplotype_track(window_name, sample_id, haplotype, row)
+            if signal_row is None:
+                return None
+            signal_rows.append(signal_row[None, :])
+
+        if not signal_rows:
+            return None
+
+        signals = np.concatenate(signal_rows, axis=0)
+        # feature_mode is enforced to 'signals_only' for this method (config.py validator), so this
+        # mask block is never actually consumed -- kept only to satisfy the (signals, masks) shape
+        # contract shared with the bcftools_chain path.
+        shared_masks = np.zeros((3, self.window_center_size), dtype=np.float32)
+        return signals, shared_masks
+
+    def _process_window_bcftools_chain(
+        self,
+        sample_id: str,
+        window_name: str,
+        haplotype: str,
+        array: np.ndarray,
+        track_meta: Optional[List[Dict]],
+        output_type: str,
+    ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
         if self.bcftools_chain_mapper is None:
             raise ValueError("tensor_layout='haplotype_channels' requer alignment_mapping='bcftools_chain'")
         entry = self.bcftools_chain_mapper.get_haplotype_entry(window_name, sample_id, haplotype)

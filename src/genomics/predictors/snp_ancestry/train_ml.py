@@ -5,7 +5,7 @@ import csv
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -134,17 +134,29 @@ def evaluate_predictions(y_true: Sequence[str], y_pred: Sequence[str], labels: S
 
 
 def _feature_importance(model, model_name: str, marker_ids: Sequence[str]) -> List[dict]:
+    signed: Optional[np.ndarray] = None
     if model_name == "random_forest" and hasattr(model, "feature_importances_"):
         scores = np.asarray(model.feature_importances_, dtype=float)
     elif model_name == "logistic" and hasattr(model, "coef_"):
-        scores = np.mean(np.abs(np.asarray(model.coef_, dtype=float)), axis=0)
+        coef = np.asarray(model.coef_, dtype=float)
+        scores = np.mean(np.abs(coef), axis=0)
+        if coef.shape[0] == 1:
+            # Binary classification: sklearn fits one coefficient vector (for the positive
+            # class). Keep its sign so downstream analysis can report effect *direction*
+            # (e.g. "this allele's dose is associated with strong pigmentation"), not just
+            # |coefficient| magnitude -- multi-class coefficients don't have one shared sign
+            # to report, so this is left unset (None) in that case.
+            signed = coef[0]
     else:
         scores = np.zeros(len(marker_ids), dtype=float)
     order = np.argsort(-scores)
-    return [
-        {"rank": int(rank), "rsid": marker_ids[int(idx)], "importance": float(scores[int(idx)])}
-        for rank, idx in enumerate(order, start=1)
-    ]
+    rows = []
+    for rank, idx in enumerate(order, start=1):
+        row = {"rank": int(rank), "rsid": marker_ids[int(idx)], "importance": float(scores[int(idx)])}
+        if signed is not None:
+            row["signed_coefficient"] = float(signed[int(idx)])
+        rows.append(row)
+    return rows
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -162,13 +174,16 @@ def _write_predictions(path: Path, sample_ids: Sequence[str], y_true: Sequence[s
             writer.writerow({"sample_id": sid, "true": true, "predicted": pred, "correct": str(true == pred).lower()})
 
 
-def _write_importance(path: Path, rows: Iterable[dict]) -> None:
+def _write_importance(path: Path, rows: List[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = ["rank", "rsid", "importance"]
+    if rows and "signed_coefficient" in rows[0]:
+        fieldnames.append("signed_coefficient")
     with open(path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["rank", "rsid", "importance"], delimiter="\t")
+        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
         writer.writeheader()
         for row in rows:
-            writer.writerow(row)
+            writer.writerow({key: row.get(key, "") for key in fieldnames})
 
 
 def run_train_ml(args: argparse.Namespace) -> int:

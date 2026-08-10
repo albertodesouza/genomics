@@ -211,6 +211,104 @@ def bootstrap_confidence_intervals(
     }
 
 
+def _fallback_auc_score(y_true: Sequence[int], y_score: Sequence[float]) -> float:
+    y_true_arr = np.asarray(list(y_true), dtype=int)
+    y_score_arr = np.asarray(list(y_score), dtype=float)
+    n_pos = int((y_true_arr == 1).sum())
+    n_neg = int((y_true_arr == 0).sum())
+    if n_pos == 0 or n_neg == 0:
+        return float("nan")
+    ranks = np.empty_like(y_score_arr, dtype=float)
+    order = np.argsort(y_score_arr, kind="mergesort")
+    sorted_scores = y_score_arr[order]
+    # Average tied ranks (1-indexed), matching scipy.stats.rankdata's default "average" method.
+    rank_values = np.empty(len(sorted_scores), dtype=float)
+    i = 0
+    while i < len(sorted_scores):
+        j = i
+        while j + 1 < len(sorted_scores) and sorted_scores[j + 1] == sorted_scores[i]:
+            j += 1
+        rank_values[i : j + 1] = (i + j) / 2.0 + 1.0
+        i = j + 1
+    ranks[order] = rank_values
+    sum_ranks_pos = float(ranks[y_true_arr == 1].sum())
+    auc = (sum_ranks_pos - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg)
+    return float(auc)
+
+
+def auc_score(y_true: Sequence[int], y_score: Sequence[float]) -> Dict[str, Any]:
+    """Binary-label AUROC, equivalent to the (rescaled) Mann-Whitney U statistic.
+
+    ``y_true`` must be binary (1 = positive class, 0 = negative class); rows with
+    any other label should be filtered out by the caller. Falls back to a
+    rank-based computation (ties averaged) plus scipy's Mann-Whitney U test when
+    sklearn/scipy are unavailable.
+    """
+    y_true_arr = np.asarray(list(y_true), dtype=int)
+    y_score_arr = np.asarray(list(y_score), dtype=float)
+    n_pos = int((y_true_arr == 1).sum())
+    n_neg = int((y_true_arr == 0).sum())
+    result: Dict[str, Any] = {"n_pos": n_pos, "n_neg": n_neg, "auc": float("nan"), "p_value": None}
+    if n_pos == 0 or n_neg == 0:
+        return result
+
+    try:
+        from sklearn.metrics import roc_auc_score
+
+        result["auc"] = float(roc_auc_score(y_true_arr, y_score_arr))
+    except ImportError:
+        result["auc"] = _fallback_auc_score(y_true_arr, y_score_arr)
+
+    try:
+        from scipy.stats import mannwhitneyu
+
+        stat = mannwhitneyu(y_score_arr[y_true_arr == 1], y_score_arr[y_true_arr == 0], alternative="two-sided")
+        result["p_value"] = float(stat.pvalue)
+    except ImportError:
+        pass
+    return result
+
+
+def bootstrap_auc_ci(
+    y_true: Sequence[int],
+    y_score: Sequence[float],
+    *,
+    n_bootstrap: int = 2000,
+    confidence_level: float = 0.95,
+    seed: int = 13,
+) -> Dict[str, Any]:
+    """Stratified-bootstrap confidence interval for :func:`auc_score`'s AUC."""
+    y_true_arr = np.asarray(list(y_true), dtype=int)
+    y_score_arr = np.asarray(list(y_score), dtype=float)
+    base = auc_score(y_true_arr, y_score_arr)
+    pos_idx = np.where(y_true_arr == 1)[0]
+    neg_idx = np.where(y_true_arr == 0)[0]
+    alpha = 1.0 - float(confidence_level)
+    if len(pos_idx) == 0 or len(neg_idx) == 0:
+        return {**base, "confidence_level": float(confidence_level), "n_bootstrap": int(n_bootstrap), "low": float("nan"), "high": float("nan")}
+
+    rng = np.random.default_rng(seed)
+    values: List[float] = []
+    for _ in range(int(n_bootstrap)):
+        sample_pos = rng.choice(pos_idx, size=len(pos_idx), replace=True)
+        sample_neg = rng.choice(neg_idx, size=len(neg_idx), replace=True)
+        idx = np.concatenate([sample_pos, sample_neg])
+        auc = auc_score(y_true_arr[idx], y_score_arr[idx])["auc"]
+        if not np.isnan(auc):
+            values.append(auc)
+
+    if not values:
+        return {**base, "confidence_level": float(confidence_level), "n_bootstrap": int(n_bootstrap), "low": float("nan"), "high": float("nan")}
+    arr = np.asarray(values, dtype=float)
+    return {
+        **base,
+        "confidence_level": float(confidence_level),
+        "n_bootstrap": int(n_bootstrap),
+        "low": float(np.quantile(arr, alpha / 2.0)),
+        "high": float(np.quantile(arr, 1.0 - alpha / 2.0)),
+    }
+
+
 def stratified_bootstrap_confidence_intervals(
     y_true: Sequence[int],
     y_pred: Sequence[int],

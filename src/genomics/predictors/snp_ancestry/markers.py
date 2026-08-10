@@ -7,6 +7,8 @@ import math
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
+import numpy as np
+
 from genomics.predictors.snp_ancestry.pipeline import _build_statistics_path, load_config
 
 
@@ -54,6 +56,53 @@ def marker_scores(rsid: str, stats: dict) -> dict:
     for pop, freq in zip(populations, freqs):
         row[f"freq_{pop}"] = freq
     return row
+
+
+def _pearson_corr(a: np.ndarray, b: np.ndarray) -> float:
+    a = a - a.mean()
+    b = b - b.mean()
+    denom = math.sqrt(float((a**2).sum()) * float((b**2).sum()))
+    if denom == 0.0:
+        return 0.0
+    return float((a * b).sum() / denom)
+
+
+def univariate_association(X: np.ndarray, y: Sequence[int], marker_ids: Sequence[str]) -> List[dict]:
+    """Per-SNP univariate association test: correlation between each marker's genotype dose
+    (0/1/2 copies of the reference allele, NaN for missing) and a binary phenotype label.
+
+    This is the classic single-SNP GWAS test -- equivalent to a point-biserial correlation /
+    two-sample comparison of dose across the two phenotype groups -- and is a different thing
+    from `fst_like`/`max_delta_frequency` above, which are *population allele-frequency*
+    differentiation statistics (computed from aggregate per-population frequencies, not
+    per-sample genotypes/labels). Rows with fewer than 3 non-missing samples, or where all
+    non-missing samples share one label, get `r=0.0`/`p_value=None` rather than raising.
+    """
+    X_arr = np.asarray(X, dtype=float)
+    y_arr = np.asarray(list(y), dtype=float)
+    rows: List[dict] = []
+    for col_idx, rsid in enumerate(marker_ids):
+        col = X_arr[:, col_idx]
+        valid = ~np.isnan(col)
+        n = int(valid.sum())
+        if n < 3 or len(set(y_arr[valid].tolist())) < 2:
+            rows.append({"rsid": rsid, "r": 0.0, "p_value": None, "n_samples": n})
+            continue
+        r = _pearson_corr(y_arr[valid], col[valid])
+        p_value: Optional[float] = None
+        try:
+            from scipy.stats import pointbiserialr
+
+            _, p_value = pointbiserialr(y_arr[valid], col[valid])
+            p_value = float(p_value)
+        except ImportError:
+            pass
+        rows.append({"rsid": rsid, "r": r, "p_value": p_value, "n_samples": n})
+
+    rows.sort(key=lambda row: -abs(row["r"]))
+    for rank, row in enumerate(rows, start=1):
+        row["rank"] = rank
+    return rows
 
 
 def load_statistics(config_path: Path, statistics_path: Optional[Path] = None) -> Tuple[dict, Path]:

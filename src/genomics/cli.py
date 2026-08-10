@@ -264,6 +264,9 @@ def cmd_genotype_workbench(args: argparse.Namespace) -> int:
     ]
     if args.aligned_tsv_root:
         command_args.extend(["--aligned-tsv-root", args.aligned_tsv_root])
+    if args.pigmentation_config:
+        command_args.extend(["--pigmentation-config", args.pigmentation_config])
+    command_args.extend(["--pigmentation-lab-port", args.pigmentation_lab_port])
     return _run_module("genomics.predictors.genotype_based.apps.genomics_workbench", command_args)
 
 
@@ -1133,6 +1136,8 @@ def build_parser() -> argparse.ArgumentParser:
     gp_workbench.add_argument("--aligned-tsv-root", type=Path, default=None)
     gp_workbench.add_argument("--host", default="127.0.0.1")
     gp_workbench.add_argument("--port", type=int, default=8780)
+    gp_workbench.add_argument("--pigmentation-config", type=Path, default=None)
+    gp_workbench.add_argument("--pigmentation-lab-port", type=int, default=8781)
     gp_workbench.set_defaults(func=cmd_genotype_workbench)
     gp_sync = genotype_sub.add_parser("sync-bcftools-artifacts")
     gp_sync.add_argument("--source-dir", type=Path, default=DEFAULT_CONSENSUS_DATASET_DIR)

@@ -17,11 +17,33 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
-from genomics.workspace import DEFAULT_CONSENSUS_DATASET_DIR, DEFAULT_DATASET_DIR, DEFAULT_GENOTYPE_RUNS_ROOT, results_path
+from genomics.workspace import DEFAULT_CONSENSUS_DATASET_DIR, DEFAULT_DATASET_DIR, DEFAULT_GENOTYPE_RUNS_ROOT, repo_root, results_path
 
 
 DEFAULT_RUNS_ROOT = DEFAULT_GENOTYPE_RUNS_ROOT
 DEFAULT_ALIGNED_TSV_ROOT = results_path("genotype_based_predictor", "aligned_dna", "genes_1000_all")
+DEFAULT_PIGMENTATION_CONFIG = repo_root() / "configs" / "predictors" / "genotype_based" / "pigmentation" / "pigmentation_binary.yaml"
+
+
+def _pigmentation_checkpoint_exists(config_path: Path) -> bool:
+    try:
+        from genomics.predictors.genotype_based.config import generate_experiment_name, get_experiment_runs_dir, load_config
+
+        config = load_config(config_path)
+        experiment_dir = get_experiment_runs_dir(config) / generate_experiment_name(config)
+        return (experiment_dir / "models" / "best_accuracy.pt").exists()
+    except Exception:
+        return False
+
+
+def _alphagenome_api_key_available() -> bool:
+    try:
+        from genomics.predictors.genotype_based.analysis.live_alphagenome_prediction import resolve_api_key
+
+        resolve_api_key(None)
+        return True
+    except Exception:
+        return False
 
 
 @dataclass
@@ -133,6 +155,34 @@ def _build_specs(args: argparse.Namespace) -> List[ViewerSpec]:
             disabled_reason=f"Nenhum .tsv encontrado em: {aligned_tsv_root}",
         ),
     ]
+
+    pigmentation_config = Path(args.pigmentation_config).resolve()
+    pigmentation_reasons = []
+    if not dataset_dir.exists():
+        pigmentation_reasons.append(f"dataset nao encontrado: {dataset_dir}")
+    if not pigmentation_config.exists():
+        pigmentation_reasons.append(f"config nao encontrada: {pigmentation_config}")
+    elif not _pigmentation_checkpoint_exists(pigmentation_config):
+        pigmentation_reasons.append(f"checkpoint 'best_accuracy' nao encontrado para {pigmentation_config}")
+    if not _alphagenome_api_key_available():
+        pigmentation_reasons.append("ALPHAGENOME_API_KEY nao encontrada (env ou ~/.env)")
+
+    specs.append(
+        ViewerSpec(
+            key="pigmentation-lab",
+            title="Pigmentation Sequence Lab",
+            description="Tracks RNA-seq/CAGE, sequence logos bcftools_chain e edicao in-silico (overwrite/scramble) com re-predicao pela CNN2 de pigmentacao.",
+            module="genomics.predictors.genotype_based.apps.pigmentation_sequence_lab",
+            port=args.pigmentation_lab_port,
+            args=[
+                str(dataset_dir), "--host", "127.0.0.1", "--port", str(args.pigmentation_lab_port),
+                "--consensus-dataset-dir", str(consensus_dataset_dir),
+                "--config", str(pigmentation_config),
+            ],
+            enabled=not pigmentation_reasons,
+            disabled_reason="; ".join(pigmentation_reasons),
+        )
+    )
     return specs
 
 
@@ -495,6 +545,8 @@ def main() -> None:
     parser.add_argument("--experiment-port", type=int, default=8772)
     parser.add_argument("--track-port", type=int, default=8774)
     parser.add_argument("--alignment-port", type=int, default=8765)
+    parser.add_argument("--pigmentation-lab-port", type=int, default=8781)
+    parser.add_argument("--pigmentation-config", type=Path, default=DEFAULT_PIGMENTATION_CONFIG)
     parser.add_argument("--log-dir", type=Path, default=None)
     args = parser.parse_args()
 

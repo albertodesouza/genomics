@@ -1220,6 +1220,12 @@ def _build_statistics_path(config: dict) -> str:
     )
     if output_dir.endswith(".json"):
         output_dir = os.path.dirname(output_dir)
+    # Resolve relative to the config file's own directory (not the process CWD) -- otherwise a
+    # config-relative path like "../../../results/..." resolves differently depending on where
+    # `genomics snp-ancestry run` happens to be invoked from.
+    resolved_output_dir = _resolve_path(output_dir, config)
+    if resolved_output_dir is not None:
+        output_dir = str(resolved_output_dir)
 
     ref_subsets = sorted(stat_cfg.get("reference_subsets", ["train"]))
     level = pred_cfg.get("level", "superpopulation")
@@ -1975,9 +1981,7 @@ def step3_predict_ancestry(config: dict, console: Console) -> None:
     )
 
     method = pred_cfg.get("method", "mle")
-    results_dir = Path(
-        pred_cfg.get("results_dir", str(DEFAULT_RESULTS_DIR))
-    )
+    results_dir = _resolve_path(pred_cfg.get("results_dir"), config) or Path(DEFAULT_RESULTS_DIR)
     results_dir.mkdir(parents=True, exist_ok=True)
     ind_results_dir = results_dir / "individuals"
     ind_results_dir.mkdir(parents=True, exist_ok=True)
