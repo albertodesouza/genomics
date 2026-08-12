@@ -1,0 +1,1282 @@
+#!/usr/bin/env python3
+"""
+build_non_longevous_dataset.py
+
+Pipeline to build datasets from non-longevous individuals from the 1000 Genomes Project.
+
+This program:
+1. Analyzes a CSV file with metadata about non-longevous individuals
+2. Prints statistics about superpopulations, populations, and sex distribution
+3. Selects samples according to user-specified criteria
+4. Runs build_window_and_predict.py for each selected sample
+
+Requirements:
+  - Python 3.8+
+  - pandas
+  - pyyaml
+  - build_window_and_predict.py (in the parent directory)
+
+CSV Format:
+  Header: FamilyID,SampleID,FatherID,MotherID,Sex,Population,Superpopulation
+  Sex: 1=Male, 2=Female
+  Example:
+    BB01,HG01879,0,0,1,ACB,AFR
+    BB01,HG01880,0,0,2,ACB,AFR
+    BB01,HG01881,HG01879,HG01880,2,ACB,AFR
+
+Usage:
+  # Step 1: Analyze metadata and print statistics
+  genomics dataset-builders non-longevous build --config configs/workflows/non_longevous_dataset/default.yaml
+  
+  # Step 2: Enable sample selection and run predictions
+  # (Edit configs/default.yaml to enable additional steps)
+  genomics dataset-builders non-longevous build --config configs/workflows/non_longevous_dataset/default.yaml
+
+Author: ChatGPT (for Alberto)
+Last updated: 2025-11-04
+"""
+
+import argparse
+import os
+import sys
+import json
+import subprocess
+import time
+from pathlib import Path
+from typing import Dict, List, Tuple, Optional
+from collections import defaultdict, Counter
+import yaml
+import pandas as pd
+import numpy as np
+
+# Import dos novos módulos para Dataset PyTorch
+try:
+    from .frog_ancestry_parser import FROGAncestryData
+    from .dataset_builder import IndividualDatasetBuilder, DatasetMetadataBuilder
+except ImportError:
+    # Fallback para execução como script standalone
+    from frog_ancestry_parser import FROGAncestryData
+    from dataset_builder import IndividualDatasetBuilder, DatasetMetadataBuilder
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FROGAncestryCalc Accuracy Evaluation Functions
+# ═══════════════════════════════════════════════════════════════════════════════
+
+SUPERPOPULATION_ORDER = ['AFR', 'AMR', 'EAS', 'EUR', 'SAS']
+
+
+def aggregate_likelihood_by_superpopulation(
+    likelihood: List[float],
+    pop_names: List[str],
+    mapping: Dict[str, Dict[str, str]]
+) -> Dict[str, float]:
+    """
+    Aggregate likelihood values by superpopulation.
+    
+    Args:
+        likelihood: Vector of likelihood values (~150 values)
+        pop_names: List of FROG population names corresponding to likelihood
+        mapping: Population mapping from FROG to 1000G
+        
+    Returns:
+        Dictionary with aggregated likelihood per superpopulation
+    """
+    superpop_likelihood = {sp: 0.0 for sp in SUPERPOPULATION_ORDER}
+    
+    for val, pop_name in zip(likelihood, pop_names):
+        if pop_name in mapping:
+            superpop = mapping[pop_name]['superpopulation_code']
+            if superpop in superpop_likelihood:
+                superpop_likelihood[superpop] += val
+    
+    return superpop_likelihood
+
+
+def predict_superpopulation(
+    likelihood: List[float],
+    pop_names: List[str],
+    mapping: Dict[str, Dict[str, str]]
+) -> str:
+    """
+    Predict superpopulation based on highest aggregated likelihood.
+    
+    Args:
+        likelihood: Vector of likelihood values
+        pop_names: List of FROG population names
+        mapping: Population mapping from FROG to 1000G
+        
+    Returns:
+        Predicted superpopulation code (AFR, AMR, EAS, EUR, SAS)
+    """
+    superpop_likelihood = aggregate_likelihood_by_superpopulation(
+        likelihood, pop_names, mapping
+    )
+    
+    # Return superpopulation with highest likelihood
+    return max(superpop_likelihood, key=superpop_likelihood.get)
+
+
+def evaluate_frog_accuracy(
+    output_dir: Path,
+    population_mapping: Dict[str, Dict[str, str]]
+) -> Tuple[float, np.ndarray, List[str], List[str]]:
+    """
+    Evaluate FROGAncestryCalc accuracy at superpopulation level.
+    
+    Iterates over all individuals in the dataset, compares predicted
+    superpopulation (from frog_likelihood) with actual superpopulation.
+    
+    Args:
+        output_dir: Base directory of the dataset
+        population_mapping: Mapping from FROG populations to 1000G
+        
+    Returns:
+        Tuple with:
+        - accuracy: float (0.0 to 1.0)
+        - confusion_matrix: numpy array (5x5)
+        - y_true: list of actual superpopulations
+        - y_pred: list of predicted superpopulations
+    """
+    individuals_dir = output_dir / "individuals"
+    
+    if not individuals_dir.exists():
+        raise FileNotFoundError(f"Diretório de indivíduos não encontrado: {individuals_dir}")
+    
+    y_true = []
+    y_pred = []
+    skipped = 0
+    
+    # Iterate over all individuals
+    for individual_dir in sorted(individuals_dir.iterdir()):
+        if not individual_dir.is_dir():
+            continue
+        
+        metadata_file = individual_dir / "individual_metadata.json"
+        if not metadata_file.exists():
+            skipped += 1
+            continue
+        
+        # Load individual metadata
+        with open(metadata_file, 'r') as f:
+            metadata = json.load(f)
+        
+        # Check if frog_likelihood is available
+        if 'frog_likelihood' not in metadata or 'frog_population_names' not in metadata:
+            skipped += 1
+            continue
+        
+        # Get actual superpopulation
+        actual_superpop = metadata.get('superpopulation', '')
+        if actual_superpop not in SUPERPOPULATION_ORDER:
+            skipped += 1
+            continue
+        
+        # Predict superpopulation from frog_likelihood
+        predicted_superpop = predict_superpopulation(
+            metadata['frog_likelihood'],
+            metadata['frog_population_names'],
+            population_mapping
+        )
+        
+        y_true.append(actual_superpop)
+        y_pred.append(predicted_superpop)
+    
+    if not y_true:
+        raise ValueError("Nenhum indivíduo com dados válidos de frog_likelihood encontrado")
+    
+    # Calculate accuracy
+    correct = sum(1 for t, p in zip(y_true, y_pred) if t == p)
+    accuracy = correct / len(y_true)
+    
+    # Build confusion matrix
+    confusion_matrix = np.zeros((5, 5), dtype=int)
+    superpop_to_idx = {sp: i for i, sp in enumerate(SUPERPOPULATION_ORDER)}
+    
+    for true_sp, pred_sp in zip(y_true, y_pred):
+        true_idx = superpop_to_idx[true_sp]
+        pred_idx = superpop_to_idx[pred_sp]
+        confusion_matrix[true_idx, pred_idx] += 1
+    
+    if skipped > 0:
+        print(f"[WARN] {skipped} indivíduos ignorados (sem dados de frog_likelihood)")
+    
+    return accuracy, confusion_matrix, y_true, y_pred
+
+
+def print_confusion_matrix(confusion_matrix: np.ndarray, labels: List[str]) -> None:
+    """
+    Print formatted confusion matrix to terminal.
+    
+    Args:
+        confusion_matrix: 2D numpy array
+        labels: List of class labels
+    """
+    # Header
+    header = "          " + "".join(f"{label:>8}" for label in labels)
+    print(header)
+    
+    # Rows
+    for i, label in enumerate(labels):
+        row_values = "".join(f"{confusion_matrix[i, j]:>8}" for j in range(len(labels)))
+        print(f"    {label:<6}{row_values}")
+
+
+def print_frog_accuracy_report(
+    accuracy: float,
+    confusion_matrix: np.ndarray,
+    y_true: List[str],
+    y_pred: List[str]
+) -> None:
+    """
+    Print complete accuracy evaluation report.
+    
+    Args:
+        accuracy: Overall accuracy (0.0 to 1.0)
+        confusion_matrix: 5x5 numpy array
+        y_true: List of actual superpopulations
+        y_pred: List of predicted superpopulations
+    """
+    total = len(y_true)
+    correct = sum(1 for t, p in zip(y_true, y_pred) if t == p)
+    
+    print(f"\n[INFO] Avaliando {total} indivíduos...")
+    print(f"\nAcurácia Geral: {accuracy*100:.1f}% ({correct}/{total})")
+    
+    # Per-class accuracy
+    print("\nAcurácia por Superpopulação:")
+    for i, sp in enumerate(SUPERPOPULATION_ORDER):
+        sp_total = confusion_matrix[i, :].sum()
+        sp_correct = confusion_matrix[i, i]
+        if sp_total > 0:
+            sp_acc = sp_correct / sp_total * 100
+            print(f"  {sp}: {sp_acc:.1f}% ({sp_correct}/{sp_total})")
+        else:
+            print(f"  {sp}: N/A (0 amostras)")
+    
+    print("\nMatriz de Confusão (linhas=real, colunas=predito):\n")
+    print_confusion_matrix(confusion_matrix, SUPERPOPULATION_ORDER)
+
+
+def load_config(config_path: Path) -> dict:
+    """
+    Load YAML configuration file.
+    
+    Relative paths in the config file are resolved relative to the config file's directory.
+    """
+    config_dir = config_path.parent
+    
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    # Expand environment variables and resolve relative paths
+    def expand_env_vars(obj, is_path_field=False):
+        if isinstance(obj, dict):
+            return {k: expand_env_vars(v, k in ['metadata_csv', 'fasta', 'vcf_pattern', 'snp_list_file', 'gene_list_file', 'gtf_feather']) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [expand_env_vars(item) for item in obj]
+        elif isinstance(obj, str):
+            # Expand environment variables
+            if obj.startswith("${") and obj.endswith("}"):
+                env_var = obj[2:-1]
+                obj = os.environ.get(env_var, obj)
+            
+            # Resolve relative paths (only for known path fields)
+            if is_path_field and not obj.startswith("/"):
+                obj = str((config_dir / obj).resolve())
+            
+            return obj
+        return obj
+    
+    return expand_env_vars(config)
+
+
+def load_metadata_csv(csv_path: Path) -> pd.DataFrame:
+    """Load 1000 Genomes metadata CSV."""
+    print(f"[INFO] Carregando arquivo CSV: {csv_path}")
+    
+    if not csv_path.exists():
+        raise FileNotFoundError(f"Arquivo CSV não encontrado: {csv_path}")
+    
+    df = pd.read_csv(csv_path)
+    
+    # Validate required columns
+    required_cols = ['FamilyID', 'SampleID', 'FatherID', 'MotherID', 
+                     'Sex', 'Population', 'Superpopulation']
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    
+    if missing_cols:
+        raise ValueError(f"Colunas ausentes no CSV: {missing_cols}")
+    
+    print(f"[INFO] CSV carregado: {len(df)} indivíduos")
+    return df
+
+
+def analyze_metadata(df: pd.DataFrame) -> Dict:
+    """
+    Analyze metadata and return statistics.
+    
+    Returns:
+        Dict with statistics about superpopulations, populations, and sex distribution
+    """
+    stats = {
+        'total_samples': len(df),
+        'superpopulations': {},
+        'populations': {}
+    }
+    
+    # Group by superpopulation
+    for superpop in sorted(df['Superpopulation'].unique()):
+        superpop_df = df[df['Superpopulation'] == superpop]
+        
+        # Count populations in this superpopulation
+        populations_in_superpop = superpop_df['Population'].unique()
+        
+        # Count sex distribution in superpopulation
+        sex_counts = superpop_df['Sex'].value_counts().to_dict()
+        
+        stats['superpopulations'][superpop] = {
+            'total_samples': len(superpop_df),
+            'n_populations': len(populations_in_superpop),
+            'populations': list(populations_in_superpop),
+            'sex_distribution': {
+                'male': sex_counts.get(1, 0),
+                'female': sex_counts.get(2, 0)
+            }
+        }
+    
+    # Group by population
+    for pop in sorted(df['Population'].unique()):
+        pop_df = df[df['Population'] == pop]
+        superpop = pop_df['Superpopulation'].iloc[0]
+        
+        # Count sex distribution in population
+        sex_counts = pop_df['Sex'].value_counts().to_dict()
+        
+        stats['populations'][pop] = {
+            'superpopulation': superpop,
+            'total_samples': len(pop_df),
+            'sex_distribution': {
+                'male': sex_counts.get(1, 0),
+                'female': sex_counts.get(2, 0)
+            }
+        }
+    
+    return stats
+
+
+def print_statistics(stats: Dict):
+    """Print formatted statistics."""
+    print("\n" + "="*80)
+    print("ESTATÍSTICAS DO DATASET - 1000 GENOMES PROJECT")
+    print("="*80)
+    
+    print(f"\n📊 TOTAL DE AMOSTRAS: {stats['total_samples']}")
+    
+    # Superpopulations
+    print(f"\n🌍 SUPERPOPULAÇÕES: {len(stats['superpopulations'])}")
+    print("-" * 80)
+    
+    for superpop, data in sorted(stats['superpopulations'].items()):
+        print(f"\n  {superpop}:")
+        print(f"    • Total de indivíduos: {data['total_samples']}")
+        print(f"    • Masculino: {data['sex_distribution']['male']}")
+        print(f"    • Feminino: {data['sex_distribution']['female']}")
+        print(f"    • Número de populações: {data['n_populations']}")
+        print(f"    • Populações: {', '.join(data['populations'])}")
+    
+    # Populations
+    print(f"\n🏘️  POPULAÇÕES: {len(stats['populations'])}")
+    print("-" * 80)
+    
+    # Group populations by superpopulation for better display
+    pops_by_superpop = defaultdict(list)
+    for pop, data in stats['populations'].items():
+        pops_by_superpop[data['superpopulation']].append((pop, data))
+    
+    for superpop in sorted(pops_by_superpop.keys()):
+        print(f"\n  {superpop}:")
+        for pop, data in sorted(pops_by_superpop[superpop]):
+            print(f"    {pop}: {data['total_samples']} indivíduos "
+                  f"(♂ {data['sex_distribution']['male']}, "
+                  f"♀ {data['sex_distribution']['female']})")
+    
+    print("\n" + "="*80)
+    print("LEGENDA:")
+    print("  ♂ = Masculino (Sex=1)")
+    print("  ♀ = Feminino (Sex=2)")
+    print("="*80 + "\n")
+
+
+def select_samples(df: pd.DataFrame, config: dict) -> pd.DataFrame:
+    """
+    Select samples according to configuration criteria.
+    
+    Returns:
+        DataFrame with selected samples
+    """
+    sel_config = config['sample_selection']
+    
+    level = sel_config['level']  # "superpopulation" or "population"
+    samples_per_group = sel_config['samples_per_group']
+    include_groups = sel_config.get('include_groups', [])
+    exclude_groups = sel_config.get('exclude_groups', [])
+    sex_filter = sel_config.get('sex_filter', 'all')
+    random_seed = sel_config.get('random_seed', 42)
+    
+    print(f"\n[INFO] Selecionando amostras...")
+    print(f"  • Nível: {level}")
+    print(f"  • Amostras por grupo: {samples_per_group}")
+    
+    # Apply sex filter
+    if sex_filter == 'male':
+        df = df[df['Sex'] == 1]
+        print(f"  • Filtro de sexo: apenas masculino")
+    elif sex_filter == 'female':
+        df = df[df['Sex'] == 2]
+        print(f"  • Filtro de sexo: apenas feminino")
+    else:
+        print(f"  • Filtro de sexo: todos")
+    
+    # Determine grouping column
+    group_col = 'Superpopulation' if level == 'superpopulation' else 'Population'
+    
+    # Filter groups
+    if include_groups:
+        df = df[df[group_col].isin(include_groups)]
+        print(f"  • Incluindo apenas: {', '.join(include_groups)}")
+    
+    if exclude_groups:
+        df = df[~df[group_col].isin(exclude_groups)]
+        print(f"  • Excluindo: {', '.join(exclude_groups)}")
+    
+    # Sample from each group
+    selected_samples = []
+    
+    for group in sorted(df[group_col].unique()):
+        group_df = df[df[group_col] == group]
+        
+        # Sample up to samples_per_group
+        n_to_sample = min(samples_per_group, len(group_df))
+        sampled = group_df.sample(n=n_to_sample, random_state=random_seed)
+        
+        selected_samples.append(sampled)
+        print(f"  • {group}: selecionados {len(sampled)} de {len(group_df)} disponíveis")
+    
+    result_df = pd.concat(selected_samples, ignore_index=True)
+    
+    print(f"\n[INFO] Total de amostras selecionadas: {len(result_df)}")
+    
+    return result_df
+
+
+def load_checkpoint(checkpoint_file: Path) -> dict:
+    """Load checkpoint file if it exists."""
+    if checkpoint_file.exists():
+        with open(checkpoint_file, 'r') as f:
+            return json.load(f)
+    return {'completed_samples': [], 'failed_samples': []}
+
+
+def save_checkpoint(checkpoint_file: Path, checkpoint_data: dict):
+    """Save checkpoint file."""
+    with open(checkpoint_file, 'w') as f:
+        json.dump(checkpoint_data, f, indent=2)
+
+
+def parse_fasta_header(fasta_file: Path) -> Tuple[Optional[str], Optional[int], Optional[int]]:
+    """
+    Parse FASTA header to extract chromosome, start, and end positions.
+    
+    Expected header format: >chr11:88974674-89498961
+    
+    Args:
+        fasta_file: Path to FASTA file
+        
+    Returns:
+        Tuple of (chromosome, start, end) or (None, None, None) if parsing fails
+    """
+    try:
+        with open(fasta_file, 'r') as f:
+            header = f.readline().strip()
+        
+        if not header.startswith('>'):
+            return None, None, None
+        
+        # Remove '>' prefix
+        header = header[1:]
+        
+        # Parse format: chr11:88974674-89498961
+        if ':' in header and '-' in header:
+            chrom_part, pos_part = header.split(':', 1)
+            start_str, end_str = pos_part.split('-', 1)
+            
+            chromosome = chrom_part.strip()
+            start = int(start_str.strip())
+            end = int(end_str.strip())
+            
+            return chromosome, start, end
+        
+        return None, None, None
+        
+    except Exception as e:
+        print(f"[WARN] Error parsing FASTA header from {fasta_file}: {e}")
+        return None, None, None
+
+
+def get_chromosome_for_gene(config: dict) -> str:
+    """
+    Determine which chromosome contains the target gene.
+    This is a simplified version - in production you'd query the GTF.
+    For now, we'll assume it's specified or we detect it.
+    """
+    # This could be enhanced to actually parse GTF and find the chromosome
+    # For now, return a placeholder that will be determined at runtime
+    return None
+
+
+def validate_vcf_exists(sample_id: str, vcf_pattern: str, chromosome: str) -> Optional[Path]:
+    """
+    Check if VCF file exists for the given sample and chromosome.
+    
+    Returns:
+        Path to VCF if it exists and contains the sample, None otherwise
+    """
+    vcf_path = Path(vcf_pattern.format(chrom=chromosome))
+    
+    if not vcf_path.exists():
+        print(f"[WARN] VCF não encontrado: {vcf_path}")
+        return None
+    
+    # Check if VCF index exists
+    vcf_idx = Path(str(vcf_path) + ".tbi")
+    if not vcf_idx.exists():
+        print(f"[WARN] Índice VCF não encontrado: {vcf_idx}")
+        return None
+    
+    # Optionally, we could check if sample is in VCF using bcftools query -l
+    # For now, assume it exists if file exists
+    
+    return vcf_path
+
+
+def run_build_window_predict(
+    sample_id: str, 
+    config: dict, 
+    output_dir: Path,
+    target_name: Optional[str] = None
+) -> Tuple[bool, Optional[str]]:
+    """
+    Run build_window_and_predict.py for a single sample.
+    
+    Args:
+        sample_id: ID do sample
+        config: Configuração do pipeline
+        output_dir: Diretório de saída (será usado como base para individuals/)
+        target_name: Nome do gene/SNP sendo processado (para logging)
+    
+    Returns:
+        Tupla (success: bool, target_name: Optional[str])
+        target_name é o nome do gene/SNP processado
+    """
+    params = config['build_window_params']
+    data_sources = config['data_sources']
+    
+    # Build command
+    # Determinar output directory: individuals/SAMPLE_ID/windows/
+    # O build_window_and_predict.py criará SAMPLE__TARGET dentro deste dir
+    # Então precisamos apontar para individuals/SAMPLE_ID/ e ele criará windows/
+    individual_base = output_dir / "individuals" / sample_id
+    individual_base.mkdir(parents=True, exist_ok=True)
+    
+    # O output será: individuals/SAMPLE_ID/SAMPLE__TARGET/
+    # Precisamos mover depois para: individuals/SAMPLE_ID/windows/TARGET/
+    
+    cmd = [
+        sys.executable,  # Use same Python interpreter
+        "-m",
+        "genomics.workflows.dataset_builders.non_longevous.build_window_and_predict",
+        "--sample", sample_id,
+        "--ref-fasta", str(Path(data_sources['reference']['fasta']).expanduser()),
+        "--outdir", str(individual_base),
+    ]
+    
+    # Add mode
+    mode = params.get('mode', 'gene')
+    cmd.extend(["--mode", mode])
+    
+    # Mode-specific arguments
+    if mode == 'gene':
+        gene_config = params.get('gene', {})
+        
+        # Check for gene list file first
+        if gene_config.get('gene_list_file'):
+            cmd.extend(["--gene-list-file", gene_config['gene_list_file']])
+        # Otherwise check for single gene
+        elif gene_config.get('symbol'):
+            cmd.extend(["--gene", gene_config['symbol']])
+        elif gene_config.get('id'):
+            cmd.extend(["--gene-id", gene_config['id']])
+        else:
+            raise ValueError("Gene mode requires either gene.symbol, gene.id, or gene.gene_list_file in config")
+    
+    elif mode == 'snp':
+        snp_config = params.get('snp', {})
+        
+        if not snp_config.get('snp_list_file'):
+            raise ValueError("SNP mode requires snp.snp_list_file in config")
+        
+        cmd.extend(["--snp-list-file", snp_config['snp_list_file']])
+    
+    # Add GTF if specified
+    if params.get('gtf_feather'):
+        cmd.extend(["--gtf-feather", params['gtf_feather']])
+    
+    # Add GTF cache directory (shared across all samples)
+    cmd.extend(["--gtf-cache-dir", str(output_dir)])
+    
+    # Add window size
+    if params.get('window_size'):
+        cmd.extend(["--window-size", str(params['window_size'])])
+
+    # Add variant filter for consensus FASTA construction.
+    variant_filter = params.get('variant_filter', 'all')
+    if variant_filter:
+        cmd.extend(["--variant-filter", str(variant_filter)])
+    
+    # Add haplotype options
+    if params.get('skip_h2'):
+        cmd.append("--skip-h2")
+    
+    if params.get('also_iupac'):
+        cmd.append("--also-iupac")
+    
+    # Add prediction options
+    if params.get('predict'):
+        cmd.append("--predict")
+        
+        # Add API key
+        if params.get('api_key'):
+            cmd.extend(["--api-key", params['api_key']])
+        
+        # Add outputs
+        if params.get('outputs'):
+            cmd.extend(["--outputs", params['outputs']])
+        
+        # Add ontology
+        if params.get('ontology'):
+            cmd.extend(["--ontology", params['ontology']])
+        
+        # Add all-tissues flag
+        if params.get('all_tissues'):
+            cmd.append("--all-tissues")
+        
+        # Add API rate limiting delay
+        api_delay = params.get('api_rate_limit_delay', 0.0)
+        if api_delay > 0:
+            cmd.extend(["--api-rate-limit-delay", str(api_delay)])
+    
+    # VCF path
+    # Pass the VCF pattern to build_window_and_predict.py
+    # It will handle chromosome determination based on the gene/SNP being processed
+    vcf_pattern = data_sources.get('vcf_pattern', '')
+    
+    # Check for debug mode
+    debug_config = config.get('debug', {})
+    reference_only = debug_config.get('create_dataset_with_reference_genome_only', False)
+    
+    if reference_only:
+        print(f"[DEBUG] Reference-only mode enabled for {sample_id}")
+        cmd.append("--reference-only")
+    
+    if vcf_pattern:
+        cmd.extend(["--vcf", vcf_pattern])
+    else:
+        print(f"[ERROR] VCF pattern não especificado no config.")
+        return False, None
+    
+    # Determinar target_name para retorno
+    extracted_target_name = None
+    mode = params.get('mode', 'gene')
+    
+    if mode == 'gene':
+        gene_config = params.get('gene', {})
+        if gene_config.get('symbol'):
+            extracted_target_name = gene_config['symbol']
+        elif gene_config.get('id'):
+            extracted_target_name = gene_config['id']
+    elif mode == 'snp':
+        # Para SNP mode, será criado múltiplos diretórios (um por SNP)
+        # Retornaremos None e o caller precisa descobrir quais foram criados
+        extracted_target_name = None
+    
+    # Run command
+    print(f"\n[INFO] Executando: {' '.join(cmd)}")
+    
+    # Mensagem de tempo estimado adaptada ao modo
+    if mode == 'gene':
+        gene_config = params.get('gene', {})
+        if gene_config.get('gene_list_file'):
+            print(f"[INFO] Processamento de múltiplos genes (pode levar vários minutos)...")
+        else:
+            print(f"[INFO] Processamento de 1 gene (pode levar alguns minutos)...")
+    elif mode == 'snp':
+        print(f"[INFO] Processamento de 55 SNPs (pode levar vários minutos)...")
+    
+    print(f"[INFO] Mostrando output em tempo real:")
+    print("-" * 80)
+    
+    try:
+        result = subprocess.run(
+            cmd,
+            text=True,
+            check=True
+        )
+        print("-" * 80)
+        
+        # Reorganizar estrutura de saída
+        # build_window_and_predict.py cria: outdir/SAMPLE__TARGET/
+        # Queremos mover para: individuals/SAMPLE/windows/TARGET/
+        _reorganize_output_structure(individual_base, sample_id)
+        
+        return True, extracted_target_name
+        
+    except subprocess.CalledProcessError as e:
+        print("-" * 80)
+        print(f"[ERROR] Falha ao processar amostra {sample_id}")
+        print(f"[ERROR] Código de saída: {e.returncode}")
+        print(f"[ERROR] Veja o output acima para detalhes do erro")
+        return False, None
+
+
+def _reorganize_output_structure(individual_base: Path, sample_id: str) -> List[str]:
+    """
+    Reorganiza estrutura de saída do build_window_and_predict.py.
+    
+    Move de: individual_base/SAMPLE__TARGET/ para o layout canonico:
+    - individual_base/windows/TARGET/ para artefatos por amostra
+    - dataset_root/references/windows/TARGET/ para referencia e metadata global da janela
+    
+    Args:
+        individual_base: Diretório base do indivíduo (individuals/SAMPLE_ID/)
+        sample_id: ID do sample
+        
+    Returns:
+        Lista de nomes de targets processados
+    """
+    dataset_dir = individual_base.parent.parent
+    windows_dir = individual_base / "windows"
+    ref_windows_dir = dataset_dir / "references" / "windows"
+    windows_dir.mkdir(exist_ok=True)
+    
+    # Encontrar diretórios SAMPLE__TARGET
+    pattern = f"{sample_id}__*"
+    target_dirs = list(individual_base.glob(pattern))
+    
+    processed_targets = []
+    
+    for target_dir in target_dirs:
+        if not target_dir.is_dir():
+            continue
+        
+        # Extrair nome do target
+        target_name = target_dir.name.replace(f"{sample_id}__", "")
+        
+        # Destino final dos artefatos por amostra.
+        final_dir = windows_dir / target_name
+        
+        # Mover (ou sobrescrever se já existir)
+        if final_dir.exists():
+            import shutil
+            shutil.rmtree(final_dir)
+        
+        target_dir.rename(final_dir)
+
+        # Centralize arquivos compartilhados por janela no layout canonico.
+        ref_target_dir = ref_windows_dir / target_name
+        ref_target_dir.mkdir(parents=True, exist_ok=True)
+        for file_name in ("ref.window.fa", "window_metadata.json"):
+            src = final_dir / file_name
+            dst = ref_target_dir / file_name
+            if src.exists():
+                if dst.exists():
+                    src.unlink()
+                else:
+                    src.rename(dst)
+        processed_targets.append(target_name)
+        
+        print(f"[INFO] Janela organizada: {target_name}")
+    
+    return processed_targets
+
+
+def generate_summary_report(config: dict, checkpoint_data: dict, output_dir: Path):
+    """Generate a summary report of the processing."""
+    report_file = output_dir / "processing_summary.txt"
+    
+    completed = checkpoint_data.get('completed_samples', [])
+    failed = checkpoint_data.get('failed_samples', [])
+    
+    with open(report_file, 'w') as f:
+        f.write("="*80 + "\n")
+        f.write("NON-LONGEVOUS DATASET - RELATÓRIO DE PROCESSAMENTO\n")
+        f.write("="*80 + "\n\n")
+        
+        f.write(f"Total de amostras completadas: {len(completed)}\n")
+        f.write(f"Total de amostras com falha: {len(failed)}\n\n")
+        
+        if completed:
+            f.write("Amostras completadas:\n")
+            for sample in completed:
+                f.write(f"  • {sample}\n")
+            f.write("\n")
+        
+        if failed:
+            f.write("Amostras com falha:\n")
+            for sample in failed:
+                f.write(f"  • {sample}\n")
+            f.write("\n")
+        
+        f.write("="*80 + "\n")
+    
+    print(f"\n[INFO] Relatório salvo em: {report_file}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Build non-longevous dataset from 1000 Genomes Project"
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="configs/default.yaml",
+        help="Path to YAML configuration file (default: configs/default.yaml)"
+    )
+    
+    args = parser.parse_args()
+    
+    # Load configuration
+    config_path = Path(args.config).resolve()
+    if not config_path.exists():
+        print(f"[ERROR] Arquivo de configuração não encontrado: {config_path}")
+        sys.exit(1)
+    
+    config = load_config(config_path)
+    print(f"[INFO] Configuração carregada: {config_path}")
+    
+    # Create output directory
+    output_dir = Path(config['project']['output_dir']).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"[INFO] Diretório de saída: {output_dir}")
+    
+    # Get pipeline steps
+    steps = config['pipeline']['steps']
+    
+    # Step 1: Analyze metadata
+    if steps.get('analyze_metadata', False):
+        print("\n" + "="*80)
+        print("PASSO 1: ANÁLISE DE METADADOS")
+        print("="*80)
+        
+        csv_path = Path(config['data_sources']['metadata_csv']).resolve()
+        df = load_metadata_csv(csv_path)
+        
+        stats = analyze_metadata(df)
+        print_statistics(stats)
+        
+        # Save statistics to JSON
+        stats_file = output_dir / "metadata_statistics.json"
+        with open(stats_file, 'w') as f:
+            json.dump(stats, f, indent=2)
+        print(f"[INFO] Estatísticas salvas em: {stats_file}")
+    
+    # Step 2: Select samples
+    selected_df = None
+    if steps.get('select_samples', False):
+        print("\n" + "="*80)
+        print("PASSO 2: SELEÇÃO DE AMOSTRAS")
+        print("="*80)
+        
+        if df is None:
+            csv_path = Path(config['data_sources']['metadata_csv']).resolve()
+            df = load_metadata_csv(csv_path)
+        
+        selected_df = select_samples(df, config)
+        
+        # Save selected samples
+        selected_file = output_dir / "selected_samples.csv"
+        selected_df.to_csv(selected_file, index=False)
+        print(f"[INFO] Amostras selecionadas salvas em: {selected_file}")
+    
+    # Step 3: Validate VCFs (optional)
+    if steps.get('validate_vcfs', False):
+        print("\n" + "="*80)
+        print("PASSO 3: VALIDAÇÃO DE ARQUIVOS VCF")
+        print("="*80)
+        
+        if selected_df is None:
+            selected_file = output_dir / "selected_samples.csv"
+            if selected_file.exists():
+                selected_df = pd.read_csv(selected_file)
+            else:
+                print("[ERROR] Nenhuma amostra selecionada. Execute o passo 'select_samples' primeiro.")
+                sys.exit(1)
+        
+        # Determine which chromosomes need validation
+        params = config['build_window_params']
+        mode = params.get('mode', 'gene')
+        chromosomes_to_validate = set()
+        
+        print(f"[INFO] Modo de operação: {mode}")
+        
+        if mode == 'snp':
+            # SNP mode: read chromosomes from SNP list file
+            snp_file = params['snp'].get('snp_list_file')
+            if snp_file:
+                config_dir = config_path.parent
+                snp_path = config_dir / snp_file
+                
+                if snp_path.exists():
+                    print(f"[INFO] Lendo cromossomos do arquivo SNP: {snp_path}")
+                    with open(snp_path) as f:
+                        header = f.readline()  # Skip header
+                        for line in f:
+                            if line.strip() and not line.startswith('#'):
+                                parts = line.strip().split('\t')
+                                if len(parts) >= 3:
+                                    chrom = parts[2]  # chrom column
+                                    # Add 'chr' prefix if not present
+                                    if not chrom.startswith('chr'):
+                                        chrom = f'chr{chrom}'
+                                    chromosomes_to_validate.add(chrom)
+                    print(f"[INFO] Cromossomos identificados: {sorted(chromosomes_to_validate)}")
+                else:
+                    print(f"[WARN] Arquivo SNP não encontrado: {snp_path}")
+                    print("[WARN] Pulando validação de VCF.")
+        
+        elif mode == 'gene':
+            # Gene mode: try to infer chromosome from gene symbol/ID
+            gene_symbol = params['gene'].get('symbol')
+            gene_id = params['gene'].get('id')
+            gene_list_file = params['gene'].get('gene_list_file')
+            
+            if gene_list_file:
+                print(f"[INFO] Modo gene list detectado. Validação completa requer processamento do GTF.")
+                print("[INFO] Validando apenas os VCFs mais comuns (chr1-22, chrX, chrY).")
+                chromosomes_to_validate = {f'chr{i}' for i in range(1, 23)}
+                chromosomes_to_validate.update(['chrX', 'chrY'])
+            elif gene_symbol or gene_id:
+                print(f"[INFO] Modo gene único: {gene_symbol or gene_id}")
+                print("[INFO] Para validação completa, seria necessário consultar o GTF.")
+                print("[INFO] Validando VCFs para cromossomos comuns (chr1-22, chrX, chrY).")
+                chromosomes_to_validate = {f'chr{i}' for i in range(1, 23)}
+                chromosomes_to_validate.update(['chrX', 'chrY'])
+            else:
+                print("[WARN] Nenhum gene especificado. Pulando validação.")
+        
+        if chromosomes_to_validate:
+            vcf_pattern = config['data_sources']['vcf_pattern']
+            print(f"\n[INFO] Validando VCFs para {len(chromosomes_to_validate)} cromossomos...")
+            print(f"[INFO] Padrão VCF: {vcf_pattern}")
+            
+            # Track validation results
+            validation_results = {
+                'valid': [],
+                'missing_vcf': [],
+                'missing_index': []
+            }
+            
+            # Validate each chromosome
+            for chrom in sorted(chromosomes_to_validate):
+                vcf_path = Path(vcf_pattern.format(chrom=chrom))
+                vcf_idx = Path(str(vcf_path) + ".tbi")
+                
+                if not vcf_path.exists():
+                    validation_results['missing_vcf'].append(chrom)
+                    print(f"  ✗ {chrom}: VCF não encontrado - {vcf_path}")
+                elif not vcf_idx.exists():
+                    validation_results['missing_index'].append(chrom)
+                    print(f"  ✗ {chrom}: Índice (.tbi) não encontrado - {vcf_idx}")
+                else:
+                    validation_results['valid'].append(chrom)
+                    print(f"  ✓ {chrom}: OK")
+            
+            # Print summary
+            print("\n" + "-"*80)
+            print("RESUMO DA VALIDAÇÃO:")
+            print("-"*80)
+            print(f"✓ VCFs válidos: {len(validation_results['valid'])}/{len(chromosomes_to_validate)}")
+            
+            if validation_results['missing_vcf']:
+                print(f"✗ VCFs ausentes: {len(validation_results['missing_vcf'])}")
+                print(f"  Cromossomos: {', '.join(validation_results['missing_vcf'])}")
+            
+            if validation_results['missing_index']:
+                print(f"⚠ Índices ausentes: {len(validation_results['missing_index'])}")
+                print(f"  Cromossomos: {', '.join(validation_results['missing_index'])}")
+            
+            # Save validation report
+            validation_report = output_dir / "vcf_validation_report.json"
+            with open(validation_report, 'w') as f:
+                json.dump({
+                    'mode': mode,
+                    'chromosomes_validated': sorted(chromosomes_to_validate),
+                    'vcf_pattern': vcf_pattern,
+                    'results': validation_results,
+                    'total_samples': len(selected_df),
+                    'summary': {
+                        'valid': len(validation_results['valid']),
+                        'missing_vcf': len(validation_results['missing_vcf']),
+                        'missing_index': len(validation_results['missing_index'])
+                    }
+                }, f, indent=2)
+            print(f"\n[INFO] Relatório de validação salvo em: {validation_report}")
+            
+            # Warn if critical VCFs are missing
+            if validation_results['missing_vcf'] or validation_results['missing_index']:
+                print("\n[WARN] Alguns VCFs ou índices estão ausentes!")
+                print("[WARN] Isto pode causar falhas durante a execução do pipeline.")
+                print("[WARN] Recomenda-se corrigir antes de prosseguir para 'run_predictions'.")
+        else:
+            print("[INFO] Nenhum cromossomo identificado para validação.")
+            print("[INFO] VCFs serão validados durante a execução de build_window_and_predict.py")
+    
+    # Step 4: Run predictions
+    if steps.get('run_predictions', False):
+        print("\n" + "="*80)
+        print("PASSO 4: EXECUÇÃO DE PREDIÇÕES")
+        print("="*80)
+        
+        if selected_df is None:
+            selected_file = output_dir / "selected_samples.csv"
+            if selected_file.exists():
+                selected_df = pd.read_csv(selected_file)
+            else:
+                print("[ERROR] Nenhuma amostra selecionada. Execute o passo 'select_samples' primeiro.")
+                sys.exit(1)
+        
+        # Carregar FROGAncestryCalc likelihoods
+        print("\n[INFO] Carregando dados de ancestralidade do FROGAncestryCalc...")
+        frog_data = None
+        try:
+            script_dir = Path(__file__).parent
+            project_root = script_dir.parent
+            likelihood_file = project_root / "third_party/FROGAncestryCalc/output/whole_1000genomes_55aisnps_likelihood.txt"
+            mapping_file = project_root / "third_party/FROGAncestryCalc/population_mapping_1000genomes.csv"
+            
+            if likelihood_file.exists() and mapping_file.exists():
+                frog_data = FROGAncestryData(likelihood_file, mapping_file)
+            else:
+                print("[WARN] Arquivos do FROGAncestryCalc não encontrados. Continuando sem dados de ancestralidade.")
+        except Exception as e:
+            print(f"[WARN] Erro ao carregar FROGAncestryCalc: {e}")
+            print("[WARN] Continuando sem dados de ancestralidade.")
+        
+        # Load checkpoint
+        checkpoint_file = output_dir / config['pipeline']['checkpoint_file']
+        checkpoint_data = load_checkpoint(checkpoint_file)
+        
+        # Obter parâmetros de build_window
+        params = config['build_window_params']
+        
+        # Process each sample
+        total_samples = len(selected_df)
+        for idx, row in selected_df.iterrows():
+            sample_id = row['SampleID']
+            
+            # Skip if already completed
+            if sample_id in checkpoint_data['completed_samples']:
+                print(f"\n[INFO] Amostra {sample_id} já processada (passo {idx+1}/{total_samples})")
+                continue
+            
+            print(f"\n[INFO] Processando amostra {sample_id} ({idx+1}/{total_samples})")
+            print(f"  • População: {row['Population']}")
+            print(f"  • Superpopulação: {row['Superpopulation']}")
+            print(f"  • Sexo: {'Masculino' if row['Sex'] == 1 else 'Feminino'}")
+            
+            # Preparar informações do sample
+            sample_info = {
+                'FamilyID': row.get('FamilyID', '0'),
+                'SampleID': sample_id,
+                'Sex': int(row['Sex']),
+                'Population': row['Population'],
+                'Superpopulation': row['Superpopulation']
+            }
+            
+            # Obter likelihood FROG se disponível
+            frog_likelihood = None
+            frog_pop_names = None
+            if frog_data and frog_data.has_sample(sample_id):
+                try:
+                    frog_info = frog_data.get_individual_data(sample_id, full_frog_vector=True)
+                    frog_likelihood = frog_info['likelihood']
+                    frog_pop_names = frog_info['population_names']
+                except Exception as e:
+                    print(f"[WARN] Erro ao obter likelihood para {sample_id}: {e}")
+            
+            # Criar builder de metadados individuais
+            ind_builder = IndividualDatasetBuilder(
+                base_dir=output_dir,
+                sample_id=sample_id,
+                sample_info=sample_info,
+                frog_likelihood=frog_likelihood,
+                frog_population_names=frog_pop_names
+            )
+            ind_builder.create_structure()
+            
+            # Executar build_window_and_predict
+            success, target_name = run_build_window_predict(sample_id, config, output_dir)
+            
+            if success:
+                # Descobrir quais janelas foram criadas
+                windows_dir = output_dir / "individuals" / sample_id / "windows"
+                if windows_dir.exists():
+                    window_names = [d.name for d in windows_dir.iterdir() if d.is_dir()]
+                    
+                    # Adicionar metadados de cada janela
+                    for window_name in window_names:
+                        # Extrair informações da janela
+                        mode = params.get('mode', 'gene')
+                        ref_fasta = output_dir / "references" / "windows" / window_name / "ref.window.fa"
+                        
+                        # Parse FASTA header to get real chromosome/start/end
+                        chromosome = 'unknown'
+                        start = 0
+                        end = 0
+                        
+                        if ref_fasta.exists():
+                            chromosome, start, end = parse_fasta_header(ref_fasta)
+                            if chromosome is None:
+                                # Fallback to defaults if parsing fails
+                                chromosome = 'unknown'
+                                start = 0
+                                end = params.get('window_size', 1000000)
+                        else:
+                            # Use window_size from config as fallback
+                            end = params.get('window_size', 1000000)
+                        
+                        # Parse outputs and ontologies, removing extra whitespace
+                        outputs_str = params.get('outputs', '')
+                        outputs = [o.strip() for o in outputs_str.split(',') if o.strip()] if outputs_str else []
+                        
+                        ontology_str = params.get('ontology', '')
+                        ontologies = [ont.strip() for ont in ontology_str.split(',') if ont.strip()] if ontology_str else []
+                        
+                        ind_builder.add_window(
+                            target_name=window_name,
+                            window_type=mode,
+                            chromosome=chromosome,
+                            start=start,
+                            end=end,
+                            outputs=outputs,
+                            ontologies=ontologies
+                        )
+                
+                # Salvar metadados individuais
+                ind_builder.save_metadata()
+                
+                checkpoint_data['completed_samples'].append(sample_id)
+                print(f"[INFO] ✓ Amostra {sample_id} processada com sucesso")
+            else:
+                checkpoint_data['failed_samples'].append(sample_id)
+                print(f"[ERROR] ✗ Falha ao processar amostra {sample_id}")
+            
+            # Save checkpoint
+            save_checkpoint(checkpoint_file, checkpoint_data)
+        
+        print(f"\n[INFO] Processamento concluído!")
+        print(f"  • Sucesso: {len(checkpoint_data['completed_samples'])}")
+        print(f"  • Falha: {len(checkpoint_data['failed_samples'])}")
+    
+    # Step 5: Generate report
+    if steps.get('generate_report', False):
+        print("\n" + "="*80)
+        print("PASSO 5: GERAÇÃO DE RELATÓRIO")
+        print("="*80)
+        
+        checkpoint_file = output_dir / config['pipeline']['checkpoint_file']
+        checkpoint_data = load_checkpoint(checkpoint_file)
+        
+        generate_summary_report(config, checkpoint_data, output_dir)
+    
+    # Step 6: Generate dataset metadata (PyTorch Dataset)
+    if steps.get('generate_dataset_metadata', False):
+        print("\n" + "="*80)
+        print("PASSO 6: GERAÇÃO DE METADADOS DO DATASET PYTORCH")
+        print("="*80)
+        
+        try:
+            dataset_name = config['project'].get('name', 'non_longevous_dataset')
+            window_size = config['build_window_params'].get('window_size')
+            
+            metadata_builder = DatasetMetadataBuilder(
+                dataset_dir=output_dir,
+                dataset_name=dataset_name,
+                window_size=window_size
+            )
+            
+            # Escanear todos os indivíduos
+            metadata_builder.scan_individuals()
+            
+            # Salvar metadados globais
+            metadata_builder.save_metadata()
+            
+            # Imprimir sumário
+            metadata_builder.print_summary()
+            
+            print(f"[INFO] ✓ Metadados do Dataset PyTorch gerados com sucesso!")
+            print(f"[INFO] Arquivo: {output_dir / 'dataset_metadata.json'}")
+            
+        except Exception as e:
+            print(f"[ERROR] Erro ao gerar metadados do dataset: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # Step 7: Evaluate FROGAncestryCalc accuracy
+    if steps.get('evaluate_frog_accuracy', False):
+        print("\n" + "="*80)
+        print("PASSO 7: AVALIAÇÃO DE ACURÁCIA FROGAncestryCalc (Superpopulação)")
+        print("="*80)
+        
+        try:
+            # Load population mapping if not already loaded
+            project_root = Path(__file__).resolve().parents[5]
+            mapping_file = project_root / "third_party/FROGAncestryCalc/population_mapping_1000genomes.csv"
+            
+            if not mapping_file.exists():
+                print(f"[ERROR] Arquivo de mapeamento não encontrado: {mapping_file}")
+                print("[WARN] Pulando avaliação de acurácia.")
+            else:
+                # Load mapping
+                import pandas as pd
+                mapping_df = pd.read_csv(mapping_file)
+                population_mapping = {}
+                for _, row in mapping_df.iterrows():
+                    frog_pop = row['FROGAncestryCalc_Population']
+                    population_mapping[frog_pop] = {
+                        'code_1000g': row['Pop_Code_1000G'],
+                        'full_name_1000g': row['Full_Name_1000G'],
+                        'superpopulation_code': row['Superpopulation_1000G'],
+                        'superpopulation_name': row['Superpopulation_Full_Name']
+                    }
+                
+                # Evaluate accuracy
+                accuracy, confusion_matrix, y_true, y_pred = evaluate_frog_accuracy(
+                    output_dir, population_mapping
+                )
+                
+                # Print report
+                print_frog_accuracy_report(accuracy, confusion_matrix, y_true, y_pred)
+                
+                print(f"\n[INFO] ✓ Avaliação de acurácia concluída!")
+                
+        except Exception as e:
+            print(f"[ERROR] Erro ao avaliar acurácia: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    print("\n[DONE] Pipeline concluído!")
+
+
+if __name__ == "__main__":
+    main()

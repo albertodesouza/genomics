@@ -1,0 +1,57 @@
+# AlphaGenome local chr15 workflow for 1000 Genomes haplotypes.
+# This initial implementation is coordinate-preserving and applies phased SNVs only.
+
+alphagenome:
+  backend: local
+  alphagenome_research_dir: /home/breno/I2CA/alphagenome_research
+  checkpoint_source: huggingface  # huggingface or kaggle; ignored when checkpoint_path is set.
+  model_version: all_folds
+  checkpoint_path: null
+
+reference:
+  # Null uses the canonical reference from: genomics references ensure-grch38
+  fasta: null
+  chromosome: chr15
+  chromosome_length: 101991189
+
+variants:
+  # Uses genomics.core.data_registry to resolve:
+  # /dados/GENOMICS_DATA/v1/1kG_high_coverage/raw_variants/vcf_chromosomes/*chr15*.vcf.gz
+  dataset_id: 1kg_high_coverage
+  vcf: null
+  samples: all
+  phased: true
+  include_indels: false  # Reserved for a future coordinate-remapping implementation.
+
+windows:
+  window_bp: 1048576
+  stride_bp: 524288
+  keep_policy: nearest_center
+
+outputs:
+  requested_outputs:
+    - RNA_SEQ
+    - CAGE
+    - ATAC
+    - DNASE
+    - CHIP_HISTONE
+    - CHIP_TF
+  ontology_terms:
+    - CL:1000458
+    - CL:0000346
+    - CL:2000092
+  strands:
+    - plus
+    - minus
+  # plus+minus doubles the number of model calls: ~194 windows * 2 haplotypes * 2 strands per sample.
+  exclude_contact_maps: true
+
+runtime:
+  resume: true
+  # Real JAX batch size for model._predict. Increase gradually on DGX Spark.
+  batch_size: 1
+
+output:
+  dataset_dir: results/alphagenome_chr15_1kg
+  compression: npz
+  dtype: native

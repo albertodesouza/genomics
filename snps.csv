@@ -1,0 +1,58 @@
+rsid,window,gene,consequence,protein_change,effect_allele,allele_effect,population_context,expected_rnaseq_signal,control_class,source_key,notes
+rs1426654,SLC24A5,SLC24A5,missense,p.Ala111Thr,A,lightening,European/South-Asian; introgressed into East Africa,NULL_CODING,NEG,Lamason2005;Crawford2017,"Largest single EUR-vs-AFR effect; derived allele near-fixed in Europe. Protein-level -> expected null in RNA-seq. Key negative control."
+rs16891982,SLC45A2,SLC45A2,missense,p.Phe374Leu,G,lightening,European,NULL_CODING,NEG,Chaitanya2018;LonaDurazo2019,"Coding, BUT reported associated with SLC45A2 EXPRESSION (derived G -> higher expression). Informative test: in-silico perturbation of the coding base itself should be ~null unless it alters a regulatory element; a population eQTL by LD should NOT move the in-silico score. Watch this one."
+rs28777,SLC45A2,SLC45A2,intron/near-gene,,,see_source,European,VISIBLE,SUPP,Chaitanya2018,"HIrisPlex-S skin SNP; non-coding, candidate expression signal."
+rs26722,SLC45A2,SLC45A2,missense,p.Glu272Lys,,see_source,East-Asian,NULL_CODING,NEG,Yuasa2006,"Coding; low relevance in EUR/AFR split (East-Asian differentiated). Included as coding negative."
+rs1042602,TYR,TYR,missense,p.Ser192Tyr,A,lightening,European,NULL_CODING,NEG,Chaitanya2018;Shriver2003,"Coding nonsyn; freckling/skin. Expected null in RNA-seq."
+rs1126809,TYR,TYR,missense,p.Arg402Gln,A,lightening,European,NULL_CODING,NEG,Chaitanya2018,"Thermosensitive coding variant; eye/skin. Expected null."
+rs1393350,TYR,TYR,intron/near-gene,,A,lightening,European,VISIBLE,POS,Sulem2007;Chaitanya2018,"Non-coding TYR-region GWAS hit (freckles/pigmentation); candidate regulatory -> should be visible."
+rs12913832,OCA2_HERC2,HERC2,intron(regulatory enhancer of OCA2),,G,lightening,European,VISIBLE,POS,Visser2012;Crawford2017,"Canonical distal enhancer variant; modulates OCA2 promoter via chromatin looping. Strongest POSITIVE control: expect Delta OCA2 expression / Delta accessibility."
+rs1129038,OCA2_HERC2,HERC2,intron(regulatory),,,see_source,European,VISIBLE,POS,Chaitanya2018,"In strong LD with rs12913832; eye colour/melasma. Regulatory -> visible."
+rs4932620,OCA2_HERC2,HERC2,intron(regulatory),,T,darkening,African (Ethiopian Nilo-Saharan),VISIBLE,POS,Crawford2017,"African-identified HERC2 intronic; derived T -> dark. Regulatory candidate."
+rs6497271,OCA2_HERC2,HERC2,intron(regulatory),,G,lightening,African,VISIBLE,POS,Crawford2017,"African-identified HERC2 intronic; derived G -> light."
+rs1800407,OCA2_HERC2,OCA2,missense,p.Arg419Gln,A,lightening,European,NULL_CODING,NEG,Chaitanya2018,"Coding; eye/skin. Expected null in RNA-seq."
+rs1800414,OCA2_HERC2,OCA2,missense,p.His615Arg,,see_source,East-Asian,NULL_CODING,NEG,Edwards2010,"East-Asian light-skin coding variant; low EUR/AFR relevance; coding negative."
+rs74653330,OCA2_HERC2,OCA2,missense,p.Ala481Thr,,see_source,East-Asian,NULL_CODING,NEG,Edwards2010,"East-Asian coding; included as coding negative."
+rs1800404,OCA2_HERC2,OCA2,synonymous/exonic (splice-linked),,,see_source,global,VISIBLE,POS,Crawford2017,"OCA2 signal linked to alternative splicing of exon 10 (functional OCA2 amount). Candidate SPLICE-track signal; verify exact tag SNP against Crawford2017 supplement."
+rs7495174,OCA2_HERC2,OCA2,intron(regulatory),,,see_source,European,VISIBLE,SUPP,Duffy2007,"OCA2 regulatory-region tag; supporting."
+rs1805007,MC1R,MC1R,missense (loss-of-function),p.Arg151Cys,T,lightening (red hair/fair),European,NULL_CODING,NEG,Morgan2019,"High-penetrance 'R' allele. Protein-level LoF -> expected null in RNA-seq. Part of MC1R coding negative-control cluster."
+rs1805008,MC1R,MC1R,missense (loss-of-function),p.Arg160Trp,T,lightening (red hair/fair),European,NULL_CODING,NEG,Morgan2019,"High-penetrance 'R' allele; coding negative."
+rs1805009,MC1R,MC1R,missense (loss-of-function),p.Asp294His,C,lightening (red hair/fair),European,NULL_CODING,NEG,Morgan2019,"High-penetrance 'R' allele; coding negative."
+rs1805006,MC1R,MC1R,missense,p.Asp84Glu,,see_source,European,NULL_CODING,NEG,Morgan2019,"Rare high-penetrance R; coding negative."
+rs11547464,MC1R,MC1R,missense,p.Arg142His,,see_source,European,NULL_CODING,NEG,Morgan2019,"Rare high-penetrance R; coding negative."
+rs1110400,MC1R,MC1R,missense,p.Ile155Thr,,see_source,European,NULL_CODING,NEG,Morgan2019,"Rare high-penetrance R; coding negative."
+rs1805005,MC1R,MC1R,missense,p.Val60Leu,,see_source,European,NULL_CODING,NEG,Morgan2019,"Low-penetrance 'r' allele; coding negative."
+rs2228479,MC1R,MC1R,missense,p.Val92Met,,see_source,European,NULL_CODING,NEG,Morgan2019,"Low-penetrance 'r' allele; coding negative."
+rs885479,MC1R,MC1R,missense,p.Arg163Gln,,see_source,European/East-Asian,NULL_CODING,NEG,Morgan2019,"Low-penetrance 'r' allele; coding negative."
+rs683,TYRP1,TYRP1,3'UTR,,,see_source,European/Oceanian,VISIBLE,POS,Chaitanya2018,"3'UTR variant -> candidate post-transcriptional/expression signal; visible."
+rs1408799,TYRP1,TYRP1,near-gene/intergenic,,C,darkening,European,VISIBLE,SUPP,Sulem2008,"TYRP1-region pigmentation GWAS hit; regulatory candidate."
+rs12821256,KITLG,KITLG,upstream (enhancer),,C,lightening (blond hair),European,VISIBLE,POS,Guenther2014;Chaitanya2018,"Validated enhancer variant altering KITLG expression in melanocytes. Strong POSITIVE control (expression/accessibility)."
+rs642742,KITLG,KITLG,upstream (regulatory),,,see_source,East-Asian/European,VISIBLE,POS,Miller2007,"KITLG regulatory region; skin/hair colour. Visible."
+rs6058017,ASIP,ASIP,3'UTR (regulatory),,G,darkening,African/European,VISIBLE,POS,Kanetsky2002;Bonilla2005,"ASIP 3'UTR; expression/post-transcriptional candidate. Visible."
+rs2378249,ASIP,ASIP,near-gene(regulatory),,,see_source,European,VISIBLE,SUPP,Chaitanya2018,"HIrisPlex-S ASIP-region SNP; regulatory candidate."
+rs1015362,ASIP,ASIP,intergenic(regulatory),,,see_source,European,VISIBLE,SUPP,Sulem2008,"ASIP/RALY-region pigmentation; regulatory candidate."
+rs10424065,MFSD12,MFSD12,upstream/near-gene (regulatory),,,darkening,African,VISIBLE,POS,Crawford2017,"African dark-skin signal; MFSD12 expression-linked (MFSD12 high in melanocytes). POSITIVE control (African)."
+rs6510760,MFSD12,MFSD12,upstream (regulatory),,,see_source,African,VISIBLE,POS,Crawford2017,"Upstream MFSD12; regulatory candidate. African positive control."
+rs112332856,MFSD12,MFSD12,near-gene,,,darkening,African/admixed,VISIBLE,POS,LonaDurazo2019,"Lead MFSD12 variant in admixed meta-analysis; regulatory candidate."
+rs56203814,MFSD12,MFSD12,near-gene,,,see_source,African,VISIBLE,SUPP,Crawford2017,"MFSD12-region African dark-skin SNP; supporting. Verify in Crawford2017 supplement."
+rs10756819,BNC2,BNC2,intron(regulatory),,,see_source,European,VISIBLE,SUPP,Jacobs2013,"BNC2 pigment-saturation/freckling; regulatory candidate."
+rs62543565,BNC2,BNC2,intron(enhancer),,,darkening (freckling),European,VISIBLE,POS,Visser2014,"Validated 'Irish-type' enhancer variant in BNC2 melanocyte enhancer. POSITIVE control (accessibility/expression)."
+DDB1_REGION,DDB1,DDB1/TMEM138,melanocyte-specific regulatory region,,,see_source,African/Eurasian,VISIBLE,SUPP,Crawford2017,"Crawford2017 report melanocyte-specific regulatory variants near DDB1/TMEM138 correlating with UV-response gene expression. Pull exact lead rsIDs from Crawford2017 Table S (not hard-coded here to avoid mis-ID). Region-level positive-control candidate."
+#
+# ---- REFERENCE KEY ----
+# Lamason2005   : Lamason RL et al., Science 2005;310:1782 (SLC24A5).
+# Crawford2017  : Crawford NG et al., Science 2017;358:eaan8433 (African pigmentation: SLC24A5, MFSD12, DDB1/TMEM138, OCA2/HERC2).
+# Visser2012    : Visser M et al., Genome Res 2012;22:446 (HERC2 rs12913832 enhancer-OCA2 loop).
+# Visser2014    : Visser M et al., Hum Mol Genet 2014;23:5750 (BNC2 rs62543565 enhancer).
+# Guenther2014  : Guenther CA et al., PLoS Genet 2014 / Miller CT et al., Cell 2007 (KITLG enhancer/expression).
+# Miller2007    : Miller CT et al., Cell 2007;131:1179 (KITLG rs642742 region).
+# Chaitanya2018 : Chaitanya L et al., Forensic Sci Int Genet 2018;35:123 (HIrisPlex-S skin/hair/eye prediction panel).
+# Morgan2019    : Morgan MD et al., Hum Mol Genet 2019;28:2093 ("A study in scarlet"; MC1R red-hair variants, UK Biobank).
+# Sulem2007/2008: Sulem P et al., Nat Genet 2007;39:1443 & 2008;40:835 (pigmentation GWAS: TYR, TYRP1, ASIP, KITLG).
+# LonaDurazo2019: Lona-Durazo F et al., BMC Genet / Genomic Data 2019 (admixed-population meta-analysis; MFSD12 lead).
+# Jacobs2013    : Jacobs LC et al., Hum Genet 2013 (BNC2 pigment saturation).
+# Kanetsky2002/Bonilla2005 : ASIP skin-pigmentation associations.
+# Duffy2007     : Duffy DL et al., Am J Hum Genet 2007 (OCA2/HERC2 region).
+# Edwards2010   : Edwards M et al., PLoS Genet 2010 (OCA2 East-Asian light-skin variants).
+# Shriver2003   : Shriver MD et al., Hum Genet 2003 (skin reflectance associations).
+# Yuasa2006     : Yuasa I et al. (SLC45A2 population variation).

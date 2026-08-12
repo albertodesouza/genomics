@@ -1,0 +1,273 @@
+# Default example config for the Genomes Analyzer workflow.
+#
+# Usage:
+#   genomics genomes-analyzer run --config configs/genomes_analyzer/default.yaml
+#
+# This file uses the normalized, user-facing schema accepted by
+# genomics.workflows.genomes_analyzer.config.normalize_config_schema(). The
+# workflow downloads/stages sequencing reads, prepares references, aligns reads,
+# calls variants, generates coverage reports, and optionally runs downstream
+# ancestry/RNA-seq steps.
+
+project:
+  # Human-readable project name used in logs and reports.
+  name: "human_30x_example"
+
+  # Organism label for documentation only. Current operational defaults target
+  # human GRCh38 data.
+  organism: "homo_sapiens"
+
+  reference:
+    # Assembly/reference name recorded in outputs. Use a value matching the FASTA
+    # and downstream tools, for example GRCh38 or GRCh38.d1.vd1.
+    name: "GRCh38"
+
+    # URL for the reference FASTA. The pipeline downloads and indexes this unless
+    # matching artifacts already exist and resume/skip behavior allows reuse.
+    fasta_url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/GRCh38.primary_assembly.genome.fa.gz"
+
+    # URL for the gene annotation GTF used to build gene lists and coverage
+    # summaries. Keep the GTF assembly consistent with reference.name/fasta_url.
+    gtf_url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/gencode.v46.primary_assembly.annotation.gtf.gz"
+
+    # Optional prebuilt BWA/BWA-MEM2 index URL. Leave empty to build indexes
+    # locally. When using a prebuilt index, do not enable limit_to_canonical unless
+    # the index was built from that exact limited FASTA.
+    bwa_index_url: ""
+
+storage:
+  # Base working directory. Runtime outputs such as fastq/, bam/, cram/, vcf/,
+  # refs/, genes/, and reports are created under this directory.
+  base_dir: "results/genomes_analyzer/example"
+
+  # Temporary directory used by tools that honor TMPDIR. Put this on fast local
+  # storage when processing large FASTQ/BAM/CRAM files.
+  temp_dir: "results/genomes_analyzer/tmp"
+
+  # If true, keep intermediate files to simplify debugging/resume. If false, the
+  # normalized cleanup defaults may remove large BAM intermediates after CRAMs are
+  # produced.
+  keep_intermediates: true
+
+download:
+  # Download backend. Currently sra_toolkit is the supported operational mode.
+  tool: "sra_toolkit"
+
+  # Number of threads for download/conversion steps where supported.
+  threads: 4
+
+  # Number of prefetch retry attempts before failing a run.
+  prefetch_retries: 3
+
+  # If true, try Aspera acceleration when the local environment supports it.
+  use_ascp: false
+
+execution:
+  # Global thread default used by several stages unless a stage-specific setting
+  # overrides it.
+  threads: 8
+
+  # Print detailed progress and tool command information.
+  verbose: true
+
+  # Reuse already generated artifacts when possible.
+  resume: true
+
+  # Skip downloads/outputs that already exist.
+  skip_existing: true
+
+  # Seconds between progress estimates for long-running stages.
+  progress_interval_sec: 60
+
+  # Warn when download/conversion progress appears stalled for this many minutes.
+  stall_warn_min: 10
+
+  # Treat a stalled download/conversion as failed after this many minutes.
+  stall_fail_min: 45
+
+  # If true, fall back to ENA HTTP when SRA conversion stalls.
+  ena_fallback: true
+
+  # If true, try ENA-provided FASTQs before prefetch/fasterq-dump.
+  prefer_ena_fastq: false
+
+  # Aligner to use. Values accepted by normalization: bwa, bwa-mem2, bwa_mem2,
+  # mem2. bwa-mem2 is generally faster when available.
+  aligner: "bwa-mem2"
+
+  # Threads used specifically by the aligner. Keep this below total CPU count when
+  # running multiple samples in parallel.
+  aln_threads: 8
+
+size_control:
+  downsample:
+    # Enable read downsampling before alignment. Useful for smoke tests or low
+    # memory machines. Disable or set fraction=1.0 for full-depth processing.
+    enabled: true
+
+    # Fraction of reads to retain. Example: 0.25 approximates 7.5x from 30x data.
+    fraction: 0.05
+
+    # Random seed used by downsampling tools for reproducibility.
+    seed: 123
+
+general:
+  # Force reference downloads even when local files exist.
+  force_refs: false
+
+  # Force rebuilding aligner indexes even when index files exist.
+  force_indexes: false
+
+  # Convert final aligned BAMs to CRAM when possible.
+  use_cram: true
+
+  # Memory per samtools sort thread, in megabytes.
+  sort_mem_mb: 512
+
+  # BWA batch size. Lower values reduce RAM pressure and may slow alignment.
+  bwa_batch_k: 20000000
+
+  # Minimum mean coverage used when deciding whether a gene is present.
+  gene_presence_min_mean_cov: 5.0
+
+  # Minimum fraction of a gene covered at >=1x depth to call it present.
+  gene_presence_min_breadth_1x: 0.8
+
+  # Optional trio IDs used by trio de novo and paternity steps.
+  trio_child_id: "NA12878"
+  trio_parent_ids: ["NA12891", "NA12892"]
+
+  # Simple de novo candidate filters.
+  trio_min_dp_child: 8
+  trio_min_dp_parents: 8
+  trio_min_gq: 20
+  trio_min_ab_het: 0.25
+  trio_max_ab_het: 0.75
+  trio_min_ab_hom: 0.90
+  trio_max_parent_alt_frac: 0.02
+
+params:
+  # Variant caller. Supported operational values depend on installed tools;
+  # common choices are bcftools and gatk.
+  variant_caller: "bcftools"
+
+  # Memory budget in GB for variant calling stages that accept a Java/tool memory
+  # parameter.
+  mem_gb: 32
+
+  # Optional gene panel/list path. null means derive genes from the configured GTF.
+  target_gene_list: null
+
+  # bcftools controls.
+  bcf_verbose: true
+  bcf_show_intervals: true
+  bcf_show_intervals_rows: 12
+  bcf_heartbeat_sec: 30
+  bcf_progress_sec: 30
+  bcf_mapq: 20
+  bcf_baseq: 20
+  bcf_max_depth: 250
+  bcf_scatter_parts: 8
+  bcf_max_parallel: 4
+  bcf_threads_io: 2
+  bcf_io_threads: 4
+  bcf_emit_variants_only: true
+  bcf_min_baseq: 20
+  bcf_min_mapq: 20
+  bcf_emit_all_sites: false
+  bcf_split_multiallelic: true
+
+  # GATK HaplotypeCaller controls, used only when variant_caller selects GATK.
+  hc_java_mem_gb: 16
+  hc_threads_native: 4
+  hc_pcr_free: true
+  keep_alt_decoy: true
+  hc_scatter_parts: 4
+  hc_max_parallel: 2
+  hc_extra_args: []
+
+  # GenotypeGVCFs controls, used only for relevant GATK workflows.
+  gg_java_mem_gb: 12
+  gg_extra_args: []
+
+  # VEP annotation controls. Disable annotate_with_vep unless VEP/cache is
+  # installed locally.
+  annotate_with_vep: false
+  vep_species: "homo_sapiens"
+  vep_assembly: "GRCh38"
+  vep_dir_cache: "refs/vep_cache"
+  vep_fork: 4
+  vep_buffer_size: 5000
+  vep_heartbeat_sec: 30
+  vep_compress_output: false
+  vep_extra:
+    - "--everything"
+    - "--no_stats"
+
+limit_to_canonical: false
+
+samples:
+  # DNA samples to process. Each sample declares one or more SRA/ENA run accessions.
+  # Use small/downsampled runs for tests and full 30x runs for production.
+  - sample_id: "NA12878"
+    study: "PRJEB31736"
+    runs:
+      - "ERR3239334"
+    notes: "Example 1000 Genomes high-coverage sample."
+
+  - sample_id: "NA12891"
+    study: "PRJEB36890"
+    runs:
+      - "ERR3989341"
+    notes: "Example trio parent sample."
+
+steps:
+  # Reference preparation and aligner index preparation.
+  refs_and_indexes: true
+
+  # Download/stage FASTQs from configured sample runs.
+  fetch_fastqs: true
+
+  # Estimate expected output size and print disk warnings.
+  estimate_space: true
+
+  # Apply read downsampling when size_control.downsample.enabled is true.
+  downsample: true
+
+  # Run read QC/trimming.
+  qc_and_trimming: true
+
+  # Align reads and sort/mark duplicates.
+  align_and_sort: true
+
+  # Convert BAM to CRAM and compute coverage.
+  cram_and_coverage: true
+
+  # Call variants and optionally annotate with VEP.
+  variants_and_vep: true
+
+  # Build gene BED/list from GTF.
+  gene_list: true
+
+  # Compute gene presence/coverage reports.
+  gene_presence: true
+
+  # Compare variants pairwise across processed samples.
+  pairwise: true
+
+  # Run trio de novo candidate analysis when trio IDs are available.
+  trio_denovo: false
+
+  # Run paternity analysis when trio IDs are available.
+  paternity: false
+
+  # Run ancestry analysis. Requires additional ancestry assets/configuration.
+  ancestry: false
+
+  # Run RNA-seq workflow when RNA samples are configured.
+  rnaseq: false
+
+ancestry:
+  # Placeholder for optional ADMIXTURE/supervised ancestry settings. Keep empty
+  # unless enabling steps.ancestry.
+  enabled: false
