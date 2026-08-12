@@ -19,6 +19,7 @@ alphagenome = [
     "rich",
 ]
 genotype = [
+    "captum",
     "matplotlib",
     "numpy",
     "pandas",

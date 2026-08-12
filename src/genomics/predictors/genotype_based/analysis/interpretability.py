@@ -8,11 +8,12 @@ Ferramentas de interpretabilidade para modelos genômicos.
 Classes
 -------
 GradCAM   : Gradient-weighted Class Activation Mapping (Selvaraju et al., 2017)
-DeepLIFT  : Deep Learning Important Features (Shrikumar et al., 2017) — aproximação Rescale Rule
+DeepLIFT  : Deep Learning Important Features (Shrikumar et al., 2017) — regra Rescale via captum
 
 Funções
 -------
-extract_dna_sequence : Extrai sequência FASTA de uma região genômica
+extract_dna_sequence         : Extrai sequência FASTA de uma região genômica
+deeplift_completeness_check  : Verifica sum(attribution) == output(x) - output(baseline)
 """
 
 from pathlib import Path
@@ -20,6 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
+from captum.attr import DeepLift as _CaptumDeepLift
 from rich.console import Console
 
 console = Console()
@@ -342,7 +344,16 @@ class GradCAM:
 
 class DeepLIFT:
     """
-    DeepLIFT via aproximação Rescale Rule: atribuição = gradiente × (input − baseline).
+    DeepLIFT via captum (regra Rescale genuína, não a aproximação gradiente × input).
+
+    captum.attr.DeepLift propaga multiplicadores discretos por cada não-linearidade
+    do modelo (substituindo o gradiente pontual por (f(x) - f(x0)) / (x - x0), com
+    fallback para o gradiente quando x - x0 ≈ 0), o que evita que a atribuição
+    colapse para gradiente(x) * x e fique proporcional à magnitude bruta do input --
+    ver `deeplift_completeness_check` para validar a implementação numa amostra.
+
+    Requer que as não-linearidades do modelo sejam módulos (`nn.ReLU()` etc.), não
+    chamadas funcionais soltas no `forward` -- é o caso de CNN2AncestryPredictor.
 
     Parâmetros
     ----------
@@ -352,6 +363,7 @@ class DeepLIFT:
 
     def __init__(self, model: nn.Module):
         self.model = model
+        self._captum_dl = _CaptumDeepLift(model)
         self._baseline_cache: Optional[torch.Tensor] = None
         self._class_mean_cache: Dict[int, torch.Tensor] = {}
         self._class_input_mean_cache: Dict[int, Tuple[torch.Tensor, int]] = {}
@@ -360,20 +372,23 @@ class DeepLIFT:
         if baseline_type == "zeros":
             return torch.zeros_like(input_tensor)
         elif baseline_type == "mean":
-            if self._baseline_cache is not None:
-                return self._baseline_cache.to(input_tensor.device)
-            if dataset is None:
-                return torch.zeros_like(input_tensor)
-            console.print("[cyan]Calculando baseline (média do dataset)...[/cyan]")
-            samples = [_unpack_dataset_item(dataset[i])[0] for i in range(min(len(dataset), 10000))]
-            self._baseline_cache = torch.stack(samples).mean(dim=0)
-            return self._baseline_cache.unsqueeze(0).to(input_tensor.device)
+            if self._baseline_cache is None:
+                if dataset is None:
+                    return torch.zeros_like(input_tensor)
+                console.print("[cyan]Calculando baseline (média do dataset)...[/cyan]")
+                samples = [_unpack_dataset_item(dataset[i])[0] for i in range(min(len(dataset), 10000))]
+                # Mantém a dimensão de batch (tamanho 1) no cache -- captum exige que o shape do
+                # baseline bata com o input ou tenha batch=1 para fazer broadcast; a subtração de
+                # tensores usada antes do captum fazia esse broadcast silenciosamente, mascarando
+                # a falta dessa dimensão aqui.
+                self._baseline_cache = torch.stack(samples).mean(dim=0).unsqueeze(0)
+            return self._baseline_cache.to(input_tensor.device)
         raise ValueError(f"baseline_type inválido: {baseline_type}")
 
     def generate(self, input_tensor: torch.Tensor, target_class: Optional[int] = None,
                  baseline_type: str = "zeros", dataset=None) -> Tuple[torch.Tensor, int]:
         """
-        Gera atribuições DeepLIFT.
+        Gera atribuições DeepLIFT (regra Rescale, via captum).
 
         Returns
         -------
@@ -385,24 +400,16 @@ class DeepLIFT:
         self.model.eval()
 
         baseline = self._get_baseline(input_tensor, baseline_type, dataset)
-        delta = input_tensor - baseline
-
-        inp = input_tensor.clone().requires_grad_(True)
-        output = self.model(inp)
 
         if target_class is None:
-            target_class = output.argmax(dim=1).item()
+            with torch.no_grad():
+                target_class = self.model(input_tensor).argmax(dim=1).item()
 
-        self.model.zero_grad()
-        one_hot = torch.zeros_like(output)
-        one_hot[0, target_class] = 1.0
-        output.backward(gradient=one_hot)
-
-        attributions = (inp.grad.detach() * delta).squeeze(0)
+        attributions = self._captum_dl.attribute(input_tensor, baselines=baseline, target=target_class)
 
         if was_training:
             self.model.train()
-        return attributions.cpu(), target_class
+        return attributions.detach().squeeze(0).cpu(), target_class
 
     def generate_class_mean(self, target_class_idx: int, dataset: Any,
                             baseline_type: str = "zeros") -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], int]:
@@ -437,6 +444,37 @@ class DeepLIFT:
         self._class_mean_cache[target_class_idx] = mean_attr
         self._class_input_mean_cache[target_class_idx] = (mean_input, len(samples))
         return mean_attr, mean_input, len(samples)
+
+
+def deeplift_completeness_check(
+    deeplift: DeepLIFT,
+    input_tensor: torch.Tensor,
+    target_class: int,
+    baseline_type: str = "zeros",
+    dataset: Any = None,
+) -> Tuple[float, float]:
+    """
+    Verifica a propriedade de completeness do DeepLIFT numa amostra: sum(attribution)
+    deve bater com output(x) - output(baseline) na classe alvo. Gradiente×input (a
+    aproximação antiga) não satisfaz essa igualdade em geral; a regra Rescale sim, a
+    menos de erro numérico -- um desvio grande indica baseline incompatível, camada
+    não suportada pelo captum, ou outro problema de setup.
+
+    Returns
+    -------
+    Tuple[float, float]
+        (attr_sum, output_diff) -- devem ficar próximos.
+    """
+    attrs, _ = deeplift.generate(input_tensor, target_class=target_class,
+                                  baseline_type=baseline_type, dataset=dataset)
+    baseline = deeplift._get_baseline(input_tensor, baseline_type, dataset)
+    was_training = deeplift.model.training
+    deeplift.model.eval()
+    with torch.no_grad():
+        output_diff = (deeplift.model(input_tensor) - deeplift.model(baseline))[0, target_class].item()
+    if was_training:
+        deeplift.model.train()
+    return float(attrs.sum().item()), output_diff
 
 
 def extract_dna_sequence(dataset_dir: Path, sample_id: str, gene_name: str,
