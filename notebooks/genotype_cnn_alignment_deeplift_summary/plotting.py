@@ -152,13 +152,16 @@ def plot_signal_std_bands(genes, config, target_idx, other_idx, class_names, cla
 
 def plot_exon_overlap(genes, config, target_idx, other_idx, class_names, class_colors,
                        ontology_terms, strands, dataset_dir, window_center_size,
-                       deeplift_results, mean_input_total, logodds_attr_target_pop,
-                       logodds_attr_other_pop, gene_id_map, transcript_extractor_mane,
+                       deeplift_results, mean_input_total, attr_by_target,
+                       gene_id_map, transcript_extractor_mane,
                        transcript_extractor_coding, out_dir):
-    """Per-gene (RNA-seq signal, DeepLIFT log-odds attribution) row pairs plus an exon track, one
-    figure per gene, saved to `out_dir` and returned as (figs, labels) for a carousel. Also
-    returns the per-track Pearson r between the smoothed strong-minus-weak signal diff and the
-    smoothed log-odds attribution curve, as a DataFrame."""
+    """Per-gene (RNA-seq signal, DeepLIFT attribution) row pairs plus an exon track, one figure
+    per gene, saved to `out_dir` and returned as (figs, labels) for a carousel. The attribution
+    row shows all 4 (population, toward-logit) curves from `attr_by_target` -- each population's
+    genotype attributed toward each class's own logit (solid) and toward the other class's logit
+    (dashed) -- rather than collapsing them into a single log-odds curve per population. Also
+    returns the per-track Pearson r between the smoothed strong-minus-weak signal diff and each
+    population's log-odds attribution curve (own-logit minus cross-logit), as a DataFrame."""
     out_dir.mkdir(parents=True, exist_ok=True)
     n_ont = len(ontology_terms)
     n_rows = 2 * n_ont + 1  # (RNA-seq signal, DeepLIFT attribution) pair per ontology, + exon row
@@ -173,10 +176,12 @@ def plot_exon_overlap(genes, config, target_idx, other_idx, class_names, class_c
         )
         tss_local, tes_local = gene_boundary_positions(exon_boxes, gene_strand)
 
-        # One curve per population: how much that population's genotype pushes the model's
-        # log-odds(target/other) up (toward target) or down (toward other) at each window position.
-        target_pop_logodds_curves = gene_track_curves(logodds_attr_target_pop, config, gene)
-        other_pop_logodds_curves = gene_track_curves(logodds_attr_other_pop, config, gene)
+        # One curve per (population, toward-logit) combination: how much that population's
+        # genotype pushes each class's own logit up or down at each window position.
+        target_toward_target_curves = gene_track_curves(attr_by_target[(target_idx, target_idx)], config, gene)
+        target_toward_other_curves = gene_track_curves(attr_by_target[(target_idx, other_idx)], config, gene)
+        other_toward_other_curves = gene_track_curves(attr_by_target[(other_idx, other_idx)], config, gene)
+        other_toward_target_curves = gene_track_curves(attr_by_target[(other_idx, target_idx)], config, gene)
 
         class_signal_curves = {
             target_idx: gene_track_curves(deeplift_results[target_idx]["mean_input"], config, gene),
@@ -252,20 +257,31 @@ def plot_exon_overlap(genes, config, target_idx, other_idx, class_names, class_c
                             handles, plot_labels = handles + diff_handles, plot_labels + diff_labels
                         ax_sig.legend(handles, plot_labels, fontsize=6, loc="upper right")
 
-                # Both curves share one axis and one sign convention: positive = pushes the
-                # model's log-odds(target/other) toward target, negative = toward other,
-                # regardless of which population is plotted. Color identifies the population.
+                # All 4 curves share one axis: positive = pushes that curve's toward-logit up,
+                # negative = pushes it down. Color identifies which population's genotype is
+                # attributed (target vs. other); solid vs. dashed identifies which logit it's
+                # attributed toward (own class vs. the other class).
                 ax_attr = axes[attr_row, col]
-                target_pop_curve = target_pop_logodds_curves.get((ontology, strand))
-                if target_pop_curve is not None:
-                    ax_attr.plot(smooth(target_pop_curve), color=class_colors[target_idx],
+                target_toward_target_curve = target_toward_target_curves.get((ontology, strand))
+                if target_toward_target_curve is not None:
+                    ax_attr.plot(smooth(target_toward_target_curve), color=class_colors[target_idx],
                                  linewidth=1.0, linestyle="-",
-                                 label=f"{class_names[target_idx]} individuals")
-                other_pop_curve = other_pop_logodds_curves.get((ontology, strand))
-                if other_pop_curve is not None:
-                    ax_attr.plot(smooth(other_pop_curve), color=class_colors[other_idx],
+                                 label=f"{class_names[target_idx]} individuals → {class_names[target_idx]} logit")
+                target_toward_other_curve = target_toward_other_curves.get((ontology, strand))
+                if target_toward_other_curve is not None:
+                    ax_attr.plot(smooth(target_toward_other_curve), color=class_colors[target_idx],
+                                 linewidth=1.0, linestyle="--",
+                                 label=f"{class_names[target_idx]} individuals → {class_names[other_idx]} logit")
+                other_toward_other_curve = other_toward_other_curves.get((ontology, strand))
+                if other_toward_other_curve is not None:
+                    ax_attr.plot(smooth(other_toward_other_curve), color=class_colors[other_idx],
                                  linewidth=1.0, linestyle="-",
-                                 label=f"{class_names[other_idx]} individuals")
+                                 label=f"{class_names[other_idx]} individuals → {class_names[other_idx]} logit")
+                other_toward_target_curve = other_toward_target_curves.get((ontology, strand))
+                if other_toward_target_curve is not None:
+                    ax_attr.plot(smooth(other_toward_target_curve), color=class_colors[other_idx],
+                                 linewidth=1.0, linestyle="--",
+                                 label=f"{class_names[other_idx]} individuals → {class_names[target_idx]} logit")
                 ax_attr.axhline(0, color="black", linewidth=0.7, alpha=0.5, zorder=1)
                 if is_sense:
                     for s, e in exon_boxes:
@@ -274,22 +290,27 @@ def plot_exon_overlap(genes, config, target_idx, other_idx, class_names, class_c
                         ax_attr.axvline(tss_local, color="tab:green", linewidth=1.0, linestyle=":", alpha=0.8)
                         ax_attr.axvline(tes_local, color="tab:green", linewidth=1.0, linestyle="-.", alpha=0.8)
                 if col == 0:
-                    ax_attr.set_ylabel(f"{ontology}\nDeepLIFT attr\ntoward log-odds", fontsize=7)
+                    ax_attr.set_ylabel(f"{ontology}\nDeepLIFT attr\ntoward class logit", fontsize=7)
                     if i == 0:
                         ax_attr.legend(fontsize=6, loc="upper right")
 
                 # Quantify -- rather than just eyeball -- whether where the two classes' RNA-seq
                 # signal differs lines up with where each population's log-odds attribution is
-                # large: Pearson r between the smoothed diff and the smoothed attribution curve.
+                # large: Pearson r between the smoothed diff and each population's log-odds
+                # attribution (own-logit curve minus cross-logit curve -- see
+                # compute_attributions_by_target_class's docstring for why that subtraction is
+                # exact), reconstructed here from the 4 plotted curves rather than plotted itself.
                 if diff_smoothed is not None:
-                    if other_pop_curve is not None:
-                        r = float(np.corrcoef(diff_smoothed, smooth(other_pop_curve))[0, 1])
+                    if other_toward_other_curve is not None and other_toward_target_curve is not None:
+                        other_pop_logodds_curve = other_toward_target_curve - other_toward_other_curve
+                        r = float(np.corrcoef(diff_smoothed, smooth(other_pop_logodds_curve))[0, 1])
                         corr_rows.append({
                             "strand": strand, "ontology": ontology, "individuals": class_names[other_idx],
                             "corr(diff_signal, logodds_attribution)": r,
                         })
-                    if target_pop_curve is not None:
-                        r = float(np.corrcoef(diff_smoothed, smooth(target_pop_curve))[0, 1])
+                    if target_toward_target_curve is not None and target_toward_other_curve is not None:
+                        target_pop_logodds_curve = target_toward_target_curve - target_toward_other_curve
+                        r = float(np.corrcoef(diff_smoothed, smooth(target_pop_logodds_curve))[0, 1])
                         corr_rows.append({
                             "strand": strand, "ontology": ontology, "individuals": class_names[target_idx],
                             "corr(diff_signal, logodds_attribution)": r,
@@ -310,7 +331,7 @@ def plot_exon_overlap(genes, config, target_idx, other_idx, class_names, class_c
 
         fig.suptitle(
             f"{gene} -- gene strand={gene_strand} ({len(exon_boxes)} exons), "
-            f"positive = pushes the log-odds toward {class_names[target_idx]}"
+            f"attr rows: solid = attribution toward own class logit, dashed = toward the other class's logit"
         )
         fig.tight_layout()
         out_path = out_dir / f"exon_overlap_{gene}.png"

@@ -39,20 +39,23 @@ def compute_population_mean_input(deeplift_results, class_indices):
     return sum(deeplift_results[c]["mean_input"] * n_by_class[c] for c in n_by_class) / n_total
 
 
-def compute_logodds_attributions(model, dataset, target_idx, other_idx, deeplift_results, class_names):
-    """Per-population attribution toward log-odds(target/other) = logit_target - logit_other.
+def compute_attributions_by_target_class(model, dataset, target_idx, other_idx, deeplift_results, class_names):
+    """Per-population attribution toward each of the two class logits, kept separate (not
+    combined into a single log-odds curve).
 
-    `deeplift_results[c]["mean_attr"]` (from `compute_class_mean_deeplift`) only explains samples
-    of class c toward class c's own output logit. DeepLIFT's Rescale multipliers at each
-    nonlinearity depend only on the forward activations for a given input/baseline pair, not on
-    which output neuron backprop started from -- so attribution is linear in the output-side
-    target: attribution(A - B) = attribution(A) - attribution(B) exactly, no new interpretation
-    needed. That combination needs each population's attribution toward *both* logits, and
-    `compute_class_mean_deeplift`'s cache only has each population's attribution toward its *own*
-    logit, so this takes two new DeepLIFT passes for the missing half via
-    `DeepLIFT.generate_class_mean_cross`.
+    `deeplift_results[c]["mean_attr"]` (from `compute_class_mean_deeplift`) only has each
+    population's attribution toward its *own* output logit. This adds the missing half -- each
+    population's attribution toward the *other* logit -- via two new DeepLIFT passes
+    (`DeepLIFT.generate_class_mean_cross`).
 
-    Returns (logodds_attr_target_pop, logodds_attr_other_pop).
+    Returns {(population_idx, toward_idx): mean_attr_curve} for all 4 combinations of
+    population in {target_idx, other_idx} and toward-logit in {target_idx, other_idx}. Since
+    DeepLIFT's Rescale multipliers at each nonlinearity depend only on the forward activations
+    for a given input/baseline pair, not on which output neuron backprop started from,
+    attribution is linear in the output-side target: attribution(A - B) = attribution(A) -
+    attribution(B) exactly, so e.g. attr[(target_idx, target_idx)] - attr[(target_idx, other_idx)]
+    recovers the target population's attribution toward log-odds(target/other), no new
+    interpretation needed.
     """
     cross_deeplift = DeepLIFT(model)
     cross_attr_other_toward_target, _, n_other_cross = cross_deeplift.generate_class_mean_cross(
@@ -62,15 +65,18 @@ def compute_logodds_attributions(model, dataset, target_idx, other_idx, deeplift
         target_idx, other_idx, dataset=dataset, baseline_type="mean",
     )
     print(
-        f"cross attribution computed (intermediate, combined into log-odds below): "
+        f"cross attribution computed: "
         f"{class_names[other_idx]} samples -> {class_names[target_idx]} logit "
         f"(n={n_other_cross}); {class_names[target_idx]} samples -> "
         f"{class_names[other_idx]} logit (n={n_target_cross})"
     )
 
-    logodds_attr_target_pop = deeplift_results[target_idx]["mean_attr"] - cross_attr_target_toward_other
-    logodds_attr_other_pop = cross_attr_other_toward_target - deeplift_results[other_idx]["mean_attr"]
-    return logodds_attr_target_pop, logodds_attr_other_pop
+    return {
+        (target_idx, target_idx): deeplift_results[target_idx]["mean_attr"],
+        (target_idx, other_idx): cross_attr_target_toward_other,
+        (other_idx, other_idx): deeplift_results[other_idx]["mean_attr"],
+        (other_idx, target_idx): cross_attr_other_toward_target,
+    }
 
 
 def gene_track_curves(tensor, config, gene):
