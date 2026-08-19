@@ -181,6 +181,8 @@ def _build_view_definition(config: PipelineConfig) -> Dict[str, Any]:
         view["reference_predictions_sample_id"] = di.reference_predictions_sample_id
     if di.indel_include_snp_mask:
         view["indel_include_snp_mask"] = di.indel_include_snp_mask
+    if di.indel_mask_positive_value != 1.0:
+        view["indel_mask_positive_value"] = di.indel_mask_positive_value
     return view
 
 
@@ -395,7 +397,15 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
 
         with open(cache_dir / "view_definition.json") as f:
             cache_view = json.load(f)
-        if cache_view.get("requested_view") != _build_view_definition(config):
+        stored_view = dict(cache_view.get("requested_view") or {})
+        current_view = _build_view_definition(config)
+        # indel_mask_positive_value was added after some caches were built (and briefly written
+        # unconditionally by an intermediate version of this code); treat "absent" and "present
+        # with the default 1.0" as equivalent so those caches don't spuriously invalidate.
+        for _view in (stored_view, current_view):
+            if _view.get("indel_mask_positive_value", 1.0) == 1.0:
+                _view.pop("indel_mask_positive_value", None)
+        if stored_view != current_view:
             console.print("[yellow]Cache inválido: definição lógica da view mudou[/yellow]")
             return False
 
@@ -483,6 +493,13 @@ def validate_cache(cache_dir: Path, config: PipelineConfig) -> bool:
         if cached_snp_mask != config.dataset_input.indel_include_snp_mask:
             console.print(
                 f"[yellow]Cache inválido: indel_include_snp_mask mudou ({cached_snp_mask} → {config.dataset_input.indel_include_snp_mask})[/yellow]"
+            )
+            return False
+
+        cached_mask_positive_value = pp.get("indel_mask_positive_value", requested_view.get("indel_mask_positive_value", 1.0))
+        if cached_mask_positive_value != config.dataset_input.indel_mask_positive_value:
+            console.print(
+                f"[yellow]Cache inválido: indel_mask_positive_value mudou ({cached_mask_positive_value} → {config.dataset_input.indel_mask_positive_value})[/yellow]"
             )
             return False
 
@@ -856,6 +873,7 @@ def save_processed_dataset(cache_dir: Path, processed_dataset: ProcessedGenomicD
                 "selected_track_index": config.dataset_input.selected_track_index,
                 "indel_include_valid_mask": config.dataset_input.indel_include_valid_mask,
                 "indel_include_snp_mask": config.dataset_input.indel_include_snp_mask,
+                "indel_mask_positive_value": config.dataset_input.indel_mask_positive_value,
                 "alignment_mapping": config.dataset_input.alignment_mapping,
                 "alignment_axis_splits": config.dataset_input.alignment_axis_splits,
                 "consensus_dataset_dir": config.dataset_input.consensus_dataset_dir,

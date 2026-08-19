@@ -21,6 +21,7 @@ from genomics.predictors.genotype_based.analysis.interpretability import (
     DeepLIFT,
     build_haplotype_track_layout,
     find_top_deeplift_windows,
+    iter_track_attribution_rows,
     summarize_deeplift_by_track,
 )
 from genomics.predictors.genotype_based.alignment.dynamic_indel_alignment import (
@@ -1254,31 +1255,28 @@ def _select_top_regions(
         raise ValueError(f"Esperado attributions [hap,row,L] ou [row,L], recebido {tuple(attrs.shape)}")
 
     layout = build_haplotype_track_layout(config)
-    hap_names = ["H1", "H2"] if attrs.shape[0] == 2 else [f"H{i + 1}" for i in range(attrs.shape[0])]
     length = attrs.shape[-1]
     actual_window = min(window_size, length)
     best_by_gene: Dict[str, Dict[str, Any]] = {}
 
-    for hap_idx, hap_name in enumerate(hap_names):
-        for row_meta in layout[: attrs.shape[1]]:
-            row = attrs[hap_idx, row_meta["row_index"]].abs().view(1, 1, -1)
-            scores = torch.nn.functional.avg_pool1d(row, kernel_size=actual_window, stride=1).view(-1)
-            if scores.numel() == 0:
-                continue
-            value, start = torch.max(scores, dim=0)
-            candidate = {
-                "haplotype": hap_name,
-                **row_meta,
-                "window_start": int(start.item()),
-                "window_end": int(start.item() + actual_window),
-                "window_center": int(start.item() + actual_window // 2),
-                "window_size": int(actual_window),
-                "mean_abs_attr": float(value.item()),
-            }
-            gene = str(candidate.get("gene_name"))
-            current = best_by_gene.get(gene)
-            if current is None or candidate["mean_abs_attr"] > current["mean_abs_attr"]:
-                best_by_gene[gene] = candidate
+    for row_meta, row_tensor in iter_track_attribution_rows(attrs, layout):
+        row = row_tensor.abs().view(1, 1, -1)
+        scores = torch.nn.functional.avg_pool1d(row, kernel_size=actual_window, stride=1).view(-1)
+        if scores.numel() == 0:
+            continue
+        value, start = torch.max(scores, dim=0)
+        candidate = {
+            **row_meta,
+            "window_start": int(start.item()),
+            "window_end": int(start.item() + actual_window),
+            "window_center": int(start.item() + actual_window // 2),
+            "window_size": int(actual_window),
+            "mean_abs_attr": float(value.item()),
+        }
+        gene = str(candidate.get("gene_name"))
+        current = best_by_gene.get(gene)
+        if current is None or candidate["mean_abs_attr"] > current["mean_abs_attr"]:
+            best_by_gene[gene] = candidate
 
     selected = sorted(best_by_gene.values(), key=lambda r: r["mean_abs_attr"], reverse=True)
     return selected[:top_k]

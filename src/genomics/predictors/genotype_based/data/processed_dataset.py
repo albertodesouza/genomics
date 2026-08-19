@@ -93,6 +93,7 @@ class ProcessedGenomicDataset(Dataset):
         self.indel_neutral_value = di.indel_neutral_value
         self.indel_include_valid_mask = di.indel_include_valid_mask
         self.indel_include_snp_mask = di.indel_include_snp_mask
+        self.indel_mask_positive_value = di.indel_mask_positive_value
         self.alignment_mapping = di.alignment_mapping
         self.consensus_dataset_dir = Path(di.consensus_dataset_dir) if di.consensus_dataset_dir else None
         out = config.output
@@ -744,6 +745,7 @@ class ProcessedGenomicDataset(Dataset):
                     include_valid_mask=True,
                     include_snp_mask=self.indel_include_snp_mask,
                     expanded_slice=expanded_slice,
+                    mask_positive_value=self.indel_mask_positive_value,
                 )
                 signal_row = aligned[0]
                 if self.alphagenome_signal_transform == "delta_reference":
@@ -769,6 +771,7 @@ class ProcessedGenomicDataset(Dataset):
                 include_valid_mask=True,
                 include_snp_mask=self.indel_include_snp_mask,
                 expanded_slice=expanded_slice,
+                mask_positive_value=self.indel_mask_positive_value,
             )
             signal_row = aligned[0]
             if self.alphagenome_signal_transform == "delta_reference":

@@ -137,6 +137,8 @@ The final row count is driven by the selected genes, haplotypes, ontology tracks
 
 Mask rows identify where the aligned axis contains insertions, deletions, valid mapped signal, and optionally SNP positions. Signal rows contain AlphaGenome values after any configured signal transform.
 
+`indel_mask_positive_value` (default `1.0`) sets the value written at marked positions in every enabled mask row (insertion, deletion, and optionally validity/SNP); unmarked positions always stay at `0.0`. Lowering it (e.g. `0.5`, `0.25`, `0.125`) tests whether a softer mask signal changes how much the model relies on explicit variant-location channels relative to the AlphaGenome signal rows. Changing this value changes the processed-tensor cache hash and the experiment name (`generate_dataset_name`/`generate_experiment_name` in `config.py`), so different values train and cache independently.
+
 ### Signal Transform And Masking
 
 `alphagenome_signal_transform` controls the value before normalization:

@@ -62,6 +62,7 @@ def build_aligned_haplotype_tensor(
     include_valid_mask: bool = True,
     include_snp_mask: bool = False,
     expanded_slice: Optional[Tuple[int, int]] = None,
+    mask_positive_value: float = 1.0,
 ) -> np.ndarray:
     if expanded_slice is None:
         slice_start = 0
@@ -87,23 +88,23 @@ def build_aligned_haplotype_tensor(
         if np.any(valid):
             local_idx = copy_to[valid] - slice_start
             values[local_idx] = row[copy_from[valid]]
-            valid_mask[local_idx] = 1.0
+            valid_mask[local_idx] = mask_positive_value
 
     insertion_indices = np.asarray(entry.get("insertion_indices", []), dtype=np.int64)
     if insertion_indices.size:
         valid = (insertion_indices >= slice_start) & (insertion_indices < slice_end)
-        ins_mask[insertion_indices[valid] - slice_start] = 1.0
+        ins_mask[insertion_indices[valid] - slice_start] = mask_positive_value
 
     deletion_indices = np.asarray(entry.get("deletion_indices", []), dtype=np.int64)
     if deletion_indices.size:
         valid = (deletion_indices >= slice_start) & (deletion_indices < slice_end)
-        del_mask[deletion_indices[valid] - slice_start] = 1.0
+        del_mask[deletion_indices[valid] - slice_start] = mask_positive_value
 
     if include_snp_mask:
         snp_indices = np.asarray(entry.get("snp_indices", []), dtype=np.int64)
         if snp_indices.size:
             valid = (snp_indices >= slice_start) & (snp_indices < slice_end)
-            snp_mask[snp_indices[valid] - slice_start] = 1.0
+            snp_mask[snp_indices[valid] - slice_start] = mask_positive_value
 
     output_rows = [values, ins_mask, del_mask]
     if include_valid_mask:

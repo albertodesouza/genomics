@@ -73,13 +73,26 @@ def build_haplotype_track_layout(
     config: Any,
     track_metadata: Optional[List[Dict]] = None,
 ) -> List[Dict[str, Any]]:
-    """Return row metadata for one haplotype in the canonical tensor layout.
+    """Return row metadata mapping tensor rows to (gene, haplotype, track).
 
-    The genotype-based layout is ``(haplotype, row, position)``. Within each
-    haplotype, rows are ordered as ``gene_1 tracks, gene_2 tracks, ...``. For
-    each gene, signal tracks come first, followed by the INDEL masks. The masks
-    are deliberately returned as normal tracks so downstream ranking treats them
-    exactly like RNA-seq tracks.
+    For ``tensor_layout="haplotype_channels"``, haplotype is an explicit tensor
+    axis (``(haplotype, row, position)``), so this returns row metadata for one
+    haplotype's worth of tracks -- rows ordered as ``gene_1 tracks, gene_2
+    tracks, ...`` -- with no ``"haplotype"`` key (the caller applies the same
+    row indices to each haplotype slice).
+
+    For ``tensor_layout="raw_center_crop"``, there is no explicit haplotype
+    axis: `ProcessedGenomicDataset._process_windows_raw_center_crop` stacks each
+    haplotype's tracks as extra rows per gene (``gene_1-H1 tracks, gene_1-H2
+    tracks, gene_2-H1 tracks, ...`` when ``haplotype_mode="H1+H2"``). This
+    returns one entry per (gene, haplotype, track) with a ``"haplotype"`` key
+    (``"H1"``/``"H2"``) and ``row_index`` already accounting for that
+    haplotype-major-within-gene layout, so it directly indexes the flat
+    ``(row, position)`` tensor.
+
+    For each gene, signal tracks come first, followed by the INDEL masks. The
+    masks are deliberately returned as normal tracks so downstream ranking
+    treats them exactly like RNA-seq tracks.
     """
     di = config.dataset_input
     genes = list(di.genes_to_use or di.gene_order or [])
@@ -142,19 +155,54 @@ def build_haplotype_track_layout(
                 "metadata": None,
             })
 
-    layout: List[Dict[str, Any]] = []
     tracks_per_gene = len(per_gene_tracks)
+    tensor_layout = getattr(di, "tensor_layout", "haplotype_channels")
+    haplotype_mode = getattr(di, "haplotype_mode", "H1+H2")
+    haplotypes: List[Optional[str]]
+    if tensor_layout == "raw_center_crop":
+        haplotypes = ["H1", "H2"] if haplotype_mode == "H1+H2" else [haplotype_mode]
+    else:
+        haplotypes = [None]
+    stride_per_gene = tracks_per_gene * len(haplotypes)
+
+    layout: List[Dict[str, Any]] = []
     for gene_idx, gene_name in enumerate(genes):
-        for track_idx, track in enumerate(per_gene_tracks):
-            row_index = gene_idx * tracks_per_gene + track_idx
-            layout.append({
-                "row_index": row_index,
-                "gene_index": gene_idx,
-                "gene_name": gene_name,
-                "track_index_in_gene": track_idx,
-                **track,
-            })
+        for hap_idx, haplotype in enumerate(haplotypes):
+            for track_idx, track in enumerate(per_gene_tracks):
+                row_index = gene_idx * stride_per_gene + hap_idx * tracks_per_gene + track_idx
+                entry = {
+                    "row_index": row_index,
+                    "gene_index": gene_idx,
+                    "gene_name": gene_name,
+                    "track_index_in_gene": track_idx,
+                    **track,
+                }
+                if haplotype is not None:
+                    entry["haplotype"] = haplotype
+                layout.append(entry)
     return layout
+
+
+def iter_track_attribution_rows(attrs: torch.Tensor, layout: List[Dict[str, Any]]):
+    """Yield ``(row_meta, row_tensor)`` for every (haplotype, track) row in ``attrs``.
+
+    Handles both canonical layouts from `build_haplotype_track_layout`: when haplotype is an
+    explicit tensor axis (``layout`` rows carry no ``"haplotype"`` key), this loops
+    ``attrs.shape[0]`` haplotypes and pairs each with the same per-haplotype ``layout``, adding a
+    ``"haplotype"`` key. When haplotype is already folded into ``row_index`` (``layout`` rows
+    already carry ``"haplotype"``, i.e. ``tensor_layout="raw_center_crop"``), ``attrs.shape[0]``
+    is 1 and this iterates ``layout`` directly.
+    """
+    if layout and "haplotype" in layout[0]:
+        for row_meta in layout:
+            if row_meta["row_index"] >= attrs.shape[1]:
+                continue
+            yield row_meta, attrs[0, row_meta["row_index"]]
+    else:
+        hap_names = ["H1", "H2"] if attrs.shape[0] == 2 else [f"H{i + 1}" for i in range(attrs.shape[0])]
+        for hap_idx, hap_name in enumerate(hap_names):
+            for row_meta in layout[: attrs.shape[1]]:
+                yield {"haplotype": hap_name, **row_meta}, attrs[hap_idx, row_meta["row_index"]]
 
 
 def summarize_deeplift_by_track(
@@ -175,21 +223,17 @@ def summarize_deeplift_by_track(
         raise ValueError(f"Esperado attributions [hap,row,L] ou [row,L], recebido {tuple(attrs.shape)}")
 
     layout = build_haplotype_track_layout(config, track_metadata=track_metadata)
-    hap_names = ["H1", "H2"] if attrs.shape[0] == 2 else [f"H{i + 1}" for i in range(attrs.shape[0])]
     rows: List[Dict[str, Any]] = []
-    for hap_idx, hap_name in enumerate(hap_names):
-        for row_meta in layout[: attrs.shape[1]]:
-            row = attrs[hap_idx, row_meta["row_index"]]
-            abs_row = row.abs()
-            rows.append({
-                "haplotype": hap_name,
-                **row_meta,
-                "mean_abs_attr": float(abs_row.mean().item()),
-                "sum_abs_attr": float(abs_row.sum().item()),
-                "max_abs_attr": float(abs_row.max().item()),
-                "mean_signed_attr": float(row.mean().item()),
-                "sum_signed_attr": float(row.sum().item()),
-            })
+    for row_meta, row in iter_track_attribution_rows(attrs, layout):
+        abs_row = row.abs()
+        rows.append({
+            **row_meta,
+            "mean_abs_attr": float(abs_row.mean().item()),
+            "sum_abs_attr": float(abs_row.sum().item()),
+            "max_abs_attr": float(abs_row.max().item()),
+            "mean_signed_attr": float(row.mean().item()),
+            "sum_signed_attr": float(row.sum().item()),
+        })
     rows.sort(key=lambda r: r["mean_abs_attr"], reverse=True)
     return rows
 
@@ -215,29 +259,26 @@ def find_top_deeplift_windows(
         raise ValueError(f"Esperado attributions [hap,row,L] ou [row,L], recebido {tuple(attrs.shape)}")
 
     layout = build_haplotype_track_layout(config, track_metadata=track_metadata)
-    hap_names = ["H1", "H2"] if attrs.shape[0] == 2 else [f"H{i + 1}" for i in range(attrs.shape[0])]
     length = attrs.shape[-1]
     actual_window = min(window_size, length)
     windows: List[Dict[str, Any]] = []
 
-    for hap_idx, hap_name in enumerate(hap_names):
-        for row_meta in layout[: attrs.shape[1]]:
-            row = attrs[hap_idx, row_meta["row_index"]].abs().view(1, 1, -1)
-            scores = nn.functional.avg_pool1d(row, kernel_size=actual_window, stride=1).view(-1)
-            if scores.numel() == 0:
-                continue
-            take = min(top_k, scores.numel())
-            values, starts = torch.topk(scores, k=take)
-            for value, start in zip(values.tolist(), starts.tolist()):
-                windows.append({
-                    "haplotype": hap_name,
-                    **row_meta,
-                    "window_start": int(start),
-                    "window_end": int(start + actual_window),
-                    "window_center": int(start + actual_window // 2),
-                    "window_size": int(actual_window),
-                    "mean_abs_attr": float(value),
-                })
+    for row_meta, row_tensor in iter_track_attribution_rows(attrs, layout):
+        row = row_tensor.abs().view(1, 1, -1)
+        scores = nn.functional.avg_pool1d(row, kernel_size=actual_window, stride=1).view(-1)
+        if scores.numel() == 0:
+            continue
+        take = min(top_k, scores.numel())
+        values, starts = torch.topk(scores, k=take)
+        for value, start in zip(values.tolist(), starts.tolist()):
+            windows.append({
+                **row_meta,
+                "window_start": int(start),
+                "window_end": int(start + actual_window),
+                "window_center": int(start + actual_window // 2),
+                "window_size": int(actual_window),
+                "mean_abs_attr": float(value),
+            })
 
     windows.sort(key=lambda r: r["mean_abs_attr"], reverse=True)
     return windows[:top_k]
@@ -365,8 +406,8 @@ class DeepLIFT:
         self.model = model
         self._captum_dl = _CaptumDeepLift(model)
         self._baseline_cache: Optional[torch.Tensor] = None
-        self._class_mean_cache: Dict[int, torch.Tensor] = {}
-        self._class_input_mean_cache: Dict[int, Tuple[torch.Tensor, int]] = {}
+        self._class_mean_cache: Dict[Tuple[int, int], torch.Tensor] = {}
+        self._class_input_mean_cache: Dict[Tuple[int, int], Tuple[torch.Tensor, int]] = {}
 
     def _get_baseline(self, input_tensor: torch.Tensor, baseline_type: str, dataset=None) -> torch.Tensor:
         if baseline_type == "zeros":
@@ -414,21 +455,38 @@ class DeepLIFT:
     def generate_class_mean(self, target_class_idx: int, dataset: Any,
                             baseline_type: str = "zeros") -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], int]:
         """
-        Calcula a média das atribuições DeepLIFT para todas as amostras de uma classe.
+        Calcula a média das atribuições DeepLIFT para todas as amostras de uma classe,
+        cada uma atribuída em relação à saída dessa mesma classe.
 
         Returns
         -------
         Tuple[mean_attributions, mean_input, num_samples]
         """
-        if target_class_idx in self._class_mean_cache:
-            mean_input, n = self._class_input_mean_cache[target_class_idx]
-            return self._class_mean_cache[target_class_idx], mean_input, n
+        return self.generate_class_mean_cross(target_class_idx, target_class_idx, dataset,
+                                               baseline_type=baseline_type)
+
+    def generate_class_mean_cross(self, sample_class_idx: int, target_class_idx: int, dataset: Any,
+                                  baseline_type: str = "zeros") -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], int]:
+        """
+        Generalização de `generate_class_mean`: seleciona amostras pelo rótulo verdadeiro
+        (`sample_class_idx`) mas atribui cada uma em relação à saída `target_class_idx` do
+        modelo -- as duas classes podem ser diferentes, permitindo explicações cruzadas
+        (ex.: por que amostras da classe A não pendem para a classe B).
+
+        Returns
+        -------
+        Tuple[mean_attributions, mean_input, num_samples]
+        """
+        cache_key = (sample_class_idx, target_class_idx)
+        if cache_key in self._class_mean_cache:
+            mean_input, n = self._class_input_mean_cache[cache_key]
+            return self._class_mean_cache[cache_key], mean_input, n
 
         device = next(self.model.parameters()).device
         samples = []
         for i in range(len(dataset)):
             sample, target, _meta = _unpack_dataset_item(dataset[i])
-            if _target_as_int(target) == target_class_idx:
+            if _target_as_int(target) == sample_class_idx:
                 samples.append(sample)
         if not samples:
             return None, None, 0
@@ -441,8 +499,8 @@ class DeepLIFT:
             attrs.append(a)
 
         mean_attr = torch.stack(attrs).mean(dim=0)
-        self._class_mean_cache[target_class_idx] = mean_attr
-        self._class_input_mean_cache[target_class_idx] = (mean_input, len(samples))
+        self._class_mean_cache[cache_key] = mean_attr
+        self._class_input_mean_cache[cache_key] = (mean_input, len(samples))
         return mean_attr, mean_input, len(samples)
 
 

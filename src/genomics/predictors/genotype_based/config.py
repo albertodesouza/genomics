@@ -161,6 +161,11 @@ class DatasetInputConfig(BaseModel):
     indel_include_snp_mask: bool = False
     """Se True, concatena uma máscara binária para SNPs em relação à referência."""
 
+    indel_mask_positive_value: float = 1.0
+    """Valor usado nas posições marcadas (insertion/deletion/valid/snp) dos canais de máscara
+    INDEL; posições não marcadas permanecem em 0.0. Permite testar máscaras "suaves"
+    (ex: 0.5/0.25/0.125) em vez do binário 0/1 padrão."""
+
     alignment_mapping: Literal["bcftools_chain", "reference_realign"] = "bcftools_chain"
     """Fonte do mapa predição AlphaGenome -> eixo de alinhamento: 'bcftools_chain' (eixo expandido
     global, compartilhado pelo cohort) ou 'reference_realign' (realinhamento independente por
@@ -871,6 +876,8 @@ def generate_dataset_name(config: PipelineConfig) -> str:
         view_payload["reference_predictions_sample_id"] = di.reference_predictions_sample_id
     if di.indel_include_snp_mask:
         view_payload["indel_include_snp_mask"] = di.indel_include_snp_mask
+    if di.indel_mask_positive_value != 1.0:
+        view_payload["indel_mask_positive_value"] = di.indel_mask_positive_value
     view_hash = stable_hash(view_payload, length=12)
     return f"{outputs}_{hap}_{wcs}_ds{ds}_{norm}_{bal}_ont{ont_count}_view{view_hash}"
 
@@ -935,6 +942,8 @@ def generate_experiment_name(config: PipelineConfig) -> str:
             mask_bits.append("valid")
         if di.indel_include_snp_mask:
             mask_bits.append("snp")
+        if di.indel_mask_positive_value != 1.0:
+            mask_bits.append(f"val{di.indel_mask_positive_value}".replace(".", "p"))
     mask_tag = "" if not mask_bits else "_" + "-".join(mask_bits)
 
     if model_type == "cnn":

@@ -1,0 +1,11 @@
+PubMed / NCBI E-utilities usage notice
+Generated automatically on first use of the pubmed_database skill.
+
+Users of data retrieved via this skill should review NCBI's terms before
+redistribution or downstream use:
+- PubMed disclaimer: https://pubmed.ncbi.nlm.nih.gov/disclaimer/
+- NCBI usage policies: https://www.ncbi.nlm.nih.gov/home/about/policies/
+
+Always check the license/copyright of individual papers retrieved (abstracts
+are NCBI-hosted metadata; full text availability and reuse terms vary by
+publisher/journal, even within PubMed Central).
