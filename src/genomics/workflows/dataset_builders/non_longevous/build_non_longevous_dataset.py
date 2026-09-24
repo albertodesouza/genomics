@@ -40,6 +40,7 @@ import argparse
 import os
 import sys
 import json
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -560,8 +561,34 @@ def validate_vcf_exists(sample_id: str, vcf_pattern: str, chromosome: str) -> Op
     return vcf_path
 
 
+def _kill_process_group(proc: "subprocess.Popen") -> None:
+    """Terminate ``proc``'s whole process group, escalating to SIGKILL.
+
+    ``proc`` is started with ``start_new_session=True``, so its pid is also its
+    process-group id and its grandchildren (samtools, bcftools) are in the same
+    group. Killing only the direct child would leave those orphaned.
+    """
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+    try:
+        proc.wait(timeout=10)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        print(f"[WARN] Processo {proc.pid} nao encerrou apos SIGKILL", file=sys.stderr)
+
+
 def run_build_window_predict(
-    sample_id: str, 
+    sample_id: str,
     config: dict, 
     output_dir: Path,
     target_name: Optional[str] = None
@@ -675,6 +702,12 @@ def run_build_window_predict(
         api_delay = params.get('api_rate_limit_delay', 0.0)
         if api_delay > 0:
             cmd.extend(["--api-rate-limit-delay", str(api_delay)])
+
+        # Per-call deadline and retry budget. The AlphaGenome client sets no RPC
+        # deadline, so a dropped connection otherwise blocks forever; see
+        # build_window_and_predict._call_with_deadline.
+        cmd.extend(["--api-timeout", str(params.get('api_timeout', 600.0))])
+        cmd.extend(["--api-max-attempts", str(params.get('api_max_attempts', 3))])
     
     # VCF path
     # Pass the VCF pattern to build_window_and_predict.py
@@ -711,7 +744,14 @@ def run_build_window_predict(
         extracted_target_name = None
     
     # Run command
-    print(f"\n[INFO] Executando: {' '.join(cmd)}")
+    # The command carries --api-key, so it is masked before logging: this line is written
+    # to a log file for every sample of every build, and a live credential in plaintext
+    # across thousands of log lines is a leak waiting to be shared with a stack trace.
+    _safe = list(cmd)
+    for _i, _a in enumerate(_safe):
+        if _a == "--api-key" and _i + 1 < len(_safe):
+            _safe[_i + 1] = "<redacted>"
+    print(f"\n[INFO] Executando: {' '.join(_safe)}")
     
     # Mensagem de tempo estimado adaptada ao modo
     if mode == 'gene':
@@ -726,27 +766,47 @@ def run_build_window_predict(
     print(f"[INFO] Mostrando output em tempo real:")
     print("-" * 80)
     
+    # Backstop timeout around the whole per-sample build. The per-call deadline
+    # inside build_window_and_predict should fire first; this catches a wedge
+    # that escapes it (e.g. one blocking in a non-main thread, where SIGALRM
+    # cannot be used). 0 disables. The child runs in its own session so a
+    # timeout can kill the whole group, not just the direct child -- otherwise
+    # samtools/bcftools grandchildren survive.
+    sample_timeout = params.get('subprocess_timeout', 3600.0)
+    proc = subprocess.Popen(cmd, text=True, start_new_session=True)
     try:
-        result = subprocess.run(
-            cmd,
-            text=True,
-            check=True
-        )
+        returncode = proc.wait(timeout=sample_timeout if sample_timeout and sample_timeout > 0 else None)
+        if returncode != 0:
+            raise subprocess.CalledProcessError(returncode, cmd)
         print("-" * 80)
-        
+
         # Reorganizar estrutura de saída
         # build_window_and_predict.py cria: outdir/SAMPLE__TARGET/
         # Queremos mover para: individuals/SAMPLE/windows/TARGET/
         _reorganize_output_structure(individual_base, sample_id)
-        
+
         return True, extracted_target_name
-        
+
+    except subprocess.TimeoutExpired:
+        print("-" * 80)
+        print(f"[ERROR] Amostra {sample_id} excedeu {sample_timeout:.0f}s; encerrando o grupo de processos")
+        _kill_process_group(proc)
+        print(f"[ERROR] A amostra fica pendente no checkpoint e sera refeita na proxima execucao")
+        return False, None
+
     except subprocess.CalledProcessError as e:
         print("-" * 80)
         print(f"[ERROR] Falha ao processar amostra {sample_id}")
         print(f"[ERROR] Código de saída: {e.returncode}")
         print(f"[ERROR] Veja o output acima para detalhes do erro")
         return False, None
+
+    except BaseException:
+        # start_new_session detaches the child from this terminal's process
+        # group, so Ctrl-C no longer reaches it. Without this the child would be
+        # orphaned and keep holding an AlphaGenome slot after an interrupt.
+        _kill_process_group(proc)
+        raise
 
 
 def _reorganize_output_structure(individual_base: Path, sample_id: str) -> List[str]:

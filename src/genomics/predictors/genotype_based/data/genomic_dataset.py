@@ -47,6 +47,10 @@ class GenomicDataset(GenomicLongevityDataset):
         if self.load_predictions:
             window_data["predictions_h1"] = self._load_predictions(window_dir / "predictions_H1")
             window_data["predictions_h2"] = self._load_predictions(window_dir / "predictions_H2")
+            # Track metadata travels with the arrays: without it a request to restrict by
+            # ontology or strand has no way to map a curie to a column index.
+            window_data["prediction_metadata_h1"] = self._load_prediction_metadata(window_dir / "predictions_H1")
+            window_data["prediction_metadata_h2"] = self._load_prediction_metadata(window_dir / "predictions_H2")
 
         meta_path = ref_window_dir / "window_metadata.json"
         if meta_path.exists():

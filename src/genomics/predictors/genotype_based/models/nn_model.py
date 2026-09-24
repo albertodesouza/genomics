@@ -32,14 +32,24 @@ def _resolve_gene_rows(config: PipelineConfig, input_shape: Tuple[int, int]) -> 
             return genes_to_use, list(range(input_shape[0]))
         else:
             mask_channels = 2 + int(config.dataset_input.indel_include_valid_mask) + int(config.dataset_input.indel_include_snp_mask)
+            num_ontologies = len(config.dataset_input.ontology_terms or []) or 1
+            # AlphaGenome emits one signal row per (ontology, strand). Both strands are kept
+            # unless track_strands narrows them, so the strand factor is not a constant 2.
+            # gene_track_strands narrows it to exactly one per gene (that gene's sense strand),
+            # which is the multi-gene single-channel layout. This mirrors
+            # ProcessedGenomicDataset._strands_per_gene; the two must agree or the model
+            # rejects a tensor the dataset built correctly.
+            if config.dataset_input.gene_track_strands:
+                num_strands = 1
+            else:
+                num_strands = len(config.dataset_input.track_strands or []) or 2
+            signal_rows = num_strands * num_ontologies
             if config.dataset_input.feature_mode == "masks_only":
                 rows_per_gene = mask_channels
             elif config.dataset_input.feature_mode == "signals_only":
-                num_ontologies = len(config.dataset_input.ontology_terms or []) or 1
-                rows_per_gene = 2 * num_ontologies
+                rows_per_gene = signal_rows
             else:
-                num_ontologies = len(config.dataset_input.ontology_terms or []) or 1
-                rows_per_gene = 2 * num_ontologies + mask_channels
+                rows_per_gene = signal_rows + mask_channels
             num_haplotypes = 2 if config.dataset_input.haplotype_mode == "H1+H2" else 1
             rows_per_gene = num_haplotypes * rows_per_gene
         expected_rows = rows_per_gene * len(genes_to_use)

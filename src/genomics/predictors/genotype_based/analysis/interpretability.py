@@ -100,7 +100,13 @@ def build_haplotype_track_layout(
         raise ValueError("genes_to_use/gene_order vazio; nao e possivel mapear linhas")
 
     signal_metadata = _filter_signal_track_metadata(config, track_metadata)
-    signal_count = 2 * len(di.ontology_terms) if di.ontology_terms else 1
+    if di.track_strands:
+        strands_per_track = len(di.track_strands)
+    elif di.gene_track_strands:
+        strands_per_track = 1
+    else:
+        strands_per_track = 2
+    signal_count = strands_per_track * len(di.ontology_terms) if di.ontology_terms else 1
     if signal_metadata and len(signal_metadata) == signal_count:
         signal_tracks = []
         for signal_idx, meta in enumerate(signal_metadata):

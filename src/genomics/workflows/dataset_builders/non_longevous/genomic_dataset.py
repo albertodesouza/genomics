@@ -199,6 +199,35 @@ class GenomicLongevityDataset(Dataset):
         
         return sequence
     
+    def _load_prediction_metadata(self, predictions_dir: Path) -> Dict[str, list]:
+        """Carrega a metadata por track que acompanha cada .npz de predicoes.
+
+        Cada predictions_H*/ tem <output_type>.npz e <output_type>_metadata.json, e o
+        JSON traz {"metadata": [ {ontology_curie, strand, ...}, ... ]} na MESMA ordem das
+        colunas do array. Sem essa lista nao ha como selecionar tracks por ontologia ou
+        por strand: o consumidor (ProcessedGenomicDataset._filter_track_indices) so tem
+        indices de coluna. Historicamente esta metadata nunca era carregada aqui, e o
+        filtro de ontologia caia silenciosamente para "todas as tracks" -- o que fazia
+        ontology_terms nao ter efeito algum no layout raw_center_crop. Ver o guard em
+        processed_dataset.py, que agora falha alto em vez de ignorar a restricao.
+        """
+        if not predictions_dir.exists():
+            return {}
+
+        metadata: Dict[str, list] = {}
+        for meta_file in predictions_dir.glob("*_metadata.json"):
+            output_type = meta_file.stem[: -len("_metadata")]
+            try:
+                with open(meta_file, "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+            except Exception as e:
+                warnings.warn(f"Erro ao carregar {meta_file}: {e}")
+                continue
+            tracks = payload.get("metadata") if isinstance(payload, dict) else payload
+            if isinstance(tracks, list):
+                metadata[output_type] = tracks
+        return metadata
+
     def _load_predictions(self, predictions_dir: Path) -> Dict[str, np.ndarray]:
         """
         Carrega predições AlphaGenome de um diretório.
@@ -289,6 +318,8 @@ class GenomicLongevityDataset(Dataset):
             
             window_data['predictions_h1'] = self._load_predictions(predictions_h1_dir)
             window_data['predictions_h2'] = self._load_predictions(predictions_h2_dir)
+            window_data['prediction_metadata_h1'] = self._load_prediction_metadata(predictions_h1_dir)
+            window_data['prediction_metadata_h2'] = self._load_prediction_metadata(predictions_h2_dir)
 
         meta_path = ref_window_dir / "window_metadata.json"
         if meta_path.exists():
