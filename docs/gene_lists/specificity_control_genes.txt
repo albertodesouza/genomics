@@ -1,0 +1,3 @@
+TPM2
+SMCR8
+PSMC4

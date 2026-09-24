@@ -13,7 +13,7 @@ from alphagenome.models import dna_client
 from genomics.predictors.genotype_based.data.normalization import apply_normalization
 
 from .annotations import get_gene_tss
-from .cage import find_cage_promoter_individual
+from .cage import find_cage_promoter_individual, find_cage_promoter_no_tss_individual
 from .haplotype import haplotype_local_idx, load_haplotype_fasta
 
 
@@ -121,7 +121,8 @@ def knockout_gene_experiment(ctx, sample_id, gene, method, scramble_window=100):
 
     location_labels = {
         "biology_tss": "TSS (GENCODE MANE Select)",
-        "cage_melanocyte": "CAGE summit (dark/light melanocyte, individual-specific)",
+        "cage_melanocyte": "CAGE summit (dark/light melanocyte, individual-specific, TSS neighborhood)",
+        "cage_gene_start": "CAGE summit (dark/light melanocyte, individual-specific, gene-start neighborhood)",
     }
     if method not in location_labels:
         raise ValueError(f"unknown method: {method!r}")
@@ -130,15 +131,21 @@ def knockout_gene_experiment(ctx, sample_id, gene, method, scramble_window=100):
     hap_tracks = {}
     for haplotype in ("H1", "H2"):
         # biology_tss: a single reference position (GTF-derived, individual-invariant) converted
-        # to this haplotype's own indel-corrected local coordinate. cage_melanocyte: found
-        # directly on this haplotype's own re-predicted signal (find_cage_promoter_individual)
-        # -- already haplotype-local, no reference round-trip needed or meaningful here, since
-        # the summit itself can genuinely differ between H1 and H2, not just drift-shift.
+        # to this haplotype's own indel-corrected local coordinate. cage_melanocyte/cage_gene_start:
+        # found directly on this haplotype's own re-predicted signal (find_cage_promoter_individual
+        # / find_cage_promoter_no_tss_individual) -- already haplotype-local, no reference
+        # round-trip needed or meaningful here, since the summit itself can genuinely differ
+        # between H1 and H2, not just drift-shift.
         tss_hap_local_idx = haplotype_local_idx(
             ctx.dataset_dir, sample_id, gene, haplotype, start_1based, tss_pos_0based + 1
         )
         cage_hap = find_cage_promoter_individual(ctx, sample_id, gene, haplotype)
-        marker_local_idx = {"biology_tss": tss_hap_local_idx, "cage_melanocyte": cage_hap["summit_local_idx"]}
+        cage_gene_start_hap = find_cage_promoter_no_tss_individual(ctx, sample_id, gene, haplotype)
+        marker_local_idx = {
+            "biology_tss": tss_hap_local_idx,
+            "cage_melanocyte": cage_hap["summit_local_idx"],
+            "cage_gene_start": cage_gene_start_hap["summit_local_idx"],
+        }
         hap_target_local_idx = marker_local_idx[method]
 
         seq = load_haplotype_fasta(ctx.dataset_dir, sample_id, gene, haplotype)

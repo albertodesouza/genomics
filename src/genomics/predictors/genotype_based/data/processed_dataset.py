@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import time
+import traceback
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -78,6 +79,17 @@ class ProcessedGenomicDataset(Dataset):
         di = config.dataset_input
         self.alphagenome_outputs = di.alphagenome_outputs
         self.ontology_terms = di.ontology_terms
+        self.track_strands = getattr(di, "track_strands", None)
+        self.gene_track_strands = getattr(di, "gene_track_strands", None)
+        if self.gene_track_strands:
+            missing = [g for g in (di.genes_to_use or []) if g not in self.gene_track_strands]
+            if missing:
+                raise ValueError(
+                    f"gene_track_strands nao cobre {missing}. Um gene sem strand declarado "
+                    f"cairia no track_strands global e receberia a fita errada sem erro.")
+            bad = {g: s for g, s in self.gene_track_strands.items() if s not in ("+", "-")}
+            if bad:
+                raise ValueError(f"gene_track_strands com valores invalidos: {bad}")
         self.haplotype_mode = di.haplotype_mode
         self.window_center_size = di.window_center_size
         self.downsample_factor = di.downsample_factor
@@ -319,6 +331,10 @@ class ProcessedGenomicDataset(Dataset):
         track_mean: Optional[np.ndarray] = None
         track_M2: Optional[np.ndarray] = None
         num_processed = 0
+        fit_failures = 0
+        first_fit_error: Optional[str] = None
+        fit_haplotypes = 0
+        fit_channels = 0
 
         console.print(f"[cyan]Computando normalização ({self.normalization_method})...[/cyan]")
 
@@ -332,7 +348,25 @@ class ProcessedGenomicDataset(Dataset):
             for idx in range(len(self.base_dataset)):
                 try:
                     input_data, _ = self.base_dataset[idx]
-                    processed = self._process_windows(input_data["windows"])
+                    # The haplotype_channels assembly is per-individual: it resolves that
+                    # individual's own INDEL chain, so it needs the sample id and raises
+                    # without one. Swallowed by the except below, that raise left every
+                    # track_max unset on every DITA arm ever fitted, and the function
+                    # returned per_track=False -- which apply_normalization reads as
+                    # log_max=1.0, i.e. plain log1p with no divisor at all.
+                    sample_id = self._infer_sample_id_from_input(input_data)
+                    if sample_id is None:
+                        sample_id = self._sample_id_for_base_index(idx)
+                    if sample_id is not None:
+                        self._inject_sample_id_into_windows(input_data, sample_id)
+                    processed = self._process_windows(input_data["windows"], sample_id=sample_id)
+                    # haplotype_channels returns (haplotypes, channels, L). Flatten to
+                    # (rows, L) in exactly the order _normalize_features_tensor uses when
+                    # it indexes track_params (features_tensor.view(-1, L)), so a fitted
+                    # divisor lands on the row it was fitted from.
+                    if processed.ndim == 3:
+                        fit_haplotypes, fit_channels = processed.shape[0], processed.shape[1]
+                        processed = processed.reshape(-1, processed.shape[-1])
                     if processed.size > 0:
                         num_tracks = processed.shape[0]
                         if self.normalization_method == "zscore":
@@ -362,12 +396,54 @@ class ProcessedGenomicDataset(Dataset):
                                 if len(nz) > 0:
                                     track_max[ti] = max(track_max[ti], float(nz.max()))
                         num_processed += 1
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Keep the FIRST failure. A bare `pass` here is what let the
+                    # haplotype_channels fit degrade to no normalisation at all for
+                    # months: the loop reported success while dropping every sample.
+                    if first_fit_error is None:
+                        first_fit_error = traceback.format_exc()
+                    fit_failures += 1
                 progress.update(task, advance=1)
 
         if track_max is None and track_count is None:
+            # Refuse rather than degrade. This branch used to return a divisor of 1.0,
+            # which is a silent no-op normalisation indistinguishable in the output JSON
+            # from a deliberate choice; it is how every haplotype_channels arm ended up
+            # unnormalised. An empty dataset is the only legitimate way to get here.
+            if len(self.base_dataset) > 0:
+                raise RuntimeError(
+                    "Ajuste da normalizacao nao processou nenhuma das "
+                    f"{len(self.base_dataset)} amostras do split de ajuste "
+                    f"(tensor_layout={self.config.dataset_input.tensor_layout}, "
+                    f"metodo={self.normalization_method}, falhas={fit_failures}). "
+                    "Retornar per_track=False aqui equivaleria a dividir por 1.0 sem "
+                    f"aviso. Primeira falha:\n{first_fit_error}"
+                )
             return {"method": self.normalization_method, "per_track": False, "mean": 0.0, "std": 1.0}
+
+        # Haplotypes are exchangeable. Which of an individual's two phased haplotypes is
+        # labelled H1 is not anchored to parent of origin, so fitting one divisor on H1's
+        # rows and another on H2's imposes a scale difference between the two channels that
+        # carries no biological content -- measured at up to 2.5x on a melanocyte track
+        # (MFSD12, strand +) across the raw single-gene arms. Pool the fitted maximum over
+        # the haplotype axis so both channels of an (ontology, strand) pair share one
+        # divisor. Flat row order is haplotype-major, matching how _normalize_features_tensor
+        # indexes track_params. Restricted to haplotype_channels: the raw_center_crop arms
+        # of the published panel were fitted unpooled and must stay reproducible. Only the
+        # track_max path is pooled; pooling running zscore statistics is not implemented.
+        if (
+            track_max is not None
+            and self.config.dataset_input.tensor_layout == "haplotype_channels"
+            and fit_haplotypes > 1
+            and fit_channels > 0
+            and len(track_max) == fit_haplotypes * fit_channels
+        ):
+            pooled = track_max.reshape(fit_haplotypes, fit_channels).max(axis=0)
+            track_max = np.tile(pooled, fit_haplotypes)
+            console.print(
+                f"[green]✓ log_max agrupado entre {fit_haplotypes} haplótipos "
+                f"({fit_channels} canais)[/green]"
+            )
 
         track_params: List[Dict] = []
         num_tracks = len(track_count) if track_count is not None else len(track_max)
@@ -586,7 +662,21 @@ class ProcessedGenomicDataset(Dataset):
             array = predictions[output_type]
             track_meta = prediction_metadata.get(output_type) if prediction_metadata else None
             if array.ndim == 2 and array.shape[1] > 1:
-                track_indices = self._filter_track_indices(output_type, track_meta) if track_meta else list(range(array.shape[1]))
+                if track_meta:
+                    track_indices = self._filter_track_indices(output_type, track_meta)
+                elif self.ontology_terms or self.track_strands:
+                    # Refuse rather than fall back. This branch used to silently take EVERY
+                    # track when the metadata was absent, so a config asking for one ontology
+                    # trained on all six -- with the right cache key, the right resolved
+                    # config and the wrong tensor. Nothing downstream could detect it.
+                    raise ValueError(
+                        f"Restricao de tracks pedida (ontology_terms={self.ontology_terms}, "
+                        f"track_strands={self.track_strands}) mas {output_type} nao trouxe "
+                        "metadata por track. Sem ela a selecao por ontologia/strand e "
+                        "impossivel e o tensor sairia com todas as tracks."
+                    )
+                else:
+                    track_indices = list(range(array.shape[1]))
                 for track_idx in track_indices:
                     if not (0 <= track_idx < array.shape[1]):
                         raise ValueError(f"track_index={track_idx} fora do limite para {output_type} com shape={array.shape}")
@@ -680,7 +770,7 @@ class ProcessedGenomicDataset(Dataset):
         signal_rows = []
         if array.ndim == 2:
             if track_meta:
-                track_indices = self._filter_track_indices(output_type, track_meta)
+                track_indices = self._filter_track_indices(output_type, track_meta, window_name)
             else:
                 track_indices = [self.selected_track_index]
             for track_index in track_indices:
@@ -730,7 +820,7 @@ class ProcessedGenomicDataset(Dataset):
         shared_masks = None
         if array.ndim == 2:
             if track_meta:
-                track_indices = self._filter_track_indices(output_type, track_meta)
+                track_indices = self._filter_track_indices(output_type, track_meta, window_name)
             else:
                 track_indices = [self.selected_track_index]
             for track_position, track_index in enumerate(track_indices):
@@ -850,17 +940,43 @@ class ProcessedGenomicDataset(Dataset):
         digest = hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
         return self._global_variation_mask_cache_dir / self.alignment_mapping / gene_name / f"{digest}.npy"
 
-    def _filter_track_indices(self, output_type: str, track_metadata: List[Dict]) -> List[int]:
-        if not self.ontology_terms:
+    def _filter_track_indices(self, output_type: str, track_metadata: List[Dict],
+                              gene_name: Optional[str] = None) -> List[int]:
+        """Colunas a manter, por ontologia e/ou por strand.
+
+        AlphaGenome devolve uma coluna por (ontologia, strand) -- para as tres ontologias
+        de melanocito/foliculo isso e 6 colunas, na ordem
+        [CL:0000346 +, CL:1000458 +, CL:2000092 +, CL:0000346 -, CL:1000458 -, CL:2000092 -].
+        A selecao e feita por ontology_curie e strand lidos da metadata, NUNCA por indice
+        fixo: a ordem e uma propriedade do arquivo, nao do contrato.
+        """
+        strands = self.track_strands
+        if self.gene_track_strands:
+            if gene_name is None:
+                raise ValueError(
+                    "gene_track_strands exige o nome do gene para resolver o strand, e este "
+                    "caminho nao o recebe. tensor_layout='raw_center_crop' processa os "
+                    "haplotipos sem identificar a janela, portanto nao suporta strand por "
+                    "gene; use tensor_layout='haplotype_channels'.")
+            if gene_name not in self.gene_track_strands:
+                raise ValueError(f"gene_track_strands nao declara strand para {gene_name!r}")
+            strands = [self.gene_track_strands[gene_name]]
+        if not self.ontology_terms and not strands:
             return list(range(len(track_metadata)))
-        requested = set(self.ontology_terms)
-        indices = [
-            i for i, m in enumerate(track_metadata)
-            if m.get("ontology_curie") in requested
-        ]
-        if not indices:
-            available = sorted({m.get("ontology_curie", "") for m in track_metadata})
-            raise ValueError(f"Nenhuma track para {sorted(requested)} em {output_type}. Disponíveis: {available}")
+        indices = list(range(len(track_metadata)))
+        if self.ontology_terms:
+            requested = set(self.ontology_terms)
+            indices = [i for i in indices if track_metadata[i].get("ontology_curie") in requested]
+            if not indices:
+                available = sorted({m.get("ontology_curie", "") for m in track_metadata})
+                raise ValueError(f"Nenhuma track para {sorted(requested)} em {output_type}. Disponíveis: {available}")
+        if strands:
+            wanted = set(strands)
+            indices = [i for i in indices if track_metadata[i].get("strand") in wanted]
+            if not indices:
+                available = sorted({str(m.get("strand", "")) for m in track_metadata})
+                raise ValueError(f"Nenhuma track para strand {sorted(wanted)} em {output_type}. "
+                                 f"Disponíveis: {available}")
         return indices
 
     def _expanded_slice_for_gene(self, gene_name: str) -> Tuple[int, int]:
@@ -966,7 +1082,7 @@ class ProcessedGenomicDataset(Dataset):
         ref_meta = self._load_reference_track_metadata(window_name, output_type)
         if not ref_meta:
             return sample_track_index
-        indices = self._filter_track_indices(output_type, ref_meta)
+        indices = self._filter_track_indices(output_type, ref_meta, window_name)
         if 0 <= filtered_position < len(indices):
             return indices[filtered_position]
         return indices[0]
@@ -1175,7 +1291,9 @@ class ProcessedGenomicDataset(Dataset):
         method = self.normalization_params.get("method", "zscore")
         per_track = self.normalization_params.get("per_track", False)
         mask_channels_per_gene = self._mask_channels_per_gene()
-        signal_channels_per_gene = 0 if self.feature_mode == "masks_only" else (2 * len(self.ontology_terms) if self.ontology_terms else 1)
+        _strands = self._strands_per_gene()
+        signal_channels_per_gene = 0 if self.feature_mode == "masks_only" else (
+            _strands * len(self.ontology_terms) if self.ontology_terms else 1)
         if self.feature_mode == "signals_only":
             mask_channels_per_gene = 0
         channels_per_gene = signal_channels_per_gene + mask_channels_per_gene
@@ -1340,15 +1458,29 @@ class ProcessedGenomicDataset(Dataset):
     def _rows_per_gene(self) -> int:
         if self.config.dataset_input.tensor_layout == "raw_center_crop":
             num_haplotypes = 2 if self.haplotype_mode == "H1+H2" else 1
-            num_tracks = len(self.ontology_terms) if self.ontology_terms else 1
+            num_ontologies = len(self.ontology_terms) if self.ontology_terms else 1
+            # AlphaGenome emits one column per (ontology, strand); both strands are kept
+            # unless track_strands narrows them.
+            num_strands = self._strands_per_gene()
+            num_tracks = num_ontologies * num_strands
             return num_haplotypes * len(self.alphagenome_outputs) * num_tracks
         if self.feature_mode == "masks_only":
             return self._mask_channels_per_gene()
         num_ontologies = len(self.ontology_terms) if self.ontology_terms else 1
+        # One signal row per (ontology, strand); track_strands narrows the strands, and
+        # gene_track_strands narrows them to exactly one (this gene's sense strand).
+        num_strands = self._strands_per_gene()
+        signal_rows = num_strands * num_ontologies
         if self.feature_mode == "signals_only":
-            return 2 * num_ontologies
+            return signal_rows
         mask_channels = self._mask_channels_per_gene()
-        return 2 * num_ontologies + mask_channels
+        return signal_rows + mask_channels
+
+    def _strands_per_gene(self) -> int:
+        """Colunas de strand que cada gene contribui por ontologia."""
+        if self.gene_track_strands:
+            return 1
+        return len(self.track_strands) if self.track_strands else 2
 
     def _mask_channels_per_gene(self) -> int:
         return 2 + (1 if self.indel_include_valid_mask else 0) + (1 if self.indel_include_snp_mask else 0)

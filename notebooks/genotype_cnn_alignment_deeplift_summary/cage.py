@@ -87,10 +87,11 @@ def find_cage_promoter_individual(ctx, sample_id, gene, haplotype, search_radius
 
 
 def find_cage_promoter_no_tss_individual(ctx, sample_id, gene, haplotype, search_radius=5000):
-    '''CAGE summit within +/-5kb of the gene's strand-naive genomic start (no biological TSS
-    prior), searched on this individual's own haplotype-specific signal. Reuses the same cached
-    full-window curve `find_cage_promoter_individual` already fetched -- no extra AlphaGenome
-    calls, only the search window/anchor differs.'''
+    '''CAGE summit within +/-5kb of the gene's strand-aware genomic 5' edge (the "gene" GTF
+    feature's boundary, not the MANE Select transcript's TSS annotation), searched on this
+    individual's own haplotype-specific signal. Reuses the same cached full-window curve
+    `find_cage_promoter_individual` already fetched -- no extra AlphaGenome calls, only the
+    search window/anchor differs.'''
     curve = find_cage_curve_individual(ctx, sample_id, gene, haplotype)
     window_meta = json.loads(
         (ctx.dataset_dir / "references" / "windows" / gene / "window_metadata.json").read_text()

@@ -64,12 +64,12 @@ def compute_attributions_by_target_class(model, dataset, target_idx, other_idx, 
     cross_attr_target_toward_other, _, n_target_cross = cross_deeplift.generate_class_mean_cross(
         target_idx, other_idx, dataset=dataset, baseline_type="mean",
     )
-    print(
-        f"cross attribution computed: "
-        f"{class_names[other_idx]} samples -> {class_names[target_idx]} logit "
-        f"(n={n_other_cross}); {class_names[target_idx]} samples -> "
-        f"{class_names[other_idx]} logit (n={n_target_cross})"
-    )
+    # print(
+    #     f"cross attribution computed: "
+    #     f"{class_names[other_idx]} samples -> {class_names[target_idx]} logit "
+    #     f"(n={n_other_cross}); {class_names[target_idx]} samples -> "
+    #     f"{class_names[other_idx]} logit (n={n_target_cross})"
+    # )
 
     return {
         (target_idx, target_idx): deeplift_results[target_idx]["mean_attr"],

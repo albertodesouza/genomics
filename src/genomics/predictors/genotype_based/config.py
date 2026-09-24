@@ -134,6 +134,19 @@ class DatasetInputConfig(BaseModel):
     ontology_terms: Optional[List[str]] = None
     """CURIEs de ontologia para filtrar tracks (ex: ['CL:0000236'])."""
 
+    track_strands: Optional[List[str]] = None
+    """Strands a manter, ex: ['+'] ou ['-']. AlphaGenome emite uma coluna por
+    (ontologia, strand); None mantem as duas. A selecao usa o strand registrado na
+    metadata de cada track, nunca um indice de coluna."""
+
+    gene_track_strands: Optional[Dict[str, str]] = None
+    """Strand a manter POR GENE, ex: {'DDB1': '-', 'MC1R': '+'}. Quando presente,
+    sobrepoe track_strands e cada gene contribui exatamente uma coluna por ontologia:
+    a do seu proprio strand sense. Necessario para um input multi-gene de 1 canal por
+    gene, onde um unico track_strands global daria a fita antisense para parte dos
+    genes. Todo gene em genes_to_use precisa aparecer no mapa; a checagem e feita no
+    dataset e falha alto, porque um strand errado produz um tensor plausivel e silencioso."""
+
     selected_track_index: int = 0
     """Índice da track a usar quando o output possui múltiplas tracks e não há metadados úteis."""
 
@@ -866,6 +879,12 @@ def generate_dataset_name(config: PipelineConfig) -> str:
         }
     if config.label_permutation.enabled:
         view_payload["label_permutation"] = config.label_permutation.model_dump(mode="python")
+    if di.track_strands:
+        view_payload["track_strands"] = list(di.track_strands)
+    if di.gene_track_strands:
+        # Part of the cache key: two runs that differ only in which strand each gene
+        # contributes are different tensors and must not share a processed view.
+        view_payload["gene_track_strands"] = dict(sorted(di.gene_track_strands.items()))
     if di.feature_mode != "signals_and_masks":
         view_payload["feature_mode"] = di.feature_mode
     if di.alphagenome_signal_variant_mask:

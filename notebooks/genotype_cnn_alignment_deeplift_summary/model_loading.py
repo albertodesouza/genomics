@@ -76,10 +76,10 @@ def load_predictor_bundle(config_paths, device, class_names_from):
 
     for name, config in configs.items():
         di = config.dataset_input
-        print(f"{name}: tensor_layout={di.tensor_layout!r} alignment_mapping={di.alignment_mapping!r} "
-              f"feature_mode={di.feature_mode!r} indel_mask_positive_value={di.indel_mask_positive_value}")
-        print(f"  experiment_dir={experiment_dirs[name]}")
-        print(f"  checkpoint exists: {(experiment_dirs[name] / 'models' / 'best_accuracy.pt').exists()}")
+        # print(f"{name}: tensor_layout={di.tensor_layout!r} alignment_mapping={di.alignment_mapping!r} "
+        #       f"feature_mode={di.feature_mode!r} indel_mask_positive_value={di.indel_mask_positive_value}")
+        # print(f"  experiment_dir={experiment_dirs[name]}")
+        # print(f"  checkpoint exists: {(experiment_dirs[name] / 'models' / 'best_accuracy.pt').exists()}")
 
     datasets, loaders, models = {}, {}, {}
     # prepare_data's dataset-report step logs cache validation / per-batch progress via a
@@ -96,11 +96,11 @@ def load_predictor_bundle(config_paths, device, class_names_from):
             checkpoint_path = experiment_dir / "models" / "best_accuracy.pt"
             models[name] = load_checkpoint(model, checkpoint_path, device)
             n_params = sum(p.numel() for p in model.parameters())
-            print(f"{name}: loaded {checkpoint_path.name} ({n_params:,} params), "
-                  f"test set size = {len(test_loader.dataset)}")
+            # print(f"{name}: loaded {checkpoint_path.name} ({n_params:,} params), "
+            #       f"test set size = {len(test_loader.dataset)}")
 
     class_names = datasets[class_names_from].get_class_names()
-    print(f"class_names={class_names}")
+    # print(f"class_names={class_names}")
 
     return PredictorBundle(configs, experiment_dirs, datasets, loaders, models, class_names)
 

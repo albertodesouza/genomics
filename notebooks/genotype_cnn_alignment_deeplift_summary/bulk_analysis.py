@@ -4,11 +4,10 @@ import pandas as pd
 
 
 def load_bulk_results(bulk_results_path):
-    """Loads the offline bulk knockout CSV, derives log-odds columns, and excludes the disabled
-    alphagenome_atac method (see the notebook's Ontology caveat markdown) from every downstream
-    stat/plot."""
+    """Loads the offline bulk knockout CSV (biology_tss / cage_melanocyte / cage_gene_start
+    methods -- see scripts/experiments/bulk_knockout_pigmentation.py) and derives log-odds
+    columns."""
     bulk_df = pd.read_csv(bulk_results_path)
-    bulk_df = bulk_df[bulk_df["method"] != "alphagenome_atac"]
     # log-odds(strong/weak) = logit_strong - logit_weak = log(p_strong / p_weak) -- exact (not an
     # approximation) for this binary softmax head, since the normalizing constant cancels in the
     # difference. The bulk CSV only stores the two raw per-class logits, so it's derived here

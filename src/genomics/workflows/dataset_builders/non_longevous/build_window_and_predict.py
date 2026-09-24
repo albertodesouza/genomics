@@ -80,8 +80,11 @@ Last updated: 2025-11-04
 import argparse
 import os
 import sys
+import signal
 import subprocess
 import tempfile
+import threading
+import time
 import json
 from pathlib import Path
 from typing import Tuple, Optional, Dict
@@ -103,6 +106,114 @@ def _load_alphagenome_modules():
             "Install alphagenome or use only modes that do not require it."
         ) from exc
     return gene_annotation, dna_client
+
+
+class ApiCallTimeout(Exception):
+    """A single AlphaGenome call exceeded its deadline."""
+
+
+def _call_with_deadline(fn, timeout_s: float):
+    """Run ``fn()`` under a SIGALRM deadline, returning its result.
+
+    The AlphaGenome client issues its streaming RPC with no deadline
+    (``dna_client.py`` calls ``PredictSequence(...)`` without ``timeout=``), and
+    ``dna_client.create(timeout=...)`` bounds only channel setup, not the call.
+    Its ``@retry_rpc`` decorator therefore never fires on a half-open
+    connection: the call raises nothing, it simply never returns. That is what
+    stalled the specificity-control run for three days at 45/1072 samples with
+    every worker asleep on an open socket.
+
+    SIGALRM bounds the wait. gRPC's Python bindings service signals during
+    blocking calls -- which is why Ctrl-C works on one -- so the handler runs.
+    Where SIGALRM is unavailable (non-POSIX, or not the main thread) the call is
+    made unbounded, and the caller's own timeout is the remaining backstop.
+    """
+    if (
+        timeout_s <= 0
+        or not hasattr(signal, "SIGALRM")
+        or threading.current_thread() is not threading.main_thread()
+    ):
+        return fn()
+
+    def _on_alarm(_signum, _frame):
+        raise ApiCallTimeout("no response after {:.0f}s".format(timeout_s))
+
+    previous = signal.signal(signal.SIGALRM, _on_alarm)
+    signal.setitimer(signal.ITIMER_REAL, timeout_s)
+    try:
+        return fn()
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+#: gRPC statuses that will never succeed on retry. Retrying these would burn
+#: max_attempts x backoff on every one of a cohort's samples -- a bad API key
+#: costs seconds per sample instead of failing on the first.
+_FATAL_GRPC_STATUSES = frozenset(
+    ("INVALID_ARGUMENT", "UNAUTHENTICATED", "PERMISSION_DENIED", "NOT_FOUND")
+)
+
+
+def _is_fatal_rpc_error(exc: Exception) -> bool:
+    """True when ``exc`` is a gRPC error whose status cannot succeed on retry."""
+    code = getattr(exc, "code", None)
+    if not callable(code):
+        return False
+    try:
+        return getattr(code(), "name", None) in _FATAL_GRPC_STATUSES
+    except Exception:                                                 # noqa: BLE001
+        return False
+
+
+def predict_sequence_resilient(client_box, make_client, seq, requested_outputs,
+                               ontology_terms, timeout_s: float, max_attempts: int):
+    """``predict_sequence`` with a per-call deadline, retries and channel rebuild.
+
+    ``client_box`` is a one-element list holding the live client. On retry the
+    channel is rebuilt via ``make_client()`` and stored back, because a
+    half-open connection stays broken for every subsequent call made on it, so
+    retrying on the same client would hang exactly as the first attempt did.
+
+    Backoff is exponential with the same shape the AlphaGenome library uses for
+    its own retryable status codes (1.25s, x1.5).
+    """
+    backoff = 1.25
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return _call_with_deadline(
+                lambda: client_box[0].predict_sequence(
+                    seq,
+                    requested_outputs=requested_outputs,
+                    ontology_terms=ontology_terms,
+                ),
+                timeout_s,
+            )
+        except Exception as exc:                                      # noqa: BLE001
+            if _is_fatal_rpc_error(exc):
+                print(
+                    "[ERROR] AlphaGenome call failed with a non-retryable status "
+                    "({}: {}); not retrying".format(type(exc).__name__, exc),
+                    file=sys.stderr, flush=True)
+                raise
+            if attempt >= max_attempts:
+                print(
+                    "[ERROR] AlphaGenome call failed on attempt {}/{} ({}: {}); giving up".format(
+                        attempt, max_attempts, type(exc).__name__, exc),
+                    file=sys.stderr, flush=True)
+                raise
+            print(
+                "[WARN] AlphaGenome call failed on attempt {}/{} ({}: {}); "
+                "rebuilding channel and retrying in {:.1f}s".format(
+                    attempt, max_attempts, type(exc).__name__, exc, backoff),
+                file=sys.stderr, flush=True)
+            time.sleep(backoff)
+            backoff *= 1.5
+            try:
+                client_box[0] = make_client()
+            except Exception as rebuild_exc:                          # noqa: BLE001
+                print("[WARN] Channel rebuild failed ({}: {}); reusing previous client".format(
+                    type(rebuild_exc).__name__, rebuild_exc), file=sys.stderr, flush=True)
 
 
 def run(cmd: list, check: bool = True) -> subprocess.CompletedProcess:
@@ -619,8 +730,14 @@ def process_window(
         api_key = args.api_key or os.environ.get("ALPHAGENOME_API_KEY")
         if not api_key:
             raise RuntimeError("AlphaGenome API key not provided. Use --api-key or set ALPHAGENOME_API_KEY env var.")
-        client = dna_client.create(api_key)
-        
+
+        def make_client():
+            return dna_client.create(api_key)
+
+        # One-element box so a retry can swap in a fresh channel: a half-open
+        # connection stays broken for every later call on the same client.
+        client_box = [make_client()]
+
         # Convert string output names to OutputType objects
         output_names = [o.strip() for o in args.outputs.split(",") if o.strip()]
         requested_outputs = []
@@ -691,12 +808,14 @@ def process_window(
                 return
             
             print(f"[INFO] Running prediction for {tag}...", flush=True)
-            
-            import time
+
             start_time = time.time()
-            outputs = client.predict_sequence(seq, requested_outputs=requested_outputs, ontology_terms=ontology_terms)
+            outputs = predict_sequence_resilient(
+                client_box, make_client, seq, requested_outputs, ontology_terms,
+                timeout_s=args.api_timeout, max_attempts=args.api_max_attempts,
+            )
             elapsed = time.time() - start_time
-            
+
             print(f"[INFO] API call completed in {elapsed:.1f} seconds", flush=True)
             
             # Apply rate limiting delay after API call
@@ -796,6 +915,14 @@ def main():
     ap.add_argument("--filter-tissue", help="Filter tissue list by name (case-insensitive, e.g., 'brain' or 'liver'). Use with --list-tissues")
     ap.add_argument("--all-tissues", action="store_true", help="Skip confirmation when requesting all tissues (WARNING: very slow and memory intensive)")
     ap.add_argument("--api-rate-limit-delay", type=float, default=0.0, help="Delay (in seconds) between AlphaGenome API calls to respect usage limits. Supports float values (e.g., 0.5 for 500ms)")
+    ap.add_argument("--api-timeout", type=float, default=600.0,
+                    help="Per-call deadline (seconds) for a single AlphaGenome prediction; 0 disables. "
+                         "The client library sets no RPC deadline of its own, so without this a dropped "
+                         "connection blocks forever. Default 600 is ~1.7x the slowest call observed over "
+                         "270 calls on a 524288 bp window (median 3.7s, p95 43s, max 355s)")
+    ap.add_argument("--api-max-attempts", type=int, default=3,
+                    help="Attempts per AlphaGenome call before giving up. Each retry rebuilds the client "
+                         "channel and backs off exponentially (1.25s, x1.5). Default: 3")
     args = ap.parse_args()
     
     # Handle --list-outputs early
