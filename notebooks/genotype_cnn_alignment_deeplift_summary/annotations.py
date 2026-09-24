@@ -143,11 +143,13 @@ def get_gene_tss(gene, tss_df_mane, tss_df_coding):
 
 
 def get_gene_start(gene, gtf_gene_rows):
-    '''Returns (chrom, gene_start_pos_0based) -- the raw "gene" GTF feature's lower genomic
-    coordinate, taken as-is regardless of strand. Deliberately NOT the same as get_gene_tss: for
-    a minus-strand gene this point is the transcript's 3' end, not its TSS.'''
+    '''Returns (chrom, gene_start_pos_0based) -- the raw "gene" GTF feature's 5' edge, i.e. the
+    lower genomic coordinate on the `+` strand and the upper one on the `-` strand. Strand-aware,
+    unlike the feature's own Start column: for a minus-strand gene, `Start` is the transcript's
+    3' end, not its TSS.'''
     rows = gtf_gene_rows[gtf_gene_rows["gene_name"] == gene]
     if rows.empty:
         raise ValueError(f"No gene feature found for {gene!r}")
     row = rows.iloc[0]
-    return row["Chromosome"], int(row["Start"])
+    pos = int(row["End"]) - 1 if row["Strand"] == "-" else int(row["Start"])
+    return row["Chromosome"], pos

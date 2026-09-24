@@ -345,7 +345,7 @@ def plot_exon_overlap(genes, config, target_idx, other_idx, class_names, class_c
     return figs, labels, pd.DataFrame(all_corr_rows)
 
 
-def plot_cage_gene_start_centered_individual(ctx, sample_id, gene):
+def plot_cage_gene_start_centered_individual(ctx, sample_id, gene, marker_margin=1000):
     _, _, strand = get_gene_tss(gene, ctx.tss_df_mane, ctx.tss_df_coding)
     dark_color = ctx.class_colors[ctx.target_idx]
     light_color = ctx.class_colors[ctx.other_idx]
@@ -358,20 +358,31 @@ def plot_cage_gene_start_centered_individual(ctx, sample_id, gene):
         gene_start_anchor = gene_start_result["anchor_local_idx"]
         tss_anchor = tss_result["anchor_local_idx"]
 
-        # Display window: the union of both methods' own +/-5 kb search windows, so both
-        # neighborhoods stay visible regardless of how far apart the TSS and gene-start anchors
-        # sit (minus-strand genes can put these tens of kb apart).
-        lo = min(tss_result["search_lo"], gene_start_result["search_lo"])
-        hi = max(tss_result["search_hi"], gene_start_result["search_hi"])
-
         exon_boxes, exon_strand = gene_exon_haplotype_local_boxes(
             ctx.dataset_dir, sample_id, gene, hap, ctx.gene_id_map,
             ctx.transcript_extractor_mane, ctx.transcript_extractor_coding,
         )
         exon_tss_local, exon_tes_local = gene_boundary_positions(exon_boxes, exon_strand)
 
+        # Display window: same base window (and centering formula) as plot_exon_overlap /
+        # plot_knockout_result -- the CNN's actual window_center_size-bp crop -- extended only as
+        # needed (with a margin) to keep every marker (TSS, TES, both CAGE summits) visible when
+        # one falls outside that crop, same convention as plot_knockout_result.
+        curve_len = len(tss_result["dark_curve"])
+        crop_lo, crop_hi = cnn_crop_bounds(curve_len, ctx.config.dataset_input.window_center_size)
+        markers = [tss_anchor, tss_result["summit_local_idx"], gene_start_result["summit_local_idx"]]
+        if exon_tss_local is not None:
+            markers += [exon_tss_local, exon_tes_local]
+        lo = min([crop_lo] + [m - marker_margin for m in markers if m < crop_lo])
+        hi = max([crop_hi] + [m + marker_margin for m in markers if m >= crop_hi])
+        lo, hi = max(0, lo), min(curve_len, hi)
+
         ax = axes[0, col]
         x = np.arange(lo, hi) - gene_start_anchor
+        # Shaded band = the CNN's actual 32 kb input crop, so it's visually obvious how much
+        # of the plotted window (if any extension was needed) the model never directly sees.
+        ax.axvspan(crop_lo - gene_start_anchor, crop_hi - gene_start_anchor, color="gray", alpha=0.10, zorder=0,
+                   label="CNN 32 kb input crop")
         # log1p, not raw signal -- same convention the RNA-seq input tracks already use, and
         # standard for this kind of long-tailed, mostly-near-zero signal: keeps zero-valued
         # positions (most of the window, outside real initiation sites) well-defined while
@@ -384,7 +395,7 @@ def plot_cage_gene_start_centered_individual(ctx, sample_id, gene):
         ax.axvline(0, color="tab:purple", linestyle="-", linewidth=1.2, alpha=0.6, label="gene start (center)")
         ax.axvline(tss_anchor - gene_start_anchor, color="tab:blue", linestyle="-", alpha=0.6, linewidth=1.4,
                    label=f"TSS ({strand} strand)")
-        ax.axvline(tss_result["summit_local_idx"] - gene_start_anchor, color="tab:green",
+        ax.axvline(tss_result["summit_local_idx"] - gene_start_anchor, color="tab:red",
                    linestyle="--", linewidth=1.4, alpha=0.6, label="CAGE summit (TSS neighborhood)")
         ax.axvline(gene_start_result["summit_local_idx"] - gene_start_anchor, color="tab:orange",
                    linestyle=":", linewidth=1.8, alpha=0.6, label="CAGE summit (gene-start neighborhood)")
