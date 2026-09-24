@@ -1,0 +1,196 @@
+metadata:
+  note: >
+    3-vs-3 magnitude-matched specificity control, tracks-only arm (pigmentation-irrelevant control triple).
+
+    Question. Audit test 2 of the paper (the irrelevant-gene control) has only ever
+    been run against the dosage logistic regression, where eleven pigmentation-
+    irrelevant windows reproduced the real panel exactly (1.000 pigmentation, and
+    0.944/0.958 superpopulation against 0.962). It has never been run against the
+    *tracks* pipeline -- which is the pipeline whose phenotype specificity the
+    predicted-transcriptome argument is defending. This config is one arm of that
+    test.
+
+    Design. Two 3-gene panels, matched on the total predicted RNA-seq signal inside
+    the 32,768-unit crop on the reference window, measured by
+    scripts/experiments/specificity_control_preflight.py. That proxy tracks realised
+    delivered perturbation over the published panel at Spearman rho = 0.855
+    (p = 0.0008). The pairing is an optimal assignment minimising total
+    |log10(ratio)|:
+
+        TPM2   48,071  <->  TYR      48,068   (1.00x)
+        SMCR8  23,951  <->  MFSD12   26,326   (0.91x)
+        PSMC4  18,620  <->  MC1R     14,995   (1.24x)
+        --------------------------------------------------
+        control total 90,642  vs  panel total 89,389  (1.4% apart)
+
+    Everything else is held identical between the two arms -- same layout, crop,
+    ontologies, haplotype mode, architecture, hyperparameters, split and seed -- so
+    the only difference is which three windows the network reads.
+
+    Why raw_center_crop rather than DITA. This is the arm whose published reference
+    number is the unaligned tracks-only pigmentation accuracy (0.926); the shared
+    axis is not needed for it (the paper's alignment section shows the gene-level
+    result does not depend on the axis), and no DITA axis exists for the control
+    windows, so building one would cost hours for nothing this measurement uses.
+
+    Reading, pre-registered before either arm is trained. If the control arm
+    approaches the panel arm, the tracks representation carries ancestry as
+    promiscuously as dosage does and the filter argument is refuted -- the same way
+    the random-panel LR refuted the biological reading of Table I. If the control
+    arm falls materially below, that is the first evidence of phenotype specificity
+    anywhere in this work. The dosage-LR arm
+    (scripts/experiments/random_gene_genotype_control.py --genes ...) must be run on
+    both triples too: it establishes how much *genotype* information each triple
+    carries, without which a tracks-side gap could just mean the control windows are
+    less variable. Report the 2x2, never the tracks row alone.
+
+    Cache note: a 3-gene signals_only view is roughly 5 GB (the 11-gene one is 18 GB).
+
+dataset_input:
+  dataset_id: "1kg_high_coverage"
+  processed_cache_dir: "results/cache/genotype_based_predictor/pigmentation"
+  # ISOLATED results dir. The run name is derived from architecture/layout
+  # parameters and does NOT include the gene list, so a 3-gene raw_center_crop
+  # run resolves to exactly the same directory as the published 11-gene
+  # no_alignment run and overwrites its provenance files. Discovered the hard
+  # way on 2026-09-06. Keep each arm in its own tree.
+  results_dir: "results/genotype_based_predictor/runs_three_vs_three/control"
+  cache_processed_tensors: true
+
+  # Track selection
+  alphagenome_outputs:
+    - "rna_seq"
+  haplotype_mode: "H1+H2"
+  window_center_size: 32768
+  downsample_factor: 1
+  genes_to_use:
+    - "TPM2"
+    - "SMCR8"
+    - "PSMC4"
+  ontology_terms:
+    - "CL:1000458"
+    - "CL:0000346"
+    - "CL:2000092"
+
+  # No alignment: legacy raw center-crop layout, no INDEL-aware coordinate axis
+  tensor_layout: "raw_center_crop"
+  feature_mode: "signals_only"
+  selected_track_index: 0
+
+  # Normalization
+  normalization_method: "log"
+  normalization_value: 0.0
+  normalization_fit_splits: ["train"]
+  normalization_fit_sample_fraction: 1.0
+  normalization_fit_min_samples: 0
+  normalization_fit_min_samples_per_class: 0
+  normalization_fit_random_seed: 13
+  normalization_fit_stratify: true
+
+output:
+  prediction_target: "pigmentation"
+  known_classes:
+    - "strong pigmentation"
+    - "weak pigmentation"
+  derived_targets:
+    pigmentation:
+      source_field: "population"
+      exclude_unmapped: true
+      class_map:
+        strong pigmentation: ["YRI", "ESN", "LWK", "MSL", "GWD"]
+        weak pigmentation: ["FIN", "CEU", "GBR"]
+
+model:
+  type: "CNN2"
+  hidden_layers: [100, 40]
+  activation: "relu"
+  dropout_rate: 0.5
+  cnn:
+    kernel_size: [6, 32]
+    num_filters: 5
+    stride: [6, 32]
+    padding: 0
+    pool_size: null
+  cnn2:
+    num_filters_stage1: 16
+    # Same per-gene-per-haplotype channel count as pigmentation_binary.yaml's signals_only
+    # layout: 2 strands x 3 ontology terms = 6, no mask channels (raw_center_crop has none).
+    kernel_stage1: [6, 32]
+    stride_stage1: [6, 32]
+    num_filters_stage2: 32
+    num_filters_stage3: 64
+    kernel_stages23: [1, 5]
+    stride_stages23: [1, 2]
+    padding_stages23: [0, 2]
+    fc_hidden_size: 256
+    global_pool_type: "avg"
+  sklearn:
+    pca_components: 300
+    use_pca_cache: true
+    pca_align_n_train: false
+    xgboost:
+      n_estimators: 200
+      max_depth: 4
+      learning_rate: 0.1
+      subsample: 0.8
+      colsample_bytree: 0.8
+      tree_method: "hist"
+      random_state: 42
+      n_jobs: -1
+      eval_metric: "logloss"
+
+training:
+  optimizer: "adam"
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  loss_function: "cross_entropy"
+  batch_size: 256
+  num_epochs: 400
+  validation_frequency: 3
+  lr_scheduler:
+    enabled: true
+    type: "cosine_warm_restarts"
+    mode: "min"
+    factor: 0.5
+    patience: 30
+    min_lr: 0.0000001
+    step_size: 30
+    T_max: 300
+    eta_min: 0.0000001
+    T_0: 50
+    T_mult: 1
+
+data_split:
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  random_seed: 13
+  family_split_mode: "family_aware"
+  balancing_strategy: "shuffle"
+  strict_determinism: true
+
+wandb:
+  use_wandb: false
+  project_name: "genotype-based-predictor-neural-legacy"
+  run_name: "pigmentation-binary-no-alignment-triple-control"
+  log_frequency: 100
+
+checkpointing:
+  checkpoint_dir: "models"
+  save_frequency: 100
+  save_during_training: true
+  load_checkpoint: null
+
+debug:
+  enable_visualization: false
+  force_pca_cache_rebuild: false
+  max_samples_per_epoch: null
+  taint_at_cache_save: false
+  taint_at_runtime: false
+  visualization: {}
+
+data_loading:
+  loading_strategy: "preload"
+
+mode: "train"
+test_dataset: "test"

@@ -1,0 +1,188 @@
+metadata:
+  note: 'TOP-10 SELECIONADO NA VALIDACAO. Identico ao arm top10_multigene em tudo -- 1 ontologia (CL:1000458),
+    1 strand por gene via gene_track_strands, input (2, 10, 32768), max pool, LR 1e-3 constante, 600 epocas,
+    batch 256, seed 13 -- exceto QUAIS dez genes entram. O arm anterior rankeou os bracos single-gene
+    pela balanced accuracy do split de TESTE (poolmax_final_table.py le test_best_accuracy_results.json)
+    e foi depois avaliado nesse mesmo split, chegando a bal_acc 1.0000 com margem mediana de 10.9 log-odds:
+    selecao no teste, e um classificador saturado no qual o knockdown nao tem decisao para mover (8 dos
+    10 genes nao viram nenhuma predicao). Aqui o ranking e pela balanced accuracy da VALIDACAO, sobre
+    todos os 31 bracos (o arm anterior foi selecionado quando so existiam 20, antes do segundo sorteio
+    de controles). Trocam tres dos dez: saem MC1R, PSMC4 e TYRP1, entram LRRC36, FYB1 e OR51S1. A composicao
+    vai de 7 painel / 3 controles para 5 / 5, o que tambem equilibra o contraste painel-vs-controle do
+    knockdown. Corte: OR51S1 0.9083 vs TYRP1 0.9066 -- apertado, e registrado como tal. Caveat: val bal_acc
+    e o valor da melhor epoca no proprio split de validacao, logo otimista em nivel; o que importa aqui
+    e que e comparavel entre bracos e nao toca o teste.'
+dataset_input:
+  dataset_id: 1kg_high_coverage
+  processed_cache_dir: results/cache/genotype_based_predictor/top10val_multigene
+  results_dir: results/genotype_based_predictor/runs_top10val/top10val_multigene
+  cache_processed_tensors: true
+  alphagenome_outputs:
+  - rna_seq
+  haplotype_mode: H1+H2
+  window_center_size: 32768
+  downsample_factor: 1
+  genes_to_use:
+  - SLC24A5
+  - SLC45A2
+  - SPRED2
+  - HERC2
+  - DDB1
+  - LRRC36
+  - FYB1
+  - MFSD12
+  - FRA10AC1
+  - OR51S1
+  ontology_terms:
+  - CL:1000458
+  tensor_layout: haplotype_channels
+  feature_mode: signals_only
+  selected_track_index: 0
+  indel_include_valid_mask: false
+  indel_include_snp_mask: false
+  alignment_mapping: bcftools_chain
+  consensus_dataset_dir: /dados/GENOMICS_DATA/v1/1kG_high_coverage
+  alignment_axis_splits:
+  - train
+  normalization_method: log
+  normalization_value: 0.0
+  normalization_fit_splits:
+  - train
+  normalization_fit_sample_fraction: 1.0
+  normalization_fit_min_samples: 0
+  normalization_fit_min_samples_per_class: 0
+  normalization_fit_random_seed: 13
+  normalization_fit_stratify: true
+  dataset_dir: /dados/GENOMICS_DATA/v1/1kG_high_coverage
+  gene_track_strands:
+    SLC24A5: +
+    SLC45A2: '-'
+    SPRED2: '-'
+    HERC2: '-'
+    DDB1: '-'
+    LRRC36: +
+    FYB1: '-'
+    MFSD12: '-'
+    FRA10AC1: '-'
+    OR51S1: '-'
+output:
+  prediction_target: pigmentation
+  known_classes:
+  - strong pigmentation
+  - weak pigmentation
+  derived_targets:
+    pigmentation:
+      source_field: population
+      exclude_unmapped: true
+      class_map:
+        strong pigmentation:
+        - YRI
+        - ESN
+        - LWK
+        - MSL
+        - GWD
+        weak pigmentation:
+        - FIN
+        - CEU
+        - GBR
+model:
+  type: CNN2
+  hidden_layers:
+  - 100
+  - 40
+  activation: relu
+  dropout_rate: 0.5
+  cnn:
+    kernel_size:
+    - 1
+    - 32
+    num_filters: 5
+    stride:
+    - 1
+    - 32
+    padding: 0
+    pool_size: null
+  cnn2:
+    num_filters_stage1: 16
+    kernel_stage1:
+    - 1
+    - 32
+    stride_stage1:
+    - 1
+    - 32
+    num_filters_stage2: 32
+    num_filters_stage3: 64
+    kernel_stages23:
+    - 1
+    - 5
+    stride_stages23:
+    - 1
+    - 2
+    padding_stages23:
+    - 0
+    - 2
+    fc_hidden_size: 256
+    global_pool_type: max
+  sklearn:
+    pca_components: 300
+    use_pca_cache: true
+    pca_align_n_train: false
+    xgboost:
+      n_estimators: 200
+      max_depth: 4
+      learning_rate: 0.1
+      subsample: 0.8
+      colsample_bytree: 0.8
+      tree_method: hist
+      random_state: 42
+      n_jobs: -1
+      eval_metric: logloss
+training:
+  optimizer: adam
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  loss_function: cross_entropy
+  batch_size: 256
+  num_epochs: 600
+  validation_frequency: 3
+  lr_scheduler:
+    enabled: false
+    type: cosine_warm_restarts
+    mode: min
+    factor: 0.5
+    patience: 30
+    min_lr: 1.0e-07
+    step_size: 30
+    T_max: 300
+    eta_min: 1.0e-07
+    T_0: 50
+    T_mult: 1
+data_split:
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  random_seed: 13
+  family_split_mode: family_aware
+  balancing_strategy: shuffle
+  strict_determinism: true
+wandb:
+  use_wandb: false
+  project_name: genotype-based-predictor-neural-legacy
+  run_name: top10val-multigene
+  log_frequency: 100
+checkpointing:
+  checkpoint_dir: models
+  save_frequency: 100
+  save_during_training: true
+  load_checkpoint: null
+debug:
+  enable_visualization: false
+  force_pca_cache_rebuild: false
+  max_samples_per_epoch: null
+  taint_at_cache_save: false
+  taint_at_runtime: false
+  visualization: {}
+data_loading:
+  loading_strategy: preload
+mode: train
+test_dataset: test
