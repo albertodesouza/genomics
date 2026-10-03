@@ -12,7 +12,7 @@ _genomics_completion()
         cword=$COMP_CWORD
     fi
 
-    local commands="audit-configs audit-data data config convert snp-ancestry genomes-analyzer dataset-builders alphagenome genotype variant references completion"
+    local commands="visualize audit-configs audit-data data config convert snp-ancestry genomes-analyzer dataset-builders alphagenome genotype variant references completion"
     local config="describe schema validate"
     local genotype="prepare-cache split train test search stability confidence-intervals evaluate pca-variance compare-aligned-signals workbench sync-bcftools-artifacts single-gene-screen"
     local variant="materialize train evaluate analyze-counts"
@@ -55,6 +55,14 @@ _genomics_completion()
     fi
 
     case "${words[1]}" in
+        visualize)
+            case "$prev" in
+                --dataset|--annotations|--consensus-dataset-dir|--runs-root|--gtf|--cache-dir|--pigmentation-config|--alphagenome-ca-cert|--alphagenome-server-dir|--alphagenome-server-python) _genomics_filedir; return ;;
+                --dataset-id) COMPREPLY=( $(compgen -W "1kg_high_coverage legacy_top3_1kg_high_coverage variant_transformer_superpopulation variant_transformer_superpopulation_32k variant_transformer_pigmentation_binary" -- "$cur") ); return ;;
+            esac
+            COMPREPLY=( $(compgen -W "--dataset --dataset-id --annotations --consensus-dataset-dir --runs-root --gtf --cache-dir --no-disk-cache --memory-mb --workers --model-window --pigmentation-config --lab-port --alphagenome-address --alphagenome-ca-cert --alphagenome-server-dir --alphagenome-server-python --host --port --open --no-add-datasets --verbose" -- "$cur") )
+            return
+            ;;
         genotype)
             if [[ ${cword} -eq 2 ]]; then COMPREPLY=( $(compgen -W "$genotype" -- "$cur") ); return; fi
             case "${words[2]}" in

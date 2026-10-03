@@ -160,6 +160,18 @@ def _extract_full_matrix(array: np.ndarray, track_start: int, track_count: int) 
     return np.asarray(matrix[:, left_track:right_track], dtype=np.float32)
 
 
+def _alignment_scatter(entry: Dict[str, Any], source_length: int, start: int, end: int) -> Tuple[np.ndarray, np.ndarray]:
+    """Vectorised (target_offsets, source_indices) for expanded positions start..end (1-based)."""
+    copy_to = np.asarray(entry.get("expanded_indices", []), dtype=np.int64)
+    copy_from = np.asarray(entry.get("copy_from_indices", []), dtype=np.int64)
+    n = min(copy_to.size, copy_from.size)
+    copy_to, copy_from = copy_to[:n], copy_from[:n]
+    if str(entry.get("mapping_method")) != "bcftools_chain":
+        copy_from = copy_from + int(entry.get("source_start_idx", 0))
+    keep = (copy_to + 1 >= start) & (copy_to + 1 <= end) & (copy_from >= 0) & (copy_from < source_length)
+    return copy_to[keep] + 1 - start, copy_from[keep]
+
+
 def _align_signal_window(
     signal: np.ndarray,
     entry: Dict[str, Any],
@@ -171,15 +183,8 @@ def _align_signal_window(
     if end < start:
         return np.asarray([], dtype=np.float32)
     window = np.full(end - start + 1, np.nan, dtype=np.float32)
-    copy_from = entry.get("copy_from_indices", [])
-    copy_to = entry.get("expanded_indices", [])
-    source_start = int(entry.get("source_start_idx", 0))
-    absolute_source = str(entry.get("mapping_method")) == "bcftools_chain"
-    for source_raw, target_raw in zip(copy_from, copy_to):
-        source = int(source_raw) if absolute_source else source_start + int(source_raw)
-        target = int(target_raw)
-        if start <= target + 1 <= end and 0 <= source < signal.size:
-            window[target + 1 - start] = signal[source]
+    targets, sources = _alignment_scatter(entry, signal.size, start, end)
+    window[targets] = signal[sources]
     return window
 
 
@@ -194,15 +199,8 @@ def _align_matrix_window(
     if end < start:
         return np.empty((0, matrix.shape[1]), dtype=np.float32)
     window = np.full((end - start + 1, matrix.shape[1]), np.nan, dtype=np.float32)
-    copy_from = entry.get("copy_from_indices", [])
-    copy_to = entry.get("expanded_indices", [])
-    source_start = int(entry.get("source_start_idx", 0))
-    absolute_source = str(entry.get("mapping_method")) == "bcftools_chain"
-    for source_raw, target_raw in zip(copy_from, copy_to):
-        source = int(source_raw) if absolute_source else source_start + int(source_raw)
-        target = int(target_raw)
-        if start <= target + 1 <= end and 0 <= source < matrix.shape[0]:
-            window[target + 1 - start, :] = matrix[source, :]
+    targets, sources = _alignment_scatter(entry, matrix.shape[0], start, end)
+    window[targets, :] = matrix[sources, :]
     return window
 
 
@@ -214,21 +212,15 @@ def _downsample(signal: np.ndarray, start: int, points: int) -> Tuple[List[int],
         y = [_json_scalar(v) for v in signal]
         return x, y, "none"
 
-    bucket_count = max(1, points)
-    edges = np.linspace(0, signal.size, num=bucket_count + 1, dtype=np.int64)
-    xs: List[int] = []
-    ys: List[Optional[float]] = []
-    for i in range(bucket_count):
-        left = int(edges[i])
-        right = int(edges[i + 1])
-        if right <= left:
-            continue
-        bucket = signal[left:right]
-        if bucket.size == 0:
-            continue
-        finite = bucket[np.isfinite(bucket)]
-        xs.append(start + (left + right - 1) // 2)
-        ys.append(None if finite.size == 0 else _json_scalar(np.mean(finite)))
+    edges = np.unique(np.linspace(0, signal.size, num=max(1, points) + 1, dtype=np.int64))
+    lefts, rights = edges[:-1], edges[1:]
+    finite = np.isfinite(signal)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        sums = np.add.reduceat(np.where(finite, signal, 0.0).astype(np.float64), lefts)
+        counts = np.add.reduceat(finite.astype(np.int64), lefts)
+        means = sums / counts
+    xs = (start + (lefts + rights - 1) // 2).tolist()
+    ys = [None if count == 0 else float(mean) for mean, count in zip(means.tolist(), counts.tolist())]
     return xs, ys, "mean"
 
 

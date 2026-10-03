@@ -63,6 +63,7 @@ nav:
       - Preprocessing And Leakage: concepts/preprocessing-and-leakage.md
   - Components:
       - Overview: components/index.md
+      - Visualizer: components/visualizer.md
       - Genomes Analyzer: components/genomes-analyzer.md
       - Genotype Predictor: components/genotype-predictor.md
       - Variant Transformer: components/variant-transformer.md

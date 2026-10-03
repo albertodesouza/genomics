@@ -6,10 +6,21 @@ The primary entrypoint is:
 genomics
 ```
 
+## Visualizer
+
+```bash
+genomics visualize                                     # default dataset and runs root, http://127.0.0.1:8780
+genomics visualize --dataset /path/to/dataset --open   # any canonical-layout dataset
+genomics visualize --dataset-id 1kg_high_coverage --annotations phenotypes.tsv --memory-mb 8192
+```
+
+Options: `--dataset DIR` / `--dataset-id ID` (repeatable), `--annotations TABLE`, `--runs-root DIR` (repeatable), `--gtf TABLE`, `--consensus-dataset-dir DIR`, `--cache-dir DIR`, `--no-disk-cache`, `--memory-mb N`, `--workers N`, `--model-window N`, `--pigmentation-config PATH`, `--lab-port N`, `--alphagenome-address URL`, `--alphagenome-ca-cert PEM`, `--alphagenome-server-dir DIR`, `--alphagenome-server-python PYTHON`, `--host`, `--port`, `--open`, `--no-add-datasets`, `--verbose`.
+
 ## Top-Level Commands
 
 | Command | Purpose |
 |---|---|
+| `visualize` | Interactive visualizer for datasets, AlphaGenome tracks, sequences and experiments (see [Visualizer](../components/visualizer.md)) |
 | `audit-configs` | Check configs for legacy paths and active/inactive status |
 | `audit-data` | Validate registered dataset paths and expected artifacts |
 | `config ...` | Describe, validate, and export typed config schemas |
@@ -77,7 +88,7 @@ genomics genotype single-gene-screen configs/predictors/genotype_based/neural_le
 
 `genomics genotype compare-aligned-signals` reads the processed aligned tensor cache and compares AlphaGenome signal channels between pairs of individuals using only positions where both individuals have `valid_mask=1`. By default it analyzes the `train` split only; pass `--splits train val test` to include other splits deliberately. It writes global pairwise similarity, top absolute differences, per-position superpopulation effects (`eta_squared`, group mean delta, standardized delta), a sparse top-effect pairwise summary, and `summary.json`. Use `--max-samples` and `--max-pairs` for a fast pilot run; add `--permutations 1000` to test the global between-vs-within superpopulation MAD difference.
 
-`genomics genotype workbench` launches the local genotype workbench apps for inspecting datasets, aligned tensors, AlphaGenome tracks, and experiment outputs. It also registers a "Pigmentation Sequence Lab" viewer (default port `8781`, `--pigmentation-lab-port` to change it; `--pigmentation-config` selects the pigmentation config, default `configs/predictors/genotype_based/pigmentation/pigmentation_binary.yaml`) for interactively browsing RNA-seq/CAGE tracks and bcftools_chain-aligned sequence logos for an individual or a pigmentation-class average, and for overwriting/scrambling a selected region of an individual's sequence to see the effect on the trained CNN2 classifier's prediction. It requires a trained `best_accuracy` checkpoint for the selected config and an `ALPHAGENOME_API_KEY` (env or `~/.env`), and is disabled with a reason shown in the workbench UI if either is missing.
+`genomics genotype workbench` opens the unified visualizer (same as `genomics visualize --dataset <dataset-dir> --runs-root <runs-root>`); see [Visualizer](../components/visualizer.md). The Pigmentation Sequence Lab (interactive RNA-seq/CAGE tracks, bcftools_chain sequence logos, and in-silico overwrite/scramble edits re-scored by the trained CNN2) is launched on demand from the visualizer's Labs page (`--pigmentation-config` selects the config, default `configs/predictors/genotype_based/pigmentation/pigmentation_binary.yaml`; `--pigmentation-lab-port`, default `8781`); it needs a trained `best_accuracy` checkpoint and an AlphaGenome backend (an `ALPHAGENOME_API_KEY` in the env or `~/.env`, or a self-hosted server chosen on the Labs page; see [Visualizer](../components/visualizer.md#alphagenome-backend-labs)), and the Labs page shows why it is unavailable otherwise. `--legacy` starts the previous multi-process workbench instead.
 
 `genomics genotype sync-bcftools-artifacts` previews or applies hardlink/symlink/copy operations for consensus and chain artifacts required by the aligned `haplotype_channels` layout. Add `--apply` only after reviewing the preview.
 

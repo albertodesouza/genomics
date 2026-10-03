@@ -21,6 +21,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from genomics.core.alphagenome_connection import create_dna_client, resolve_api_key  # noqa: F401 (re-export)
+
 _OUTPUT_ATTR_BY_NAME = {
     "RNA_SEQ": "rna_seq",
     "CAGE": "cage",
@@ -29,26 +31,6 @@ _OUTPUT_ATTR_BY_NAME = {
     "CHIP_HISTONE": "chip_histone",
     "CHIP_TF": "chip_tf",
 }
-
-
-def resolve_api_key(explicit: Optional[str] = None) -> str:
-    """Resolve the AlphaGenome API key from an explicit argument, the environment, or ``~/.env``
-    (matching the notebook's own resolution order), raising a clear error if none is found."""
-    if explicit:
-        return explicit
-    api_key = os.environ.get("ALPHAGENOME_API_KEY")
-    if api_key:
-        return api_key
-    try:
-        from dotenv import dotenv_values
-
-        values = dotenv_values(Path.home() / ".env")
-        api_key = values.get("ALPHAGENOME_API_KEY")
-    except ImportError:
-        api_key = None
-    if not api_key:
-        raise RuntimeError("ALPHAGENOME_API_KEY not found in the environment, an explicit argument, or ~/.env.")
-    return api_key
 
 
 def reorder_to_canonical(
@@ -80,7 +62,8 @@ class LiveAlphaGenomePredictor:
         from alphagenome.models import dna_client
 
         self._dna_client_module = dna_client
-        self.client = dna_client.create(api_key=resolve_api_key(api_key))
+        # Hosted API, or the self-hosted server named by ALPHAGENOME_ADDRESS.
+        self.client = create_dna_client(api_key=api_key)
         self.organism = organism if organism is not None else dna_client.Organism.HOMO_SAPIENS
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
         if self.cache_dir is not None:

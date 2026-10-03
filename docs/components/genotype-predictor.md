@@ -42,7 +42,7 @@ See [Dynamic Indel Tensor Alignment](../concepts/dynamic-indel-tensor-alignment.
 | Training | `experiments/train.py`, `experiments/training.py`, `genomics.core.training_utils` | Training loops, schedulers, checkpoints, metrics |
 | Evaluation | `experiments/evaluate_checkpoint.py`, `experiments/evaluation.py` | Loads checkpoints and writes split metrics |
 | Analysis | `analysis/*.py` | PCA plots, UMAP/shard plots, interpretability helpers |
-| Apps | `apps/*.py` | Workbench and lightweight viewers |
+| Apps | `apps/*.py` | Legacy standalone viewers and the Pigmentation Sequence Lab (the unified UI is `genomics visualize`, `src/genomics/visualizer/`) |
 
 ## Data Representation
 
@@ -902,7 +902,7 @@ genomics genotype test configs/predictors/genotype_based/icann/genes_1000_all_rf
 | `evaluate` | Evaluate a checkpoint on a split |
 | `pca-variance` | Analyze PCA variance for sklearn baselines |
 | `compare-aligned-signals` | Compare aligned AlphaGenome signal similarity and superpopulation-associated positions |
-| `workbench` | Launch interactive workbench/dashboard |
+| `workbench` | Open the unified visualizer (`--legacy` for the old workbench) |
 | `sync-bcftools-artifacts` | Materialize chain/consensus artifacts |
 | `single-gene-screen` | Run single-gene ablation/screen experiments |
 
