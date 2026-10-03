@@ -249,8 +249,45 @@ def cmd_genotype_compare_aligned_signals(args: argparse.Namespace) -> int:
     return _run_module("genomics.predictors.genotype_based.analysis.compare_aligned_signals", command_args)
 
 
+def cmd_visualize(args: argparse.Namespace) -> int:
+    return _run_module("genomics.visualizer", _visualizer_args(args))
+
+
+def _visualizer_args(args: argparse.Namespace) -> list:
+    command_args: list[PathLike] = []
+    for path in args.dataset:
+        command_args.extend(["--dataset", path])
+    for dataset_id in args.dataset_id:
+        command_args.extend(["--dataset-id", dataset_id])
+    for root in args.runs_root:
+        command_args.extend(["--runs-root", root])
+    for flag in ("annotations", "consensus_dataset_dir", "gtf", "cache_dir", "pigmentation_config"):
+        value = getattr(args, flag)
+        if value:
+            command_args.extend([f"--{flag.replace('_', '-')}", value])
+    for flag in ("memory_mb", "workers", "model_window", "lab_port", "host", "port"):
+        command_args.extend([f"--{flag.replace('_', '-')}", getattr(args, flag)])
+    for flag in ("no_disk_cache", "open", "no_add_datasets", "verbose"):
+        if getattr(args, flag):
+            command_args.append(f"--{flag.replace('_', '-')}")
+    return command_args
+
+
 def cmd_genotype_workbench(args: argparse.Namespace) -> int:
-    command_args: list[PathLike] = [
+    if not args.legacy:
+        # The unified visualizer replaces the multi-process workbench.
+        command_args: list[PathLike] = [
+            "--dataset", args.dataset_dir,
+            "--runs-root", args.runs_root,
+            "--consensus-dataset-dir", args.consensus_dataset_dir,
+            "--host", args.host,
+            "--port", args.port,
+            "--lab-port", args.pigmentation_lab_port,
+        ]
+        if args.pigmentation_config:
+            command_args.extend(["--pigmentation-config", args.pigmentation_config])
+        return _run_module("genomics.visualizer", command_args)
+    command_args = [
         "--dataset-dir",
         args.dataset_dir,
         "--runs-root",
@@ -911,6 +948,12 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--fail-on-active-legacy", action="store_true")
     audit.set_defaults(func=cmd_audit_configs)
 
+    from genomics.visualizer.cli_args import add_visualizer_arguments
+
+    visualize = subparsers.add_parser("visualize", help="Visualizador interativo de datasets, tracks AlphaGenome, sequencias e experimentos")
+    add_visualizer_arguments(visualize)
+    visualize.set_defaults(func=cmd_visualize)
+
     audit_data = subparsers.add_parser("audit-data", help="Valida existencia fisica dos datasets registrados")
     audit_data.add_argument("--dataset-id", action="append", choices=registered_dataset_ids(), default=None)
     audit_data.add_argument("--check-bcftools-chain", action="store_true")
@@ -1129,7 +1172,7 @@ def build_parser() -> argparse.ArgumentParser:
     gp_compare.add_argument("--reference-superpopulation", default=None)
     gp_compare.add_argument("--output-dir", type=Path, required=True)
     gp_compare.set_defaults(func=cmd_genotype_compare_aligned_signals)
-    gp_workbench = genotype_sub.add_parser("workbench")
+    gp_workbench = genotype_sub.add_parser("workbench", help="Abre o visualizador interativo (alias de `genomics visualize`); --legacy abre o workbench antigo")
     gp_workbench.add_argument("--dataset-dir", type=Path, default=DEFAULT_DATASET_DIR)
     gp_workbench.add_argument("--runs-root", type=Path, default=DEFAULT_GENOTYPE_RUNS_ROOT)
     gp_workbench.add_argument("--consensus-dataset-dir", type=Path, default=DEFAULT_CONSENSUS_DATASET_DIR)
@@ -1138,6 +1181,7 @@ def build_parser() -> argparse.ArgumentParser:
     gp_workbench.add_argument("--port", type=int, default=8780)
     gp_workbench.add_argument("--pigmentation-config", type=Path, default=None)
     gp_workbench.add_argument("--pigmentation-lab-port", type=int, default=8781)
+    gp_workbench.add_argument("--legacy", action="store_true", help="Launch the old multi-process workbench instead of the unified visualizer")
     gp_workbench.set_defaults(func=cmd_genotype_workbench)
     gp_sync = genotype_sub.add_parser("sync-bcftools-artifacts")
     gp_sync.add_argument("--source-dir", type=Path, default=DEFAULT_CONSENSUS_DATASET_DIR)

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Genomics Visualizer</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232a78d6'/%3E%3Cpath d='M9 6c0 7 14 7 14 14M23 6c0 7-14 7-14 14M9 26v0M10 10h12M10 22h12' stroke='white' stroke-width='2.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script>
+    // Keep uncaught errors inspectable (window.__errors) for debugging and automated checks.
+    window.__errors = [];
+    window.addEventListener('error', function (e) { window.__errors.push(String(e.message || e)); });
+    window.addEventListener('unhandledrejection', function (e) { window.__errors.push(String(e.reason && e.reason.message || e.reason)); });
+    (function () {
+      try {
+        var t = localStorage.getItem('gv.theme');
+        if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+  <div class="app" id="app">
+    <header class="topbar">
+      <button class="icon-btn nav-toggle" id="navToggle" title="Toggle navigation" aria-label="Toggle navigation"></button>
+      <a class="brand" href="#/overview">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">Genomics Visualizer</span>
+      </a>
+      <div class="topbar-dataset">
+        <label class="sr-only" for="datasetSelect">Dataset</label>
+        <select id="datasetSelect" class="select select-dataset"></select>
+      </div>
+      <div class="topbar-spacer"></div>
+      <a class="cohort-chip" id="cohortChip" href="#/samples" title="Current cohort (Samples page filters) and pinned individuals"></a>
+      <div class="jobs-indicator" id="jobsIndicator" hidden></div>
+      <button class="icon-btn" id="themeToggle" title="Toggle light/dark theme" aria-label="Toggle theme"></button>
+    </header>
+    <nav class="sidenav" id="sidenav" aria-label="Pages"></nav>
+    <main class="page" id="page" tabindex="-1"></main>
+  </div>
+  <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

@@ -89,3 +89,4 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "genomics.completions" = ["*.bash"]
+"genomics.visualizer" = ["static/*.html", "static/css/*.css", "static/js/*.js", "static/js/pages/*.js"]

@@ -6,6 +6,7 @@ If you are reproducing the pipeline for the first time, start with [Building 100
 
 | Component | CLI Prefix | Code |
 |---|---|---|
+| Visualizer | `genomics visualize` | `src/genomics/visualizer/` |
 | Genomes Analyzer | `genomics genomes-analyzer` | `src/genomics/workflows/genomes_analyzer/` |
 | Genotype predictor | `genomics genotype` | `src/genomics/predictors/genotype_based/` |
 | Variant transformer | `genomics variant` | `src/genomics/predictors/variant_transformer/` |
