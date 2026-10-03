@@ -91,6 +91,7 @@ def fake_alphagenome_module(monkeypatch):
     monkeypatch.setitem(sys.modules, "alphagenome.models", fake_models_pkg)
     monkeypatch.setitem(sys.modules, "alphagenome.models.dna_client", fake_dna_client)
     monkeypatch.setenv("ALPHAGENOME_API_KEY", "fake-key-for-tests")
+    monkeypatch.delenv("ALPHAGENOME_ADDRESS", raising=False)  # hosted API path
     return fake_dna_client
 
 

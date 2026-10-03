@@ -27,6 +27,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 import numpy as np
 
 from genomics.visualizer.alignment import AlignmentService
+from genomics.visualizer.alphagenome import create_backend
 from genomics.visualizer.annotations import AnnotationService
 from genomics.visualizer.cli_args import build_arg_parser
 from genomics.visualizer.cache import DiskArrayCache, stable_key
@@ -185,6 +186,12 @@ class VisualizerApp:
         r("GET", r"/api/runs/file", self.api_run_file)
         r("GET", r"/api/labs", self.api_labs)
         r("POST", r"/api/labs/(?P<key>[^/]+)/start", self.api_lab_start)
+        r("POST", r"/api/labs/(?P<key>[^/]+)/stop", self.api_lab_stop)
+        r("GET", r"/api/alphagenome", self.api_alphagenome)
+        r("POST", r"/api/alphagenome/settings", self.api_alphagenome_settings)
+        r("POST", r"/api/alphagenome/test", self.api_alphagenome_test)
+        r("POST", r"/api/alphagenome/local/start", self.api_alphagenome_local_start)
+        r("POST", r"/api/alphagenome/local/stop", self.api_alphagenome_local_stop)
 
     def dispatch(self, method: str, path: str, query: Query, body: Any) -> Any:
         for route_method, pattern, handler in self.routes:
@@ -492,6 +499,41 @@ class VisualizerApp:
         except RuntimeError as exc:
             raise HttpError(HTTPStatus.CONFLICT, str(exc))
 
+    def api_lab_stop(self, query: Query, body: Any, key: str) -> Any:
+        try:
+            return self.labs.stop(key)
+        except KeyError as exc:
+            raise HttpError(HTTPStatus.NOT_FOUND, str(exc))
+
+    # -- AlphaGenome backend -------------------------------------------------------------------
+    def _alphagenome(self):
+        if self.labs.alphagenome is None:
+            raise HttpError(HTTPStatus.NOT_FOUND, "AlphaGenome backend settings are not available")
+        return self.labs.alphagenome
+
+    def api_alphagenome(self, query: Query, body: Any) -> Any:
+        return self._alphagenome().describe()
+
+    def api_alphagenome_settings(self, query: Query, body: Any) -> Any:
+        try:
+            return self._alphagenome().update(body or {})
+        except ValueError as exc:
+            raise HttpError(HTTPStatus.BAD_REQUEST, str(exc))
+
+    def api_alphagenome_test(self, query: Query, body: Any) -> Any:
+        return self._alphagenome().test(body or {})
+
+    def api_alphagenome_local_start(self, query: Query, body: Any) -> Any:
+        try:
+            self._alphagenome().local.start()
+        except RuntimeError as exc:
+            raise HttpError(HTTPStatus.CONFLICT, str(exc))
+        return self._alphagenome().describe()
+
+    def api_alphagenome_local_stop(self, query: Query, body: Any) -> Any:
+        self._alphagenome().local.stop()
+        return self._alphagenome().describe()
+
     def shutdown(self) -> None:
         self.jobs.shutdown()
         self.labs.stop_all()
@@ -626,12 +668,14 @@ def create_app(args: argparse.Namespace) -> VisualizerApp:
     if args.consensus_dataset_dir:
         consensus_dirs = {d.id: str(Path(args.consensus_dataset_dir).resolve()) for d in catalog.all()}
     primary = catalog.all()[0] if catalog.all() else None
+    log_dir = (cache_dir / "logs") if cache_dir else None
     labs = LabsService(
         primary.path if primary else None,
         consensus_dir=Path(args.consensus_dataset_dir) if args.consensus_dataset_dir else None,
         pigmentation_config=args.pigmentation_config,
         port=args.lab_port,
-        log_dir=(cache_dir / "logs") if cache_dir else None,
+        log_dir=log_dir,
+        alphagenome=create_backend(args, log_dir),
     )
     return VisualizerApp(
         catalog,

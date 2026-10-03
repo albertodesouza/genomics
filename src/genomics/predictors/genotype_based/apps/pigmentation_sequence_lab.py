@@ -31,6 +31,7 @@ from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 
+from genomics.core.alphagenome_connection import backend_configured
 from genomics.predictors.genotype_based.alignment.bcftools_chain_mapper import BcftoolsChainMapper
 from genomics.predictors.genotype_based.alignment.dynamic_indel_alignment import DynamicIndelAligner
 from genomics.predictors.genotype_based.analysis.alignment_frequency import (
@@ -47,7 +48,6 @@ from genomics.predictors.genotype_based.analysis.haplotype_edit_geometry import 
 from genomics.predictors.genotype_based.analysis.live_alphagenome_prediction import (
     LiveAlphaGenomePredictor,
     reorder_to_canonical,
-    resolve_api_key,
 )
 from genomics.predictors.genotype_based.analysis.pigmentation_model_context import PigmentationModelContext
 from genomics.predictors.genotype_based.apps.alphagenome_track_viewer import (
@@ -324,11 +324,8 @@ class PigmentationSequenceLabRepository:
 
     # -- shared collaborators -------------------------------------------------
     def api_key_available(self) -> bool:
-        try:
-            resolve_api_key(self._explicit_api_key)
-            return True
-        except RuntimeError:
-            return False
+        """Whether live predictions can run: an API key, or a self-hosted ALPHAGENOME_ADDRESS."""
+        return backend_configured(self._explicit_api_key)
 
     @property
     def defaults(self) -> Dict[str, Any]:

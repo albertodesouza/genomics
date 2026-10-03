@@ -23,7 +23,7 @@ Code: `src/genomics/visualizer/` (Python stdlib HTTP server + JSON API, static s
 | Tracks | Canvas genome browser: overview strip, ruler, gene models, one panel per AlphaGenome track. Shows pinned **individuals**, cohort **group means** ± SD (or each group's difference from the cohort mean) by any facet, or a **population heatmap** with every cohort sample as a row |
 | Sequence | Pinned haplotypes against the reference: bases when zoomed in (mismatches coloured, matches as dots, deletions and insertions marked), mismatch/indel density when zoomed out, variant lane and genotype table |
 | Experiments | Runs table with any numeric metric (`weighted_*` included), training curves, run comparison, confusion matrix, per-class metrics, config, plots |
-| Labs | Launches the Pigmentation Sequence Lab on demand (needs a trained checkpoint and `ALPHAGENOME_API_KEY`) |
+| Labs | Chooses the AlphaGenome backend (hosted API, remote server, or a server started on this machine) and launches the Pigmentation Sequence Lab on demand (needs a trained checkpoint) |
 
 Navigation: drag to pan, Ctrl/⌘+scroll to zoom, Shift+drag to zoom to a region, double-click to
 zoom in, ←/→ and +/− on the focused plot. The locus box accepts `chr:start-end`, `start-end` or a
@@ -73,6 +73,36 @@ from whatever fields `individuals_pedigree` carries. Add more facets with
 `--annotations table.tsv` (first column or `sample_id` = sample). Gene models are read from
 `<dataset>/gtf_cache.feather` (or `--gtf`) when pandas/pyarrow are installed. Datasets can also be
 opened from the Overview page while the server runs (disable with `--no-add-datasets`).
+
+## AlphaGenome backend (Labs)
+
+Labs that re-predict edited sequences call AlphaGenome. The **AlphaGenome backend** card on the
+Labs page selects where those calls go; the choice is saved to
+`~/.config/genomics/visualizer_alphagenome.json` and passed to lab processes as
+`ALPHAGENOME_ADDRESS` / `ALPHAGENOME_TLS_CA_CERT`. A lab keeps the backend it was launched with;
+stop and relaunch it after changing the backend.
+
+| Mode | Uses |
+|---|---|
+| Hosted API | Google's AlphaGenome API with `ALPHAGENOME_API_KEY` (env or `~/.env`) |
+| Remote server | A self-hosted `alphagenome_research` `server.py`, e.g. `grpc://10.0.0.5:50051` (plaintext), `grpcs://host:50051` (TLS) or `host:port` (TLS detected). For a self-signed TLS server set the CA certificate (`certs/ca.crt` from `scripts/generate_certs.sh`). No API key is needed |
+| This machine | **Start server** runs `server.py` from an `alphagenome_research` checkout in its own Python environment, shows its state (loading model → ready) and log, and stops it when the visualizer exits. It listens on `0.0.0.0:50051` (fixed by `server.py`) and uses TLS when `certs/server.crt` and `certs/server.key` exist |
+
+**Test connection** connects and calls the service (`GetMetadata`); **Test prediction** also runs a
+16 kb `predict_sequence`, which proves the model runs (the first prediction on a fresh server
+includes JIT compilation).
+
+The local server is found with `--alphagenome-server-dir` (or `$ALPHAGENOME_SERVER_DIR`, default
+`../alphagenome_research` next to this repository) and runs with `--alphagenome-server-python` (or
+`$ALPHAGENOME_SERVER_PYTHON`; by default the first conda environment, trying `alphagenome` first,
+that imports `alphagenome_research` and a CUDA-enabled `jax`). `server.py` refuses to run on CPU, and
+the Labs page says so when the chosen interpreter only has CPU `jax`. The model weights come from
+Hugging Face (`all_folds`).
+`--alphagenome-address URL` / `--alphagenome-ca-cert PEM` select a remote server from the command
+line, overriding the saved setting.
+
+Outside the visualizer, `genomics.core.alphagenome_connection.create_dna_client()` honours the same
+environment variables, so any code that builds its client through it can use a self-hosted server.
 
 ## Legacy apps
 

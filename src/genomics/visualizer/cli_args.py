@@ -25,6 +25,10 @@ def add_visualizer_arguments(parser: argparse.ArgumentParser) -> argparse.Argume
     labs = parser.add_argument_group("labs")
     labs.add_argument("--pigmentation-config", type=Path, default=None, help="Config for the optional Pigmentation Sequence Lab")
     labs.add_argument("--lab-port", type=int, default=8781, help="Port used when the Pigmentation Sequence Lab is launched")
+    labs.add_argument("--alphagenome-address", default=None, metavar="URL", help="Self-hosted AlphaGenome server for the Labs, e.g. grpc://host:50051 or grpcs://host:50051 (overrides the setting saved from the UI)")
+    labs.add_argument("--alphagenome-ca-cert", type=Path, default=None, metavar="PEM", help="CA certificate for a self-hosted AlphaGenome server using TLS")
+    labs.add_argument("--alphagenome-server-dir", type=Path, default=None, metavar="DIR", help="alphagenome_research checkout with server.py, for 'Start server on this machine' (default: $ALPHAGENOME_SERVER_DIR or ../alphagenome_research)")
+    labs.add_argument("--alphagenome-server-python", type=Path, default=None, metavar="PYTHON", help="Interpreter with alphagenome_research + JAX for the local server (default: $ALPHAGENOME_SERVER_PYTHON, else the first conda env with alphagenome_research and CUDA jax)")
 
     server = parser.add_argument_group("server")
     server.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")

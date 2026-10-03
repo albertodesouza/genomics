@@ -31,6 +31,8 @@ def _pigmentation_checkpoint_exists(config_path: Path) -> bool:
 
         config = load_config(config_path)
         experiment_dir = get_experiment_runs_dir(config) / generate_experiment_name(config)
+        if not experiment_dir.is_absolute():  # config paths are relative to the repository root
+            experiment_dir = repo_root() / experiment_dir
         return (experiment_dir / "models" / "best_accuracy.pt").exists()
     except Exception:
         return False
