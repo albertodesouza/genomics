@@ -14,7 +14,9 @@ genomics visualize --dataset /path/to/dataset --open   # any canonical-layout da
 genomics visualize --dataset-id 1kg_high_coverage --annotations phenotypes.tsv --memory-mb 8192
 ```
 
-Options: `--dataset DIR` / `--dataset-id ID` (repeatable), `--annotations TABLE`, `--runs-root DIR` (repeatable), `--gtf TABLE`, `--consensus-dataset-dir DIR`, `--cache-dir DIR`, `--no-disk-cache`, `--memory-mb N`, `--workers N`, `--model-window N`, `--pigmentation-config PATH`, `--lab-port N`, `--alphagenome-address URL`, `--alphagenome-ca-cert PEM`, `--alphagenome-server-dir DIR`, `--alphagenome-server-python PYTHON`, `--host`, `--port`, `--open`, `--no-add-datasets`, `--verbose`.
+Options: `--dataset DIR` / `--dataset-id ID` (repeatable), `--annotations TABLE`, `--runs-root DIR` (repeatable), `--gtf TABLE`, `--consensus-dataset-dir DIR`, `--cache-dir DIR`, `--no-disk-cache`, `--memory-mb N`, `--workers N`, `--model-window N`, `--jobs-dir DIR`, `--no-jobs`, `--pigmentation-config PATH`, `--alphagenome-address URL`, `--alphagenome-ca-cert PEM`, `--alphagenome-server-dir DIR`, `--alphagenome-server-python PYTHON`, `--host`, `--port`, `--open`, `--no-add-datasets`, `--no-remote`, `--verbose`.
+
+Without `--port` the visualizer uses 8780, or the next free port if 8780 is taken. If a visualizer already running on that port has every requested dataset (and no `--annotations`, `--runs-root`, `--gtf` or `--consensus-dataset-dir` is given), the command prints its URL, opens it with `--open`, and exits; an explicit `--port` that is busy is an error. `--open` waits until the server is listening and, on a machine without a graphical display, prints the URL instead. In an SSH session the command prints the `ssh -L` tunnel to reach it from your computer.
 
 ## Top-Level Commands
 
@@ -36,6 +38,9 @@ Options: `--dataset DIR` / `--dataset-id ID` (repeatable), `--annotations TABLE`
 | `snp-ancestry plot` | Plot ML metrics, feature importance, and AIM-ablation curves |
 | `genomes-analyzer run` | Run FASTQ/BAM/CRAM/VCF operational workflow |
 | `dataset-builders non-longevous ...` | Build derived 1000G/AlphaGenome datasets |
+| `dataset-builders vcf-import --spec SPEC` | Build a canonical dataset from any phased VCF plus free-form sample metadata |
+| `alphagenome predict-dataset DIR` | AlphaGenome predictions (any of the 11 outputs, any tissues) for every haplotype window of a canonical dataset (resumable) |
+| `alphagenome catalog` | List every AlphaGenome output track and ontology term (JSON, optional per-track CSV) |
 | `alphagenome ...` | Run AlphaGenome analysis/integration utilities |
 | `genotype ...` | Dense/aligned genotype predictor workflows |
 | `variant ...` | Sparse variant transformer workflows |
@@ -88,7 +93,7 @@ genomics genotype single-gene-screen configs/predictors/genotype_based/neural_le
 
 `genomics genotype compare-aligned-signals` reads the processed aligned tensor cache and compares AlphaGenome signal channels between pairs of individuals using only positions where both individuals have `valid_mask=1`. By default it analyzes the `train` split only; pass `--splits train val test` to include other splits deliberately. It writes global pairwise similarity, top absolute differences, per-position superpopulation effects (`eta_squared`, group mean delta, standardized delta), a sparse top-effect pairwise summary, and `summary.json`. Use `--max-samples` and `--max-pairs` for a fast pilot run; add `--permutations 1000` to test the global between-vs-within superpopulation MAD difference.
 
-`genomics genotype workbench` opens the unified visualizer (same as `genomics visualize --dataset <dataset-dir> --runs-root <runs-root>`); see [Visualizer](../components/visualizer.md). The Pigmentation Sequence Lab (interactive RNA-seq/CAGE tracks, bcftools_chain sequence logos, and in-silico overwrite/scramble edits re-scored by the trained CNN2) is launched on demand from the visualizer's Labs page (`--pigmentation-config` selects the config, default `configs/predictors/genotype_based/pigmentation/pigmentation_binary.yaml`; `--pigmentation-lab-port`, default `8781`); it needs a trained `best_accuracy` checkpoint and an AlphaGenome backend (an `ALPHAGENOME_API_KEY` in the env or `~/.env`, or a self-hosted server chosen on the Labs page; see [Visualizer](../components/visualizer.md#alphagenome-backend-labs)), and the Labs page shows why it is unavailable otherwise. `--legacy` starts the previous multi-process workbench instead.
+`genomics genotype workbench` opens the unified visualizer (same as `genomics visualize --dataset <dataset-dir> --runs-root <runs-root>`); see [Visualizer](../components/visualizer.md). The Perturbation Lab (in-silico overwrite/scramble/revert edits of a haplotype, re-predicted by AlphaGenome and re-scored by any trained model) now runs inside the visualizer; `--pigmentation-config` only chooses the run it selects first, and `--pigmentation-lab-port` is ignored. `--legacy` starts the previous multi-process workbench instead.
 
 `genomics genotype sync-bcftools-artifacts` previews or applies hardlink/symlink/copy operations for consensus and chain artifacts required by the aligned `haplotype_channels` layout. Add `--apply` only after reviewing the preview.
 
@@ -168,6 +173,17 @@ genomics dataset-builders non-longevous visualize configs/workflows/non_longevou
 ```
 
 `build-window` forwards arguments to the window builder module. Use `-- --help` to inspect the forwarded module's options.
+
+```bash
+genomics dataset-builders vcf-import --spec import.yaml            # build (resumable; re-run to add samples or genes)
+genomics dataset-builders vcf-import --spec import.yaml --inspect  # samples, contigs and phasing of the VCF
+genomics alphagenome predict-dataset /data/my_cohort --outputs RNA_SEQ,CAGE --ontology CL:1000458,UBERON:0002107
+genomics alphagenome predict-dataset /data/my_cohort --outputs all --ontology CL:1000458   # every output type
+genomics alphagenome predict-dataset /data/my_cohort --outputs RNA_SEQ,CAGE --ontology CL:1000458 --haplotypes ref   # the reference window of each gene only
+genomics alphagenome catalog --output catalog.json --csv tracks.csv                         # every track / tissue
+```
+
+`vcf-import` builds the canonical layout (reference windows, per-sample window VCFs, H1/H2 consensus FASTAs, `dataset_metadata.json`) from any phased, bgzipped VCF (or a `{chrom}` pattern) and a reference FASTA, without assuming 1000 Genomes metadata. `vcf` and `reference_fasta` may be URLs (`https://`, `ftp://`, `s3://`, `gs://`): only each window's region is fetched through the remote `.tbi`/`.csi`/`.fai` index, which is cached in `~/.cache/genomics/remote_index`; `vcf_overrides` (`{chrom: file}`) covers chromosomes whose file does not follow the `{chrom}` pattern (e.g. `...chrX...v2.vcf.gz`). The spec (JSON or YAML) takes `name`, `output_dir`, `vcf`, `reference_fasta`, `window_size` (an AlphaGenome length: 16384, 131072, 524288 or 1048576), `genes` (symbols or Ensembl ids, resolved with `gtf`, default the 1000 Genomes dataset's `gtf_cache.feather`) and/or `regions` (`{name, chrom, start, end}`), optional `samples`, and sample metadata as `metadata_file` (CSV/TSV/JSON/PLINK `.fam`; `id_column`, `family_column`, `sex_column` optional, the id column is detected otherwise) or inline `metadata` (`{sample: {field: value}}`). Every metadata column becomes a sample field (facet, group, training target). Windows are centred like `build-window`, and the outputs are byte-identical to the 1000 Genomes builder's for the same sample and window. A spec with `"extend": true` adds windows to an existing dataset (an import or the 1000 Genomes dataset) and changes only its window lists. `predict-dataset` writes `predictions_<H>/<output>.npz` + `<output>_metadata.json` with the hosted API or the server in `ALPHAGENOME_ADDRESS`, skips windows that already have the outputs, and updates the dataset metadata. Every AlphaGenome output is supported: per-base tracks (RNA-seq, CAGE, PRO-cap, DNase, ATAC, splice sites and splice-site usage), 128 bp ChIP-seq tracks (histone marks, TFs; `values` has one row per bin and the file stores `resolution`), splice junctions (`starts`/`ends`/`strands`/`values`) and 2048 bp contact maps (`values` is bins × bins × tracks). `--ontology` takes any CURIE in the AlphaGenome catalog (`alphagenome catalog`); `--all-tissues` predicts every track. `--haplotypes` takes `H1`, `H2` and/or `ref`: `ref` predicts each window's reference sequence (`references/windows/<gene>/ref.window.fa`) into `references/windows/<gene>/predictions_ref/` (same files; recorded as `reference_outputs` in the window metadata), the baseline the visualizer draws next to individuals. Both are also started from the visualizer (Overview, Jobs, Import).
 
 Use `--help` at any level:
 

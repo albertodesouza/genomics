@@ -7,6 +7,13 @@ Three coordinate systems are supported for every request:
 ``haplotype``  raw prediction-array index (the haplotype's own consensus coordinates).
 ``aligned``    the bcftools_chain expanded axis used to build CNN training tensors (needs the
                alignment service; insertion columns are shared across the cohort).
+
+Binned outputs (``resolution`` > 1 bp per row, e.g. 128 bp ChIP-seq) are expanded to bases on the
+fly: every base reads the row of the bin its haplotype position falls in.
+
+The pseudo-sample ``@reference`` is AlphaGenome's prediction of the reference window itself
+(``references/windows/<gene>/predictions_ref``); its columns are matched to the dataset's track
+order by ontology term / strand / assay, and it is identical in genomic and haplotype coordinates.
 """
 from __future__ import annotations
 
@@ -42,6 +49,7 @@ DIPLOID = "H1+H2"
 MAX_BINS = 8192
 MAX_SERIES = 32
 MAX_GROUP_TRACKS = 16
+REFERENCE_SAMPLE = "@reference"
 ProgressFn = Callable[[float, str], None]
 
 
@@ -76,6 +84,26 @@ def _read_npz_member_fast(path: Path, member: str = "values.npy") -> Optional[np
     if dtype.hasobject:
         return None
     return np.frombuffer(buf, dtype=dtype, offset=stream.tell()).reshape(shape, order="F" if fortran else "C")
+
+
+def npz_header(path: Path) -> Dict[str, object]:
+    """Members, ``values`` shape and stored ``resolution`` of a prediction ``.npz`` without inflating ``values``."""
+    with zipfile.ZipFile(path) as archive:
+        names = archive.namelist()
+        members = [n[:-4] if n.endswith(".npy") else n for n in names]
+        shape: Optional[Tuple[int, ...]] = None
+        if "values.npy" in names:
+            with archive.open("values.npy") as handle:
+                version = np.lib.format.read_magic(handle)
+                reader = np.lib.format.read_array_header_1_0 if version == (1, 0) else np.lib.format.read_array_header_2_0
+                shape = tuple(int(n) for n in reader(handle)[0])
+        resolution = None
+        if "resolution.npy" in names:
+            with archive.open("resolution.npy") as handle:
+                resolution = int(np.lib.format.read_array(handle))
+    if shape is None:  # legacy layouts (track_<i> members, unnamed arrays)
+        shape = tuple(load_prediction_matrix(path).shape)
+    return {"members": members, "shape": shape, "resolution": resolution}
 
 
 def load_prediction_matrix(path: Path) -> np.ndarray:
@@ -147,14 +175,37 @@ def bin_matrix(values: np.ndarray, bins: int) -> Dict[str, np.ndarray]:
     }
 
 
+def _track_key(record: Dict[str, object], with_name: bool) -> Tuple:
+    base = (str(record.get("ontology_curie") or record.get("biosample_name")), str(record.get("strand")))
+    return base + ((str(record.get("name") or record.get("Assay title") or ""),) if with_name else ())
+
+
+def match_track_columns(stored: List[Dict[str, object]], canonical: List[Dict[str, object]]) -> List[int]:
+    """Column of ``stored`` holding each ``canonical`` track (same ontology / strand / assay), or -1."""
+    has_name = lambda rows: all(r.get("name") or r.get("Assay title") for r in rows)  # noqa: E731
+    with_name = has_name(stored) and has_name(canonical)
+    lookup: Dict[Tuple, List[int]] = {}
+    for i, record in enumerate(stored):
+        lookup.setdefault(_track_key(record, with_name), []).append(i)
+    used: Dict[Tuple, int] = {}
+    columns = []
+    for record in canonical:
+        key = _track_key(record, with_name)
+        options = lookup.get(key) or []
+        k = used.get(key, 0)
+        columns.append(options[k] if k < len(options) else -1)
+        used[key] = k + 1
+    return columns
+
+
 @dataclass(frozen=True)
 class SeriesSpec:
     sample: str
-    haplotype: str  # H1, H2 or H1+H2
+    haplotype: str  # H1, H2 or H1+H2 (ignored for the reference)
 
     @property
     def label(self) -> str:
-        return f"{self.sample} {self.haplotype}"
+        return "Reference genome" if self.sample == REFERENCE_SAMPLE else f"{self.sample} {self.haplotype}"
 
 
 def parse_series(text: str) -> List[SeriesSpec]:
@@ -186,6 +237,48 @@ class SignalService:
             hit = self.arrays.get(("pred", str(path)))
             return hit if hit is not None else load_prediction_matrix(path)
         return self.arrays.get_or_load(("pred", str(path)), lambda: load_prediction_matrix(path))
+
+    def reference_prediction(self, dataset: Dataset, gene: str, output: str) -> np.ndarray:
+        """Reference-window prediction with columns in the dataset's track order (NaN when absent)."""
+        path = dataset.reference_prediction_path(gene, output)
+        if not path.exists():
+            raise FileNotFoundError(f"No AlphaGenome {output} prediction of the reference window for {gene} (predict haplotype 'ref')")
+
+        def load() -> np.ndarray:
+            matrix = load_prediction_matrix(path)
+            stored = dataset.reference_outputs(gene).get(output) or []
+            canonical = [t.get("metadata") or {} for t in (dataset.gene_info(gene)["outputs"].get(output) or {}).get("tracks", [])]
+            if not canonical or not stored:
+                return matrix
+            columns = match_track_columns(stored, canonical)
+            out = np.full((matrix.shape[0], len(columns)), np.nan, dtype=np.float32)
+            for j, c in enumerate(columns):
+                if 0 <= c < matrix.shape[1]:
+                    out[:, j] = matrix[:, c]
+            return out
+
+        return self.arrays.get_or_load(("refpred", str(path), path.stat().st_mtime_ns), load)
+
+    def reference_indexed_window(self, dataset: Dataset, gene: str, matrix: np.ndarray, res: int, coords: str, start: int, end: int) -> np.ndarray:
+        """``(end-start, tracks)`` of a matrix indexed by reference offset (rows of ``res`` bases) in ``coords``."""
+        out = np.full((end - start, matrix.shape[1]), np.nan, dtype=np.float32)
+        positions = matrix.shape[0] * res
+        if coords in ("reference", "haplotype"):
+            lo, hi = max(start, 0), min(end, positions)
+            if hi > lo:
+                out[lo - start:hi - start] = matrix[lo:hi] if res == 1 else matrix[np.arange(lo, hi) // res]
+            return out
+        if coords == "aligned":
+            axis = self._alignment().axis(dataset, gene)
+            slots = np.asarray(axis["insertion_slots"], dtype=np.int64)
+            pos = np.arange(start, end, dtype=np.int64)
+            k = np.searchsorted(slots, pos)
+            is_slot = (k < slots.size) & (slots[np.minimum(k, max(slots.size - 1, 0))] == pos) if slots.size else np.zeros(pos.size, bool)
+            ref = int(axis["ref_start_offset"]) + pos - k
+            valid = ~is_slot & (ref >= 0) & (ref < positions)
+            out[np.nonzero(valid)[0]] = matrix[ref[valid] // res]
+            return out
+        raise ValueError(f"Unknown coordinate system: {coords}")
 
     def _parse_vcf(self, dataset: Dataset, sample: str, gene: str) -> SampleVariants:
         path = dataset.sample_vcf_path(sample, gene)
@@ -227,6 +320,11 @@ class SignalService:
             return int(window.length)
         return len(self.reference_sequence(dataset, gene))
 
+    @staticmethod
+    def resolution(dataset: Dataset, gene: str, output: str) -> int:
+        """Bases per stored row of ``output`` (1 for per-base tracks)."""
+        return int((dataset.gene_info(gene)["outputs"].get(output) or {}).get("resolution") or 1)
+
     def domain_length(self, dataset: Dataset, gene: str, output: str, coords: str) -> int:
         if coords == "reference":
             return self.reference_length(dataset, gene)
@@ -256,6 +354,11 @@ class SignalService:
         cache: bool = True,
     ) -> np.ndarray:
         """``(end-start, tracks)`` values for one haplotype in the requested coordinates."""
+        if sample == REFERENCE_SAMPLE:
+            matrix = self.reference_prediction(dataset, gene, output)
+            if tracks is not None and list(tracks) != list(range(matrix.shape[1])):
+                matrix = matrix[:, list(tracks)]
+            return self.reference_indexed_window(dataset, gene, matrix, self.resolution(dataset, gene, output), coords, start, end)
         if haplotype == DIPLOID:
             h1 = self.haplotype_window(dataset, sample, gene, "H1", output, coords, start, end, tracks, cache)
             h2 = self.haplotype_window(dataset, sample, gene, "H2", output, coords, start, end, tracks, cache)
@@ -267,26 +370,28 @@ class SignalService:
         matrix = self.prediction(dataset, sample, gene, haplotype, output, cache=cache)
         if tracks is not None and list(tracks) != list(range(matrix.shape[1])):
             matrix = matrix[:, list(tracks)]
+        res = self.resolution(dataset, gene, output)
+        positions = matrix.shape[0] * res  # haplotype bases covered by the stored rows
         if coords == "haplotype":
             out = np.full((end - start, matrix.shape[1]), np.nan, dtype=np.float32)
-            lo, hi = max(start, 0), min(end, matrix.shape[0])
+            lo, hi = max(start, 0), min(end, positions)
             if hi > lo:
-                out[lo - start:hi - start] = matrix[lo:hi]
+                out[lo - start:hi - start] = matrix[lo:hi] if res == 1 else matrix[np.arange(lo, hi) // res]
             return out
         if coords == "reference":
             ref_map = self.ref_map(dataset, sample, gene, haplotype, cache=cache)
             local = ref_map.local[max(start, 0):min(end, ref_map.local.size)]
             out = np.full((end - start, matrix.shape[1]), np.nan, dtype=np.float32)
-            valid = (local >= 0) & (local < matrix.shape[0])
+            valid = (local >= 0) & (local < positions)
             offset = max(start, 0) - start
             target = np.nonzero(valid)[0] + offset
-            out[target] = matrix[local[valid]]
+            out[target] = matrix[local[valid] // res]
             return out
         if coords == "aligned":
             expanded, source = self._alignment().entry_arrays(dataset, gene, sample, haplotype)
             out = np.full((end - start, matrix.shape[1]), np.nan, dtype=np.float32)
-            mask = (expanded >= start) & (expanded < end) & (source >= 0) & (source < matrix.shape[0])
-            out[expanded[mask] - start] = matrix[source[mask]]
+            mask = (expanded >= start) & (expanded < end) & (source >= 0) & (source < positions)
+            out[expanded[mask] - start] = matrix[source[mask] // res]
             return out
         raise ValueError(f"Unknown coordinate system: {coords}")
 

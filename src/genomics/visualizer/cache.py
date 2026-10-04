@@ -131,14 +131,14 @@ class DiskArrayCache:
         except Exception:
             return None
 
-    def save(self, namespace: str, key: str, arrays: Dict[str, np.ndarray]) -> None:
+    def save(self, namespace: str, key: str, arrays: Dict[str, np.ndarray], compress: bool = False) -> None:
         path = self._path(namespace, key)
         if path is None:
             return
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_name(f"{path.stem}.{os.getpid()}.{threading.get_ident()}.tmp.npz")
-            np.savez(tmp, **arrays)
+            (np.savez_compressed if compress else np.savez)(tmp, **arrays)
             os.replace(tmp, path)
         except OSError:
             pass

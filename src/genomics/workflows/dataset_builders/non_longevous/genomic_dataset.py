@@ -388,7 +388,13 @@ class GenomicLongevityDataset(Dataset):
             'population': individual_metadata.get('population', ''),
             'superpopulation': individual_metadata.get('superpopulation', ''),
         }
-        
+        # Any other scalar field (e.g. from an imported metadata table) can be a prediction target.
+        for key, value in individual_metadata.items():
+            if key not in output_data and key != 'windows' and not key.startswith('frog_') and (
+                value is None or isinstance(value, (str, int, float, bool))
+            ):
+                output_data[key] = value
+
         # Adicionar likelihood FROG se disponível
         if 'frog_likelihood' in individual_metadata:
             output_data['frog_likelihood'] = np.array(individual_metadata['frog_likelihood'])

@@ -3,6 +3,8 @@ import { api } from '../api.js';
 import { navigate } from '../app.js';
 import { state, ds, filterRows, setFilters, setPinned, togglePinned, categoricalFields } from '../state.js';
 import { h, clear, icon, fmtInt, drawer, modal, toast, downloadText, debounce, field, select, errorBox, escapeHtml } from '../ui.js';
+import { igsrPopulationUrl, igsrSampleUrl, isIgsrPopulation, isIgsrSample, xref } from '../links.js';
+import { geneChip } from '../cards.js';
 
 const ROW_H = 30;
 
@@ -171,7 +173,14 @@ export async function mount(root) {
       const detail = await api(`${ds()}/samples/${encodeURIComponent(id)}`);
       clear(body);
       const sample = detail.sample;
-      body.appendChild(h('dl', { class: 'kv' }, Object.entries(sample).flatMap(([k, v]) => [h('dt', null, k), h('dd', null, v === null || v === undefined || v === '' ? '–' : String(v))])));
+      // 1000 Genomes sample ids and population codes link to the IGSR data portal.
+      const value = (k, v) => {
+        if (v === null || v === undefined || v === '') return '–';
+        if (k === 'sample_id' && isIgsrSample(v)) return h('span', null, String(v), ' ', xref({ label: 'IGSR', url: igsrSampleUrl(v), title: 'International Genome Sample Resource (1000 Genomes)' }, { compact: true }));
+        if (isIgsrPopulation(v)) return h('span', null, String(v), ' ', xref({ label: 'IGSR', url: igsrPopulationUrl(v), title: '1000 Genomes population' }, { compact: true }));
+        return String(v);
+      };
+      body.appendChild(h('dl', { class: 'kv' }, Object.entries(sample).flatMap(([k, v]) => [h('dt', null, k), h('dd', null, value(k, v))])));
       const meta = detail.individual_metadata || {};
       const extra = Object.entries(meta).filter(([k, v]) => !(k in sample) && k !== 'windows' && (typeof v !== 'object' || v === null));
       if (extra.length) body.appendChild(h('div', null, h('div', { class: 'label', style: { marginBottom: '6px' } }, 'Individual metadata'), h('dl', { class: 'kv' }, extra.flatMap(([k, v]) => [h('dt', null, k), h('dd', null, String(v))]))));
@@ -180,7 +189,7 @@ export async function mount(root) {
         h('div', { class: 'table-wrap', style: { maxHeight: '360px' } }, h('table', { class: 'table' },
           h('thead', null, h('tr', null, h('th', null, 'Gene'), h('th', null, 'Predictions'), h('th', null, 'VCF'), h('th', null, ''))),
           h('tbody', null, detail.windows.map((w) => h('tr', null,
-            h('td', null, h('b', null, w.gene)),
+            h('td', null, geneChip(w.gene)),
             h('td', null, w.outputs.length ? `${w.outputs.join(', ')} · ${w.haplotypes.join('/')}` : h('span', { class: 'muted' }, 'none')),
             h('td', null, w.has_vcf ? 'yes' : h('span', { class: 'muted' }, 'no')),
             h('td', null, h('div', { style: { display: 'flex', gap: '4px', justifyContent: 'flex-end' } },

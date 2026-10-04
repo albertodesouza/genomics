@@ -1,6 +1,9 @@
 // Experiments: run table with generic metrics, training curves, confusion matrices, comparisons.
 import { api } from '../api.js';
+import { navigate } from '../app.js';
+import { state } from '../state.js';
 import { h, clear, icon, select, fmtNum, fmtDate, fmtInt, debounce, errorBox, showTooltip, hideTooltip, escapeHtml } from '../ui.js';
+import { openTrainForm, openEvaluateForm } from '../forms.js';
 import { lineChart, setupCanvas, theme, seqColor, css, ColorSlots } from '../plot.js';
 
 const PREFERRED = ['best_val_accuracy', 'best_val_loss', 'val_best_accuracy.weighted_f1_score', 'test.weighted_f1_score', 'val.weighted_accuracy'];
@@ -13,8 +16,11 @@ export async function mount(root) {
   let data;
   try { data = await api('/api/runs'); } catch (err) { clear(page).appendChild(errorBox(err)); return {}; }
   clear(page);
+  const trainButton = () => (state.datasetId && state.status && state.status.allow_tasks
+    ? h('button', { class: 'btn primary', title: 'Train and evaluate on the dataset selected at the top (background job)', onclick: () => openTrainForm() }, icon('play', 14), 'New training run')
+    : null);
   if (!data.runs.length) {
-    page.append(h('div', { class: 'page-head' }, h('h1', null, 'Experiments')), h('div', { class: 'card empty' }, data.roots.length ? `No runs found under ${data.roots.join(', ')}` : 'No runs root configured. Start the visualizer with --runs-root PATH.'));
+    page.append(h('div', { class: 'page-head' }, h('h1', null, 'Experiments'), trainButton()), h('div', { class: 'card empty' }, data.roots.length ? `No runs found under ${data.roots.join(', ')}` : 'No runs root configured. Start the visualizer with --runs-root PATH.'));
     return {};
   }
   const metrics = data.metrics;
@@ -33,7 +39,7 @@ export async function mount(root) {
   const compareHost = h('div');
   const detailHost = h('div');
   page.append(
-    h('div', { class: 'page-head' }, h('div', null, h('h1', null, 'Experiments'), h('p', null, `${fmtInt(data.runs.length)} runs · ${data.roots.join(', ')}`)), search),
+    h('div', { class: 'page-head' }, h('div', null, h('h1', null, 'Experiments'), h('p', null, `${fmtInt(data.runs.length)} runs · ${data.roots.join(', ')}`)), h('div', { style: { display: 'flex', gap: '8px' } }, search, trainButton())),
     h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', null, 'Runs'), h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, h('span', { class: 'label' }, 'Metric columns'), metricPickers)), tableHost),
     compareHost, detailHost);
 
@@ -111,7 +117,14 @@ export async function mount(root) {
     clear(detailHost);
     const card = h('section', { class: 'card', style: { marginTop: '16px' } });
     const body = h('div', { class: 'card-body', style: { display: 'grid', gap: '18px' } });
-    card.append(h('div', { class: 'card-head' }, h('div', null, h('h2', null, run.name), h('div', { class: 'muted mono', style: { fontSize: '11.5px', marginTop: '2px' } }, run.path)), h('button', { class: 'btn small ghost', onclick: () => { selected = null; clear(detailHost); renderTable(); } }, 'Close')), body);
+    const canTask = state.status && state.status.allow_tasks;
+    const torch = run.checkpoints.some((c) => c.endsWith('.pt'));
+    card.append(h('div', { class: 'card-head' }, h('div', null, h('h2', null, run.name), h('div', { class: 'muted mono', style: { fontSize: '11.5px', marginTop: '2px' } }, run.path)),
+      h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' } },
+        canTask && run.config ? h('button', { class: 'btn small', title: 'Evaluate a checkpoint on a split (background job)', onclick: () => openEvaluateForm(run) }, 'Evaluate…') : null,
+        canTask && run.config && state.datasetId ? h('button', { class: 'btn small', title: 'Start a new training run from this run\'s config', onclick: () => openTrainForm(state.datasetId, { base_run: run.id }) }, 'Train again…') : null,
+        torch && run.config ? h('button', { class: 'btn small', title: 'Edit haplotypes and see how this model\'s prediction changes', onclick: () => navigate('perturb', { run: run.id }) }, icon('perturb', 14), 'Perturbation Lab') : null,
+        h('button', { class: 'btn small ghost', onclick: () => { selected = null; clear(detailHost); renderTable(); } }, 'Close'))), body);
     detailHost.appendChild(card);
     // headline metrics
     const headline = Object.entries(run.metrics).filter(([k]) => /accuracy|f1|loss|epoch/i.test(k.split('.').pop())).slice(0, 8);
@@ -168,7 +181,12 @@ export async function mount(root) {
 
   renderPickers();
   renderTable();
-  return {};
+  return {
+    onEvent(topic, task) {
+      // New results from training/evaluation jobs: reload the runs.
+      if (topic === 'task' && task && ['train', 'evaluate'].includes(task.kind)) window.dispatchEvent(new HashChangeEvent('hashchange'));
+    },
+  };
 }
 
 function attachCurveHover(canvas, geo, keys, hist) {

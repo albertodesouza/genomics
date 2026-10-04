@@ -23,7 +23,6 @@ from genomics.core.alphagenome_connection import (
 )
 from genomics.visualizer import alphagenome as backend_module
 from genomics.visualizer.alphagenome import AlphaGenomeBackend, LocalAlphaGenomeServer
-from genomics.visualizer.labs import LabsService
 
 
 def _free_port() -> int:
@@ -256,15 +255,15 @@ def test_default_server_python_prefers_a_gpu_env(tmp_path, monkeypatch):
     assert backend_module.default_server_python() == Path("/opt/py")
 
 
-def test_labs_use_backend_reasons_and_env(tmp_path):
+def test_backend_client_uses_selected_endpoint(tmp_path, monkeypatch):
+    from genomics.core import alphagenome_connection
+
     backend = AlphaGenomeBackend(_local(tmp_path), settings_path=tmp_path / "settings.json")
-    labs = LabsService(tmp_path, alphagenome=backend)
-    labs._reasons = []  # pretend dataset/config/checkpoint are fine
-    lab = labs.list()[0]
-    assert not lab["available"] and "ALPHAGENOME_API_KEY" in lab["reasons"][0]
     backend.update({"mode": "remote", "address": "grpc://gpu-box:50051"})
-    lab = labs.list()[0]
-    assert lab["available"] and lab["backend"] == "Remote server (grpc://gpu-box:50051)"
+    calls = []
+    monkeypatch.setattr(alphagenome_connection, "create_dna_client", lambda **kw: calls.append(kw) or "client")
+    assert backend.create_client(timeout=5) == "client"
+    assert calls[-1]["address"] == "grpc://gpu-box:50051" and calls[-1]["timeout"] == 5
 
 
 def test_http_alphagenome_routes(tmp_path):
@@ -272,8 +271,7 @@ def test_http_alphagenome_routes(tmp_path):
     from genomics.visualizer.server import Handler, Server, VisualizerApp
 
     backend = AlphaGenomeBackend(_local(tmp_path), settings_path=tmp_path / "settings.json")
-    app = VisualizerApp(DatasetCatalog(), cache_dir=None, memory_bytes=64 << 20, workers=1, runs_roots=[],
-                        labs=LabsService(None, alphagenome=backend))
+    app = VisualizerApp(DatasetCatalog(), cache_dir=None, memory_bytes=64 << 20, workers=1, runs_roots=[], alphagenome=backend)
     port = _free_port()
     server = Server(("127.0.0.1", port), type("H", (Handler,), {"app": app}))
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -296,8 +294,9 @@ def test_http_alphagenome_routes(tmp_path):
         assert status == 200 and not data["ok"]
         status, data = call("/api/alphagenome/test", "POST", {"mode": "local"})
         assert not data["ok"] and "stopped" in data["message"]
-        assert call("/api/labs/pigmentation/stop", "POST", {})[0] == 200
-        assert call("/api/labs/nope/stop", "POST", {})[0] == 404
+        status, data = call("/api/perturb/models")
+        assert status == 200 and data["runs"] == [] and data["backend"]["label"].startswith("Remote server")
+        assert call("/api/perturb/score?sample=S1")[0] == 400  # no model loaded
     finally:
         server.shutdown()
         server.server_close()

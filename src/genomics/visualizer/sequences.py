@@ -11,6 +11,7 @@ from genomics.visualizer.signals import SeriesSpec, SignalService, _clamp_range
 MAX_LETTER_SPAN = 4000
 MAX_ROWS = 64
 GAP = ord("-")
+LETTERS = ("A", "C", "G", "T", "N", "-")
 
 
 def _variant_type(ref: str, alt: str) -> str:
@@ -63,6 +64,96 @@ class SequenceService:
             row[: hi - start] = ref[start:hi]
         return row
 
+    def _row(self, dataset: Dataset, gene: str, spec: SeriesSpec, coords: str, start: int, end: int) -> Tuple[np.ndarray, List[Dict[str, object]]]:
+        """One haplotype's bases over ``[start, end)`` of ``coords`` (``-`` where it has none)."""
+        if coords == "reference":
+            return self._row_reference(dataset, gene, spec, start, end)
+        if coords == "aligned":
+            return self._row_aligned(dataset, gene, spec, start, end), []
+        hap = np.frombuffer(self.signals.haplotype_sequence(dataset, spec.sample, gene, spec.haplotype), dtype=np.uint8)
+        row = np.full(end - start, GAP, dtype=np.uint8)
+        hi = min(end, hap.size)
+        if hi > start:
+            row[: hi - start] = hap[start:hi]
+        return row, []
+
+    def _expand_rows(self, rows: List[SeriesSpec]) -> List[SeriesSpec]:
+        expanded: List[SeriesSpec] = []
+        for spec in rows:
+            haps = ["H1", "H2"] if spec.haplotype == "H1+H2" else [spec.haplotype]
+            expanded.extend(SeriesSpec(spec.sample, h) for h in haps)
+        return expanded[:MAX_ROWS]
+
+    def _domain(self, dataset: Dataset, gene: str, coords: str, rows: List[SeriesSpec]) -> int:
+        if coords == "aligned":
+            return int(self.signals.alignment.axis(dataset, gene)["expanded_length"])
+        if coords == "reference":
+            return self.signals.reference_length(dataset, gene)
+        return max((len(self.signals.haplotype_sequence(dataset, s.sample, gene, s.haplotype)) for s in rows), default=0) or self.signals.reference_length(dataset, gene)
+
+    def composition(
+        self,
+        dataset: Dataset,
+        gene: str,
+        rows: List[SeriesSpec],
+        coords: str,
+        start: int,
+        end: int,
+        bins: int,
+    ) -> Dict[str, object]:
+        """Per-base letter frequencies (A, C, G, T, N, gap) over haplotypes, or of the reference.
+
+        Without ``rows`` the reference sequence is counted (one letter per base). Each bin holds the
+        fraction of (haplotype, base) cells with each letter, so zoomed-in bins are per-base
+        frequencies across the chosen haplotypes and zoomed-out bins are base composition.
+        """
+        expanded = self._expand_rows(rows)
+        domain = self._domain(dataset, gene, coords, expanded)
+        start, end = _clamp_range(start, end, domain)
+        span = end - start
+        ref_row = self._reference_row(dataset, gene, coords, start, end)
+        counts = np.zeros((len(LETTERS), span), dtype=np.uint16)
+        used: List[str] = []
+        errors: List[str] = []
+        sources = []
+        for spec in expanded:
+            try:
+                sources.append(self._row(dataset, gene, spec, coords, start, end)[0])
+                used.append(f"{spec.sample}:{spec.haplotype}")
+            except Exception as exc:
+                errors.append(f"{spec.sample} {spec.haplotype}: {exc}")
+        if not sources:
+            sources = [ref_row]
+        for row in sources:
+            upper = row & 0xDF  # ASCII upper case (soft-masked bases count as their letter)
+            known = np.zeros(span, dtype=bool)
+            for i, letter in enumerate(LETTERS[:4]):
+                hit = upper == ord(letter)
+                counts[i] += hit
+                known |= hit
+            gap = row == GAP
+            counts[5] += gap
+            counts[4] += ~(known | gap)
+        edges = np.unique(np.linspace(0, span, min(max(1, int(bins)), span) + 1).astype(np.int64))
+        totals = np.add.reduceat(counts.astype(np.float32), edges[:-1], axis=1)
+        freq = totals / (np.diff(edges).astype(np.float32) * len(sources))
+        payload: Dict[str, object] = {
+            "gene": gene,
+            "coords": coords,
+            "start": start,
+            "end": end,
+            "domain": domain,
+            "edges": (edges + start).astype(np.int64),
+            "letters": "".join(LETTERS),
+            "freq": freq.astype(np.float32),
+            "source": "haplotypes" if used else "reference",
+            "haplotypes": used,
+            "errors": errors[:5],
+        }
+        if span <= MAX_LETTER_SPAN:
+            payload["reference"] = ref_row.tobytes().decode("ascii", "replace")
+        return payload
+
     def window(
         self,
         dataset: Dataset,
@@ -73,17 +164,8 @@ class SequenceService:
         end: int,
         bins: int,
     ) -> Dict[str, object]:
-        expanded_rows: List[SeriesSpec] = []
-        for spec in rows:
-            haps = ["H1", "H2"] if spec.haplotype == "H1+H2" else [spec.haplotype]
-            expanded_rows.extend(SeriesSpec(spec.sample, h) for h in haps)
-        expanded_rows = expanded_rows[:MAX_ROWS]
-        if coords == "aligned":
-            domain = int(self.signals.alignment.axis(dataset, gene)["expanded_length"])
-        elif coords == "reference":
-            domain = self.signals.reference_length(dataset, gene)
-        else:
-            domain = max((len(self.signals.haplotype_sequence(dataset, s.sample, gene, s.haplotype)) for s in expanded_rows), default=0) or self.signals.reference_length(dataset, gene)
+        expanded_rows = self._expand_rows(rows)
+        domain = self._domain(dataset, gene, coords, expanded_rows)
         start, end = _clamp_range(start, end, domain)
         span = end - start
         ref_row = self._reference_row(dataset, gene, coords, start, end)
@@ -92,17 +174,7 @@ class SequenceService:
         for spec in expanded_rows:
             item: Dict[str, object] = {"sample": spec.sample, "haplotype": spec.haplotype}
             try:
-                insertions: List[Dict[str, object]] = []
-                if coords == "reference":
-                    row, insertions = self._row_reference(dataset, gene, spec, start, end)
-                elif coords == "aligned":
-                    row = self._row_aligned(dataset, gene, spec, start, end)
-                else:
-                    hap = np.frombuffer(self.signals.haplotype_sequence(dataset, spec.sample, gene, spec.haplotype), dtype=np.uint8)
-                    row = np.full(span, GAP, dtype=np.uint8)
-                    hi = min(end, hap.size)
-                    if hi > start:
-                        row[: hi - start] = hap[start:hi]
+                row, insertions = self._row(dataset, gene, spec, coords, start, end)
                 diff = (row != ref_row) & (row != GAP) & (ref_row != GAP) & (row != ord("N"))
                 deleted = (row == GAP) & (ref_row != GAP)
                 item["mismatches"] = int(diff.sum())

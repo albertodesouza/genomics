@@ -1,6 +1,6 @@
 // App shell: navigation, hash router, dataset switcher, theme, cohort chip and job indicator.
 import { api } from './api.js';
-import { state, loadStatus, setDataset, subscribe, cohortSize } from './state.js';
+import { state, loadStatus, setDataset, subscribe, cohortSize, emit } from './state.js';
 import { h, clear, icon, toast, progressBar, fmtInt, errorBox } from './ui.js';
 
 const PAGES = [
@@ -8,10 +8,15 @@ const PAGES = [
   { key: 'samples', label: 'Samples', icon: 'samples', load: () => import('./pages/samples.js') },
   { key: 'tracks', label: 'Tracks', icon: 'tracks', load: () => import('./pages/tracks.js') },
   { key: 'sequence', label: 'Sequence', icon: 'sequence', load: () => import('./pages/sequence.js') },
+  { key: 'perturb', label: 'Perturbation Lab', icon: 'perturb', load: () => import('./pages/perturb.js') },
   { sep: true },
   { key: 'experiments', label: 'Experiments', icon: 'experiments', load: () => import('./pages/experiments.js') },
-  { key: 'labs', label: 'Labs', icon: 'labs', load: () => import('./pages/labs.js') },
+  { key: 'jobs', label: 'Jobs', icon: 'jobs', load: () => import('./pages/jobs.js') },
+  { key: 'alphagenome', label: 'AlphaGenome', icon: 'alphagenome', load: () => import('./pages/labs.js') },
+  { key: 'import', label: 'Import dataset', icon: 'upload', hidden: true, nav: 'jobs', load: () => import('./pages/import.js') },
 ];
+const ALIASES = { labs: 'alphagenome' };
+const NO_DATASET_PAGES = ['experiments', 'alphagenome', 'overview', 'jobs', 'import', 'perturb'];
 
 const pageEl = document.getElementById('page');
 const navEl = document.getElementById('sidenav');
@@ -43,6 +48,7 @@ function renderNav(active) {
   clear(navEl);
   for (const p of PAGES) {
     if (p.sep) { navEl.appendChild(h('div', { class: 'nav-sep' })); continue; }
+    if (p.hidden) continue;
     navEl.appendChild(h('a', { href: `#/${p.key}`, class: p.key === active ? 'active' : '', title: p.label, 'aria-current': p.key === active ? 'page' : null }, icon(p.icon, 18), h('span', null, p.label)));
   }
   navEl.appendChild(h('div', { class: 'nav-foot' }, state.status ? `v${state.status.version}` : ''));
@@ -51,8 +57,8 @@ function renderNav(active) {
 async function route() {
   const token = ++routeToken;
   const { page, params } = parseRoute();
-  const def = PAGES.find((p) => p.key === page) || PAGES[0];
-  renderNav(def.key);
+  const def = PAGES.find((p) => p.key === (ALIASES[page] || page)) || PAGES[0];
+  renderNav(def.nav || def.key);
   document.getElementById('app').classList.remove('nav-open');
   if (current && current.key === def.key && current.instance.update) {
     current.instance.update(params);
@@ -61,7 +67,7 @@ async function route() {
   if (current && current.instance.unmount) current.instance.unmount();
   current = null;
   clear(pageEl);
-  if (!state.datasetId && !['experiments', 'labs', 'overview'].includes(def.key)) {
+  if (!state.datasetId && !NO_DATASET_PAGES.includes(def.key)) {
     pageEl.appendChild(h('div', { class: 'page-inner' }, h('div', { class: 'empty' }, 'No dataset loaded. Add one from the Overview page.')));
     return;
   }
@@ -127,15 +133,17 @@ function setupNavToggle() {
   });
 }
 
-// Background job indicator (cohort aggregates etc. keep running when you leave a page).
+// Job indicator: in-server jobs (cohort aggregates; keep running when you leave a page) and
+// background jobs (imports, predictions, training; keep running when the browser or server closes).
 let jobsTimer = null;
+let lastTaskStates = null;
 export function watchJobs() {
   if (jobsTimer) return;
   const el = document.getElementById('jobsIndicator');
   const bar = progressBar(0);
-  const label = h('span');
+  const label = h('a', { href: '#/jobs', class: 'jobs-link' });
   let activeJobs = [];
-  const cancel = h('button', { class: 'btn small ghost', title: 'Cancel running jobs', onclick: async () => {
+  const cancel = h('button', { class: 'btn small ghost', title: 'Cancel running in-server jobs', onclick: async () => {
     if (!activeJobs.length || !confirm(`Cancel ${activeJobs.length} running job(s)?\n\n${activeJobs.map((j) => j.title).join('\n')}`)) return;
     await Promise.all(activeJobs.map((j) => api(`/api/jobs/${j.id}/cancel`, { method: 'POST', body: {} }).catch(() => {})));
     toast('Cancelling jobs…');
@@ -143,18 +151,51 @@ export function watchJobs() {
   el.append(h('span', { class: 'spinner' }), label, bar, cancel);
   const tick = async () => {
     try {
-      const { jobs } = await api('/api/jobs');
+      const { jobs, tasks = [] } = await api('/api/jobs');
       activeJobs = jobs;
-      if (!jobs.length) { el.hidden = true; clearInterval(jobsTimer); jobsTimer = null; return; }
+      notifyFinishedTasks(tasks);
+      if (!jobs.length && !tasks.length) { el.hidden = true; clearInterval(jobsTimer); jobsTimer = null; return; }
       el.hidden = false;
-      const job = jobs[0];
-      label.textContent = jobs.length > 1 ? `${jobs.length} jobs running` : job.title;
-      el.title = jobs.map((j) => `${j.title}: ${j.message}`).join('\n');
-      bar.set(job.progress);
+      cancel.hidden = !jobs.length;
+      const all = [...jobs, ...tasks];
+      const first = all[0];
+      label.textContent = all.length > 1 ? `${all.length} jobs running` : first.title;
+      el.title = [...jobs.map((j) => `${j.title}: ${j.message}`), ...tasks.map((t) => `${t.title}: ${t.message} (background)`)].join('\n');
+      bar.set(first.progress || 0);
     } catch (e) { /* server restarting */ }
   };
-  jobsTimer = setInterval(tick, 1500);
+  jobsTimer = setInterval(tick, 2000);
   tick();
+}
+
+// Toast when a background job that was running in this tab finishes.
+function notifyFinishedTasks(active) {
+  const now = new Map(active.map((t) => [t.id, t]));
+  if (lastTaskStates) {
+    for (const [id, title] of lastTaskStates) {
+      if (!now.has(id)) {
+        api(`/api/tasks/${encodeURIComponent(id)}`, { params: { log: 0 } }).then((t) => {
+          toast(`${title}: ${t.status === 'done' ? 'finished' : t.status}`, t.status === 'done' ? 'info' : 'error', 8000);
+          emit('task', t);
+        }).catch(() => {});
+      }
+    }
+  }
+  lastTaskStates = new Map(active.map((t) => [t.id, t.title]));
+}
+
+// New datasets (imports) and new outputs (predictions) appear without reloading the page.
+async function refreshAfterTask(task) {
+  try {
+    await loadStatus();
+    renderDatasetSelect();
+    const path = task.params.dataset_path || task.params.output_dir;
+    const active = state.datasets.find((d) => d.id === state.datasetId);
+    if (active && path && active.path === path) {
+      await setDataset(state.datasetId);
+      renderCohortChip();
+    }
+  } catch (e) { /* ignore */ }
 }
 
 async function boot() {
@@ -176,7 +217,7 @@ async function boot() {
   }
   renderDatasetSelect();
   renderCohortChip();
-  if (state.status.jobs && state.status.jobs.length) watchJobs();
+  if ((state.status.jobs && state.status.jobs.length) || (state.status.tasks && state.status.tasks.length)) watchJobs();
   document.getElementById('datasetSelect').addEventListener('change', async (e) => {
     try {
       await setDataset(e.target.value);
@@ -186,11 +227,12 @@ async function boot() {
       route();
     } catch (err) { toast(err.message, 'error'); }
   });
-  subscribe((topic) => {
+  subscribe((topic, detail) => {
     if (topic === 'cohort' || topic === 'pinned' || topic === 'dataset') renderCohortChip();
     if (topic === 'datasets') renderDatasetSelect();
     if (topic === 'job') watchJobs();
-    if (current && current.instance.onEvent) current.instance.onEvent(topic);
+    if (topic === 'task' && detail && detail.status === 'done' && ['import', 'predict'].includes(detail.kind)) refreshAfterTask(detail);
+    if (current && current.instance.onEvent) current.instance.onEvent(topic, detail);
   });
   window.addEventListener('hashchange', route);
   route();

@@ -38,7 +38,7 @@ class AnnotationService:
         if self.cache_dir is None:
             return None
         stat = table.stat()
-        key = stable_key({"v": 1, "dataset": dataset.fingerprint, "table": str(table), "mtime": stat.st_mtime_ns, "genes": dataset.genes})
+        key = stable_key({"v": 2, "dataset": dataset.fingerprint, "table": str(table), "mtime": stat.st_mtime_ns, "genes": dataset.genes})
         return self.cache_dir / "annotations" / f"{key}.json"
 
     def status(self, dataset: Dataset) -> Dict[str, Any]:
@@ -106,12 +106,16 @@ class AnnotationService:
 
 
 def _features_to_models(df, window_start: int) -> List[Dict[str, Any]]:
-    """Group GTF rows into gene -> transcripts -> exon/CDS blocks (window offsets, 0-based)."""
+    """Group GTF rows into gene -> transcripts -> exon/CDS blocks (window offsets, 0-based half-open).
+
+    GTF cache tables (pyranges) are 0-based half-open while ``window_start`` is the 1-based
+    position of window offset 0, so offset = Start - (window_start - 1).
+    """
     genes: Dict[str, Dict[str, Any]] = {}
     transcripts: Dict[str, Dict[str, Any]] = {}
     for row in df.itertuples(index=False):
         feature = row.Feature
-        start = int(row.Start) - window_start
+        start = int(row.Start) - window_start + 1
         end = int(row.End) - window_start + 1
         if feature == "gene":
             genes[str(row.gene_name)] = {"name": str(row.gene_name), "type": str(row.gene_type), "strand": str(row.Strand), "start": start, "end": end, "transcripts": []}

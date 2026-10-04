@@ -5,6 +5,8 @@ import argparse
 import os
 from pathlib import Path
 
+from genomics.visualizer.startup import DEFAULT_PORT
+
 
 def add_visualizer_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     data = parser.add_argument_group("data")
@@ -22,19 +24,24 @@ def add_visualizer_arguments(parser: argparse.ArgumentParser) -> argparse.Argume
     perf.add_argument("--workers", type=int, default=min(8, os.cpu_count() or 4), help="Threads for interactive requests (bulk jobs use up to 16)")
     perf.add_argument("--model-window", type=int, default=32768, help="CNN training window size for the training-axis coordinates (default: 32768)")
 
-    labs = parser.add_argument_group("labs")
-    labs.add_argument("--pigmentation-config", type=Path, default=None, help="Config for the optional Pigmentation Sequence Lab")
-    labs.add_argument("--lab-port", type=int, default=8781, help="Port used when the Pigmentation Sequence Lab is launched")
-    labs.add_argument("--alphagenome-address", default=None, metavar="URL", help="Self-hosted AlphaGenome server for the Labs, e.g. grpc://host:50051 or grpcs://host:50051 (overrides the setting saved from the UI)")
+    jobs = parser.add_argument_group("background jobs")
+    jobs.add_argument("--jobs-dir", type=Path, default=None, metavar="DIR", help="Where import/prediction/training jobs keep their state and logs (default: results/visualizer/jobs)")
+    jobs.add_argument("--no-jobs", action="store_true", help="Do not allow starting imports, predictions or training from the UI")
+
+    labs = parser.add_argument_group("perturbation lab and AlphaGenome")
+    labs.add_argument("--pigmentation-config", type=Path, default=None, help="Training config whose run the Perturbation Lab selects first (default: pigmentation_binary.yaml)")
+    labs.add_argument("--lab-port", type=int, default=8781, help=argparse.SUPPRESS)  # the lab now runs inside the visualizer; kept for old scripts
+    labs.add_argument("--alphagenome-address", default=None, metavar="URL", help="Self-hosted AlphaGenome server, e.g. grpc://host:50051 or grpcs://host:50051 (overrides the setting saved from the UI)")
     labs.add_argument("--alphagenome-ca-cert", type=Path, default=None, metavar="PEM", help="CA certificate for a self-hosted AlphaGenome server using TLS")
     labs.add_argument("--alphagenome-server-dir", type=Path, default=None, metavar="DIR", help="alphagenome_research checkout with server.py, for 'Start server on this machine' (default: $ALPHAGENOME_SERVER_DIR or ../alphagenome_research)")
     labs.add_argument("--alphagenome-server-python", type=Path, default=None, metavar="PYTHON", help="Interpreter with alphagenome_research + JAX for the local server (default: $ALPHAGENOME_SERVER_PYTHON, else the first conda env with alphagenome_research and CUDA jax)")
 
     server = parser.add_argument_group("server")
     server.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
-    server.add_argument("--port", type=int, default=8780, help="Port (default: 8780)")
-    server.add_argument("--open", action="store_true", help="Open the browser after starting")
+    server.add_argument("--port", type=int, default=None, help=f"Port (default: {DEFAULT_PORT}, or the next free one if it is taken). A visualizer already running there with the requested datasets is reused")
+    server.add_argument("--open", action="store_true", help="Open the browser once the server is listening (or open the visualizer already running)")
     server.add_argument("--no-add-datasets", action="store_true", help="Disallow opening other dataset paths from the UI")
+    server.add_argument("--no-remote", action="store_true", help="Do not contact public databases (HGNC, Gene Ontology/QuickGO, OLS, ENCODE, FANTOM5); only cached lookups are used")
     server.add_argument("--verbose", action="store_true", help="Log every request")
     return parser
 

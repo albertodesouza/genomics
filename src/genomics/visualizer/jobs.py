@@ -127,6 +127,14 @@ class JobManager:
         self._pool.submit(target)
         return job
 
+    def peek(self, key: str) -> Optional[Job]:
+        """The job for ``key`` (running or finished and not yet consumed), without starting one."""
+        with self._lock:
+            job = self._jobs.get(key)
+            if job is None:
+                job = next((j for j in self._by_id.values() if j.key == key), None)
+            return job
+
     def get(self, job_id: str) -> Optional[Job]:
         return self._by_id.get(job_id)
 

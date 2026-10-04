@@ -1,7 +1,8 @@
-"""AlphaGenome backend used by the Labs: hosted API, a remote server, or a server on this machine.
+"""AlphaGenome backend used by the visualizer: hosted API, a remote server, or a server on this machine.
 
-The choice is saved to ``~/.config/genomics/visualizer_alphagenome.json`` and handed to lab
-processes through ``ALPHAGENOME_ADDRESS`` / ``ALPHAGENOME_TLS_CA_CERT`` (read by
+The choice is saved to ``~/.config/genomics/visualizer_alphagenome.json``. The Perturbation Lab
+calls it in-process (:meth:`AlphaGenomeBackend.create_client`); background prediction jobs get it
+through ``ALPHAGENOME_ADDRESS`` / ``ALPHAGENOME_TLS_CA_CERT`` (read by
 :func:`genomics.core.alphagenome_connection.create_dna_client`).
 
 "This machine" runs ``server.py`` from an ``alphagenome_research`` checkout (JAX + model weights)
@@ -324,6 +325,17 @@ class AlphaGenomeBackend:
             if ca_cert:
                 env[CA_CERT_ENV] = str(Path(ca_cert).expanduser())
         return env
+
+    def create_client(self, timeout: float = 60.0):
+        """A ``DnaClient`` for the selected backend, for calls made inside the visualizer."""
+        from genomics.core.alphagenome_connection import create_dna_client, resolve_api_key
+
+        address, ca_cert = self._endpoint()
+        if address:
+            return create_dna_client(address=address, ca_cert=ca_cert, timeout=timeout)
+        from alphagenome.models import dna_client
+
+        return dna_client.create(api_key=resolve_api_key(), timeout=timeout)
 
     def describe(self) -> Dict[str, Any]:
         return {

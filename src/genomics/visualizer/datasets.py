@@ -8,6 +8,9 @@ A dataset is any directory following the canonical layout::
     individuals/<sample>/windows/<gene>/<sample>.window[.consensus_ready].vcf.gz
     individuals/<sample>/windows/<gene>/predictions_<H>/<output>.npz (+ <output>_metadata.json)
 
+Track outputs may be binned (``resolution`` bp per row, e.g. 128 for ChIP-seq); contact maps and
+splice junctions are listed separately (``other_outputs``) since they are not 1-D tracks.
+
 Nothing here is specific to 1000 Genomes: sample facets are taken from whatever fields the
 pedigree records carry (plus an optional annotation table), genes are discovered from the
 reference windows on disk, and outputs/haplotypes/tracks from the prediction files.
@@ -232,6 +235,22 @@ class Dataset:
             )
         return fields
 
+    def set_field(self, name: str, values: Dict[str, Any]) -> None:
+        """Add or replace a sample field (e.g. a model's derived target) and refresh the facets."""
+        with self._lock:
+            for row in self.samples:
+                value = values.get(row["sample_id"])
+                if value is None:
+                    row.pop(name, None)
+                else:
+                    row[name] = _scalar(value)
+            self.fields = self._describe_fields(self.samples)
+
+    def reset_gene_cache(self) -> None:
+        """Forget discovered outputs/tracks (after new predictions were written)."""
+        with self._lock:
+            self._gene_cache.clear()
+
     def facet_fields(self) -> List[str]:
         return [f["name"] for f in self.fields if f["kind"] == "categorical"]
 
@@ -346,6 +365,28 @@ class Dataset:
     def prediction_path(self, sample_id: str, gene: str, haplotype: str, output: str) -> Path:
         return self.gene_dir(sample_id, gene) / f"predictions_{haplotype}" / f"{output}.npz"
 
+    def reference_prediction_path(self, gene: str, output: str) -> Path:
+        """AlphaGenome prediction of the reference window (``predict-dataset --haplotypes ref``)."""
+        return self.reference_dir(gene) / "predictions_ref" / f"{output}.npz"
+
+    def reference_outputs(self, gene: str) -> Dict[str, List[Dict[str, Any]]]:
+        """{output: track metadata records} of the stored reference predictions of a window."""
+        folder = self.reference_dir(gene) / "predictions_ref"
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        if not folder.is_dir():
+            return out
+        for npz in sorted(folder.glob("*.npz")):
+            meta_path = npz.with_name(f"{npz.stem}_metadata.json")
+            records: Any = []
+            if meta_path.exists():
+                try:
+                    payload = load_json(meta_path)
+                    records = payload.get("metadata", payload) if isinstance(payload, dict) else payload
+                except Exception:
+                    records = []
+            out[npz.stem] = [r for r in records if isinstance(r, dict)] if isinstance(records, list) else []
+        return out
+
     def haplotype_fasta(self, sample_id: str, gene: str, haplotype: str) -> Path:
         return self.gene_dir(sample_id, gene) / f"{sample_id}.{haplotype}.window.fixed.fa"
 
@@ -373,46 +414,67 @@ class Dataset:
         sample = self.representative_sample(gene)
         haplotypes: List[str] = []
         outputs: Dict[str, Dict[str, Any]] = {}
+        others: Dict[str, Dict[str, Any]] = {}
         if sample:
             gene_dir = self.gene_dir(sample, gene)
             haplotypes = sorted(p.name[len("predictions_"):] for p in gene_dir.glob("predictions_*") if p.is_dir())
             for hap in haplotypes[:1]:
                 for npz in sorted((gene_dir / f"predictions_{hap}").glob("*.npz")):
-                    outputs[npz.stem] = self._describe_output(npz)
+                    described = self._describe_output(npz, window.length)
+                    if described.get("kind") == "tracks" and described["tracks"]:
+                        outputs[npz.stem] = described
+                    else:
+                        others[npz.stem] = described
         info = {
             **window.as_dict(),
             "representative_sample": sample,
             "haplotypes": haplotypes,
             "outputs": outputs,
+            "other_outputs": others,
             "has_reference": (self.reference_dir(gene) / "ref.window.fa").exists(),
+            "reference_outputs": sorted(self.reference_outputs(gene)),
             "model_window": self.model_window(gene),
         }
         with self._lock:
             self._gene_cache[gene] = info
         return info
 
-    def _describe_output(self, npz_path: Path) -> Dict[str, Any]:
-        from genomics.visualizer.signals import load_prediction_matrix
+    def _describe_output(self, npz_path: Path, window_length: Optional[int] = None) -> Dict[str, Any]:
+        """Tracks, kind (tracks / contact_map / junctions), resolution and length in bp of one output."""
+        from genomics.visualizer.signals import npz_header
 
-        try:
-            matrix = load_prediction_matrix(npz_path)
-            shape = list(matrix.shape)
-        except Exception as exc:
-            return {"error": str(exc), "tracks": [], "length": None}
-        tracks: List[Dict[str, Any]] = []
         meta_path = npz_path.with_name(f"{npz_path.stem}_metadata.json")
-        records: List[Dict[str, Any]] = []
+        payload: Any = {}
         if meta_path.exists():
             try:
                 payload = load_json(meta_path)
-                records = payload.get("metadata", payload) if isinstance(payload, dict) else payload
-                records = records if isinstance(records, list) else []
             except Exception:
-                records = []
-        for idx in range(shape[1]):
+                payload = {}
+        records = payload.get("metadata", payload) if isinstance(payload, dict) else payload
+        records = records if isinstance(records, list) else []
+        extra = payload if isinstance(payload, dict) else {}
+        try:
+            header = npz_header(npz_path)
+        except Exception as exc:
+            return {"error": str(exc), "tracks": [], "length": None, "kind": "tracks"}
+        shape = list(header["shape"])
+        kind = extra.get("kind") or ("junctions" if "starts" in header["members"] else "contact_map" if len(shape) == 3 else "tracks")
+        resolution = extra.get("resolution") or header.get("resolution")
+        if kind == "tracks" and not resolution:
+            # Older files carry no resolution: binned when the window length is a multiple of the rows.
+            rows = shape[0] if shape else 0
+            resolution = window_length // rows if window_length and rows and rows < window_length and window_length % rows == 0 else 1
+        n_tracks = shape[-1] if len(shape) >= 2 else (1 if shape else 0)
+        tracks: List[Dict[str, Any]] = []
+        for idx in range(n_tracks):
             meta = records[idx] if idx < len(records) and isinstance(records[idx], dict) else {}
             tracks.append({"index": idx, "label": track_label(idx, meta), "short": track_short_label(idx, meta), "metadata": {k: _scalar(v) for k, v in meta.items()}})
-        return {"tracks": tracks, "length": shape[0], "dtype": "float32"}
+        out: Dict[str, Any] = {"tracks": tracks, "kind": kind, "resolution": int(resolution) if resolution else None, "dtype": "float32", "shape": shape}
+        if kind == "junctions":
+            out.update(length=window_length, junctions=shape[0] if shape else 0)
+        else:
+            out.update(bins=shape[0] if shape else 0, length=(shape[0] if shape else 0) * int(resolution or 1))
+        return out
 
     def model_window(self, gene: str, size: int = 32768) -> Optional[Dict[str, int]]:
         """Reference-centred training window, matching DynamicIndelAligner's centring."""
@@ -466,6 +528,9 @@ def track_label(idx: int, meta: Optional[Dict[str, Any]]) -> str:
     if not meta:
         return f"Track {idx}"
     bits = []
+    mark = meta.get("transcription_factor") or meta.get("histone_mark")
+    if mark:
+        bits.append(str(mark))
     name = meta.get("biosample_name") or meta.get("name")
     if name:
         bits.append(str(name))
@@ -482,6 +547,9 @@ def track_short_label(idx: int, meta: Optional[Dict[str, Any]]) -> str:
     if not meta:
         return f"T{idx}"
     name = str(meta.get("biosample_name") or meta.get("ontology_curie") or meta.get("name") or f"T{idx}")
+    mark = meta.get("transcription_factor") or meta.get("histone_mark")
+    if mark:
+        name = f"{mark} · {name}"
     strand = meta.get("strand")
     return f"{name} ({strand})" if strand and strand != "." else name
 
@@ -507,6 +575,18 @@ class DatasetCatalog:
             self._datasets[dataset.id] = dataset
         return dataset
 
+    def reload(self, dataset_id: str) -> Dataset:
+        """Re-read a dataset from disk (new samples, genes or predictions), keeping its id."""
+        old = self.get(dataset_id)
+        fresh = Dataset(old.path, dataset_id=old.id, annotations=old.annotations_path)
+        with self._lock:
+            self._datasets[old.id] = fresh
+        return fresh
+
+    def remove(self, dataset_id: str) -> None:
+        with self._lock:
+            self._datasets.pop(dataset_id, None)
+
     def get(self, dataset_id: str) -> Dataset:
         dataset = self._datasets.get(dataset_id)
         if dataset is None:
@@ -515,6 +595,48 @@ class DatasetCatalog:
 
     def all(self) -> List[Dataset]:
         return list(self._datasets.values())
+
+
+class DatasetMemory:
+    """Datasets opened or imported from the UI, reopened when the visualizer starts again.
+
+    Stored in ``~/.config/genomics/visualizer_datasets.json`` (``$XDG_CONFIG_HOME`` honoured).
+    """
+
+    def __init__(self, path: Optional[Path] = None):
+        if path is None:
+            import os
+
+            base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+            path = Path(base) / "genomics" / "visualizer_datasets.json"
+        self.path = Path(path)
+        self._lock = threading.Lock()
+
+    def entries(self) -> List[Dict[str, Optional[str]]]:
+        try:
+            data = load_json(self.path)
+        except (OSError, ValueError):
+            return []
+        items = data.get("datasets") if isinstance(data, dict) else None
+        return [i for i in items or [] if isinstance(i, dict) and i.get("path")]
+
+    def _write(self, items: List[Dict[str, Optional[str]]]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps({"datasets": items}, indent=2) + "\n", encoding="utf-8")
+
+    def remember(self, path: Path, annotations: Optional[Path]) -> None:
+        with self._lock:
+            items = [i for i in self.entries() if Path(str(i["path"])) != Path(path)]
+            items.append({"path": str(path), "annotations": str(annotations) if annotations else None})
+            self._write(items)
+
+    def missing(self) -> List[str]:
+        """Remembered datasets whose directory (or its dataset_metadata.json) is gone."""
+        return [str(i["path"]) for i in self.entries() if not (Path(str(i["path"])) / "dataset_metadata.json").exists()]
+
+    def forget(self, path: Path) -> None:
+        with self._lock:
+            self._write([i for i in self.entries() if Path(str(i["path"])) != Path(path)])
 
 
 def to_jsonable(value: Any) -> Any:

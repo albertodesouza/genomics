@@ -261,13 +261,16 @@ def _visualizer_args(args: argparse.Namespace) -> list:
         command_args.extend(["--dataset-id", dataset_id])
     for root in args.runs_root:
         command_args.extend(["--runs-root", root])
-    for flag in ("annotations", "consensus_dataset_dir", "gtf", "cache_dir", "pigmentation_config"):
+    for flag in (
+        "annotations", "consensus_dataset_dir", "gtf", "cache_dir", "pigmentation_config", "jobs_dir",
+        "alphagenome_address", "alphagenome_ca_cert", "alphagenome_server_dir", "alphagenome_server_python", "port",
+    ):
         value = getattr(args, flag)
-        if value:
+        if value is not None and value != "":
             command_args.extend([f"--{flag.replace('_', '-')}", value])
-    for flag in ("memory_mb", "workers", "model_window", "lab_port", "host", "port"):
+    for flag in ("memory_mb", "workers", "model_window", "lab_port", "host"):
         command_args.extend([f"--{flag.replace('_', '-')}", getattr(args, flag)])
-    for flag in ("no_disk_cache", "open", "no_add_datasets", "verbose"):
+    for flag in ("no_disk_cache", "open", "no_add_datasets", "no_remote", "no_jobs", "verbose"):
         if getattr(args, flag):
             command_args.append(f"--{flag.replace('_', '-')}")
     return command_args
@@ -281,9 +284,10 @@ def cmd_genotype_workbench(args: argparse.Namespace) -> int:
             "--runs-root", args.runs_root,
             "--consensus-dataset-dir", args.consensus_dataset_dir,
             "--host", args.host,
-            "--port", args.port,
             "--lab-port", args.pigmentation_lab_port,
         ]
+        if args.port is not None:
+            command_args.extend(["--port", args.port])
         if args.pigmentation_config:
             command_args.extend(["--pigmentation-config", args.pigmentation_config])
         return _run_module("genomics.visualizer", command_args)
@@ -297,7 +301,7 @@ def cmd_genotype_workbench(args: argparse.Namespace) -> int:
         "--host",
         args.host,
         "--port",
-        args.port,
+        args.port if args.port is not None else 8780,
     ]
     if args.aligned_tsv_root:
         command_args.extend(["--aligned-tsv-root", args.aligned_tsv_root])
@@ -526,6 +530,37 @@ def cmd_non_longevous_build_window(args: argparse.Namespace) -> int:
     if forwarded_args[:1] == ["--"]:
         forwarded_args = forwarded_args[1:]
     return _run_module("genomics.workflows.dataset_builders.non_longevous.build_window_and_predict", forwarded_args)
+
+
+def cmd_vcf_import(args: argparse.Namespace) -> int:
+    command_args: list[PathLike] = ["--spec", args.spec]
+    if args.workers:
+        command_args.extend(["--workers", str(args.workers)])
+    if args.inspect:
+        command_args.append("--inspect")
+    return _run_module("genomics.workflows.dataset_builders.vcf_import", command_args)
+
+
+def cmd_alphagenome_predict_dataset(args: argparse.Namespace) -> int:
+    command_args: list[PathLike] = [args.dataset_dir, "--outputs", args.outputs, "--ontology", args.ontology, "--haplotypes", args.haplotypes]
+    for flag in ("genes", "samples"):
+        if getattr(args, flag):
+            command_args.extend([f"--{flag}", getattr(args, flag)])
+    if args.samples_file:
+        command_args.extend(["--samples-file", args.samples_file])
+    if args.all_tissues:
+        command_args.append("--all-tissues")
+    if args.overwrite:
+        command_args.append("--overwrite")
+    command_args.extend(["--timeout", str(args.timeout), "--max-attempts", str(args.max_attempts), "--rate-limit-delay", str(args.rate_limit_delay)])
+    return _run_module("genomics.workflows.alphagenome.predict_dataset", command_args)
+
+
+def cmd_alphagenome_catalog(args: argparse.Namespace) -> int:
+    command_args: list[PathLike] = ["--output", args.output]
+    if args.csv:
+        command_args.extend(["--csv", args.csv])
+    return _run_module("genomics.workflows.alphagenome.catalog", command_args)
 
 
 def cmd_non_longevous_visualize(args: argparse.Namespace) -> int:
@@ -1080,6 +1115,11 @@ def build_parser() -> argparse.ArgumentParser:
     nlv = non_longevous_sub.add_parser("visualize")
     nlv.add_argument("config", type=Path)
     nlv.set_defaults(func=cmd_non_longevous_visualize)
+    vci = builders_sub.add_parser("vcf-import", help="Build a canonical dataset from any phased VCF plus sample metadata")
+    vci.add_argument("--spec", type=Path, required=True, help="Import spec (JSON/YAML): name, output_dir, vcf (path, {chrom} pattern or URL), reference_fasta (path or URL), window_size, genes/regions, metadata_file or metadata, optional vcf_overrides")
+    vci.add_argument("--workers", type=int, default=None)
+    vci.add_argument("--inspect", action="store_true", help="Only print the VCF's samples, contigs and phasing")
+    vci.set_defaults(func=cmd_vcf_import)
 
     alphagenome = subparsers.add_parser("alphagenome", help="Workflow AlphaGenome/neural_module")
     alphagenome_sub = alphagenome.add_subparsers(dest="alphagenome_command", required=True)
@@ -1109,6 +1149,24 @@ def build_parser() -> argparse.ArgumentParser:
     agc.add_argument("--strand", choices=["plus", "minus"], default=None)
     agc.add_argument("--batch-size", type=int, default=None)
     agc.set_defaults(func=cmd_alphagenome_chr15_local)
+    agp = alphagenome_sub.add_parser("predict-dataset", help="AlphaGenome predictions for every haplotype window of a canonical dataset")
+    agp.add_argument("dataset_dir", type=Path)
+    agp.add_argument("--outputs", default="RNA_SEQ", help="Comma separated among RNA_SEQ, CAGE, PROCAP, DNASE, ATAC, CHIP_HISTONE, CHIP_TF, SPLICE_SITES, SPLICE_SITE_USAGE, SPLICE_JUNCTIONS, CONTACT_MAPS, or 'all'")
+    agp.add_argument("--ontology", default="", help="Ontology CURIEs, e.g. CL:1000458,UBERON:0002107")
+    agp.add_argument("--all-tissues", action="store_true")
+    agp.add_argument("--genes", default="")
+    agp.add_argument("--samples", default="")
+    agp.add_argument("--samples-file", type=Path, default=None)
+    agp.add_argument("--haplotypes", default="H1,H2")
+    agp.add_argument("--overwrite", action="store_true")
+    agp.add_argument("--timeout", type=float, default=600.0)
+    agp.add_argument("--max-attempts", type=int, default=3)
+    agp.add_argument("--rate-limit-delay", type=float, default=0.0)
+    agp.set_defaults(func=cmd_alphagenome_predict_dataset)
+    agcat = alphagenome_sub.add_parser("catalog", help="List every AlphaGenome output track and ontology term (JSON, optional CSV)")
+    agcat.add_argument("--output", type=Path, default=Path("alphagenome_catalog.json"))
+    agcat.add_argument("--csv", type=Path, default=None, help="Also write one row per track")
+    agcat.set_defaults(func=cmd_alphagenome_catalog)
 
     genotype = subparsers.add_parser("genotype", help="Pipeline genotype_based_predictor")
     genotype_sub = genotype.add_subparsers(dest="genotype_command", required=True)
@@ -1178,7 +1236,7 @@ def build_parser() -> argparse.ArgumentParser:
     gp_workbench.add_argument("--consensus-dataset-dir", type=Path, default=DEFAULT_CONSENSUS_DATASET_DIR)
     gp_workbench.add_argument("--aligned-tsv-root", type=Path, default=None)
     gp_workbench.add_argument("--host", default="127.0.0.1")
-    gp_workbench.add_argument("--port", type=int, default=8780)
+    gp_workbench.add_argument("--port", type=int, default=None, help="Port (default: 8780; without --legacy the next free one if it is taken)")
     gp_workbench.add_argument("--pigmentation-config", type=Path, default=None)
     gp_workbench.add_argument("--pigmentation-lab-port", type=int, default=8781)
     gp_workbench.add_argument("--legacy", action="store_true", help="Launch the old multi-process workbench instead of the unified visualizer")
