@@ -1,19 +1,42 @@
 // Tracks: interactive AlphaGenome signal browser.
 //
+// Tracks:  any mix of outputs (RNA-seq, CAGE, DNase, ChIP, …), one panel per track, plus gene models
+//          and a sequence lane (per-base letter frequencies of the pinned haplotypes or reference).
 // Modes:   individuals (pinned samples) · groups (cohort means ± SD by any facet) · population
 //          heatmap (every cohort sample as a row, sorted by a facet).
 // Coords:  genomic (each haplotype remapped through its own indels) · haplotype (raw prediction
 //          index) · training axis (bcftools_chain expanded alignment used for CNN inputs).
+// Compare: AlphaGenome's prediction of the reference genome (a line in every panel) and the
+//          observed ENCODE / FANTOM5 signal behind each track (a lane under the panel).
+// Click a track name for its card (ontology terms, assay, experiments), a gene model or the gene
+// button for the gene card (HGNC, database links, Gene Ontology).
 import { api, apiJob, isAbort, Latest } from '../api.js';
 import { navigate, updateRouteParams, watchJobs } from '../app.js';
 import { state, ds, geneInfo, setLocus, setPinned, togglePinned, categoricalFields, filterRows } from '../state.js';
-import { h, clear, icon, iconButton, segmented, select, setOptions, field, fmtInt, fmtBp, fmtNum, showTooltip, hideTooltip, toast, jobOverlay, debounce, escapeHtml, errorBox } from '../ui.js';
+import { h, clear, icon, iconButton, segmented, select, field, fmtInt, fmtBp, fmtNum, showTooltip, hideTooltip, toast, jobOverlay, debounce, escapeHtml, errorBox } from '../ui.js';
 import { Viewport, ColorSlots, setupCanvas, theme, ticks, withAlpha, seqColor, onResize, css } from '../plot.js';
+import { loadGeneAnnotations, packGenes, drawGeneLanes, geneLanesHeight, geneAt, geneTooltip } from '../gene_lanes.js';
+import { labelGeneOptions, openGeneCard, openTrackCard } from '../cards.js';
+import { openPredictForm } from '../forms.js';
 
 const GUTTER_L = 64;
 const GUTTER_R = 14;
 const PANEL_H = 118;
 const MAX_INDIVIDUALS = 8;
+const MAX_TRACKS = 16;
+const SEQ_H = 62;
+const SEQ_LETTERS_PX = 7; // px per base from which the sequence lane draws letters
+const OBS_H = 72; // observed-data lane under each track panel
+const REF = '@reference'; // the reference-genome prediction series
+const MAX_SEQ_SAMPLES = 24;
+const OUTPUT_LABELS = { rna_seq: 'RNA-seq', cage: 'CAGE', procap: 'PRO-cap', dnase: 'DNase', atac: 'ATAC', chip_histone: 'ChIP histone', chip_tf: 'ChIP TF', splice_sites: 'Splice sites', splice_site_usage: 'Splice usage', splice_junctions: 'Splice junctions', contact_maps: 'Contact maps' };
+const outputLabel = (name) => OUTPUT_LABELS[String(name).toLowerCase()] || name;
+/** Track keys are "output:index" so tracks of several outputs can be shown together. */
+const trackKey = (output, index) => `${output}:${index}`;
+function parseTrackKey(key) {
+  const k = String(key).lastIndexOf(':');
+  return k < 0 ? [null, Number(key)] : [key.slice(0, k), Number(key.slice(k + 1))];
+}
 const COORD_OPTIONS = [
   { value: 'reference', label: 'Genomic', title: 'Reference coordinates: each haplotype is remapped through its own indels (deleted bases are gaps)' },
   { value: 'haplotype', label: 'Haplotype', title: 'Raw prediction index of each haplotype sequence (positions drift after indels)' },
@@ -36,6 +59,8 @@ class TracksPage {
     this.pop = null;
     this.axis = null;
     this.annotations = null;
+    this.seq = null;
+    this.seqLatest = new Latest();
     this.hover = null;
     this.disposers = [];
   }
@@ -46,14 +71,17 @@ class TracksPage {
     const saved = state.locus || {};
     const gene = (params.gene && genes.includes(params.gene)) ? params.gene : (saved.gene && genes.includes(saved.gene) ? saved.gene : (state.summary.genes.find((g) => g.in_metadata) || state.summary.genes[0] || {}).gene);
     const cats = categoricalFields();
+    // Older saved state kept one output plus numeric track indices.
+    const legacyOutput = saved.output || null;
+    const migrate = (t) => (typeof t === 'number' ? (legacyOutput ? trackKey(legacyOutput, t) : null) : t);
+    this.preferOutput = params.output || legacyOutput;
     this.cfg = {
       gene,
-      output: params.output || saved.output || null,
       // A URL locus without coords is genomic (coords are omitted from URLs when genomic).
       coords: params.coords || (params.start !== undefined ? 'reference' : saved.coords) || 'reference',
       mode: params.mode || saved.mode || 'individuals',
       hap: saved.hap || 'H1+H2',
-      tracks: saved.tracks || null,
+      tracks: Array.isArray(saved.tracks) ? saved.tracks.map(migrate).filter(Boolean) : null,
       groupField: saved.groupField && cats.some((f) => f.name === saved.groupField) ? saved.groupField : (cats.find((f) => f.name === 'superpopulation') || cats[0] || {}).name,
       groups: saved.groups || null,
       yScale: saved.yScale || 'linear',
@@ -61,12 +89,16 @@ class TracksPage {
       diff: saved.diff ?? false,
       envelope: saved.envelope ?? true,
       band: saved.band ?? true,
-      popTrack: saved.popTrack ?? 0,
+      popTrack: migrate(saved.popTrack ?? null),
+      seqSource: saved.seqSource || 'pinned',
       popRows: saved.popRows || 600,
+      showRef: saved.showRef ?? true,
+      showObserved: saved.showObserved ?? false,
+      obsScale: saved.obsScale || 'tpm',
     };
     this.buildLayout();
     this.viewport = new Viewport({ length: 1, start: 0, end: 1, minSpan: 30, onChange: () => this.onViewChange() });
-    for (const el of [this.overviewHost, this.rulerHost, this.panelsHost]) {
+    for (const el of [this.overviewHost, this.rulerHost, this.seqHost, this.panelsHost]) {
       const isOverview = el === this.overviewHost;
       if (isOverview) this.attachOverview(el);
       else this.viewport.attach(el, () => this.geom(), {
@@ -86,6 +118,15 @@ class TracksPage {
       togglePinned(id);
       toast(wasPinned ? `Unpinned ${id}` : `Pinned ${id} — switch to Individuals to compare`);
     });
+    // Clicking a gene model on the ruler opens its card.
+    let rulerDown = null;
+    this.rulerHost.addEventListener('pointerdown', (e) => { rulerDown = [e.clientX, e.clientY]; });
+    this.rulerHost.addEventListener('click', (e) => {
+      if (!rulerDown || Math.hypot(e.clientX - rulerDown[0], e.clientY - rulerDown[1]) > 4 || !this.geneRows) return;
+      const rect = this.rulerHost.getBoundingClientRect();
+      const gene = geneAt(this.geneRows, e.clientX - rect.left, e.clientY - rect.top, { top: 30, xOf: this.geneX });
+      if (gene) openGeneCard(gene.name);
+    });
     this.disposers.push(onResize(this.scroll, () => this.render()));
     const onTheme = () => this.render();
     window.addEventListener('themechange', onTheme);
@@ -95,8 +136,8 @@ class TracksPage {
 
   buildLayout() {
     const genes = state.summary.genes.map((g) => ({ value: g.gene, label: g.gene }));
-    this.geneSelect = select(genes, this.cfg.gene, (v) => this.setGene(v, {}), { 'aria-label': 'Gene', style: { minWidth: '120px' } });
-    this.outputSelect = select([], null, (v) => { this.cfg.output = v; this.cfg.tracks = null; this.applyGeneInfo(); this.invalidate(); }, { 'aria-label': 'Output' });
+    this.geneSelect = select(genes, this.cfg.gene, (v) => this.setGene(v, {}), { 'aria-label': 'Gene', style: { minWidth: '120px', maxWidth: '300px' } });
+    labelGeneOptions(this.geneSelect); // HGNC approved names, when the HGNC table is reachable
     this.coordSeg = segmented(COORD_OPTIONS, this.cfg.coords, (v) => this.setCoords(v));
     this.modeSeg = segmented([
       { value: 'individuals', label: 'Individuals', title: 'Pinned individuals as separate lines' },
@@ -115,7 +156,8 @@ class TracksPage {
     this.statusEl = h('span', { class: 'muted', style: { fontSize: '12px' } });
 
     const toolbar = h('div', { class: 'ws-toolbar' },
-      field('Gene', this.geneSelect), field('Output', this.outputSelect),
+      field('Gene', h('div', { style: { display: 'flex', gap: '4px', alignItems: 'center' } }, this.geneSelect,
+        iconButton('info', 'Gene card: HGNC names, database links (Ensembl, NCBI, UniProt, GTEx, …) and Gene Ontology', () => openGeneCard(this.cfg.gene), 'icon-btn bordered'))),
       field('Coordinates', this.coordSeg),
       h('div', { class: 'divider' }),
       field('Show', this.modeSeg), field('Haplotype', this.hapSeg),
@@ -135,13 +177,14 @@ class TracksPage {
 
     this.overviewHost = h('div', { class: 'canvas-host', style: { borderBottom: '1px solid var(--line)' } }, h('canvas'));
     this.rulerHost = h('div', { class: 'canvas-host', style: { borderBottom: '1px solid var(--line)' } }, h('canvas'));
+    this.seqHost = h('div', { class: 'canvas-host seq-track', style: { borderBottom: '1px solid var(--line)' } }, h('canvas'));
     this.panelsHost = h('div', { class: 'canvas-host' });
     this.crosshair = h('div', { style: { position: 'absolute', top: '0', bottom: '0', width: '1px', background: 'var(--ink-3)', opacity: '.6', pointerEvents: 'none', zIndex: '3' }, hidden: true });
     this.brush = h('div', { style: { position: 'absolute', top: '0', bottom: '0', background: 'var(--accent-wash)', borderLeft: '1px solid var(--accent)', borderRight: '1px solid var(--accent)', pointerEvents: 'none', zIndex: '3' }, hidden: true });
     this.loadingLine = h('div', { class: 'loading-line', hidden: true });
     this.legend = h('div', { class: 'legend' });
     this.footer = h('div', { class: 'muted', style: { padding: '10px 16px', fontSize: '12px' } });
-    this.scroll = h('div', { class: 'ws-scroll' }, this.loadingLine, this.overviewHost, this.rulerHost, this.legend, h('div', { style: { position: 'relative' } }, this.panelsHost, this.crosshair, this.brush), this.footer);
+    this.scroll = h('div', { class: 'ws-scroll' }, this.loadingLine, this.overviewHost, this.legend, h('div', { style: { position: 'relative' } }, this.rulerHost, this.seqHost, this.panelsHost, this.crosshair, this.brush), this.footer);
     this.side = h('aside', { class: 'side', 'aria-label': 'Track settings' });
     this.workspace = h('div', { class: 'workspace' }, h('div', { class: 'ws-main' }, toolbar, locus, this.scroll), this.side);
     this.root.appendChild(this.workspace);
@@ -156,7 +199,7 @@ class TracksPage {
   async setGene(gene, { start, end, keepView } = {}) {
     this.cfg.gene = gene;
     this.geneSelect.value = gene;
-    this.data = null; this.pop = null; this.annotations = null; this.axis = null;
+    this.data = null; this.pop = null; this.annotations = null; this.axis = null; this.seq = null;
     this.status('Loading gene…');
     try {
       this.info = await geneInfo(gene);
@@ -180,26 +223,75 @@ class TracksPage {
     this.invalidate();
   }
 
+  /** Keep only tracks this gene has; default to the first tracks of the preferred output. */
   applyGeneInfo() {
-    const outputs = Object.keys(this.info.outputs || {});
-    if (!outputs.length) {
-      setOptions(this.outputSelect, [{ value: '', label: 'no predictions' }], '');
-      this.cfg.output = null;
-      return;
-    }
-    if (!outputs.includes(this.cfg.output)) this.cfg.output = outputs.includes('rna_seq') ? 'rna_seq' : outputs[0];
-    setOptions(this.outputSelect, outputs, this.cfg.output);
-    const n = this.trackMeta().length;
-    if (!this.cfg.tracks || this.cfg.tracks.some((t) => t >= n)) this.cfg.tracks = Array.from({ length: Math.min(n, 6) }, (_, i) => i);
-    if (this.cfg.popTrack >= n) this.cfg.popTrack = 0;
+    const outputs = this.outputs();
+    const valid = (key) => { const [o, i] = parseTrackKey(key); return !!(o && this.info.outputs[o] && i >= 0 && i < this.info.outputs[o].tracks.length); };
+    const kept = (this.cfg.tracks || []).filter(valid);
+    if (kept.length || (this.cfg.tracks && !this.cfg.tracks.length)) this.cfg.tracks = this.sortTracks(kept);
+    else if (outputs.length) {
+      const o = outputs.includes(this.preferOutput) ? this.preferOutput : outputs.includes('rna_seq') ? 'rna_seq' : outputs[0];
+      this.cfg.tracks = this.trackMeta(o).slice(0, 6).map((m) => trackKey(o, m.index));
+    } else this.cfg.tracks = [];
+    if (!valid(this.cfg.popTrack)) this.cfg.popTrack = this.cfg.tracks[0] || (outputs.length ? trackKey(outputs[0], 0) : null);
   }
 
-  trackMeta() { return ((this.info && this.info.outputs[this.cfg.output]) || { tracks: [] }).tracks; }
+  outputs() { return Object.keys((this.info && this.info.outputs) || {}); }
+
+  trackMeta(output) { return ((this.info && this.info.outputs[output]) || { tracks: [] }).tracks; }
+
+  /** {output, index, meta} of a track key. */
+  track(key) {
+    const [output, index] = parseTrackKey(key);
+    return { output, index, meta: this.trackMeta(output)[index] || {} };
+  }
+
+  trackLabel(key, short = false) {
+    const { output, index, meta } = this.track(key);
+    return `${outputLabel(output)} · ${(short && meta.short) || meta.label || `track ${index}`}`;
+  }
+
+  /** Panels follow the user's order (drag a panel's grip); new tracks are appended. */
+  sortTracks(keys) { return [...new Set(keys)]; }
+
+  /** Move the panel at ``from`` to ``to`` (no refetch: the data key ignores the track order). */
+  moveTrack(from, to) {
+    const tracks = [...(this.cfg.tracks || [])];
+    if (from === to || from < 0 || to < 0 || from >= tracks.length || to >= tracks.length) return;
+    tracks.splice(to, 0, ...tracks.splice(from, 1));
+    this.cfg.tracks = tracks;
+    this.persist();
+    this.render();
+  }
+
+  /** Data panels in the order of ``cfg.tracks`` (responses come grouped by output). */
+  orderPanels() {
+    if (!this.data) return;
+    const rank = new Map((this.cfg.tracks || []).map((k, i) => [k, i]));
+    this.data.panels.sort((a, b) => (rank.get(a.trackKey) ?? 1e9) - (rank.get(b.trackKey) ?? 1e9));
+  }
+
+  /** Selected tracks grouped by output: [[output, [indices]], …] in panel order. */
+  tracksByOutput() {
+    const groups = new Map();
+    for (const key of this.cfg.tracks || []) {
+      const [o, i] = parseTrackKey(key);
+      if (!groups.has(o)) groups.set(o, []);
+      groups.get(o).push(i);
+    }
+    return [...groups.entries()];
+  }
+
+  shownOutputs() {
+    if (this.cfg.mode === 'population') return this.cfg.popTrack ? [parseTrackKey(this.cfg.popTrack)[0]] : [];
+    return this.tracksByOutput().map(([o]) => o);
+  }
 
   domainLength() {
     if (this.cfg.coords === 'aligned' && this.axis) return this.axis.expanded_length;
-    if (this.cfg.coords === 'haplotype') return (this.info.outputs[this.cfg.output] || {}).length || this.info.length;
-    return this.info.length || (this.info.outputs[this.cfg.output] || {}).length || 1;
+    const lengths = this.shownOutputs().map((o) => (this.info.outputs[o] || {}).length || 0);
+    if (this.cfg.coords === 'haplotype') return Math.max(0, ...lengths) || this.info.length || 1;
+    return this.info.length || Math.max(0, ...lengths) || 1;
   }
 
   async setCoords(coords) {
@@ -212,7 +304,7 @@ class TracksPage {
       if (!ok) { this.cfg.coords = prev; this.coordSeg.setValue(prev); return; }
     }
     this.viewport.setDomain(this.domainLength());
-    this.data = null; this.pop = null;
+    this.data = null; this.pop = null; this.seq = null;
     const c = this.fromGenomicOffset(center);
     this.viewport.set(c - span / 2, c + span / 2, false);
     this.invalidate();
@@ -318,9 +410,11 @@ class TracksPage {
   // ------------------------------------------------------------------ data
   configKey() {
     const c = this.cfg;
-    const base = [c.gene, c.output, c.coords];
-    if (c.mode === 'individuals') return JSON.stringify([...base, 'i', c.tracks, this.seriesSpec()]);
-    if (c.mode === 'groups') return JSON.stringify([...base, 'g', c.tracks, c.hap, c.groupField, this.groupValues(), state.filters]);
+    const base = [c.gene, c.coords];
+    const extra = [c.showRef, c.showObserved, c.obsScale];
+    const tracks = [...(c.tracks || [])].sort(); // reordering panels must not refetch
+    if (c.mode === 'individuals') return JSON.stringify([...base, 'i', tracks, this.seriesSpec(), ...extra]);
+    if (c.mode === 'groups') return JSON.stringify([...base, 'g', tracks, c.hap, c.groupField, this.groupValues(), state.filters, ...extra]);
     return JSON.stringify([...base, 'p', c.popTrack, c.hap, c.groupField, state.filters, c.popRows]);
   }
 
@@ -330,6 +424,11 @@ class TracksPage {
     const haps = this.cfg.hap === 'both' ? ['H1', 'H2'] : [this.cfg.hap];
     return this.individuals().flatMap((s) => haps.map((hp) => `${s}:${hp}`)).join(',');
   }
+
+  /** Outputs of this gene with an AlphaGenome prediction of the reference window. */
+  hasReference(output) { return ((this.info && this.info.reference_outputs) || []).includes(output); }
+
+  showReference(output) { return this.cfg.showRef && this.cfg.mode !== 'population' && this.hasReference(output); }
 
   cohortCounts() {
     const field = this.cfg.groupField;
@@ -352,14 +451,17 @@ class TracksPage {
 
   invalidate() {
     this.clearHover();
+    if (this.info) this.viewport.setDomain(this.domainLength());
     this.persist();
     this.request.cancel?.();
     this.requestNow();
+    this.requestSequence.cancel?.();
+    this.requestSequenceNow();
   }
 
   persist() {
     const c = this.cfg;
-    setLocus({ gene: c.gene, output: c.output, coords: c.coords, mode: c.mode, hap: c.hap, tracks: c.tracks, groupField: c.groupField, groups: c.groups, yScale: c.yScale, sharedY: c.sharedY, diff: c.diff, envelope: c.envelope, band: c.band, popTrack: c.popTrack, popRows: c.popRows, start: this.viewport.start, end: this.viewport.end });
+    setLocus({ gene: c.gene, output: null, coords: c.coords, mode: c.mode, hap: c.hap, tracks: c.tracks, groupField: c.groupField, groups: c.groups, yScale: c.yScale, sharedY: c.sharedY, diff: c.diff, envelope: c.envelope, band: c.band, popTrack: c.popTrack, popRows: c.popRows, seqSource: c.seqSource, showRef: c.showRef, showObserved: c.showObserved, obsScale: c.obsScale, start: this.viewport.start, end: this.viewport.end });
     updateRouteParams({ gene: c.gene, coords: c.coords !== 'reference' ? c.coords : null, mode: c.mode !== 'individuals' ? c.mode : null, start: this.viewport.start, end: this.viewport.end });
   }
 
@@ -368,6 +470,7 @@ class TracksPage {
     this.render();
     this.persistDebounced();
     this.request();
+    this.requestSequence();
   }
 
   persistDebounced = debounce(() => this.persist(), 300);
@@ -377,7 +480,7 @@ class TracksPage {
   needsFetch(data, key, margin) {
     if (!data || data.key !== key) return true;
     const v = this.viewport;
-    if (v.start < data.start || v.end > data.end) return true;
+    if (v.start < data.start || (v.end > data.end && data.end < v.length)) return true;
     const bins = Math.max(1, data.edges.length - 1);
     const dataBp = (data.end - data.start) / bins;
     const wantBp = v.span / this.geom().width;
@@ -387,7 +490,7 @@ class TracksPage {
   }
 
   async requestNow() {
-    if (!this.info || !this.cfg.output) { this.render(); return; }
+    if (!this.info || !this.outputs().length) { this.render(); return; }
     const key = this.configKey();
     const mode = this.cfg.mode;
     const current = mode === 'population' ? this.pop : this.data;
@@ -400,7 +503,7 @@ class TracksPage {
     const end = Math.min(v.length, Math.ceil(v.end + margin));
     const bins = Math.max(32, Math.min(mode === 'population' ? 2048 : 8192, Math.round(g.width * (end - start) / v.span)));
     const signal = this.latest.next();
-    const common = { gene: this.cfg.gene, output: this.cfg.output, coords: this.cfg.coords, start, end, bins };
+    const common = { gene: this.cfg.gene, coords: this.cfg.coords, start, end, bins };
     this.loadingLine.hidden = false;
     this.panelsHost.classList.add('stale');
     let overlay = null;
@@ -419,22 +522,43 @@ class TracksPage {
       overlay.update(job);
     };
     try {
+      const groups = this.tracksByOutput();
       if (mode === 'individuals') {
-        if (!this.individuals().length) { this.data = null; this.render(); return; }
-        const res = await api(`${ds()}/signal`, { params: { ...common, tracks: this.cfg.tracks.join(','), series: this.seriesSpec() }, signal });
-        this.data = this.toItems(res, key, 'series');
-        const failed = res.series.filter((s) => s.error);
+        // Pinned haplotypes plus the reference prediction (enough on its own when nothing is pinned).
+        const specs = groups.map(([output]) => [this.seriesSpec(), this.showReference(output) ? `${REF}:H1` : ''].filter(Boolean).join(','));
+        if (!groups.length || specs.some((spec) => !spec)) { this.data = null; this.render(); return; }
+        // One request per output, in parallel; each panel keeps its own bin edges.
+        const responses = await Promise.all(groups.map(([output, tracks], gi) => api(`${ds()}/signal`, { params: { ...common, output, tracks: tracks.join(','), series: specs[gi] }, signal })));
+        this.data = this.toItems(responses, groups, key, 'series');
+        const failed = responses.flatMap((res) => res.series.filter((s) => s.error));
         if (failed.length) toast(`${failed.length} series failed: ${failed[0].error}`, 'error', 7000);
       } else if (mode === 'groups') {
-        const res = await apiJob(`${ds()}/groups`, { params: { ...common, tracks: this.cfg.tracks.join(','), haps: this.cfg.hap === 'both' ? 'H1,H2' : this.cfg.hap, field: this.cfg.groupField, groups: this.groupValues().join(','), filters: state.filters }, signal, onProgress });
-        this.data = this.toItems(res, key, 'groups');
+        if (!groups.length) { this.data = null; this.render(); return; }
+        // Sequential: each output may start a long cohort job with its own progress.
+        const responses = [];
+        for (const [output, tracks] of groups) {
+          responses.push(await apiJob(`${ds()}/groups`, { params: { ...common, output, tracks: tracks.join(','), haps: this.cfg.hap === 'both' ? 'H1,H2' : this.cfg.hap, field: this.cfg.groupField, groups: this.groupValues().join(','), filters: state.filters }, signal, onProgress }));
+          if (overlay) { overlay.remove(); overlay = null; }
+        }
+        // The reference prediction is drawn with the group means (same bins: same start/end/bins).
+        const refs = await Promise.all(groups.map(([output, tracks]) => (this.showReference(output)
+          ? api(`${ds()}/signal`, { params: { ...common, output, tracks: tracks.join(','), series: `${REF}:H1` }, signal }).catch((err) => { if (isAbort(err)) throw err; return null; })
+          : null)));
+        this.data = this.toItems(responses, groups, key, 'groups', refs);
       } else {
+        if (!this.cfg.popTrack) { this.pop = null; this.render(); return; }
         const hap = this.cfg.hap === 'both' ? 'H1+H2' : this.cfg.hap;
-        const res = await apiJob(`${ds()}/population`, { params: { ...common, track: this.cfg.popTrack, hap, field: this.cfg.groupField, filters: state.filters, max_rows: this.cfg.popRows }, signal, onProgress });
+        const [output, track] = parseTrackKey(this.cfg.popTrack);
+        const res = await apiJob(`${ds()}/population`, { params: { ...common, output, track, hap, field: this.cfg.groupField, filters: state.filters, max_rows: this.cfg.popRows }, signal, onProgress });
         res.key = key;
         this.pop = res;
       }
       this.status('');
+      if (this.data && this.cfg.showObserved && mode !== 'population') {
+        this.render();
+        if (overlay) { overlay.remove(); overlay = null; }
+        await this.loadObserved(groups, common, signal, onProgress);
+      }
     } catch (err) {
       if (isAbort(err)) return;
       console.error(err);
@@ -447,20 +571,59 @@ class TracksPage {
     this.render();
   }
 
-  toItems(res, key, kind) {
-    const items = [];
-    if (kind === 'series') {
-      const keys = [...new Set(res.series.map((s) => s.sample))];
-      this.colors.sync(keys);
-      for (const s of res.series) {
-        if (s.error) continue;
-        items.push({ key: `${s.sample}:${s.haplotype}`, entity: s.sample, label: this.cfg.hap === 'both' ? `${s.sample} ${s.haplotype}` : s.sample, sub: this.cfg.hap === 'both' ? '' : (s.haplotype === 'H1+H2' ? 'diploid mean' : s.haplotype), dash: s.haplotype === 'H2' && this.cfg.hap === 'both', mean: s.mean, min: s.min, max: s.max });
+  /** Observed ENCODE / FANTOM5 signal of the shown tracks (same bins as the panels). */
+  async loadObserved(groups, common, signal, onProgress) {
+    const data = this.data;
+    this.status('Loading observed data…');
+    const results = await Promise.all(groups.map(([output, tracks]) => apiJob(`${ds()}/observed`, { params: { ...common, output, tracks: tracks.join(','), scale: this.cfg.obsScale }, signal, onProgress })
+      .catch((err) => { if (isAbort(err)) throw err; return { error: err.message, tracks: tracks.map((t) => ({ track: t, available: false, reason: err.message })) }; })));
+    if (this.data !== data) return;
+    data.observed = new Map();
+    results.forEach((res, gi) => {
+      const [output] = groups[gi];
+      for (const item of res.tracks) data.observed.set(trackKey(output, item.track), { ...item, edges: res.edges, start: res.start, end: res.end });
+    });
+    this.status('');
+  }
+
+  /**
+   * Responses (one per output) -> one entry per panel, in track order. Each panel item holds the
+   * 1-D arrays of that track; ``items`` (legend) is the union of entities across outputs.
+   */
+  toItems(responses, groups, key, kind, refs = []) {
+    const legend = new Map();
+    const panels = [];
+    const refEntry = (s) => ({ src: s, key: REF, entity: REF, label: 'Reference genome', sub: 'AlphaGenome on hg38', reference: true });
+    responses.forEach((res, gi) => {
+      const [output, indices] = groups[gi];
+      const entries = [];
+      if (kind === 'series') {
+        for (const s of res.series) {
+          if (s.error) continue;
+          if (s.sample === REF) { entries.push(refEntry(s)); continue; }
+          entries.push({ src: s, key: `${s.sample}:${s.haplotype}`, entity: s.sample, label: this.cfg.hap === 'both' ? `${s.sample} ${s.haplotype}` : s.sample, sub: this.cfg.hap === 'both' ? '' : (s.haplotype === 'H1+H2' ? 'diploid mean' : s.haplotype), dash: s.haplotype === 'H2' && this.cfg.hap === 'both' });
+        }
+      } else {
+        for (const g of res.groups) entries.push({ src: g, key: g.group, entity: g.group, label: g.group, sub: `n=${fmtInt(g.samples)}`, haplotypes: g.haplotypes, failed: g.failed });
+        const ref = refs[gi] && refs[gi].series.find((s) => !s.error);
+        if (ref) entries.push(refEntry(ref));
       }
-    } else {
-      this.colors.sync(res.groups.map((g) => g.group));
-      for (const g of res.groups) items.push({ key: g.group, entity: g.group, label: g.group, sub: `n=${fmtInt(g.samples)}`, haplotypes: g.haplotypes, mean: g.mean, min: g.min, max: g.max, upper: g.upper, lower: g.lower, failed: g.failed });
-    }
-    return { key, kind, start: res.start, end: res.end, edges: res.edges, tracks: res.tracks, items };
+      for (const { src, ...it } of entries) if (!legend.has(it.key)) legend.set(it.key, it);
+      indices.forEach((index, ti) => {
+        const pick = (arr) => (arr ? arr[ti] : null);
+        panels.push({
+          trackKey: trackKey(output, index), output, index, start: res.start, end: res.end, edges: res.edges,
+          items: entries.map(({ src, ...it }) => ({ ...it, mean: pick(src.mean), min: pick(src.min), max: pick(src.max), upper: pick(src.upper), lower: pick(src.lower) })),
+        });
+      });
+    });
+    const items = [...legend.values()];
+    const entities = items.filter((it) => !it.reference).map((it) => it.entity);
+    this.colors.sync(kind === 'series' ? [...new Set(entities)] : entities);
+    const first = panels[0] || { start: 0, end: 0, edges: [0] };
+    const start = Math.min(...panels.map((pn) => pn.start), first.start);
+    const end = Math.max(...panels.map((pn) => pn.end), first.end);
+    return { key, kind, start, end, edges: first.edges, panels, items };
   }
 
   // ------------------------------------------------------------------ rendering
@@ -469,6 +632,7 @@ class TracksPage {
     this.renderLocus();
     this.drawOverview();
     this.drawRuler();
+    this.drawSequence();
     if (this.cfg.mode === 'population') this.drawPopulation();
     else this.drawPanels();
     this.renderLegend();
@@ -531,16 +695,17 @@ class TracksPage {
     return (this.annotations && this.annotations.genes) || [];
   }
 
+  /** Gene x position (reference offset -> canvas x in the current coordinates). */
+  geneX = (p) => this.xOf(this.fromGenomicOffset(p));
+
   drawRuler() {
     const g = this.geom();
     const canvas = this.rulerHost.querySelector('canvas');
-    const genes = this.annotationGenes();
-    const rows = this.packGenes(genes);
-    const laneH = rows.length ? Math.min(rows.length, 4) * 24 + 6 : 0;
-    const H = 30 + laneH;
+    const v = this.viewport;
+    const rows = packGenes(this.annotationGenes(), { start: v.start, end: v.end, pxPerBp: g.width / v.span, toPos: (p) => this.fromGenomicOffset(p) });
+    const H = 30 + geneLanesHeight(rows);
     const ctx = setupCanvas(canvas, g.total, H);
     const t = theme();
-    const v = this.viewport;
     // model window band
     const mw = this.modelWindow();
     if (mw && mw.end > v.start && mw.start < v.end) {
@@ -565,166 +730,403 @@ class TracksPage {
     ctx.beginPath(); ctx.moveTo(g.left, 29.5); ctx.lineTo(g.left + g.width, 29.5); ctx.stroke();
     ctx.textAlign = 'right'; ctx.fillStyle = t.ink3; ctx.font = `10.5px ${t.font}`;
     ctx.fillText(this.cfg.coords === 'reference' ? (this.info.chromosome || 'pos') : this.cfg.coords === 'aligned' ? 'axis' : 'hap pos', g.left - 8, 18);
-    if (!laneH) return;
-    ctx.fillText('genes', g.left - 8, 30 + 16);
-    ctx.save();
-    ctx.beginPath(); ctx.rect(g.left, 30, g.width, laneH); ctx.clip();
-    rows.slice(0, 4).forEach((row, r) => {
-      const y = 30 + 6 + r * 24;
-      for (const gene of row) this.drawGeneModel(ctx, t, gene, y);
-    });
-    ctx.restore();
+    drawGeneLanes(ctx, t, rows, { top: 30, left: g.left, width: g.width, xOf: this.geneX, highlight: this.cfg.gene });
     this.geneRows = rows;
   }
 
-  packGenes(genes) {
-    const v = this.viewport;
-    const visible = genes.filter((gn) => this.fromGenomicOffset(gn.end) > v.start && this.fromGenomicOffset(gn.start) < v.end);
-    const rows = [];
-    const pxPerBp = this.geom().width / v.span;
-    for (const gene of visible) {
-      const a = this.fromGenomicOffset(gene.start);
-      const labelBp = (gene.name.length * 7 + 12) / pxPerBp;
-      const b = this.fromGenomicOffset(gene.end) + labelBp;
-      let placed = false;
-      for (const row of rows) {
-        if (row.end < a) { row.items.push(gene); row.end = b; placed = true; break; }
-      }
-      if (!placed) rows.push({ end: b, items: [gene] });
-    }
-    return rows.map((r) => r.items);
+  // ------------------------------------------------------------------ sequence lane
+  /** Haplotypes counted by the sequence lane ('' = the reference). */
+  seqRows() {
+    if (this.cfg.seqSource !== 'pinned') return '';
+    const hap = this.cfg.hap === 'H1' || this.cfg.hap === 'H2' ? this.cfg.hap : 'H1+H2';
+    return state.pinned.slice(0, MAX_SEQ_SAMPLES).map((s) => `${s}:${hap}`).join(',');
   }
 
-  drawGeneModel(ctx, t, gene, y) {
-    const tx = gene.transcripts && gene.transcripts[0];
-    const color = gene.name === this.cfg.gene ? t.accent : t.ink2;
-    const x = (p) => this.xOf(this.fromGenomicOffset(p));
-    const a = x(gene.start); const b = x(gene.end);
-    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(a, y + 6.5); ctx.lineTo(b, y + 6.5); ctx.stroke();
-    // strand chevrons
-    const step = 26;
-    const dir = gene.strand === '-' ? -1 : 1;
-    for (let cx = Math.max(a, this.geom().left) + 10; cx < Math.min(b, this.geom().left + this.geom().width) - 4; cx += step) {
-      ctx.beginPath(); ctx.moveTo(cx - 2 * dir, y + 4); ctx.lineTo(cx + 1 * dir, y + 6.5); ctx.lineTo(cx - 2 * dir, y + 9); ctx.stroke();
+  requestSequence = debounce(() => this.requestSequenceNow(), 140);
+
+  async requestSequenceNow() {
+    if (!this.info || this.cfg.seqSource === 'off') { this.drawSequence(); return; }
+    const v = this.viewport;
+    const g = this.geom();
+    const key = JSON.stringify([this.cfg.gene, this.cfg.coords, this.seqRows()]);
+    const d = this.seq;
+    if (d && d.key === key && v.start >= d.start && (v.end <= d.end || d.end >= d.domain)) {
+      const wantBp = v.span / g.width;
+      const binBp = (d.end - d.start) / Math.max(1, d.edges.length - 1);
+      const tooCoarse = binBp > Math.max(1, wantBp) * 1.6;
+      const tooFine = binBp < wantBp / 4 && d.edges.length > 3000;
+      if (!tooCoarse && !tooFine) { this.drawSequence(); return; }
     }
-    if (tx) {
-      for (const [s, e] of tx.exons) { const xa = x(s); ctx.fillRect(xa, y + 3, Math.max(1, x(e) - xa), 7); }
-      for (const [s, e] of tx.cds) { const xa = x(s); ctx.fillRect(xa, y + 1, Math.max(1, x(e) - xa), 11); }
+    const margin = v.span * 0.5;
+    const start = Math.max(0, Math.floor(v.start - margin));
+    const end = Math.min(v.length, Math.ceil(v.end + margin));
+    const bins = Math.max(32, Math.min(8192, Math.round(g.width * (end - start) / v.span)));
+    const signal = this.seqLatest.next();
+    try {
+      const res = await api(`${ds()}/composition`, { params: { gene: this.cfg.gene, coords: this.cfg.coords, rows: this.seqRows(), start, end, bins }, signal });
+      res.key = key;
+      this.seq = res;
+      if (res.errors && res.errors.length) toast(`Sequence lane: ${res.errors[0]}`, 'error', 6000);
+    } catch (err) {
+      if (isAbort(err)) return;
+      this.seq = null;
+      this.seqError = err.message;
+    }
+    this.drawSequence();
+  }
+
+  /**
+   * Letter frequency per base: a frequency-scaled stack of letters when zoomed in (a logo of the
+   * counted haplotypes, or the plain reference), stacked base-composition bars when zoomed out.
+   */
+  drawSequence() {
+    const host = this.seqHost;
+    host.hidden = this.cfg.seqSource === 'off';
+    if (host.hidden || !this.info) return;
+    const g = this.geom();
+    const ctx = setupCanvas(host.querySelector('canvas'), g.total, SEQ_H);
+    const t = theme();
+    const d = this.seq;
+    const v = this.viewport;
+    const top = 18; const bottom = SEQ_H - 4; const hgt = bottom - top;
+    const mw = this.modelWindow();
+    if (mw && mw.end > v.start && mw.start < v.end) {
+      const a = Math.max(g.left, this.xOf(mw.start)); const b = Math.min(g.left + g.width, this.xOf(mw.end));
+      ctx.fillStyle = t.modelWindow; ctx.fillRect(a, 0, b - a, SEQ_H);
+    }
+    ctx.font = `10.5px ${t.font}`; ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillStyle = t.ink3;
+    ctx.fillText('sequence', g.left - 8, top + hgt / 2);
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    if (!d) { ctx.fillText(this.seqError ? `Sequence unavailable: ${this.seqError}` : 'Loading sequence…', g.left + 4, 4); return; }
+    const pxPerBp = g.width / v.span;
+    const binBp = (d.end - d.start) / Math.max(1, d.edges.length - 1);
+    const letters = binBp <= 1 && pxPerBp >= SEQ_LETTERS_PX;
+    const n = d.haplotypes.length;
+    const what = d.source === 'haplotypes' ? `letter frequency over ${n} pinned haplotype${n === 1 ? '' : 's'}` : 'reference genome';
+    const how = letters ? '' : binBp <= 1 ? ' · zoom in for letters' : ` · base composition per ${fmtBp(binBp)} bin`;
+    ctx.fillText(`${what}${how}`, g.left + 4, 3);
+    const colors = [t.bases.A, t.bases.C, t.bases.G, t.bases.T, t.bases.N, t.surface2];
+    const e = d.edges;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(g.left, top, g.width, hgt); ctx.clip();
+    let i0 = 0; while (i0 < e.length - 2 && e[i0 + 1] <= v.start) i0++;
+    if (letters) {
+      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      const fontPx = 40;
+      ctx.font = `700 ${fontPx}px ${t.mono}`;
+      for (let i = i0; i < e.length - 1 && e[i] < v.end; i++) {
+        const x = this.xOf(e[i]);
+        const cx = x + pxPerBp / 2;
+        const sx = Math.min(1, (pxPerBp * 0.92) / (fontPx * 0.62));
+        let y = bottom;
+        // Largest frequency at the top, as in a sequence logo.
+        const order = [0, 1, 2, 3, 4, 5].filter((k) => d.freq[k][i] > 0).sort((a, b) => d.freq[a][i] - d.freq[b][i]);
+        for (const k of order) {
+          const f = d.freq[k][i];
+          const lh = f * hgt;
+          if (k === 5) { ctx.fillStyle = t.ink3; ctx.fillRect(x + 1, y - lh / 2 - 1, Math.max(1, pxPerBp - 2), 2); y -= lh; continue; }
+          if (lh >= 3) {
+            ctx.save();
+            ctx.translate(cx, y);
+            ctx.scale(sx, lh / (fontPx * 0.72));
+            ctx.fillStyle = colors[k];
+            ctx.fillText(d.letters[k], 0, 0);
+            ctx.restore();
+          } else { ctx.fillStyle = colors[k]; ctx.fillRect(x + 1, y - lh, Math.max(1, pxPerBp - 2), lh); }
+          y -= lh;
+        }
+      }
     } else {
-      ctx.fillRect(a, y + 3, Math.max(1, b - a), 7);
+      for (let i = i0; i < e.length - 1 && e[i] < v.end; i++) {
+        const x0 = this.xOf(e[i]); const x1 = this.xOf(e[i + 1]);
+        const w = Math.max(1, x1 - x0 + 0.5);
+        let y = bottom;
+        for (let k = 0; k < 6; k++) {
+          const lh = d.freq[k][i] * hgt;
+          if (lh <= 0) continue;
+          ctx.fillStyle = colors[k];
+          ctx.fillRect(x0, y - lh, w, lh);
+          y -= lh;
+        }
+      }
     }
-    ctx.font = `600 11px ${t.font}`; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-    const right = this.geom().left + this.geom().width;
-    const label = `${gene.name} ${gene.strand === '-' ? '←' : '→'}`;
-    const lw = ctx.measureText(label).width;
-    // Beside the gene when there is room, otherwise on a chip at the left edge of the view.
-    let lx = b + 5;
-    if (lx + lw > right) lx = Math.max(this.geom().left + 4, a + 4);
-    if (lx + lw <= right) {
-      ctx.fillStyle = t.surface; ctx.fillRect(lx - 3, y, lw + 6, 13);
-      ctx.fillStyle = color; ctx.fillText(label, lx, y + 6.5);
-    }
+    ctx.restore();
+  }
+
+  seqTooltip(pos) {
+    const d = this.seq;
+    if (!d) return '';
+    const bi = binIndex(d.edges, pos);
+    if (bi < 0) return '';
+    const binBp = d.edges[bi + 1] - d.edges[bi];
+    const names = { '-': 'gap / deleted', N: 'N / other' };
+    const rows = [...d.letters].map((l, k) => [l, d.freq[k][bi]]).filter(([, f]) => f > 0).sort((a, b) => b[1] - a[1])
+      .map(([l, f]) => `<div class="tt-row"><span class="tt-key">${escapeHtml(names[l] || l)}</span><span class="tt-val">${fmtNum(f * 100, 3)}%</span></div>`);
+    const ref = d.reference && binBp === 1 ? d.reference[pos - d.start] : null;
+    const sub = d.source === 'haplotypes' ? `${d.haplotypes.length} haplotypes` : 'reference';
+    return `<div class="tt-sub" style="margin:-2px 0 6px">${binBp > 1 ? `composition of ${fmtInt(binBp)} bp · ` : ''}${escapeHtml(sub)}${ref ? ` · reference ${escapeHtml(ref)}` : ''}</div>${rows.join('')}`;
   }
 
   ensurePanels(n, height) {
     const host = this.panelsHost;
-    if (host.dataset.kind !== 'panels' || host.children.length !== n) {
+    const obs = this.cfg.showObserved ? '1' : '0';
+    if (host.dataset.kind !== 'panels' || host.children.length !== n || host.dataset.obs !== obs) {
       clear(host);
       host.dataset.kind = 'panels';
-      for (let i = 0; i < n; i++) host.appendChild(h('div', { class: 'panel' }, h('div', { class: 'lane-label', style: { top: '6px' } }), h('canvas')));
+      host.dataset.obs = obs;
+      for (let i = 0; i < n; i++) {
+        const label = h('div', { class: 'lane-label clickable', style: { top: '6px' }, title: 'Track card: ontology terms, assay, experiments', onpointerdown: (e) => e.stopPropagation(), onclick: (e) => { e.stopPropagation(); this.openTrack(label.dataset.key); } });
+        const obsLabel = h('div', { class: 'lane-label clickable obs-label', style: { top: `${height + 4}px` }, title: 'The observed experiments behind this track', onpointerdown: (e) => e.stopPropagation(), onclick: (e) => { e.stopPropagation(); this.openTrack(label.dataset.key); } });
+        const panel = h('div', { class: 'panel has-grip' }, label, h('canvas', { class: 'pred' }), this.cfg.showObserved ? [obsLabel, h('canvas', { class: 'obs' })] : null);
+        panel.prepend(this.panelGrip(panel));
+        host.appendChild(panel);
+      }
     }
-    return [...host.children].map((p) => ({ el: p, label: p.querySelector('.lane-label'), canvas: p.querySelector('canvas'), height }));
+    return [...host.children].map((p) => ({ el: p, label: p.querySelector('.lane-label'), canvas: p.querySelector('canvas.pred'), obsLabel: p.querySelector('.obs-label'), obsCanvas: p.querySelector('canvas.obs'), height }));
   }
+
+  /**
+   * Drag handle of a track panel: drag it up or down to reorder the panels (the others slide to make
+   * room; the page scrolls near its edges; Escape cancels). Arrow keys move a focused handle by one panel.
+   */
+  panelGrip(panel) {
+    const grip = h('button', { class: 'panel-grip', type: 'button', title: 'Drag to reorder (or focus and use ↑ / ↓)', 'aria-label': 'Reorder track' }, icon('grip', 14));
+    const indexOf = () => [...this.panelsHost.children].indexOf(panel);
+    let drag = null;
+    const reset = () => {
+      if (!drag) return;
+      for (const el of drag.siblings) { el.style.transform = ''; el.classList.remove('reorder-shift'); }
+      panel.style.transform = '';
+      panel.classList.remove('reordering');
+      this.panelsHost.classList.remove('reordering-host');
+      window.removeEventListener('keydown', drag.onKey, true);
+      cancelAnimationFrame(drag.raf);
+      drag = null;
+    };
+    grip.addEventListener('pointerdown', (e) => {
+      e.stopPropagation(); // not a pan of the viewport
+      if (e.button !== 0 || (this.cfg.tracks || []).length < 2) return;
+      e.preventDefault();
+      grip.setPointerCapture(e.pointerId);
+      hideTooltip(); this.clearHover();
+      const siblings = [...this.panelsHost.children];
+      const from = siblings.indexOf(panel);
+      const onKey = (k) => { if (k.key === 'Escape') { k.stopPropagation(); reset(); } };
+      window.addEventListener('keydown', onKey, true);
+      drag = { y: e.clientY, lastY: e.clientY, scroll0: this.scroll.scrollTop, raf: 0, from, to: from, siblings: siblings.filter((el) => el !== panel), mids: siblings.map((el) => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; }), height: panel.getBoundingClientRect().height, onKey };
+      for (const el of drag.siblings) el.classList.add('reorder-shift');
+      panel.classList.add('reordering');
+      this.panelsHost.classList.add('reordering-host');
+      drag.raf = requestAnimationFrame(autoScroll);
+    });
+    // Positions are taken at pointerdown; scrolling since then shifts the pointer by ``ds`` in the page.
+    const update = () => {
+      const dy = drag.lastY - drag.y + (this.scroll.scrollTop - drag.scroll0);
+      panel.style.transform = `translateY(${dy}px)`;
+      const center = drag.mids[drag.from] + dy;
+      let to = drag.from;
+      while (to < drag.mids.length - 1 && center > drag.mids[to + 1]) to++;
+      while (to > 0 && center < drag.mids[to - 1]) to--;
+      drag.to = to;
+      // Panels between the old and new slot slide by one panel height.
+      [...this.panelsHost.children].forEach((el, i) => {
+        if (el === panel) return;
+        const shift = drag.from < to && i > drag.from && i <= to ? -drag.height : drag.from > to && i >= to && i < drag.from ? drag.height : 0;
+        el.style.transform = shift ? `translateY(${shift}px)` : '';
+      });
+    };
+    const autoScroll = () => {
+      if (!drag) return;
+      const r = this.scroll.getBoundingClientRect();
+      const edge = 48;
+      const step = drag.lastY < r.top + edge ? -Math.ceil((r.top + edge - drag.lastY) / 4) : drag.lastY > r.bottom - edge ? Math.ceil((drag.lastY - r.bottom + edge) / 4) : 0;
+      if (step) { const before = this.scroll.scrollTop; this.scroll.scrollTop += step; if (this.scroll.scrollTop !== before) update(); }
+      drag.raf = requestAnimationFrame(autoScroll);
+    };
+    grip.addEventListener('pointermove', (e) => {
+      e.stopPropagation();
+      if (!drag) return;
+      drag.lastY = e.clientY;
+      update();
+    });
+    const finish = (e) => {
+      e.stopPropagation();
+      if (!drag) return;
+      const { from, to } = drag;
+      reset();
+      this.moveTrack(from, to);
+    };
+    grip.addEventListener('pointerup', finish);
+    grip.addEventListener('pointercancel', (e) => { e.stopPropagation(); reset(); });
+    grip.addEventListener('click', (e) => e.stopPropagation());
+    grip.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      e.preventDefault(); e.stopPropagation();
+      const from = indexOf();
+      const to = from + (e.key === 'ArrowUp' ? -1 : 1);
+      this.moveTrack(from, to);
+      const moved = this.panelsHost.children[Math.max(0, Math.min(to, this.panelsHost.children.length - 1))];
+      const next = moved && moved.querySelector('.panel-grip');
+      if (next) next.focus();
+    });
+    return grip;
+  }
+
+  openTrack(key) {
+    if (!key) return;
+    const { output, index, meta } = this.track(key);
+    const observed = this.data && this.data.observed ? this.data.observed.get(key) : null;
+    openTrackCard({ output, index, meta: meta.metadata || {}, label: this.trackLabel(key), gene: this.cfg.gene, observed });
+  }
+
+  itemColor(it) { return it.reference ? theme().ink : this.colors.color(it.entity); }
 
   transform(v) {
     if (this.cfg.yScale === 'log') return Math.sign(v) * Math.log1p(Math.abs(v));
     return v;
   }
 
-  visibleRange(data) {
+  visibleRange(panel) {
     const v = this.viewport;
-    const e = data.edges;
+    const e = panel.edges;
     let i0 = 0; let i1 = e.length - 1;
     while (i0 < e.length - 1 && e[i0 + 1] <= v.start) i0++;
     while (i1 > i0 && e[i1 - 1] >= v.end) i1--;
     return [i0, i1];
   }
 
+  setPanelLabel(p, key) {
+    const { meta } = this.track(key);
+    p.label.textContent = this.trackLabel(key);
+    p.label.dataset.key = key || '';
+    p.label.title = `${Object.entries(meta.metadata || {}).map(([k, val]) => `${k}: ${val}`).join('\n')}\n\nClick for the track card (ontology terms, assay, observed experiments)`;
+  }
+
   drawPanels() {
     const g = this.geom();
     const data = this.data;
-    const meta = this.trackMeta();
     const tracks = this.cfg.tracks || [];
     const panels = this.ensurePanels(Math.max(1, tracks.length), PANEL_H);
     const t = theme();
-    if (!data || !data.items.length) {
+    if (!data || !data.items.length || !data.panels.length) {
       panels.forEach((p, i) => {
         const ctx = setupCanvas(p.canvas, g.total, PANEL_H);
-        p.label.textContent = tracks.length ? (meta[tracks[i]] || {}).label || `Track ${tracks[i]}` : 'No tracks selected';
+        if (p.obsCanvas) setupCanvas(p.obsCanvas, g.total, OBS_H);
+        if (tracks.length) this.setPanelLabel(p, tracks[i]); else p.label.textContent = 'No tracks selected';
         ctx.fillStyle = t.ink3; ctx.font = `12px ${t.font}`; ctx.textAlign = 'center';
-        const msg = this.cfg.mode === 'individuals' && !this.individuals().length ? 'Pin individuals on the Samples page (or add them in the panel →)' : (data ? 'No data' : 'Loading…');
+        const msg = !tracks.length ? 'Choose tracks of any output in the panel →' : this.cfg.mode === 'individuals' && !this.individuals().length ? 'Pin individuals on the Samples page (or add them in the panel →)' : (data ? 'No data' : 'Loading…');
         ctx.fillText(msg, g.left + g.width / 2, PANEL_H / 2);
       });
       return;
     }
-    const [i0, i1] = this.visibleRange(data);
-    const items = this.displayItems(data).filter((it) => !this.hidden.has(it.key));
-    const ranges = data.tracks.map((_, ti) => {
+    const band = this.showBand();
+    this.orderPanels();
+    const views = data.panels.map((panel) => {
+      const [i0, i1] = this.visibleRange(panel);
+      const items = this.displayItems(panel).filter((it) => !this.hidden.has(it.key));
       let lo = 0; let hi = 0;
-      const band = this.showBand();
       for (const it of items) {
-        const top = this.cfg.envelope && it.max ? it.max[ti] : it.mean[ti];
-        const upper = band && it.upper ? it.upper[ti] : null;
-        const bottom = band && it.lower ? it.lower[ti] : (this.cfg.envelope && it.min ? it.min[ti] : it.mean[ti]);
+        const top = this.cfg.envelope && it.max ? it.max : it.mean;
+        const upper = band && it.upper ? it.upper : null;
+        const bottom = band && it.lower ? it.lower : (this.cfg.envelope && it.min ? it.min : it.mean);
         for (let i = i0; i < i1; i++) {
           const a = top[i]; if (a > hi) hi = a;
           if (upper) { const u = upper[i]; if (u > hi) hi = u; }
           const b = bottom[i]; if (b < lo) lo = b;
         }
       }
-      return [this.transform(lo), this.transform(hi)];
+      return { panel, items, i0, i1, range: [this.transform(lo), this.transform(hi)] };
     });
-    let shared = null;
-    if (this.cfg.sharedY) shared = [Math.min(...ranges.map((r) => r[0])), Math.max(...ranges.map((r) => r[1]))];
-    data.tracks.forEach((track, ti) => {
-      const p = panels[ti];
+    // A shared y-scale only makes sense within one output (units differ between assays).
+    const shared = new Map();
+    if (this.cfg.sharedY) {
+      for (const { panel, range } of views) {
+        const cur = shared.get(panel.output);
+        shared.set(panel.output, cur ? [Math.min(cur[0], range[0]), Math.max(cur[1], range[1])] : range);
+      }
+    }
+    views.forEach(({ panel, items, i0, i1, range }, pi) => {
+      const p = panels[pi];
       if (!p) return;
-      const m = meta[track] || {};
-      p.label.textContent = m.label || `Track ${track}`;
-      p.label.title = Object.entries(m.metadata || {}).map(([k, val]) => `${k}: ${val}`).join('\n');
-      const [ylo, yhiRaw] = shared || ranges[ti];
+      this.setPanelLabel(p, panel.trackKey);
+      const [ylo, yhiRaw] = shared.get(panel.output) || range;
       const yhi = yhiRaw > ylo ? yhiRaw * 1.06 : ylo + 1;
-      this.drawPanel(p.canvas, t, g, data, items, ti, ylo, yhi, i0, i1);
+      this.drawPanel(p.canvas, t, g, panel, items, ylo, yhi, i0, i1);
       p.yRange = [ylo, yhi];
+      if (p.obsCanvas) this.drawObserved(p, t, g, panel);
     });
-    this.panelGeom = { top: 0, height: PANEL_H, count: data.tracks.length };
+    this.panelGeom = { top: 0, height: PANEL_H, count: data.panels.length };
+  }
+
+  /** Observed signal lane of one track (own y-scale: units are the source's, not AlphaGenome's). */
+  drawObserved(p, t, g, panel) {
+    const H = OBS_H;
+    const ctx = setupCanvas(p.obsCanvas, g.total, H);
+    const obs = this.data.observed ? this.data.observed.get(panel.trackKey) : null;
+    const color = css('--observed') || t.ink2;
+    if (!obs) {
+      p.obsLabel.textContent = 'Observed · loading…';
+      return;
+    }
+    if (!obs.available) {
+      p.obsLabel.textContent = 'Observed · not available';
+      ctx.fillStyle = t.ink3; ctx.font = `11.5px ${t.font}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText(obs.reason || 'No observed data', g.left + 8, H / 2 + 6);
+      return;
+    }
+    const n = (obs.items || []).length;
+    p.obsLabel.textContent = `Observed · ${obs.provider} · ${obs.units} · mean of ${n}${obs.total > n ? `/${obs.total}` : ''} ${obs.provider === 'FANTOM5' ? 'librar' + (n === 1 ? 'y' : 'ies') : 'experiment' + (n === 1 ? '' : 's')}${obs.match === 'name' ? ' (by name)' : ''}`;
+    const e = obs.edges;
+    const v = this.viewport;
+    let i0 = 0; let i1 = e.length - 1;
+    while (i0 < e.length - 1 && e[i0 + 1] <= v.start) i0++;
+    while (i1 > i0 && e[i1 - 1] >= v.end) i1--;
+    let hi = 0;
+    const top = this.cfg.envelope && obs.max ? obs.max : obs.mean;
+    for (let i = i0; i < i1; i++) { const a = top[i]; if (a > hi) hi = a; }
+    const ylo = 0; const yhi = hi > 0 ? this.transform(hi) * 1.08 : 1;
+    const y0 = 30; const y1 = H - 6;
+    const sy = (val) => y1 - ((this.transform(Math.max(0, val)) - ylo) / (yhi - ylo)) * (y1 - y0);
+    ctx.fillStyle = t.ink3; ctx.font = `10.5px ${t.font}`; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.fillText(fmtNum(this.cfg.yScale === 'log' ? Math.expm1(yhi) : yhi, 2), g.left - 6, y0);
+    ctx.fillText('0', g.left - 6, y1);
+    ctx.strokeStyle = t.lineStrong; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(g.left, y1 + 0.5); ctx.lineTo(g.left + g.width, y1 + 0.5); ctx.stroke();
+    ctx.save();
+    ctx.beginPath(); ctx.rect(g.left, 0, g.width, H); ctx.clip();
+    const binBp = (obs.end - obs.start) / Math.max(1, e.length - 1);
+    const pxPerBin = (binBp / v.span) * g.width;
+    ctx.fillStyle = withAlpha(color, 0.75);
+    for (let i = Math.max(0, i0 - 1); i < Math.min(e.length - 1, i1 + 1); i++) {
+      const val = (this.cfg.envelope && obs.max ? obs.max : obs.mean)[i];
+      if (!Number.isFinite(val) || val <= 0) continue;
+      const xa = this.xOf(e[i]); const xb = this.xOf(e[i + 1]);
+      const y = sy(val);
+      ctx.fillRect(xa, y, Math.max(pxPerBin > 2 ? xb - xa - 0.5 : 1, 1), y1 - y);
+    }
+    ctx.restore();
   }
 
   /** The ±SD band is within-group spread; it is hidden when showing differences between groups. */
   showBand() { return this.cfg.mode === 'groups' && this.cfg.band && !this.cfg.diff; }
 
   /** Group means as-is, or (when "difference" is on) minus the haplotype-weighted cohort mean. */
-  displayItems(data) {
-    if (!(this.cfg.mode === 'groups' && this.cfg.diff && data.kind === 'groups' && data.items.length > 1)) return data.items;
-    if (data.diffItems) return data.diffItems;
-    const weights = data.items.map((it) => it.haplotypes || 1);
-    const baseline = data.tracks.map((_, ti) => {
-      const n = data.items[0].mean[ti].length;
-      const out = new Float32Array(n);
-      for (let i = 0; i < n; i++) {
-        let acc = 0; let w = 0;
-        data.items.forEach((it, k) => { const v = it.mean[ti][i]; if (Number.isFinite(v)) { acc += v * weights[k]; w += weights[k]; } });
-        out[i] = w ? acc / w : NaN;
-      }
-      return out;
-    });
-    const sub = (arrs) => arrs && arrs.map((a, ti) => a.map((v, i) => v - baseline[ti][i]));
-    data.diffItems = data.items.map((it) => ({ ...it, mean: sub(it.mean), min: sub(it.min), max: sub(it.max), upper: sub(it.upper), lower: sub(it.lower) }));
-    return data.diffItems;
+  displayItems(panel) {
+    if (!(this.cfg.mode === 'groups' && this.cfg.diff && this.data.kind === 'groups' && panel.items.length > 1)) return panel.items;
+    if (panel.diffItems) return panel.diffItems;
+    const weights = panel.items.map((it) => (it.reference ? 0 : it.haplotypes || 1));
+    const n = panel.items[0].mean.length;
+    const baseline = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      let acc = 0; let w = 0;
+      panel.items.forEach((it, k) => { const v = it.mean[i]; if (weights[k] && Number.isFinite(v)) { acc += v * weights[k]; w += weights[k]; } });
+      baseline[i] = w ? acc / w : NaN;
+    }
+    const sub = (a) => a && a.map((v, i) => v - baseline[i]);
+    panel.diffItems = panel.items.map((it) => ({ ...it, mean: sub(it.mean), min: sub(it.min), max: sub(it.max), upper: sub(it.upper), lower: sub(it.lower) }));
+    return panel.diffItems;
   }
 
-  drawPanel(canvas, t, g, data, items, ti, ylo, yhi, i0, i1) {
+  drawPanel(canvas, t, g, panel, items, ylo, yhi, i0, i1) {
     const H = PANEL_H;
     const ctx = setupCanvas(canvas, g.total, H);
     const top = 24; const bottom = H - 8;
@@ -752,8 +1154,8 @@ class TracksPage {
     }
     ctx.save();
     ctx.beginPath(); ctx.rect(g.left, 0, g.width, H); ctx.clip();
-    const e = data.edges;
-    const binBp = (data.end - data.start) / Math.max(1, e.length - 1);
+    const e = panel.edges;
+    const binBp = (panel.end - panel.start) / Math.max(1, e.length - 1);
     const pxPerBin = (binBp / v.span) * g.width;
     const step = pxPerBin > 3;
     const xs = new Float64Array(e.length);
@@ -802,15 +1204,17 @@ class TracksPage {
     };
     const highlight = this.highlight;
     for (const it of items) {
-      const color = this.colors.color(it.entity);
+      if (it.reference) continue;
+      const color = this.itemColor(it);
       const dim = highlight && highlight !== it.key;
-      if (this.showBand() && it.upper) area(it.lower[ti], it.upper[ti], withAlpha(color, dim ? 0.04 : 0.14));
-      else if (this.cfg.envelope && binBp > 1.5 && it.min) area(it.min[ti], it.max[ti], withAlpha(color, dim ? 0.04 : 0.16));
+      if (this.showBand() && it.upper) area(it.lower, it.upper, withAlpha(color, dim ? 0.04 : 0.14));
+      else if (this.cfg.envelope && binBp > 1.5 && it.min) area(it.min, it.max, withAlpha(color, dim ? 0.04 : 0.16));
     }
-    for (const it of items) {
-      const color = this.colors.color(it.entity);
+    // The reference prediction goes on top, thin and dark, so individuals' deviations stand out.
+    for (const it of [...items.filter((x) => !x.reference), ...items.filter((x) => x.reference)]) {
+      const color = this.itemColor(it);
       const dim = highlight && highlight !== it.key;
-      line(it.mean[ti], dim ? withAlpha(color, 0.25) : color, it.dash, highlight === it.key ? 2.5 : 1.75);
+      line(it.mean, dim ? withAlpha(color, 0.25) : color, it.dash || it.reference, highlight === it.key ? 2.5 : it.reference ? 1.25 : 1.75);
     }
     ctx.restore();
   }
@@ -828,8 +1232,7 @@ class TracksPage {
     const canvas = panel.querySelector('canvas');
     const t = theme();
     const pop = this.pop;
-    const meta = this.trackMeta()[this.cfg.popTrack] || {};
-    label.textContent = `${meta.label || `Track ${this.cfg.popTrack}`} · ${this.cfg.hap === 'both' ? 'H1+H2 mean' : this.cfg.hap}`;
+    label.textContent = `${this.cfg.popTrack ? this.trackLabel(this.cfg.popTrack) : 'No track'} · ${this.cfg.hap === 'both' ? 'H1+H2 mean' : this.cfg.hap}`;
     if (!pop) {
       const ctx = setupCanvas(canvas, g.total, 200);
       ctx.fillStyle = t.ink3; ctx.font = `12px ${t.font}`; ctx.textAlign = 'center'; ctx.fillText('Loading…', g.left + g.width / 2, 100);
@@ -908,14 +1311,15 @@ class TracksPage {
     }
     if (!data) { this.legend.append(h('span', { class: 'muted' }, this.cfg.mode === 'groups' ? 'Group means over the cohort' : 'Pinned individuals')); return; }
     for (const it of data.items) {
-      const color = this.colors.color(it.entity);
-      const sw = it.dash ? h('span', { class: 'swatch line dashed', style: { color, borderTopColor: color } }) : h('span', { class: 'swatch line', style: { background: color } });
+      const color = this.itemColor(it);
+      const sw = it.dash || it.reference ? h('span', { class: 'swatch line dashed', style: { color, borderTopColor: color } }) : h('span', { class: 'swatch line', style: { background: color } });
       const el = h('span', { class: `legend-item${this.hidden.has(it.key) ? ' off' : ''}`, title: 'Click to hide/show; hover to highlight' }, sw, h('span', null, it.label), h('span', { class: 'muted' }, it.sub || ''));
       el.addEventListener('click', () => { if (this.hidden.has(it.key)) this.hidden.delete(it.key); else this.hidden.add(it.key); this.render(); });
       el.addEventListener('mouseenter', () => { this.highlight = it.key; this.drawPanels(); });
       el.addEventListener('mouseleave', () => { this.highlight = null; this.drawPanels(); });
       this.legend.appendChild(el);
     }
+    if (this.cfg.showObserved) this.legend.append(h('span', { class: 'legend-item', title: 'Observed ENCODE / FANTOM5 signal under each track (own scale)' }, h('span', { class: 'swatch', style: { background: css('--observed') } }), h('span', null, 'Observed data'), h('span', { class: 'muted' }, 'lane under each track')));
     if (this.cfg.mode === 'groups' && this.cfg.diff) this.legend.append(h('span', { class: 'muted' }, 'Each line: group mean minus the haplotype-weighted mean of the shown groups'));
     else if (this.showBand()) this.legend.append(h('span', { class: 'muted' }, 'Shaded: ±1 SD across haplotypes'));
     else if (this.cfg.envelope) this.legend.append(h('span', { class: 'muted' }, 'Shaded: min–max within each pixel bin'));
@@ -925,7 +1329,8 @@ class TracksPage {
     const c = this.cfg;
     const coordText = { reference: 'genomic coordinates (haplotypes remapped through their indels; deletions show as gaps)', haplotype: 'raw haplotype prediction index', aligned: 'bcftools_chain training axis (insertion columns shared across the cohort)' }[c.coords];
     const res = this.data && this.cfg.mode !== 'population' ? ` · resolution ${fmtBp((this.data.end - this.data.start) / Math.max(1, this.data.edges.length - 1))}/bin` : '';
-    this.footer.textContent = `${c.gene} · ${c.output || 'no output'} · ${coordText}${res}`;
+    const outputs = this.shownOutputs().map(outputLabel).join(', ') || 'no output';
+    this.footer.textContent = `${c.gene} · ${outputs} · ${coordText}${res}`;
   }
 
   drawBrush(a, b, done) {
@@ -948,6 +1353,15 @@ class TracksPage {
     this.crosshair.style.left = `${g.left + frac * g.width}px`;
     const target = e.target.closest ? e.target.closest('.panel') : null;
     const coordLabel = this.formatPos(Math.floor(pos), true);
+    if (this.seqHost.contains(e.target)) {
+      showTooltip(e.clientX, e.clientY, `<div class="tt-title">${escapeHtml(coordLabel)}</div>${this.seqTooltip(Math.floor(pos))}`);
+      return;
+    }
+    if (this.rulerHost.contains(e.target) && this.geneRows) {
+      const rect = this.rulerHost.getBoundingClientRect();
+      const gene = geneAt(this.geneRows, e.clientX - rect.left, e.clientY - rect.top, { top: 30, xOf: this.geneX });
+      if (gene) { showTooltip(e.clientX, e.clientY, `${geneTooltip(gene, escapeHtml)}<div class="tt-sub">Click for the gene card (HGNC, Gene Ontology, links)</div>`); return; }
+    }
     if (this.cfg.mode === 'population') {
       if (!this.pop || !this.popGeom || !target) { showTooltip(e.clientX, e.clientY, `<div class="tt-title">${escapeHtml(coordLabel)}</div>`); return; }
       const rect = target.getBoundingClientRect();
@@ -959,52 +1373,48 @@ class TracksPage {
       this.hoverRow = this.pop.samples[r];
       return;
     }
-    if (!this.data || !target) { showTooltip(e.clientX, e.clientY, `<div class="tt-title">${escapeHtml(coordLabel)}</div>`); return; }
-    const ti = [...this.panelsHost.children].indexOf(target);
-    const bi = binIndex(this.data.edges, pos);
-    const meta = this.trackMeta()[this.data.tracks[ti]] || {};
+    const panel = this.data && target ? this.data.panels[[...this.panelsHost.children].indexOf(target)] : null;
+    if (!panel) { showTooltip(e.clientX, e.clientY, `<div class="tt-title">${escapeHtml(coordLabel)}</div>`); return; }
+    if (e.target.classList && e.target.classList.contains('obs')) {
+      const obs = this.data.observed ? this.data.observed.get(panel.trackKey) : null;
+      if (!obs || !obs.available) { showTooltip(e.clientX, e.clientY, `<div class="tt-title">${escapeHtml(coordLabel)}</div><div class="tt-sub">${escapeHtml(obs ? obs.reason || 'No observed data' : 'Loading observed data…')}</div>`); return; }
+      const oi = binIndex(obs.edges, pos);
+      const ob = oi >= 0 ? obs.edges[oi + 1] - obs.edges[oi] : 0;
+      showTooltip(e.clientX, e.clientY, `<div class="tt-title">${escapeHtml(coordLabel)}</div><div class="tt-sub" style="margin:-2px 0 6px">Observed · ${escapeHtml(obs.provider)} · ${escapeHtml(obs.units)}${ob > 1 ? ` · ${fmtInt(ob)} bp bin` : ''}</div>`
+        + `<div class="tt-row"><span class="tt-key">mean</span><span class="tt-val">${oi >= 0 ? fmtNum(obs.mean[oi]) : '–'}</span></div>${ob > 1 ? `<div class="tt-row"><span class="tt-key">max in bin</span><span class="tt-val">${fmtNum(obs.max[oi])}</span></div>` : ''}`
+        + `<div class="tt-sub">${escapeHtml((obs.items || []).map((x) => x.id).join(', '))} · click the lane name for links</div>`);
+      return;
+    }
+    const bi = binIndex(panel.edges, pos);
     const rows = [];
-    const items = this.displayItems(this.data).filter((it) => !this.hidden.has(it.key));
-    const sorted = items.map((it) => ({ it, v: bi >= 0 && it.mean[ti] ? it.mean[ti][bi] : NaN })).sort((a, b) => (Number.isFinite(b.v) ? b.v : -Infinity) - (Number.isFinite(a.v) ? a.v : -Infinity));
+    const items = this.displayItems(panel).filter((it) => !this.hidden.has(it.key));
+    const sorted = items.map((it) => ({ it, v: bi >= 0 && it.mean ? it.mean[bi] : NaN })).sort((a, b) => (Number.isFinite(b.v) ? b.v : -Infinity) - (Number.isFinite(a.v) ? a.v : -Infinity));
     for (const { it, v } of sorted.slice(0, 12)) {
-      const color = this.colors.color(it.entity);
-      const extra = it.upper && bi >= 0 ? ` <span class="muted">±${fmtNum((it.upper[ti][bi] - it.lower[ti][bi]) / 2, 2)}</span>` : '';
+      const color = this.itemColor(it);
+      const extra = it.upper && bi >= 0 ? ` <span class="muted">±${fmtNum((it.upper[bi] - it.lower[bi]) / 2, 2)}</span>` : '';
       rows.push(`<div class="tt-row"><span class="tt-key"><span class="swatch line" style="background:${color}"></span>${escapeHtml(it.label)}</span><span class="tt-val">${Number.isFinite(v) ? fmtNum(v) : '<span class="muted">gap</span>'}${extra}</span></div>`);
     }
-    const binBp = bi >= 0 ? this.data.edges[bi + 1] - this.data.edges[bi] : 0;
-    showTooltip(e.clientX, e.clientY, `<div class="tt-title">${escapeHtml(coordLabel)}</div><div class="tt-sub" style="margin:-2px 0 6px">${escapeHtml(meta.short || meta.label || '')}${binBp > 1 ? ` · mean of ${fmtInt(binBp)} bp` : ''}</div>${rows.join('')}`);
+    const binBp = bi >= 0 ? panel.edges[bi + 1] - panel.edges[bi] : 0;
+    showTooltip(e.clientX, e.clientY, `<div class="tt-title">${escapeHtml(coordLabel)}</div><div class="tt-sub" style="margin:-2px 0 6px">${escapeHtml(this.trackLabel(panel.trackKey, true))}${binBp > 1 ? ` · mean of ${fmtInt(binBp)} bp` : ''}</div>${rows.join('')}`);
   }
 
   // ------------------------------------------------------------------ side panel
   renderSide() {
     const side = this.side;
     clear(side);
-    const meta = this.trackMeta();
     // tracks
     if (this.cfg.mode === 'population') {
+      const pick = h('select', { class: 'select', 'aria-label': 'Track', onchange: (e) => { this.cfg.popTrack = e.target.value; this.invalidate(); } },
+        this.outputs().map((o) => h('optgroup', { label: outputLabel(o) }, this.trackMeta(o).map((m) => h('option', { value: trackKey(o, m.index) }, m.short || m.label)))));
+      if (this.cfg.popTrack) pick.value = this.cfg.popTrack;
       side.appendChild(h('div', { class: 'side-section' },
-        h('h3', null, 'Track'),
-        select(meta.map((m) => ({ value: m.index, label: m.short || m.label })), this.cfg.popTrack, (v) => { this.cfg.popTrack = Number(v); this.invalidate(); }),
+        h('h3', null, 'Track'), pick,
         field('Max rows', select([100, 300, 600, 1200, 2400, 4000].map((n) => ({ value: n, label: `${fmtInt(n)} samples` })), this.cfg.popRows, (v) => { this.cfg.popRows = Number(v); this.invalidate(); }))));
     } else {
-      const list = h('div', { class: 'checklist' });
-      for (const m of meta) {
-        const box = h('input', { type: 'checkbox' });
-        box.checked = (this.cfg.tracks || []).includes(m.index);
-        box.addEventListener('change', () => {
-          const set = new Set(this.cfg.tracks);
-          if (box.checked) set.add(m.index); else set.delete(m.index);
-          this.cfg.tracks = [...set].sort((a, b) => a - b).slice(0, 16);
-          this.invalidate();
-        });
-        list.appendChild(h('label', { title: m.label }, box, h('span', null, m.short || m.label), h('span', { class: 'meta' }, `#${m.index}`)));
-      }
-      side.appendChild(h('div', { class: 'side-section' },
-        h('h3', null, `Tracks (${(this.cfg.tracks || []).length}/${meta.length})`, h('span', null,
-          h('button', { class: 'btn small ghost', onclick: () => { this.cfg.tracks = meta.slice(0, 16).map((m) => m.index); this.renderSide(); this.invalidate(); } }, 'All'),
-          h('button', { class: 'btn small ghost', onclick: () => { this.cfg.tracks = meta.length ? [meta[0].index] : []; this.renderSide(); this.invalidate(); } }, 'First'))),
-        list));
+      side.appendChild(this.tracksSection());
     }
+    if (this.cfg.mode !== 'population') side.appendChild(this.compareSection());
+    side.appendChild(this.sequenceSection());
     // individuals / groups
     if (this.cfg.mode === 'individuals') side.appendChild(this.individualsSection());
     else side.appendChild(this.groupsSection());
@@ -1017,6 +1427,112 @@ class TracksPage {
       this.cfg.mode === 'groups' ? checkbox('±1 SD band', this.cfg.band, (v) => { this.cfg.band = v; this.persist(); this.render(); }) : null,
       this.cfg.mode === 'groups' ? checkbox('Show difference from cohort mean', this.cfg.diff, (v) => { this.cfg.diff = v; this.persist(); this.render(); }) : null,
       h('p', { class: 'help' }, 'The blue band marks the CNN model window. Hover a legend entry to highlight it; click to hide it.')));
+  }
+
+  /** Tracks of every output, one collapsible list per output, at most MAX_TRACKS in total. */
+  tracksSection() {
+    const chosen = new Set(this.cfg.tracks || []);
+    this.openOutputs = this.openOutputs || new Set(this.tracksByOutput().map(([o]) => o));
+    if (!this.openOutputs.size && this.outputs().length) this.openOutputs.add(this.outputs()[0]);
+    const heading = h('h3', null);
+    const counters = new Map();
+    const boxes = [];
+    const refreshCounts = () => {
+      clear(heading).append(`Tracks (${chosen.size}/${MAX_TRACKS})`, chosen.size ? h('button', { class: 'btn small ghost', title: 'Unselect every track', onclick: () => setTracks([]) }, 'Clear') : '');
+      for (const [o, el] of counters) {
+        const n = [...chosen].filter((k) => parseTrackKey(k)[0] === o).length;
+        el.textContent = `${n ? `${n} / ` : ''}${this.trackMeta(o).length}`;
+        el.classList.toggle('on', n > 0);
+      }
+    };
+    const setTracks = (keys) => {
+      this.cfg.tracks = this.sortTracks(keys);
+      chosen.clear(); this.cfg.tracks.forEach((k) => chosen.add(k));
+      for (const { box, key } of boxes) box.checked = chosen.has(key);
+      refreshCounts();
+      this.invalidate();
+    };
+    const filter = h('input', { class: 'input', type: 'search', placeholder: 'Filter tracks (tissue, strand, mark…)', 'aria-label': 'Filter tracks' });
+    const groups = this.outputs().map((o) => {
+      const list = h('div', { class: 'checklist', style: { maxHeight: '220px' } });
+      for (const m of this.trackMeta(o)) {
+        const key = trackKey(o, m.index);
+        const box = h('input', { type: 'checkbox' });
+        box.checked = chosen.has(key);
+        box.addEventListener('change', () => {
+          if (box.checked && chosen.size >= MAX_TRACKS) { box.checked = false; toast(`At most ${MAX_TRACKS} tracks at once`, 'error'); return; }
+          setTracks(box.checked ? [...chosen, key] : [...chosen].filter((k) => k !== key));
+        });
+        boxes.push({ box, key });
+        const text = `${m.label} ${Object.values(m.metadata || {}).join(' ')}`.toLowerCase();
+        list.appendChild(h('label', { title: m.label, 'data-text': text }, box, h('span', null, m.short || m.label), h('span', { class: 'meta' }, `#${m.index}`)));
+      }
+      const count = h('span', { class: 'track-count' });
+      counters.set(o, count);
+      const addFirst = () => {
+        const shown = [...list.querySelectorAll('label')].filter((l) => !l.hidden).map((l) => l.querySelector('input'));
+        const keys = boxes.filter((b) => shown.includes(b.box) && !chosen.has(b.key)).map((b) => b.key);
+        const room = MAX_TRACKS - chosen.size;
+        if (!room) { toast(`At most ${MAX_TRACKS} tracks at once`, 'error'); return; }
+        setTracks([...chosen, ...keys.slice(0, room)]);
+      };
+      const details = h('details', { class: 'track-group', open: this.openOutputs.has(o) },
+        h('summary', null, h('span', null, outputLabel(o)), count),
+        h('div', { class: 'track-group-actions' },
+          h('button', { class: 'btn small ghost', title: `Add the shown ${outputLabel(o)} tracks (up to ${MAX_TRACKS} in total)`, onclick: addFirst }, 'Add shown'),
+          h('button', { class: 'btn small ghost', onclick: () => setTracks([...chosen].filter((k) => parseTrackKey(k)[0] !== o)) }, 'None')),
+        list);
+      details.addEventListener('toggle', () => { if (details.open) this.openOutputs.add(o); else this.openOutputs.delete(o); });
+      return { details, list };
+    });
+    filter.addEventListener('input', () => {
+      const q = filter.value.trim().toLowerCase();
+      for (const { details, list } of groups) {
+        let hits = 0;
+        for (const label of list.querySelectorAll('label')) { label.hidden = !!q && !label.dataset.text.includes(q); if (!label.hidden) hits++; }
+        details.hidden = !!q && !hits;
+        if (q && hits) details.open = true;
+      }
+    });
+    refreshCounts();
+    return h('div', { class: 'side-section' }, heading,
+      this.outputs().length > 1 ? h('p', { class: 'help', style: { margin: 0 } }, 'Mix tracks of any outputs; each track gets its own panel.') : null,
+      filter, groups.map((g) => g.details));
+  }
+
+  /** Reference-genome prediction and observed (ENCODE / FANTOM5) data next to the predictions. */
+  compareSection() {
+    const shown = this.tracksByOutput().map(([o]) => o);
+    const missingRef = shown.filter((o) => !this.hasReference(o));
+    const predictRef = () => {
+      const terms = [...new Set((this.cfg.tracks || []).map((k) => (this.track(k).meta.metadata || {}).ontology_curie).filter(Boolean))];
+      openPredictForm(state.datasetId, { haplotypes: ['ref'], genes: [this.cfg.gene], outputs: (missingRef.length ? missingRef : shown).map((o) => o.toUpperCase()), ontology_terms: terms.length ? terms : undefined });
+    };
+    const refHelp = !shown.length ? null : missingRef.length
+      ? h('p', { class: 'help' }, `No AlphaGenome prediction of the reference window for ${missingRef.map(outputLabel).join(', ')} in ${this.cfg.gene}. `,
+        h('a', { href: '#', onclick: (e) => { e.preventDefault(); predictRef(); } }, 'Predict the reference…'))
+      : h('p', { class: 'help' }, 'Dashed dark line: AlphaGenome on the reference genome (hg38), the baseline every haplotype deviates from.');
+    const scale = shown.includes('cage') && this.cfg.showObserved
+      ? field('FANTOM5 CAGE values', segmented([{ value: 'tpm', label: 'TPM', title: 'Tags per million (comparable across libraries)' }, { value: 'counts', label: 'Read counts', title: 'CTSS read counts' }], this.cfg.obsScale, (v) => { this.cfg.obsScale = v; this.invalidate(); }))
+      : null;
+    return h('div', { class: 'side-section' },
+      h('h3', null, 'Compare with'),
+      checkbox('Reference genome (AlphaGenome)', this.cfg.showRef, (v) => { this.cfg.showRef = v; this.invalidate(); }),
+      refHelp,
+      checkbox('Observed data (ENCODE / FANTOM5)', this.cfg.showObserved, (v) => { this.cfg.showObserved = v; this.renderSide(); this.invalidate(); }),
+      scale,
+      h('p', { class: 'help' }, 'The experiments with the same ontology term, assay and target as each track (CAGE: FANTOM5 libraries; RNA-seq, DNase, ATAC, ChIP: ENCODE GRCh38 bigWigs), read over the window on first use and cached. Units are the source\'s (TPM, signal, fold change), not AlphaGenome\'s: compare shapes and peaks. Click a track name for its ontology terms and experiments.'));
+  }
+
+  sequenceSection() {
+    return h('div', { class: 'side-section' },
+      h('h3', null, 'Sequence lane'),
+      segmented([
+        { value: 'pinned', label: 'Pinned', title: 'Letter frequency per base over the pinned haplotypes (reference when nothing is pinned)' },
+        { value: 'reference', label: 'Reference', title: 'The reference genome of the window' },
+        { value: 'off', label: 'Hidden' },
+      ], this.cfg.seqSource, (v) => { this.cfg.seqSource = v; this.seq = null; this.persist(); this.render(); this.requestSequenceNow(); }),
+      h('p', { class: 'help' }, 'Zoomed in, each base shows its letters scaled by their frequency; zoomed out, stacked bars show base composition per bin (gaps are deleted bases). Haplotypes follow the Haplotype setting.'));
   }
 
   individualsSection() {
@@ -1077,7 +1593,11 @@ class TracksPage {
 
   // ------------------------------------------------------------------ lifecycle
   onEvent(topic) {
-    if (topic === 'pinned') { this.renderSide(); if (this.cfg.mode === 'individuals') this.invalidate(); }
+    if (topic === 'pinned') {
+      this.renderSide();
+      if (this.cfg.mode === 'individuals') this.invalidate();
+      else if (this.cfg.seqSource === 'pinned') this.requestSequenceNow();
+    }
     if (topic === 'cohort' && this.cfg.mode !== 'individuals') { this.renderSide(); this.invalidate(); }
   }
 
@@ -1088,6 +1608,8 @@ class TracksPage {
   unmount() {
     this.latest.abort();
     this.request.cancel();
+    this.seqLatest.abort();
+    this.requestSequence.cancel();
     this.persistDebounced.cancel();
     hideTooltip();
     for (const d of this.disposers) d();
@@ -1096,7 +1618,7 @@ class TracksPage {
   async loadAnnotations() {
     const gene = this.cfg.gene;
     try {
-      const res = await apiJob(`${ds()}/genes/${encodeURIComponent(gene)}/annotations`, { onProgress: () => this.status('Loading gene annotations…') });
+      const res = await loadGeneAnnotations(state.datasetId, gene, { onProgress: () => this.status('Loading gene annotations…') });
       if (gene !== this.cfg.gene) return;
       this.annotations = res;
       this.status('');

@@ -19,9 +19,9 @@ _genomics_completion()
     local convert="vcf-to-23andme"
     local snp="run markers prune train-ml ablate plot"
     local genomes_analyzer="run"
-    local dataset_builders="non-longevous"
+    local dataset_builders="non-longevous vcf-import"
     local non_longevous="build build-window visualize"
-    local alphagenome="analyze integrate tracks chr15-local"
+    local alphagenome="analyze integrate tracks chr15-local predict-dataset catalog"
     local completion="bash"
     local references="ensure-grch38"
     local data="ensure-1kg-vcf"
@@ -57,10 +57,10 @@ _genomics_completion()
     case "${words[1]}" in
         visualize)
             case "$prev" in
-                --dataset|--annotations|--consensus-dataset-dir|--runs-root|--gtf|--cache-dir|--pigmentation-config|--alphagenome-ca-cert|--alphagenome-server-dir|--alphagenome-server-python) _genomics_filedir; return ;;
+                --dataset|--annotations|--consensus-dataset-dir|--runs-root|--gtf|--cache-dir|--jobs-dir|--pigmentation-config|--alphagenome-ca-cert|--alphagenome-server-dir|--alphagenome-server-python) _genomics_filedir; return ;;
                 --dataset-id) COMPREPLY=( $(compgen -W "1kg_high_coverage legacy_top3_1kg_high_coverage variant_transformer_superpopulation variant_transformer_superpopulation_32k variant_transformer_pigmentation_binary" -- "$cur") ); return ;;
             esac
-            COMPREPLY=( $(compgen -W "--dataset --dataset-id --annotations --consensus-dataset-dir --runs-root --gtf --cache-dir --no-disk-cache --memory-mb --workers --model-window --pigmentation-config --lab-port --alphagenome-address --alphagenome-ca-cert --alphagenome-server-dir --alphagenome-server-python --host --port --open --no-add-datasets --verbose" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--dataset --dataset-id --annotations --consensus-dataset-dir --runs-root --gtf --cache-dir --no-disk-cache --memory-mb --workers --model-window --jobs-dir --no-jobs --pigmentation-config --alphagenome-address --alphagenome-ca-cert --alphagenome-server-dir --alphagenome-server-python --host --port --open --no-add-datasets --no-remote --verbose" -- "$cur") )
             return
             ;;
         genotype)
@@ -97,10 +97,20 @@ _genomics_completion()
             if [[ ${cword} -eq 2 ]]; then COMPREPLY=( $(compgen -W "$dataset_builders" -- "$cur") ); return; fi
             if [[ ${words[2]} == non-longevous && ${cword} -eq 3 ]]; then COMPREPLY=( $(compgen -W "$non_longevous" -- "$cur") ); return; fi
             if [[ ${words[2]} == non-longevous ]]; then _genomics_yaml_configs; return; fi
+            if [[ ${words[2]} == vcf-import ]]; then
+                if [[ ${prev} == --spec ]]; then _genomics_filedir; return; fi
+                COMPREPLY=( $(compgen -W "--spec --workers --inspect" -- "$cur") ); return
+            fi
             ;;
         alphagenome)
             if [[ ${cword} -eq 2 ]]; then COMPREPLY=( $(compgen -W "$alphagenome" -- "$cur") ); return; fi
             if [[ ${words[2]} == chr15-local ]]; then _genomics_yaml_configs; return; fi
+            if [[ ${words[2]} == predict-dataset && ${cur} == -* ]]; then
+                COMPREPLY=( $(compgen -W "--outputs --ontology --all-tissues --genes --samples --samples-file --haplotypes --overwrite --timeout --max-attempts --rate-limit-delay" -- "$cur") ); return
+            fi
+            if [[ ${words[2]} == catalog && ${cur} == -* ]]; then
+                COMPREPLY=( $(compgen -W "--output --csv" -- "$cur") ); return
+            fi
             _genomics_filedir; return ;;
         references)
             if [[ ${cword} -eq 2 ]]; then COMPREPLY=( $(compgen -W "$references" -- "$cur") ); return; fi

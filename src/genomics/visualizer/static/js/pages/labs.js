@@ -1,6 +1,7 @@
-// Labs: optional heavyweight tools launched on demand (separate processes), plus the AlphaGenome
-// backend they use (hosted API, a remote server, or a server started on this machine).
+// AlphaGenome backend used by the Perturbation Lab and by background prediction jobs: the hosted
+// API, a remote server, or a server started on this machine.
 import { api } from '../api.js';
+import { navigate } from '../app.js';
 import { h, clear, icon, toast, errorBox, segmented, field } from '../ui.js';
 
 const LOCAL_STATES = {
@@ -17,7 +18,7 @@ export async function mount(root) {
   const backendHost = h('div');
   const list = h('div', { class: 'grid' });
   page.append(
-    h('div', { class: 'page-head' }, h('div', null, h('h1', null, 'Labs'), h('p', null, 'Tools with heavy dependencies (trained checkpoints, AlphaGenome) run as separate processes, started only when you need them.'))),
+    h('div', { class: 'page-head' }, h('div', null, h('h1', null, 'AlphaGenome'), h('p', null, 'Where AlphaGenome predictions are computed: the Perturbation Lab calls it directly and prediction jobs use it in the background.'))),
     h('div', { class: 'grid', style: { maxWidth: '900px' } }, backendHost, list));
 
   let pollTimer = null;
@@ -111,7 +112,7 @@ export async function mount(root) {
     if (document.activeElement !== caCert) caCert.value = form.ca_cert;
     modeSeg.setValue(form.mode);
     statusDot.className = `status-dot ${data.reasons.length ? 'bad' : 'good'}`;
-    activeLabel.textContent = data.reasons.length ? `${data.label}: ${data.reasons.join('; ')}` : `Labs use: ${data.label}`;
+    activeLabel.textContent = data.reasons.length ? `${data.label}: ${data.reasons.join('; ')}` : `In use: ${data.label}`;
     markDirty();
     renderPanel();
     schedulePoll(data);
@@ -120,7 +121,7 @@ export async function mount(root) {
   async function save(quiet = false) {
     try {
       render(await api('/api/alphagenome/settings', { method: 'POST', body: { ...form } }));
-      if (!quiet) toast('AlphaGenome backend saved. Running labs keep the backend they were started with.');
+      if (!quiet) toast('AlphaGenome backend saved. Jobs already running keep the backend they were started with.');
       renderLabs();
     } catch (err) { toast(err.message, 'error', 8000); throw err; }
   }
@@ -147,38 +148,17 @@ export async function mount(root) {
       result,
       activeLabel)));
 
-  // ---------------- labs ----------------
-  async function renderLabs() {
-    let labs;
-    try { ({ labs } = await api('/api/labs')); } catch (err) { clear(list).appendChild(errorBox(err)); return; }
-    clear(list);
-    for (const lab of labs) {
-      const start = async () => {
-        try {
-          await api(`/api/labs/${lab.key}/start`, { method: 'POST', body: {} });
-          toast(`${lab.title} starting at ${lab.url} (models load in a few seconds)`);
-          setTimeout(() => window.open(lab.url, '_blank', 'noopener'), 2500);
-          renderLabs();
-        } catch (err) { toast(err.message, 'error', 8000); }
-      };
-      const stop = async () => {
-        try { await api(`/api/labs/${lab.key}/stop`, { method: 'POST', body: {} }); renderLabs(); } catch (err) { toast(err.message, 'error', 8000); }
-      };
-      list.appendChild(h('section', { class: 'card' },
-        h('div', { class: 'card-head' },
-          h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center' } }, h('span', { class: `status-dot ${lab.running ? 'good' : lab.available ? 'warn' : 'bad'}` }), h('h2', null, lab.title)),
-          lab.running
-            ? h('div', { style: { display: 'flex', gap: '8px' } },
-              h('button', { class: 'btn', onclick: stop }, 'Stop'),
-              h('a', { class: 'btn primary', href: lab.url, target: '_blank', rel: 'noopener' }, 'Open', icon('external', 14)))
-            : h('button', { class: 'btn primary', disabled: !lab.available, onclick: start }, 'Launch')),
-        h('div', { class: 'card-body', style: { display: 'grid', gap: '10px' } },
-          h('p', { style: { margin: 0 } }, lab.description),
-          lab.running ? h('div', { class: 'notice' }, `Running at ${lab.url}`, lab.backend ? ` · AlphaGenome: ${lab.backend}` : '') : null,
-          lab.backend_changed ? h('div', { class: 'notice' }, h('b', null, 'Backend changed: '), 'stop and relaunch the lab to use the new AlphaGenome backend.') : null,
-          lab.reasons && lab.reasons.length ? h('div', { class: 'notice' }, h('b', null, 'Unavailable: '), lab.reasons.join('; ')) : null,
-          h('div', { class: 'muted', style: { fontSize: '12px' } }, 'Log: ', h('span', { class: 'mono' }, lab.log)))));
-    }
+  // ---------------- where it is used ----------------
+  function renderLabs() {
+    clear(list).appendChild(h('section', { class: 'card' },
+      h('div', { class: 'card-head' }, h('h2', null, 'Used by')),
+      h('div', { class: 'card-body', style: { display: 'grid', gap: '10px' } },
+        h('div', { style: { display: 'flex', gap: '12px', alignItems: 'center', justifyContent: 'space-between' } },
+          h('div', null, h('b', null, 'Perturbation Lab'), h('div', { class: 'muted', style: { fontSize: '12px' } }, 'Re-predicts edited haplotypes and re-scores them with a trained model, inside this app.')),
+          h('button', { class: 'btn', onclick: () => navigate('perturb') }, icon('perturb', 14), 'Open')),
+        h('div', { style: { display: 'flex', gap: '12px', alignItems: 'center', justifyContent: 'space-between' } },
+          h('div', null, h('b', null, 'Prediction jobs'), h('div', { class: 'muted', style: { fontSize: '12px' } }, 'Predict tracks for every individual of a dataset (Overview → AlphaGenome predictions, or after an import).')),
+          h('button', { class: 'btn', onclick: () => navigate('jobs') }, icon('jobs', 14), 'Jobs')))));
   }
 
   async function refresh() {

@@ -1,10 +1,12 @@
 // Sequence: pinned haplotypes against the reference (letters when zoomed in, mismatch density
-// when zoomed out), with the variants carried by those samples.
+// when zoomed out), with gene models and the variants carried by those samples.
 import { api, apiJob, isAbort, Latest } from '../api.js';
 import { navigate, updateRouteParams } from '../app.js';
 import { state, ds, geneInfo, setLocus, togglePinned } from '../state.js';
 import { h, clear, icon, iconButton, segmented, select, field, fmtInt, fmtBp, fmtPct, showTooltip, hideTooltip, toast, jobOverlay, debounce, escapeHtml, errorBox } from '../ui.js';
 import { Viewport, setupCanvas, theme, ticks, withAlpha, onResize, css } from '../plot.js';
+import { loadGeneAnnotations, packGenes, drawGeneLanes, geneLanesHeight, geneAt, geneTooltip } from '../gene_lanes.js';
+import { labelGeneOptions, openGeneCard } from '../cards.js';
 
 const GUTTER_L = 120;
 const GUTTER_R = 14;
@@ -24,6 +26,9 @@ class SequencePage {
     this.latest = new Latest();
     this.data = null;
     this.axis = null;
+    this.annotations = null;
+    this.geneRows = [];
+    this.genesH = 0;
     this.disposers = [];
   }
 
@@ -53,7 +58,8 @@ class SequencePage {
 
   build() {
     const genes = state.summary.genes.map((g) => g.gene);
-    this.geneSelect = select(genes, this.cfg.gene, (v) => this.setGene(v, {}), { 'aria-label': 'Gene' });
+    this.geneSelect = select(genes, this.cfg.gene, (v) => this.setGene(v, {}), { 'aria-label': 'Gene', style: { maxWidth: '300px' } });
+    labelGeneOptions(this.geneSelect);
     this.coordSeg = segmented([
       { value: 'reference', label: 'Genomic', title: 'Reference coordinates; insertions drawn as markers between bases' },
       { value: 'aligned', label: 'Training axis', title: 'bcftools_chain expanded alignment used for CNN inputs (insertions become columns)' },
@@ -65,7 +71,7 @@ class SequencePage {
     this.locusInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.gotoLocus(this.locusInput.value); });
     this.spanEl = h('span', { class: 'locus-span' });
     const toolbar = h('div', { class: 'ws-toolbar' },
-      field('Gene', this.geneSelect), field('Coordinates', this.coordSeg), h('div', { class: 'divider' }),
+      field('Gene', h('div', { style: { display: 'flex', gap: '4px', alignItems: 'center' } }, this.geneSelect, iconButton('info', 'Gene card: HGNC names, database links and Gene Ontology', () => openGeneCard(this.cfg.gene), 'icon-btn bordered'))), field('Coordinates', this.coordSeg), h('div', { class: 'divider' }),
       field('Haplotypes', this.hapSeg), field('Bases', this.matchSeg), h('div', { style: { flex: '1' } }),
       h('a', { class: 'btn small', href: '#/samples' }, icon('pin', 13), `${state.pinned.length} pinned`));
     const locus = h('div', { class: 'locus' },
@@ -95,7 +101,9 @@ class SequencePage {
     this.geneSelect.value = gene;
     this.data = null;
     this.axis = null;
+    this.annotations = null;
     try { this.info = await geneInfo(gene); } catch (err) { clear(this.host).appendChild(errorBox(err)); return; }
+    loadGeneAnnotations(state.datasetId, gene).then((res) => { if (gene === this.cfg.gene) { this.annotations = res; this.render(); } }).catch(() => {});
     if (this.cfg.coords === 'aligned' && !(await this.loadAxis())) { this.cfg.coords = 'reference'; this.coordSeg.setValue('reference'); }
     this.viewport.setDomain(this.domain());
     const saved = state.locus || {};
@@ -241,6 +249,9 @@ class SequencePage {
 
   xOf(pos) { const g = this.geom(); const v = this.viewport; return g.left + ((pos - v.start) / v.span) * g.width; }
 
+  /** Gene x position (reference offset -> canvas x in the current coordinates). */
+  geneX = (p) => this.xOf(this.fromGenomic(p));
+
   render() {
     if (!this.info) return;
     const g = this.geom();
@@ -248,11 +259,15 @@ class SequencePage {
     const t = theme();
     const d = this.data;
     const rows = d ? d.rows : [];
-    const top = 52; // ruler (30) + variant lane (22)
+    const v = this.viewport;
+    this.geneRows = packGenes((this.annotations && this.annotations.genes) || [], { start: v.start, end: v.end, pxPerBp: g.width / v.span, toPos: (p) => this.fromGenomic(p) });
+    this.genesH = geneLanesHeight(this.geneRows);
+    const top = 52 + this.genesH; // ruler (30) + gene lanes + variant lane (22)
     const H = top + ROW_H + 4 + Math.max(1, rows.length) * ROW_H + 16;
     const ctx = setupCanvas(canvas, g.total, H);
     this.layout = { top, rows: rows.length };
     this.drawRuler(ctx, t, g);
+    drawGeneLanes(ctx, t, this.geneRows, { top: 30, left: g.left, width: g.width, xOf: this.geneX, highlight: this.cfg.gene });
     if (!d) {
       ctx.fillStyle = t.ink3; ctx.font = `12px ${t.font}`; ctx.textAlign = 'center';
       ctx.fillText(state.pinned.length ? 'Loading…' : 'Pin individuals on the Samples page to compare their haplotypes', g.left + g.width / 2, top + 40);
@@ -260,7 +275,6 @@ class SequencePage {
       return;
     }
     const mw = this.modelWindow();
-    const v = this.viewport;
     if (mw && mw.end > v.start && mw.start < v.end) {
       const a = Math.max(g.left, this.xOf(mw.start)); const b = Math.min(g.left + g.width, this.xOf(mw.end));
       ctx.fillStyle = t.modelWindow; ctx.fillRect(a, top, b - a, H - top);
@@ -297,7 +311,7 @@ class SequencePage {
     ctx.beginPath(); ctx.moveTo(g.left, 29.5); ctx.lineTo(g.left + g.width, 29.5); ctx.stroke();
     ctx.textAlign = 'right'; ctx.fillStyle = t.ink3; ctx.font = `10.5px ${t.font}`;
     ctx.fillText(this.cfg.coords === 'haplotype' ? 'hap pos' : this.info.chromosome || '', g.left - 8, 18);
-    ctx.fillText('variants', g.left - 8, 44);
+    ctx.fillText('variants', g.left - 8, 44 + this.genesH);
   }
 
   variantColor(t, type) {
@@ -314,7 +328,7 @@ class SequencePage {
       const w = Math.max(2, Math.min(pxPerBase - 1, 8));
       ctx.fillStyle = this.variantColor(t, x.type);
       const hgt = 6 + Math.min(10, x.carriers.length * 2);
-      ctx.fillRect(cx - w / 2, 48 - hgt, w, hgt);
+      ctx.fillRect(cx - w / 2, 48 + this.genesH - hgt, w, hgt);
     }
   }
 
@@ -400,7 +414,9 @@ class SequencePage {
     const pos = Math.floor(this.viewport.start + ((x - g.left) / g.width) * this.viewport.span);
     let row = null;
     if (this.layout && y >= this.layout.top + ROW_H + 4) row = Math.floor((y - this.layout.top - ROW_H - 4) / ROW_H);
-    return { x, y, pos, row, lane: y >= 30 && y < 50 ? 'variants' : y >= this.layout?.top && y < this.layout.top + ROW_H ? 'reference' : 'rows' };
+    const gh = this.genesH;
+    const lane = y >= 30 && y < 30 + gh ? 'genes' : y >= 30 + gh && y < 50 + gh ? 'variants' : y >= this.layout?.top && y < this.layout.top + ROW_H ? 'reference' : 'rows';
+    return { x, y, pos, row, lane };
   }
 
   variantAt(pos, tolerancePx = 4) {
@@ -412,8 +428,14 @@ class SequencePage {
   }
 
   onHover(e, frac) {
-    if (frac < 0 || frac > 1 || !this.data) { hideTooltip(); return; }
+    if (frac < 0 || frac > 1) { hideTooltip(); return; }
     const hit = this.hitTest(e);
+    if (hit.lane === 'genes') {
+      const gene = geneAt(this.geneRows, hit.x, hit.y, { top: 30, xOf: this.geneX });
+      if (gene) showTooltip(e.clientX, e.clientY, geneTooltip(gene, escapeHtml)); else hideTooltip();
+      return;
+    }
+    if (!this.data) { hideTooltip(); return; }
     const d = this.data;
     if (hit.lane === 'variants') {
       const v = this.variantAt(hit.pos);

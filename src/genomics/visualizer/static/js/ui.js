@@ -48,9 +48,20 @@ const ICONS = {
   panel: '<rect x="3" y="3.5" width="14" height="13" rx="2"/><path d="M12.5 3.5v13"/>',
   download: '<path d="M10 3v10M6 9.5l4 4 4-4M4 16.5h12"/>',
   pin: '<path d="M7 3h6l-1 5 3 3H5l3-3zM10 11v6"/>',
+  grip: '<circle cx="7.5" cy="5" r=".9"/><circle cx="12.5" cy="5" r=".9"/><circle cx="7.5" cy="10" r=".9"/><circle cx="12.5" cy="10" r=".9"/><circle cx="7.5" cy="15" r=".9"/><circle cx="12.5" cy="15" r=".9"/>',
   external: '<path d="M11 3h6v6M17 3l-8 8M14 12v4H4V6h4"/>',
   refresh: '<path d="M16 10a6 6 0 1 1-1.8-4.3M16 3.5v3.5h-3.5"/>',
   search: '<circle cx="9" cy="9" r="5"/><path d="M13 13l4 4"/>',
+  perturb: '<path d="M3 10h3l2-5 4 10 2-5h3"/>',
+  jobs: '<rect x="3" y="4" width="14" height="3" rx="1"/><rect x="3" y="9" width="14" height="3" rx="1"/><rect x="3" y="14" width="9" height="3" rx="1"/>',
+  alphagenome: '<circle cx="10" cy="10" r="2.2"/><path d="M10 2.5v3M10 14.5v3M2.5 10h3M14.5 10h3M4.7 4.7l2.1 2.1M13.2 13.2l2.1 2.1M4.7 15.3l2.1-2.1M13.2 6.8l2.1-2.1"/>',
+  upload: '<path d="M10 14V4M6 7.5l4-4 4 4M4 16.5h12"/>',
+  play: '<path d="M6 4l10 6-10 6z"/>',
+  stop: '<rect x="5" y="5" width="10" height="10" rx="1.5"/>',
+  trash: '<path d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10"/>',
+  folder: '<path d="M3 6a1 1 0 0 1 1-1h4l2 2h6a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>',
+  doc: '<path d="M6 3h6l3 3v11H6zM12 3v3h3"/>',
+  info: '<circle cx="10" cy="10" r="7"/><path d="M10 9v5M10 6.2v.1"/>',
 };
 
 export function icon(name, size = 18) {
@@ -241,4 +252,69 @@ export function downloadText(filename, text, type = 'text/plain') {
 
 export function errorBox(err) {
   return h('div', { class: 'error-box' }, err && err.message ? err.message : String(err));
+}
+
+// ---------- forms ----------
+export function checkbox(label, value, onChange, attrs = {}) {
+  const box = h('input', { type: 'checkbox', ...attrs });
+  box.checked = !!value;
+  box.addEventListener('change', () => onChange(box.checked));
+  return h('label', { class: 'check' }, box, label);
+}
+
+/** Text input for a server path with directory completion (GET /api/fs/complete). */
+export function pathInput({ value = '', placeholder = '', onChange, filter = null, attrs = {} } = {}) {
+  const listId = `paths-${Math.random().toString(36).slice(2)}`;
+  const list = h('datalist', { id: listId });
+  const input = h('input', { class: 'input mono', list: listId, placeholder, spellcheck: 'false', autocomplete: 'off', ...attrs });
+  input.value = value || '';
+  let last = null;
+  const refresh = debounce(async () => {
+    const text = input.value;
+    if (text === last || !text.includes('/')) return;
+    last = text;
+    try {
+      const res = await fetch(`/api/fs/complete?path=${encodeURIComponent(text)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      clear(list);
+      for (const e of data.entries || []) {
+        if (filter && !e.dir && !filter(e.name)) continue;
+        list.appendChild(h('option', { value: e.path }, e.dataset ? 'dataset' : (e.dir ? 'folder' : '')));
+      }
+    } catch (e) { /* offline */ }
+  }, 150);
+  input.addEventListener('input', () => { refresh(); if (onChange) onChange(input.value.trim()); });
+  input.addEventListener('focus', refresh);
+  const wrap = h('span', { class: 'path-input' }, input, list);
+  wrap.input = input;
+  return wrap;
+}
+
+export function readFileText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Could not read the file'));
+    reader.readAsText(file);
+  });
+}
+
+const TASK_STATES = {
+  starting: ['warn', 'Starting'], queued: ['warn', 'Queued'], running: ['warn', 'Running'],
+  done: ['good', 'Done'], failed: ['bad', 'Failed'], cancelled: ['bad', 'Cancelled'], lost: ['bad', 'Lost'],
+};
+
+export function taskStatus(task) {
+  const [cls, text] = TASK_STATES[task.status] || ['warn', task.status];
+  const active = ['starting', 'queued', 'running'].includes(task.status);
+  return h('span', { class: 'task-status', title: task.message || '' }, active && task.status === 'running' ? h('span', { class: 'spinner' }) : h('span', { class: `status-dot ${cls}` }), text);
+}
+
+export function fmtDuration(seconds) {
+  if (!Number.isFinite(seconds)) return '–';
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }

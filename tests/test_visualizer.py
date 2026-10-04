@@ -13,6 +13,7 @@ import threading
 import time
 import zlib
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import urlencode
 
 import numpy as np
@@ -274,6 +275,22 @@ def test_sequence_letters_show_snvs_deletions_and_insertions(dataset):
     assert dense["rows"][0]["deletions"] == 3
 
 
+def test_composition_counts_letter_frequencies_per_base(dataset):
+    seqs = SequenceService(_service())
+    letters = list("ACGTN-")
+    ref = seqs.composition(dataset, "GENE1", [], "reference", 0, 80, 100)
+    assert ref["source"] == "reference" and ref["letters"] == "".join(letters) and ref["reference"] == REF[:80]
+    freq = ref["freq"]
+    assert freq.shape == (6, 80) and np.allclose(freq.sum(axis=0), 1.0)
+    assert all(freq[letters.index(REF[i]), i] == 1.0 for i in range(80))
+    both = seqs.composition(dataset, "GENE1", [SeriesSpec("S1", "H1+H2")], "reference", 0, 80, 100)
+    assert both["haplotypes"] == ["S1:H1", "S1:H2"]
+    assert both["freq"][letters.index("T"), 10] == 0.5 and both["freq"][letters.index(REF[10]), 10] == 0.5  # SNV on H1 only
+    assert both["freq"][letters.index("-"), 52] == 0.5  # deletion on H2
+    binned = seqs.composition(dataset, "GENE1", [], "reference", 0, L, 10)
+    assert binned["freq"].shape == (6, 10) and "reference" in binned and np.allclose(binned["freq"].sum(axis=0), 1.0)
+
+
 def test_lru_cache_respects_budget_and_dedupes_loads():
     cache = LRUCache(1000)
     calls = []
@@ -396,3 +413,104 @@ def test_cli_exposes_visualize_and_workbench_alias(monkeypatch):
     assert calls[-1][0] == "genomics.visualizer"
     assert cli.main(["genotype", "workbench", "--legacy"]) == 0
     assert calls[-1][0] == "genomics.predictors.genotype_based.apps.genomics_workbench"
+
+
+# ------------------------------------------------------------------------- reference & links
+def _write_reference_prediction(dataset_dir):
+    """Reference-window prediction with the dataset's 'cell B (-)' track plus a track it lacks, in another order."""
+    pred = dataset_dir / "references" / "windows" / "GENE1" / "predictions_ref"
+    pred.mkdir(exist_ok=True)
+    values = np.stack([np.full(L, 7.0, np.float32), np.arange(L, dtype=np.float32) * 10], axis=1)
+    np.savez_compressed(pred / "rna_seq.npz", values=values)
+    (pred / "rna_seq_metadata.json").write_text(json.dumps({"metadata": [{"biosample_name": "cell B", "strand": "-"}, {"biosample_name": "cell X", "strand": "+"}]}))
+    return pred
+
+
+def test_reference_prediction_series_matches_tracks_and_coordinates(dataset_dir, tmp_path):
+    import shutil
+
+    from genomics.visualizer.signals import REFERENCE_SAMPLE, match_track_columns
+
+    pred = _write_reference_prediction(dataset_dir)
+    try:
+        dataset = Dataset(dataset_dir)
+        assert dataset.gene_info("GENE1")["reference_outputs"] == ["rna_seq"]
+        signals = _service(tmp_path)
+        for coords in ("reference", "haplotype"):
+            payload = signals.series_payload(dataset, "GENE1", "rna_seq", [SeriesSpec(REFERENCE_SAMPLE, "H1"), SeriesSpec("S1", "H1")], [0, 1], coords, 0, L, L)
+            ref = payload["series"][0]
+            assert ref["label"] == "Reference genome"
+            assert np.isnan(ref["mean"][0]).all()  # 'cell A (+)' was not predicted on the reference
+            np.testing.assert_array_equal(ref["mean"][1], np.full(L, 7.0, np.float32))
+        # Training-axis coordinates: insertion slots are gaps, the rest follow the reference offsets.
+        signals.alignment = SimpleNamespace(axis=lambda ds, gene: {"insertion_slots": np.array([2, 5]), "ref_start_offset": 1, "expanded_length": 10})
+        mapped = signals.reference_indexed_window(dataset, "GENE1", np.arange(L, dtype=np.float32).reshape(-1, 1), 1, "aligned", 0, 8)[:, 0]
+        np.testing.assert_array_equal(mapped, [1, 2, np.nan, 3, 4, np.nan, 5, 6])
+        binned = signals.reference_indexed_window(dataset, "GENE1", np.arange(3, dtype=np.float32).reshape(-1, 1), 128, "reference", 120, 140)[:, 0]
+        np.testing.assert_array_equal(binned, [0] * 8 + [1] * 12)  # 128 bp rows expand to bases
+    finally:
+        shutil.rmtree(pred)
+    assert match_track_columns([{"ontology_curie": "CL:1", "strand": "+"}], [{"ontology_curie": "CL:1", "strand": "-"}, {"ontology_curie": "CL:1", "strand": "+"}]) == [-1, 0]
+
+
+def test_gene_models_use_0_based_gtf_starts():
+    pd = pytest.importorskip("pandas")
+    from genomics.visualizer.annotations import _features_to_models
+
+    # pyranges tables are 0-based half-open; window offset 0 is the 1-based position 1001.
+    df = pd.DataFrame([
+        {"Feature": "gene", "Start": 1000, "End": 1010, "Strand": "+", "gene_name": "G", "gene_type": "protein_coding", "transcript_id": None, "transcript_name": None, "transcript_type": None, "tag": None, "exon_number": None},
+        {"Feature": "exon", "Start": 1002, "End": 1005, "Strand": "+", "gene_name": "G", "gene_type": "protein_coding", "transcript_id": "T1", "transcript_name": "G-201", "transcript_type": "protein_coding", "tag": "", "exon_number": 1},
+    ])
+    gene = _features_to_models(df, 1001)[0]
+    assert (gene["start"], gene["end"]) == (0, 10)
+    assert gene["transcripts"][0]["exons"] == [[2, 5]]
+
+
+def test_http_api_reference_observed_and_offline_lookups(dataset_dir, tmp_path):
+    import shutil
+
+    from genomics.visualizer.server import Handler, Server, VisualizerApp
+
+    pred = _write_reference_prediction(dataset_dir)
+    catalog = DatasetCatalog()
+    ds = catalog.add(dataset_dir)
+    app = VisualizerApp(catalog, cache_dir=tmp_path / "cache", memory_bytes=256 << 20, workers=2, runs_roots=[], remote=False)
+    handler = type("TestHandler", (Handler,), {"app": app})
+    port = _free_port()
+    server = Server(("127.0.0.1", port), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def get(path):
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+        conn.request("GET", path)
+        res = conn.getresponse()
+        data = res.read()
+        conn.close()
+        return res.status, json.loads(data)
+
+    try:
+        base = f"/api/d/{ds.id}"
+        status, info = get(f"{base}/genes/GENE1")
+        assert status == 200 and info["reference_outputs"] == ["rna_seq"]
+        params = urlencode({"gene": "GENE1", "output": "rna_seq", "series": "@reference:H1", "tracks": "1", "start": 0, "end": L, "bins": 10})
+        status, payload = get(f"{base}/signal?{params}")
+        mean = np.frombuffer(__import__("base64").b64decode(payload["series"][0]["mean"]["$f32"]), dtype="<f4")
+        assert status == 200 and np.allclose(mean, 7.0)
+        params = urlencode({"gene": "GENE1", "output": "rna_seq", "tracks": "0,1", "start": 0, "end": L, "bins": 10})
+        for _ in range(100):
+            status, data = get(f"{base}/observed?{params}")
+            if not data.get("pending"):
+                break
+            time.sleep(0.05)
+        # The synthetic tracks have no ontology term / assay: reported, not an error.
+        assert status == 200 and [t["available"] for t in data["tracks"]] == [False, False] and "ontology term" in data["tracks"][0]["reason"]
+        status, err = get("/api/ontology/term?curie=CL:0000001")
+        assert status == 502 and "--no-remote" in err["error"]
+        status, names = get("/api/genes/names?symbols=GENE1")
+        assert status == 200 and names["names"] == {}
+    finally:
+        server.shutdown()
+        server.server_close()
+        app.shutdown()
+        shutil.rmtree(pred)
