@@ -24,6 +24,10 @@ the printed URL uses `localhost`.
 
 Code: `src/genomics/visualizer/` (Python stdlib HTTP server + JSON API, static single-page app in
 `static/`, no build step and no new runtime dependencies).
+`tests/test_visualizer_frontend.py` opens every page in headless Chromium against a synthetic dataset
+and fails on any JavaScript error; it also round-trips the figure export. It needs the `test-ui` extra
+and `python3 -m playwright install chromium` (skipped otherwise), and runs in the *Visualizer tests*
+GitHub workflow.
 
 ## Pages
 
@@ -43,6 +47,15 @@ Navigation: drag to pan, Ctrl/⌘+scroll to zoom, Shift+drag to zoom to a region
 zoom in, ←/→ and +/− on the focused plot. The locus box accepts `chr:start-end`, `start-end` or a
 single position. Pinned samples, cohort filters and the locus are shared between pages and kept
 per dataset in the browser; the URL is shareable.
+
+**Figure export.** *Export* on the Tracks, Sequence and Perturbation Lab pages downloads the current
+view as a **PNG** (2× or 4× pixels) or an **SVG**. The SVG is vector: the plots are re-drawn into SVG
+paths and text (not embedded bitmaps; only the population heatmap stays a bitmap), so it can be
+edited in Inkscape or Illustrator. The figure has a title and caption with the gene, locus, outputs,
+what is shown (individuals, group means by a field, heatmap; reference / observed lanes), the cohort
+filters (or the Perturbation Lab's model, individual and edits), the dataset and the date. *Light
+background* (on by default) draws the figure with the light theme whatever theme the page uses.
+The overview strip, buttons and hints are left out.
 
 ## Reference and observed data
 

@@ -12,7 +12,8 @@
 // button for the gene card (HGNC, database links, Gene Ontology).
 import { api, apiJob, isAbort, Latest } from '../api.js';
 import { navigate, updateRouteParams, watchJobs } from '../app.js';
-import { state, ds, geneInfo, setLocus, setPinned, togglePinned, categoricalFields, filterRows } from '../state.js';
+import { state, ds, geneInfo, setLocus, setPinned, togglePinned, categoricalFields, filterRows, cohortDescription } from '../state.js';
+import { exportMenu, slug } from '../figure.js';
 import { h, clear, icon, iconButton, segmented, select, field, fmtInt, fmtBp, fmtNum, showTooltip, hideTooltip, toast, jobOverlay, debounce, escapeHtml, errorBox } from '../ui.js';
 import { Viewport, ColorSlots, setupCanvas, theme, ticks, withAlpha, seqColor, onResize, css } from '../plot.js';
 import { loadGeneAnnotations, packGenes, drawGeneLanes, geneLanesHeight, geneAt, geneTooltip } from '../gene_lanes.js';
@@ -171,11 +172,12 @@ class TracksPage {
       h('button', { class: 'btn small', title: 'Jump to the CNN training window', onclick: () => this.gotoModelWindow() }, icon('target', 14), 'Model window'),
       h('button', { class: 'btn small', title: 'Show the whole prediction window', onclick: () => this.viewport.set(0, this.viewport.length) }, icon('expand', 14), 'Whole window'),
       h('button', { class: 'btn small ghost', title: 'Open this locus on the Sequence page', onclick: () => navigate('sequence', { gene: this.cfg.gene }) }, 'Sequence →'),
+      exportMenu(() => this.figureOptions()),
       this.statusEl,
       h('span', { class: 'hint' }, 'Drag to pan · ⌘/Ctrl+scroll zoom · Shift+drag region'),
       iconButton('panel', 'Toggle settings panel', () => { this.workspace.classList.toggle('side-collapsed'); this.render(); }, 'icon-btn bordered'));
 
-    this.overviewHost = h('div', { class: 'canvas-host', style: { borderBottom: '1px solid var(--line)' } }, h('canvas'));
+    this.overviewHost = h('div', { class: 'canvas-host', style: { borderBottom: '1px solid var(--line)' }, 'data-export': 'skip' }, h('canvas'));
     this.rulerHost = h('div', { class: 'canvas-host', style: { borderBottom: '1px solid var(--line)' } }, h('canvas'));
     this.seqHost = h('div', { class: 'canvas-host seq-track', style: { borderBottom: '1px solid var(--line)' } }, h('canvas'));
     this.panelsHost = h('div', { class: 'canvas-host' });
@@ -1323,6 +1325,28 @@ class TracksPage {
     if (this.cfg.mode === 'groups' && this.cfg.diff) this.legend.append(h('span', { class: 'muted' }, 'Each line: group mean minus the haplotype-weighted mean of the shown groups'));
     else if (this.showBand()) this.legend.append(h('span', { class: 'muted' }, 'Shaded: ±1 SD across haplotypes'));
     else if (this.cfg.envelope) this.legend.append(h('span', { class: 'muted' }, 'Shaded: min–max within each pixel bin'));
+  }
+
+  /** Figure export: the plot area (without the overview strip) with the view described as caption. */
+  figureOptions() {
+    if (!this.info) return null;
+    const c = this.cfg;
+    const outputs = this.shownOutputs().map(outputLabel).join(', ') || 'no output';
+    const view = c.mode === 'population'
+      ? `Population heatmap of ${this.cfg.popTrack ? this.trackLabel(this.cfg.popTrack) : 'no track'}, rows sorted by ${c.groupField || 'sample'}`
+      : c.mode === 'groups' ? `Group means by ${c.groupField}${c.diff ? ' (difference from the cohort mean)' : ''}` : `Pinned individuals (${c.hap === 'both' ? 'H1 and H2' : c.hap})`;
+    const compare = [this.cfg.showRef && c.mode !== 'population' ? 'reference genome prediction (dashed)' : '', this.cfg.showObserved && c.mode !== 'population' ? 'observed ENCODE / FANTOM5 signal' : ''].filter(Boolean).join(' and ');
+    const today = new Date().toISOString().slice(0, 10);
+    return {
+      root: this.scroll,
+      redraw: () => this.render(),
+      title: `${c.gene} · ${outputs} · ${this.locusInput.value}`,
+      caption: [
+        `${view}${compare ? `; with ${compare}` : ''}. Cohort: ${cohortDescription()}.`,
+        `Dataset ${state.datasetId} · ${this.spanEl.textContent} · exported ${today} from genomics visualize`,
+      ],
+      filename: slug(`${state.datasetId}_${c.gene}_${this.locusInput.value.replace(/,/g, '')}_${c.mode}`),
+    };
   }
 
   renderFooter() {

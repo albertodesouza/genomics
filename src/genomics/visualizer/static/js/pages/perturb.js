@@ -11,6 +11,7 @@ import { h, clear, icon, iconButton, segmented, select, setOptions, field, check
 import { Viewport, setupCanvas, theme, ticks, withAlpha, onResize, css } from '../plot.js';
 import { loadGeneAnnotations, packGenes, drawGeneLanes, geneLanesHeight, geneAt, geneTooltip } from '../gene_lanes.js';
 import { labelGeneOptions, openGeneCard } from '../cards.js';
+import { exportMenu, slug } from '../figure.js';
 
 const GUTTER_L = 92;
 const GUTTER_R = 14;
@@ -101,6 +102,7 @@ class PerturbPage {
       this.locusInput, this.spanEl,
       h('button', { class: 'btn small', onclick: () => this.gotoModelWindow() }, icon('target', 14), 'Model window'),
       h('button', { class: 'btn small', onclick: () => this.viewport.set(0, this.viewport.length) }, icon('expand', 14), 'Whole window'),
+      exportMenu(() => this.figureOptions()),
       this.statusEl,
       h('span', { class: 'hint' }, 'Tracks: drag to pan, ⌘/Ctrl+scroll to zoom · Sequence lane: drag to select a region to edit'),
       iconButton('panel', 'Toggle side panel', () => { this.page.classList.toggle('side-collapsed'); this.render(); }, 'icon-btn bordered'));
@@ -554,6 +556,24 @@ class PerturbPage {
   }
 
   // ------------------------------------------------------------------ rendering
+  /** Figure export: ruler, tracks and sequence lane, with the model, individual and edits as caption. */
+  figureOptions() {
+    if (!this.info || !this.model) return null;
+    const sample = this.byId.get(this.cfg.sample) || {};
+    const edits = this.edits.map((e) => `${e.op}${e.base ? ` ${e.base}` : ''} ${fmtInt(e.start)}-${fmtInt(e.end)} (${(e.haplotypes || []).join('+') || 'H1+H2'})`);
+    const today = new Date().toISOString().slice(0, 10);
+    return {
+      root: this.scroll,
+      redraw: () => this.render(),
+      title: `${this.cfg.gene} · ${this.cfg.sample}${sample.label ? ` (${sample.label}${sample.split ? `, ${sample.split}` : ''})` : ''} · ${this.locusInput.value}`,
+      caption: [
+        `Model ${this.model.run} (${this.model.checkpoint}). ${edits.length ? `Edits: ${edits.join('; ')}${this.result ? '' : ' (not yet re-predicted)'}` : 'No edits'}.`,
+        `Dataset ${state.datasetId} · ${this.spanEl.textContent} · exported ${today} from genomics visualize`,
+      ],
+      filename: slug(`${this.cfg.sample}_${this.cfg.gene}_${this.locusInput.value.replace(/,/g, '')}_perturbation`),
+    };
+  }
+
   render() {
     if (!this.info) { this.drawEmpty(); return; }
     this.renderLocus();

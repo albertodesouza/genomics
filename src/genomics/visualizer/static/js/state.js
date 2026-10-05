@@ -115,6 +115,16 @@ export function filterRows(filters = state.filters, search = state.search, ignor
 
 export function cohortSize() { return state.samples ? filterRows(state.filters, '').length : 0; }
 
+/** One line describing the cohort, e.g. "1,204 of 3,202 samples (superpopulation: AFR, EUR)". */
+export function cohortDescription() {
+  if (!state.samples) return '';
+  const total = state.samples.rows.length;
+  const size = cohortSize();
+  const parts = Object.entries(state.filters).filter(([, v]) => v && v.length).map(([k, v]) => `${k}: ${v.length > 6 ? `${v.slice(0, 6).join(', ')} +${v.length - 6}` : v.join(', ')}`);
+  const n = (x) => Number(x).toLocaleString('en-US');
+  return size === total ? `all ${n(total)} samples` : `${n(size)} of ${n(total)} samples (${parts.join('; ')})`;
+}
+
 export async function geneInfo(gene) {
   if (state.genes.has(gene)) return state.genes.get(gene);
   const info = await api(`${ds()}/genes/${encodeURIComponent(gene)}`);

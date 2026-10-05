@@ -7,6 +7,7 @@ import { h, clear, icon, iconButton, segmented, select, field, fmtInt, fmtBp, fm
 import { Viewport, setupCanvas, theme, ticks, withAlpha, onResize, css } from '../plot.js';
 import { loadGeneAnnotations, packGenes, drawGeneLanes, geneLanesHeight, geneAt, geneTooltip } from '../gene_lanes.js';
 import { labelGeneOptions, openGeneCard } from '../cards.js';
+import { exportMenu, slug } from '../figure.js';
 
 const GUTTER_L = 120;
 const GUTTER_R = 14;
@@ -83,6 +84,7 @@ class SequencePage {
       h('button', { class: 'btn small', onclick: () => { const mw = this.modelWindow(); if (mw) this.viewport.set(mw.start, mw.end); } }, icon('target', 14), 'Model window'),
       h('button', { class: 'btn small', onclick: () => this.viewport.set(0, this.viewport.length) }, icon('expand', 14), 'Whole window'),
       h('button', { class: 'btn small ghost', onclick: () => navigate('tracks', { gene: this.cfg.gene }) }, 'Tracks →'),
+      exportMenu(() => this.figureOptions()),
       h('span', { class: 'hint' }, 'Zoom below 4 kb for bases · click a variant tick to center it'));
     this.host = h('div', { class: 'seq-host canvas-host' }, h('canvas'));
     this.loadingLine = h('div', { class: 'loading-line', hidden: true });
@@ -251,6 +253,23 @@ class SequencePage {
 
   /** Gene x position (reference offset -> canvas x in the current coordinates). */
   geneX = (p) => this.xOf(this.fromGenomic(p));
+
+  /** Figure export: the sequence canvas (not the genotype table), the view described as caption. */
+  figureOptions() {
+    if (!this.info) return null;
+    const shown = state.pinned.slice(0, MAX_SAMPLES);
+    const today = new Date().toISOString().slice(0, 10);
+    return {
+      root: this.host,
+      redraw: () => this.render(),
+      title: `${this.cfg.gene} · haplotypes against the reference · ${this.locusInput.value}`,
+      caption: [
+        `${shown.length} pinned individual${shown.length === 1 ? '' : 's'}${shown.length ? `: ${shown.join(', ')}` : ''}.`,
+        `Dataset ${state.datasetId} · ${this.spanEl.textContent} · exported ${today} from genomics visualize`,
+      ],
+      filename: slug(`${state.datasetId}_${this.cfg.gene}_${this.locusInput.value.replace(/,/g, '')}_sequence`),
+    };
+  }
 
   render() {
     if (!this.info) return;

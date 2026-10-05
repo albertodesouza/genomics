@@ -250,6 +250,17 @@ def test_predict_dataset_writes_canonical_files_and_skips_done(lab_dataset, monk
         predict_dataset.DatasetPredictor(lab_dataset.path, ["NOT_AN_OUTPUT"], ["CL:9"])
 
 
+def test_predict_dataset_includes_windows_missing_from_metadata(lab_dataset):
+    from genomics.workflows.alphagenome import predict_dataset
+
+    # A window added after the build (not in dataset_metadata.json "genes") is still predicted.
+    (lab_dataset.path / "references" / "windows" / "G2").mkdir()
+    assert predict_dataset.DatasetPredictor(lab_dataset.path, ["CAGE"], ["CL:9"]).genes == ["G1", "G2"]
+    assert predict_dataset.DatasetPredictor(lab_dataset.path, ["CAGE"], ["CL:9"], genes=["G2"]).genes == ["G2"]
+    with pytest.raises(ValueError):
+        predict_dataset.DatasetPredictor(lab_dataset.path, ["CAGE"], ["CL:9"], genes=["G3"])
+
+
 def test_predict_dataset_stores_every_output_kind(lab_dataset, monkeypatch, tmp_path):
     """Binned ChIP tracks, contact maps and splice junctions are stored in their own shapes and
     read back: binned tracks expand to bases (through each haplotype's indels), the others are

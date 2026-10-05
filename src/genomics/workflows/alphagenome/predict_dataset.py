@@ -110,7 +110,12 @@ class DatasetPredictor:
         if not self.outputs:
             raise ValueError(f"Choose outputs among {', '.join(ALL_OUTPUTS)} (or 'all')")
         self.ontology_terms = [t.strip() for t in (ontology_terms or []) if t.strip()] or None
-        all_genes = [str(g) for g in self.metadata.get("genes") or []] or sorted(p.name for p in (self.dataset_dir / "references" / "windows").iterdir() if p.is_dir())
+        # Windows added after the dataset was built (e.g. by ``vcf-import --extend``) may be missing
+        # from the metadata's gene list, so the window directories count too.
+        windows_dir = self.dataset_dir / "references" / "windows"
+        on_disk = sorted(p.name for p in windows_dir.iterdir() if p.is_dir()) if windows_dir.is_dir() else []
+        listed = [str(g) for g in self.metadata.get("genes") or []]
+        all_genes = listed + sorted(set(on_disk) - set(listed))
         self.genes = [g for g in (genes or all_genes) if g in all_genes]
         missing_genes = [g for g in (genes or []) if g not in all_genes]
         if missing_genes:

@@ -1,4 +1,5 @@
 // Canvas plotting primitives shared by the Tracks, Sequence and Experiments pages.
+import { exportState, SvgContext } from './figure.js';
 
 export function css(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -32,9 +33,15 @@ export function withAlpha(color, alpha) {
 
 /** Size a canvas for the device pixel ratio; returns a 2D context in CSS pixels. */
 export function setupCanvas(canvas, width, height) {
-  const dpr = window.devicePixelRatio || 1;
   const w = Math.max(1, Math.floor(width));
   const hgt = Math.max(1, Math.floor(height));
+  if (exportState.recorders) {
+    // SVG export: record the drawing instead of painting (the canvas keeps its pixels).
+    const rec = new SvgContext(w, hgt);
+    exportState.recorders.set(canvas, rec);
+    return rec;
+  }
+  const dpr = exportState.dpr || window.devicePixelRatio || 1;
   if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(hgt * dpr)) {
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(hgt * dpr);
