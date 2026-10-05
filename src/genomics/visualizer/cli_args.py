@@ -33,8 +33,9 @@ def add_visualizer_arguments(parser: argparse.ArgumentParser) -> argparse.Argume
     labs.add_argument("--lab-port", type=int, default=8781, help=argparse.SUPPRESS)  # the lab now runs inside the visualizer; kept for old scripts
     labs.add_argument("--alphagenome-address", default=None, metavar="URL", help="Self-hosted AlphaGenome server, e.g. grpc://host:50051 or grpcs://host:50051 (overrides the setting saved from the UI)")
     labs.add_argument("--alphagenome-ca-cert", type=Path, default=None, metavar="PEM", help="CA certificate for a self-hosted AlphaGenome server using TLS")
-    labs.add_argument("--alphagenome-server-dir", type=Path, default=None, metavar="DIR", help="alphagenome_research checkout with server.py, for 'Start server on this machine' (default: $ALPHAGENOME_SERVER_DIR or ../alphagenome_research)")
-    labs.add_argument("--alphagenome-server-python", type=Path, default=None, metavar="PYTHON", help="Interpreter with alphagenome_research + JAX for the local server (default: $ALPHAGENOME_SERVER_PYTHON, else the first conda env with alphagenome_research and CUDA jax)")
+    labs.add_argument("--alphagenome-server-dir", type=Path, default=None, metavar="DIR", help="alphagenome_research checkout with server.py, for 'Start server on this machine' (default: $ALPHAGENOME_SERVER_DIR, ../alphagenome_research, or ~/.local/share/genomics/alphagenome_research)")
+    labs.add_argument("--alphagenome-server-python", type=Path, default=None, metavar="PYTHON", help="Interpreter with alphagenome_research + JAX for the local server (default: $ALPHAGENOME_SERVER_PYTHON, else the first conda env with alphagenome_research and CUDA jax). `genomics alphagenome server setup` creates one")
+    labs.add_argument("--alphagenome-server-port", type=int, default=None, metavar="PORT", help="Port of the local AlphaGenome server (default: $ALPHAGENOME_SERVER_PORT or 50051)")
 
     server = parser.add_argument_group("server")
     server.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")

@@ -11,7 +11,10 @@ Do not reintroduce old root-level package wrappers or legacy module entrypoints 
 ## Setup
 
 ```bash
-python3 -m pip install -e .                # base install
+scripts/env/install.sh                      # conda env "genomics" + bcftools/samtools + [visualizer]; --training, --alphagenome-server
+genomics doctor                             # what this machine can run, per feature, and how to fix the rest
+python3 -m pip install -e .                # base install (numpy, PyYAML: CLI + visualizer browsing)
+python3 -m pip install -e ".[visualizer]"   # + pandas/pyarrow (gene models, VCF import) + alphagenome client
 python3 -m pip install -e ".[test]"         # + pytest
 python3 -m pip install -e ".[genotype]"     # + torch/sklearn/scipy for genotype predictor
 python3 -m pip install -e ".[variant]"      # + torch/sklearn for variant transformer
@@ -23,6 +26,8 @@ source scripts/env/start_genomics_universal.sh   # activates conda env + Bash co
 ```
 
 Package supports Python `>=3.8` — avoid APIs from newer versions; use `importlib.resources.read_text(...)` style APIs already present in the repo for package resources.
+
+The local AlphaGenome server (`genomics alphagenome server setup|start|check`, `src/genomics/workflows/alphagenome/local_server.py`) runs an `alphagenome_research` checkout (github.com/FeLiPeOLi7/alphagenome_research) in a **separate** env (conda `alphagenome`: JAX+CUDA, `alphagenome>=0.7`). `model_server.py` runs inside that env, so it must stay stdlib-only at module level and must not import `genomics`. Requirements/sizes per feature are documented in `docs/getting-started/requirements.md`; keep them in sync with `src/genomics/doctor.py`.
 
 ## Commands
 
@@ -68,7 +73,7 @@ If a command can't run because an optional dependency/tool is missing, say so ex
 
 All active Python code lives under `src/genomics/`, organized by responsibility rather than by historical module:
 
-- `genomics.core` — shared infrastructure used across predictors/workflows: config I/O and typed schemas (`config_schema.py`), dataset registry/resolution (`data_registry.py`), reference genome registry (`reference_registry.py`), dataset metadata, splitting, metrics, checkpointing, training utils, torch/sklearn helpers, wandb integration.
+- `genomics.core` — shared infrastructure used across predictors/workflows: config I/O and typed schemas (`config_schema.py`), dataset registry/resolution (`data_registry.py`), reference genome registry (`reference_registry.py`), dataset metadata, splitting, metrics, checkpointing, training utils, torch/sklearn helpers, wandb integration. Its `__init__` (like `genomics.workflows.alphagenome`'s) exports names lazily via `__getattr__`; never add eager imports there, or the base install (numpy + PyYAML only) can no longer run `genomics` / `genomics visualize`.
 - `genomics.workflows` — operational pipelines and dataset builders: `genomes_analyzer/` (FASTQ → alignment → variants → reports pipeline), `alphagenome/` (AlphaGenome model integration), `dataset_builders/non_longevous/` (dataset construction).
 - `genomics.predictors` — model/predictor pipelines, each a self-contained subpackage: `genotype_based/` (CNN models over aligned genomic windows, with `alignment/`, `data/`, `models/`, `experiments/`, `analysis/`, `apps/`, `tools/` subfolders), `variant_transformer/` (transformer over variant calls), `snp_ancestry/` (classical ML ancestry classifier).
 - `genomics.converters` — format converters, e.g. `vcf_to_23andme/`.

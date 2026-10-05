@@ -263,7 +263,7 @@ def _visualizer_args(args: argparse.Namespace) -> list:
         command_args.extend(["--runs-root", root])
     for flag in (
         "annotations", "consensus_dataset_dir", "gtf", "cache_dir", "pigmentation_config", "jobs_dir",
-        "alphagenome_address", "alphagenome_ca_cert", "alphagenome_server_dir", "alphagenome_server_python", "port",
+        "alphagenome_address", "alphagenome_ca_cert", "alphagenome_server_dir", "alphagenome_server_python", "alphagenome_server_port", "port",
     ):
         value = getattr(args, flag)
         if value is not None and value != "":
@@ -554,6 +554,21 @@ def cmd_alphagenome_predict_dataset(args: argparse.Namespace) -> int:
         command_args.append("--overwrite")
     command_args.extend(["--timeout", str(args.timeout), "--max-attempts", str(args.max_attempts), "--rate-limit-delay", str(args.rate_limit_delay)])
     return _run_module("genomics.workflows.alphagenome.predict_dataset", command_args)
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    from genomics import doctor
+
+    return doctor.run(args)
+
+
+def cmd_alphagenome_server(args: argparse.Namespace) -> int:
+    from genomics.workflows.alphagenome import local_server
+
+    try:
+        return local_server.run(args)
+    except KeyboardInterrupt:
+        return 130
 
 
 def cmd_alphagenome_catalog(args: argparse.Namespace) -> int:
@@ -989,6 +1004,12 @@ def build_parser() -> argparse.ArgumentParser:
     add_visualizer_arguments(visualize)
     visualize.set_defaults(func=cmd_visualize)
 
+    from genomics import doctor
+
+    doctor_parser = subparsers.add_parser("doctor", help="Check which features this machine can run (packages, tools, AlphaGenome backend, GPU, disk) and how to enable the rest")
+    doctor.add_arguments(doctor_parser)
+    doctor_parser.set_defaults(func=cmd_doctor)
+
     audit_data = subparsers.add_parser("audit-data", help="Valida existencia fisica dos datasets registrados")
     audit_data.add_argument("--dataset-id", action="append", choices=registered_dataset_ids(), default=None)
     audit_data.add_argument("--check-bcftools-chain", action="store_true")
@@ -1167,6 +1188,11 @@ def build_parser() -> argparse.ArgumentParser:
     agcat.add_argument("--output", type=Path, default=Path("alphagenome_catalog.json"))
     agcat.add_argument("--csv", type=Path, default=None, help="Also write one row per track")
     agcat.set_defaults(func=cmd_alphagenome_catalog)
+    from genomics.workflows.alphagenome import local_server
+
+    agsrv = alphagenome_sub.add_parser("server", help="Run AlphaGenome on this machine's GPU (setup | start | check)", description=local_server.DESCRIPTION)
+    local_server.add_arguments(agsrv)
+    agsrv.set_defaults(func=cmd_alphagenome_server)
 
     genotype = subparsers.add_parser("genotype", help="Pipeline genotype_based_predictor")
     genotype_sub = genotype.add_subparsers(dest="genotype_command", required=True)

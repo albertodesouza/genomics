@@ -14,7 +14,7 @@ genomics visualize --dataset /path/to/dataset --open   # any canonical-layout da
 genomics visualize --dataset-id 1kg_high_coverage --annotations phenotypes.tsv --memory-mb 8192
 ```
 
-Options: `--dataset DIR` / `--dataset-id ID` (repeatable), `--annotations TABLE`, `--runs-root DIR` (repeatable), `--gtf TABLE`, `--consensus-dataset-dir DIR`, `--cache-dir DIR`, `--no-disk-cache`, `--memory-mb N`, `--workers N`, `--model-window N`, `--jobs-dir DIR`, `--no-jobs`, `--pigmentation-config PATH`, `--alphagenome-address URL`, `--alphagenome-ca-cert PEM`, `--alphagenome-server-dir DIR`, `--alphagenome-server-python PYTHON`, `--host`, `--port`, `--open`, `--no-add-datasets`, `--no-remote`, `--verbose`.
+Options: `--dataset DIR` / `--dataset-id ID` (repeatable), `--annotations TABLE`, `--runs-root DIR` (repeatable), `--gtf TABLE`, `--consensus-dataset-dir DIR`, `--cache-dir DIR`, `--no-disk-cache`, `--memory-mb N`, `--workers N`, `--model-window N`, `--jobs-dir DIR`, `--no-jobs`, `--pigmentation-config PATH`, `--alphagenome-address URL`, `--alphagenome-ca-cert PEM`, `--alphagenome-server-dir DIR`, `--alphagenome-server-python PYTHON`, `--alphagenome-server-port PORT`, `--host`, `--port`, `--open`, `--no-add-datasets`, `--no-remote`, `--verbose`.
 
 Without `--port` the visualizer uses 8780, or the next free port if 8780 is taken. If a visualizer already running on that port has every requested dataset (and no `--annotations`, `--runs-root`, `--gtf` or `--consensus-dataset-dir` is given), the command prints its URL, opens it with `--open`, and exits; an explicit `--port` that is busy is an error. `--open` waits until the server is listening and, on a machine without a graphical display, prints the URL instead. In an SSH session the command prints the `ssh -L` tunnel to reach it from your computer.
 
@@ -23,6 +23,7 @@ Without `--port` the visualizer uses 8780, or the next free port if 8780 is take
 | Command | Purpose |
 |---|---|
 | `visualize` | Interactive visualizer for datasets, AlphaGenome tracks, sequences and experiments (see [Visualizer](../components/visualizer.md)) |
+| `doctor` | Which features this machine can run (Python packages, `bcftools`/`samtools`, AlphaGenome backend and local server, PyTorch, GPU, free disk) and the command that enables each missing piece; `--json` for scripts. See [Requirements](../getting-started/requirements.md) |
 | `audit-configs` | Check configs for legacy paths and active/inactive status |
 | `audit-data` | Validate registered dataset paths and expected artifacts |
 | `config ...` | Describe, validate, and export typed config schemas |
@@ -41,6 +42,7 @@ Without `--port` the visualizer uses 8780, or the next free port if 8780 is take
 | `dataset-builders vcf-import --spec SPEC` | Build a canonical dataset from any phased VCF plus free-form sample metadata |
 | `alphagenome predict-dataset DIR` | AlphaGenome predictions (any of the 11 outputs, any tissues) for every haplotype window of a canonical dataset (resumable) |
 | `alphagenome catalog` | List every AlphaGenome output track and ontology term (JSON, optional per-track CSV) |
+| `alphagenome server setup\|start\|check` | Run AlphaGenome on this machine's NVIDIA GPU behind the hosted API's gRPC interface (see [AlphaGenome commands](#alphagenome-commands)) |
 | `alphagenome ...` | Run AlphaGenome analysis/integration utilities |
 | `genotype ...` | Dense/aligned genotype predictor workflows |
 | `variant ...` | Sparse variant transformer workflows |
@@ -141,6 +143,24 @@ genomics alphagenome integrate -- --integrated --vcf vcf/sample.vcf.gz --ref ref
 genomics alphagenome tracks --api-key API_KEY --output configs/workflows/alphagenome/tracks.json
 genomics alphagenome chr15-local --config configs/workflows/alphagenome/chr15_local.yaml --sample HG00096 --outputs RNA_SEQ --max-windows 4 --haplotype H1 --strand plus --batch-size 4
 ```
+
+Local AlphaGenome server (an `alphagenome_research` checkout in its own environment with CUDA `jax`):
+
+```bash
+genomics alphagenome server setup                          # clone, create env "alphagenome", install jax[cuda12], check weights
+genomics alphagenome server setup --download-weights       # also download the gated Hugging Face weights (~700 MB)
+genomics alphagenome server setup --python /path/to/env/bin/python --jax cuda13 --dry-run
+genomics alphagenome server start                          # 127.0.0.1:50051, foreground; --host 0.0.0.0 to share, --port N
+genomics alphagenome server check --predict                # checkout, env, weights, connection and a 16 kb prediction
+```
+
+`setup` takes `--dir` (checkout, default `$ALPHAGENOME_SERVER_DIR`, `../alphagenome_research` or
+`~/.local/share/genomics/alphagenome_research`), `--conda-env NAME`, `--python PATH`, `--jax {cuda12,cuda13,cpu}`,
+`--update` (git pull), `--reinstall`, `--dry-run`. `start` takes `--host`, `--port`, `--model-version`
+(`all_folds` or `fold_0`…`fold_3`), `--checkpoint DIR` (local, e.g. Kaggle), `--plaintext`, `--allow-cpu`.
+Clients reach it with `ALPHAGENOME_ADDRESS=grpc://127.0.0.1:50051` (every command that builds its client
+through `genomics.core.alphagenome_connection.create_dna_client`, including `predict-dataset`, `catalog`,
+`tracks`, `analyze` and the non-longevous builder's `--predict`) or from the visualizer's AlphaGenome page.
 
 Arguments after `--` are forwarded to the underlying AlphaGenome modules. `tracks` exports output and ontology metadata used when choosing `alphagenome_outputs` and `ontology_terms`.
 

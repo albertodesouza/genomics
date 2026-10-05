@@ -242,6 +242,7 @@ class VisualizerApp:
         r("POST", r"/api/perturb/apply", self.api_perturb_apply)
         r("GET", r"/api/perturb/result", self.api_perturb_result)
         r("GET", r"/api/perturb/signal", self.api_perturb_signal)
+        r("GET", r"/api/system", self.api_system)
         r("GET", r"/api/alphagenome", self.api_alphagenome)
         r("GET", r"/api/alphagenome/catalog", self.api_alphagenome_catalog)
         r("GET", r"/api/genes/search", self.api_gene_search)
@@ -1025,6 +1026,22 @@ class VisualizerApp:
         if self.alphagenome is None:
             raise HttpError(HTTPStatus.NOT_FOUND, "AlphaGenome backend settings are not available")
         return self.alphagenome
+
+    def api_system(self, query: Query, body: Any) -> Any:
+        """``genomics doctor`` for this visualizer: features, hardware, and free space where it writes."""
+        from genomics import doctor
+
+        data = doctor.report(include_local=False, backend=self._backend_summary())
+        locations = data["storage"]["locations"]
+        if self.cache_dir:
+            locations["visualizer cache"] = doctor.free_space(Path(self.cache_dir))
+        else:
+            locations.pop("visualizer cache", None)
+        if self.tasks is not None:
+            locations["background jobs"] = doctor.free_space(self.tasks.root)
+        for dataset in self.catalog.all():
+            locations[f"dataset {dataset.id}"] = doctor.free_space(Path(dataset.path))
+        return data
 
     def api_alphagenome(self, query: Query, body: Any) -> Any:
         return self._alphagenome().describe()

@@ -6,8 +6,11 @@
 src/genomics/
   cli.py
   workspace.py
+  doctor.py            # genomics doctor / the visualizer's System page
   core/
+  visualizer/
   workflows/
+    alphagenome/       # local_server.py (setup/start/check), model_server.py (runs in the server env)
   predictors/
   converters/
 

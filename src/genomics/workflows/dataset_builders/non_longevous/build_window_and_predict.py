@@ -727,12 +727,17 @@ def process_window(
     if args.predict:
         print("[INFO] Running AlphaGenome predictions ...")
         _gene_annotation, dna_client = _load_alphagenome_modules()
-        api_key = args.api_key or os.environ.get("ALPHAGENOME_API_KEY")
-        if not api_key:
-            raise RuntimeError("AlphaGenome API key not provided. Use --api-key or set ALPHAGENOME_API_KEY env var.")
+        from genomics.core.alphagenome_connection import backend_configured, create_dna_client
+
+        if not backend_configured(args.api_key):
+            raise RuntimeError(
+                "No AlphaGenome backend: use --api-key or set ALPHAGENOME_API_KEY (hosted API), or set "
+                "ALPHAGENOME_ADDRESS to a self-hosted server (see `genomics alphagenome server`)."
+            )
 
         def make_client():
-            return dna_client.create(api_key)
+            # Hosted API, or the self-hosted server named by ALPHAGENOME_ADDRESS.
+            return create_dna_client(api_key=args.api_key)
 
         # One-element box so a retry can swap in a fresh channel: a half-open
         # connection stays broken for every later call on the same client.
@@ -907,7 +912,7 @@ def main():
                     help="Use reference genome only (ignore VCFs, for debug)")
     ap.add_argument("--variant-filter", choices=["all", "snps"], default="all",
                     help="Variants used to build personalized FASTA. 'snps' excludes INDEL/SV before consensus.")
-    ap.add_argument("--api-key", help="AlphaGenome API key (or set ALPHAGENOME_API_KEY env var)")
+    ap.add_argument("--api-key", help="AlphaGenome API key (or set ALPHAGENOME_API_KEY env var; not needed with ALPHAGENOME_ADDRESS)")
     ap.add_argument("--ontology", "--tissue", dest="ontology", help="Ontology CURIE(s) for tissue/cell type. Single: UBERON:0002107. Multiple (comma-separated): UBERON:0002107,CL:0002601. If not provided, uses all tissues/cells.")
     ap.add_argument("--outputs", default="RNA-seq", help="Comma-separated requested outputs (e.g., RNA-seq,ATAC-seq)")
     ap.add_argument("--list-outputs", action="store_true", help="List available output types and exit")
@@ -937,13 +942,14 @@ def main():
     # Handle --list-tissues (requires API key)
     if args.list_tissues:
         _gene_annotation, dna_client = _load_alphagenome_modules()
-        api_key = args.api_key or os.environ.get("ALPHAGENOME_API_KEY")
-        if not api_key:
-            print("[ERROR] AlphaGenome API key required. Use --api-key or set ALPHAGENOME_API_KEY env var.", file=sys.stderr)
+        from genomics.core.alphagenome_connection import backend_configured, create_dna_client
+
+        if not backend_configured(args.api_key):
+            print("[ERROR] No AlphaGenome backend: use --api-key, set ALPHAGENOME_API_KEY, or set ALPHAGENOME_ADDRESS to a self-hosted server.", file=sys.stderr)
             sys.exit(1)
-        
+
         print("[INFO] Loading tissue metadata from AlphaGenome (this may take a few seconds)...")
-        client = dna_client.create(api_key)
+        client = create_dna_client(api_key=args.api_key)
         metadata = client.output_metadata(dna_client.Organism.HOMO_SAPIENS).concatenate()
         
         # Get unique tissues/cells

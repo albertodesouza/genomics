@@ -12,6 +12,18 @@ genomics alphagenome tracks --api-key API_KEY --output configs/workflows/alphage
 
 Arguments after `--` are forwarded to the underlying workflow modules.
 
+Every command reaches AlphaGenome through `genomics.core.alphagenome_connection.create_dna_client`: the
+hosted API with `ALPHAGENOME_API_KEY` (or `--api-key`), or a self-hosted server when
+`ALPHAGENOME_ADDRESS` is set (no key needed). To run the model on this machine's GPU:
+
+```bash
+genomics alphagenome server setup && genomics alphagenome server start
+export ALPHAGENOME_ADDRESS=grpc://127.0.0.1:50051
+```
+
+See [Requirements](../getting-started/requirements.md#alphagenome-on-your-own-gpu) and
+[Visualizer → AlphaGenome backend](visualizer.md#alphagenome-backend).
+
 ## Code And Configs
 
 | Kind | Path |

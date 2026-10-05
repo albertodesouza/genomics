@@ -426,3 +426,45 @@ def test_config_validate_reports_errors(tmp_path, capsys):
 
     assert rc == 2
     assert "config validation failed" in captured.err
+
+
+def test_cli_and_visualizer_import_without_heavy_dependencies():
+    """The base install (numpy + PyYAML) must run `genomics` and `genomics visualize`."""
+    code = (
+        "import sys\n"
+        "import genomics.cli, genomics.visualizer.server, genomics.doctor\n"
+        "import genomics.workflows.alphagenome.local_server\n"
+        "heavy = sorted(m for m in ('torch', 'sklearn', 'scipy', 'pandas', 'alphagenome', 'grpc', 'jax', 'rich', 'wandb') if m in sys.modules)\n"
+        "assert not heavy, heavy\n"
+        "from genomics.core import resolve_dataset, update_manifest  # lazy names still resolve\n"
+    )
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+
+
+def test_doctor_reports_every_feature(capsys):
+    args = genomics_cli.build_parser().parse_args(["doctor", "--json", "--no-local-server"])
+    assert args.func(args) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert [f["key"] for f in data["features"]] == ["core", "import", "alphagenome", "training"]
+    assert data["features"][0]["status"] == "ok"
+    assert all({"name", "status", "detail", "fix"} <= set(c) for f in data["features"] for c in f["checks"])
+    assert "data root (GENOMICS_DATA_ROOT)" in data["storage"]["locations"]
+
+
+def test_doctor_uses_the_visualizer_backend():
+    from genomics import doctor
+
+    feature = doctor.alphagenome_feature(backend={"label": "Server on this machine", "reasons": ["not running"]})
+    backend = [c for c in feature.checks if c.name == "backend"]
+    assert backend and backend[0].status == doctor.MISSING and "not running" in backend[0].detail
+
+
+def test_alphagenome_server_commands_parse():
+    parser = genomics_cli.build_parser()
+    args = parser.parse_args(["alphagenome", "server", "start", "--port", "50070", "--host", "0.0.0.0", "--allow-cpu"])
+    assert (args.action, args.port, args.host, args.allow_cpu) == ("start", 50070, "0.0.0.0", True)
+    args = parser.parse_args(["alphagenome", "server", "setup", "--jax", "cuda13", "--dry-run"])
+    assert args.action == "setup" and args.jax == "cuda13" and args.dry_run
+    done = subprocess.run([sys.executable, "-m", "genomics", "alphagenome", "server", "--help"], capture_output=True, text=True)
+    assert done.returncode == 0 and "setup" in done.stdout and "check" in done.stdout

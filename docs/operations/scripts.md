@@ -14,8 +14,9 @@ Root-level script wrappers have been removed. Use categorized paths directly.
 ## Common Scripts
 
 ```bash
+scripts/env/install.sh                      # visualizer env (bcftools, samtools, [visualizer]); --training, --alphagenome-server, --no-conda
 source scripts/env/start_genomics_universal.sh
-scripts/env/install_genomics_env.sh
+scripts/env/install_genomics_env.sh         # full bioinformatics toolchain for genomes-analyzer
 source scripts/maintenance/vep_install.sh
 scripts/ops/run_in_background.sh --config configs/genomes_analyzer/config_human_30x_latest_ref.yaml
 scripts/ops/monitor_monster.sh

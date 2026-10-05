@@ -37,6 +37,7 @@ Code: `src/genomics/visualizer/` (Python stdlib HTTP server + JSON API, static s
 | Experiments | Runs table with any numeric metric (`weighted_*` included), training curves, run comparison, confusion matrix, per-class metrics, config, plots. Start a training run, evaluate a checkpoint on a split, or open a run in the Perturbation Lab |
 | Jobs | Background jobs (imports, AlphaGenome predictions, training, evaluation): progress, live log, cancel. They keep running when the tab closes or the visualizer stops |
 | AlphaGenome | Chooses the AlphaGenome backend (hosted API, remote server, or a server started on this machine) used by the lab and by prediction jobs |
+| System | What this machine can run, feature by feature (packages, `bcftools`/`samtools`, AlphaGenome backend, PyTorch), hardware, and free disk space where the visualizer writes; the same report as `genomics doctor`, with the command that enables each missing piece |
 
 Navigation: drag to pan, Ctrl/⌘+scroll to zoom, Shift+drag to zoom to a region, double-click to
 zoom in, ←/→ and +/− on the focused plot. The locus box accepts `chr:start-end`, `start-end` or a
@@ -271,18 +272,41 @@ server it started on this machine, that server is left running for them.
 |---|---|
 | Hosted API | Google's AlphaGenome API with `ALPHAGENOME_API_KEY` (env or `~/.env`) |
 | Remote server | A self-hosted `alphagenome_research` `server.py`, e.g. `grpc://10.0.0.5:50051` (plaintext), `grpcs://host:50051` (TLS) or `host:port` (TLS detected). For a self-signed TLS server set the CA certificate (`certs/ca.crt` from `scripts/generate_certs.sh`). No API key is needed |
-| This machine | **Start server** runs `server.py` from an `alphagenome_research` checkout in its own Python environment, shows its state (loading model → ready) and log, and stops it when the visualizer exits (unless background prediction jobs still use it). It listens on `0.0.0.0:50051` (fixed by `server.py`) and uses TLS when `certs/server.crt` and `certs/server.key` exist |
+| This machine | **Start server** serves the model on this machine's NVIDIA GPU from an `alphagenome_research` checkout in its own Python environment, shows its state (loading model → ready), packages and log, and stops it when the visualizer exits (unless background prediction jobs still use it). It listens on `127.0.0.1:50051` (`$ALPHAGENOME_SERVER_HOST`, `$ALPHAGENOME_SERVER_PORT` or `--alphagenome-server-port`) and uses TLS when `certs/server.crt` and `certs/server.key` exist in the checkout. A server already listening there (e.g. `genomics alphagenome server start` in a terminal) is detected and used |
 
 **Test connection** connects and calls the service (`GetMetadata`); **Test prediction** also runs a
 16 kb `predict_sequence`, which proves the model runs (the first prediction on a fresh server
 includes JIT compilation).
 
-The local server is found with `--alphagenome-server-dir` (or `$ALPHAGENOME_SERVER_DIR`, default
-`../alphagenome_research` next to this repository) and runs with `--alphagenome-server-python` (or
-`$ALPHAGENOME_SERVER_PYTHON`; by default the first conda environment, trying `alphagenome` first,
-that imports `alphagenome_research` and a CUDA-enabled `jax`). `server.py` refuses to run on CPU, and
-the AlphaGenome page says so when the chosen interpreter only has CPU `jax`. The model weights come from
-Hugging Face (`all_folds`).
+**Setting up "This machine".** Run once:
+
+```bash
+genomics alphagenome server setup        # --dry-run shows the commands; --download-weights fetches the weights
+```
+
+It clones [FeLiPeOLi7/alphagenome_research](https://github.com/FeLiPeOLi7/alphagenome_research) (a fork of
+Google DeepMind's research code whose `server.py` speaks the hosted API's gRPC protocol) next to this
+repository, or under `~/.local/share/genomics`, creates the conda env `alphagenome` (a venv in the
+checkout without conda), installs it with a CUDA-enabled `jax` whose plugin matches `jaxlib`, and checks
+the Hugging Face weights (gated: accept the terms at
+<https://huggingface.co/google/alphagenome-all-folds> and `hf auth login`). `genomics alphagenome server
+check [--predict]` reports the checkout, environment, weights and a running server. The page lists what
+is missing ("Cannot start: …") and the setup command.
+
+The server process is `genomics/workflows/alphagenome/model_server.py`, run by the server environment's
+interpreter (it does not need `genomics` installed there). It reuses the checkout's `AlphaGenomeServer`
+servicer and adds what running `server.py` directly lacks: `GetMetadata` returns the model's track
+metadata (`server.py` returns an empty message, which left the track catalog and tissue picker empty), the
+bind address and port are options (`server.py` always listens on `0.0.0.0:50051`), cached weights load
+without network or an interactive Hugging Face login, XLA does not preallocate 75% of GPU memory, and
+CPU-only `jax` is refused up front. Predictions match the hosted API's (Pearson ≥ 0.9998 per track on an
+OCA2 haplotype). Memory and timings: [Requirements](../getting-started/requirements.md#alphagenome-on-your-own-gpu).
+
+The checkout is found with `--alphagenome-server-dir` (or `$ALPHAGENOME_SERVER_DIR`, then
+`../alphagenome_research` next to this repository, then `~/.local/share/genomics/alphagenome_research`)
+and runs with `--alphagenome-server-python` (or `$ALPHAGENOME_SERVER_PYTHON`; by default the checkout's
+`.venv`, the conda env `alphagenome`, or the first other conda env that has `alphagenome_research`,
+`alphagenome>=0.7` and a CUDA-enabled `jax`). Environments are inspected without importing JAX.
 `--alphagenome-address URL` / `--alphagenome-ca-cert PEM` select a remote server from the command
 line, overriding the saved setting.
 

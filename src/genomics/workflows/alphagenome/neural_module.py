@@ -165,7 +165,10 @@ class AlphaGenomeAnalyzer:
             from alphagenome.data import genome
             
             console.print("[cyan]Inicializando conexão com AlphaGenome...[/cyan]")
-            self.model = dna_client.create(self.api_key)
+            from genomics.core.alphagenome_connection import create_dna_client
+
+            # Hosted API, or the self-hosted server named by ALPHAGENOME_ADDRESS.
+            self.model = create_dna_client(api_key=self.api_key or None)
             self.dna_client = dna_client
             self.genome = genome
             self._initialized = True

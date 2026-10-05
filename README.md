@@ -13,13 +13,20 @@ predictions and training jobs.
 **1. Install** (once, from the repository root):
 
 ```bash
-python3 -m pip install -e .
+scripts/env/install.sh          # conda env "genomics" with bcftools/samtools and the [visualizer] extra
+conda activate genomics
 ```
 
-or activate the project's Conda environment, which already has it installed:
+or with pip in any Python ≥ 3.10 environment:
 
 ```bash
-source scripts/env/start_genomics_universal.sh
+python3 -m pip install -e ".[visualizer]"
+```
+
+Then check what this machine can run (packages, tools, AlphaGenome backend, GPU, free disk):
+
+```bash
+genomics doctor
 ```
 
 **2. Start it and open the browser:**
@@ -48,17 +55,24 @@ genomics visualize --dataset /path/to/dataset --open
   command to run on your own computer, e.g. `ssh -N -L 8780:localhost:8780 user@host`. Then open
   http://localhost:8780/ locally.
 - **AlphaGenome predictions** (Perturbation Lab, prediction jobs) need `ALPHAGENOME_API_KEY` in the
-  environment or `~/.env`, or a self-hosted server chosen on the AlphaGenome page
-  (`--alphagenome-address grpc://host:50051`).
+  environment or `~/.env`, or a server: on a machine with an NVIDIA GPU run
+  `genomics alphagenome server setup` once, then choose *This machine* → *Start server* on the
+  AlphaGenome page. A server elsewhere: `--alphagenome-address grpc://host:50051`.
+- **Training and the Perturbation Lab's model scoring** need PyTorch: `scripts/env/install.sh --training`
+  (or `pip install -e ".[visualizer,genotype]"`).
+- **Requirements** per feature, dataset sizes and compute times:
+  [docs/getting-started/requirements.md](docs/getting-started/requirements.md). The app's **System**
+  page shows the same report as `genomics doctor`.
 - **All options:** `genomics visualize --help`. Full guide (pages, controls, data sources):
   [docs/components/visualizer.md](docs/components/visualizer.md).
 
 ## Quick Start
 
-Install the package in editable mode from the repository root:
+Install the package in editable mode from the repository root (extras per pipeline are listed in
+[Installation](docs/getting-started/installation.md)):
 
 ```bash
-python3 -m pip install -e .
+python3 -m pip install -e ".[visualizer]"
 ```
 
 Use the CLI:
@@ -97,6 +111,7 @@ Start with:
 
 - [Documentation Home](docs/index.md)
 - [Installation](docs/getting-started/installation.md)
+- [Requirements](docs/getting-started/requirements.md)
 - [CLI Reference](docs/reference/cli.md)
 - [Repository Layout](docs/reference/repository-layout.md)
 - [Configuration Layout](configs/README.md)

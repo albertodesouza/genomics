@@ -13,10 +13,11 @@ const PAGES = [
   { key: 'experiments', label: 'Experiments', icon: 'experiments', load: () => import('./pages/experiments.js') },
   { key: 'jobs', label: 'Jobs', icon: 'jobs', load: () => import('./pages/jobs.js') },
   { key: 'alphagenome', label: 'AlphaGenome', icon: 'alphagenome', load: () => import('./pages/labs.js') },
+  { key: 'system', label: 'System', icon: 'info', load: () => import('./pages/system.js') },
   { key: 'import', label: 'Import dataset', icon: 'upload', hidden: true, nav: 'jobs', load: () => import('./pages/import.js') },
 ];
 const ALIASES = { labs: 'alphagenome' };
-const NO_DATASET_PAGES = ['experiments', 'alphagenome', 'overview', 'jobs', 'import', 'perturb'];
+const NO_DATASET_PAGES = ['experiments', 'alphagenome', 'system', 'overview', 'jobs', 'import', 'perturb'];
 
 const pageEl = document.getElementById('page');
 const navEl = document.getElementById('sidenav');

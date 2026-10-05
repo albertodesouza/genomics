@@ -12,7 +12,7 @@ _genomics_completion()
         cword=$COMP_CWORD
     fi
 
-    local commands="visualize audit-configs audit-data data config convert snp-ancestry genomes-analyzer dataset-builders alphagenome genotype variant references completion"
+    local commands="visualize doctor audit-configs audit-data data config convert snp-ancestry genomes-analyzer dataset-builders alphagenome genotype variant references completion"
     local config="describe schema validate"
     local genotype="prepare-cache split train test search stability confidence-intervals evaluate pca-variance compare-aligned-signals workbench sync-bcftools-artifacts single-gene-screen"
     local variant="materialize train evaluate analyze-counts"
@@ -21,7 +21,7 @@ _genomics_completion()
     local genomes_analyzer="run"
     local dataset_builders="non-longevous vcf-import"
     local non_longevous="build build-window visualize"
-    local alphagenome="analyze integrate tracks chr15-local predict-dataset catalog"
+    local alphagenome="analyze integrate tracks chr15-local predict-dataset catalog server"
     local completion="bash"
     local references="ensure-grch38"
     local data="ensure-1kg-vcf"
@@ -60,7 +60,7 @@ _genomics_completion()
                 --dataset|--annotations|--consensus-dataset-dir|--runs-root|--gtf|--cache-dir|--jobs-dir|--pigmentation-config|--alphagenome-ca-cert|--alphagenome-server-dir|--alphagenome-server-python) _genomics_filedir; return ;;
                 --dataset-id) COMPREPLY=( $(compgen -W "1kg_high_coverage legacy_top3_1kg_high_coverage variant_transformer_superpopulation variant_transformer_superpopulation_32k variant_transformer_pigmentation_binary" -- "$cur") ); return ;;
             esac
-            COMPREPLY=( $(compgen -W "--dataset --dataset-id --annotations --consensus-dataset-dir --runs-root --gtf --cache-dir --no-disk-cache --memory-mb --workers --model-window --jobs-dir --no-jobs --pigmentation-config --alphagenome-address --alphagenome-ca-cert --alphagenome-server-dir --alphagenome-server-python --host --port --open --no-add-datasets --no-remote --verbose" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--dataset --dataset-id --annotations --consensus-dataset-dir --runs-root --gtf --cache-dir --no-disk-cache --memory-mb --workers --model-window --jobs-dir --no-jobs --pigmentation-config --alphagenome-address --alphagenome-ca-cert --alphagenome-server-dir --alphagenome-server-python --alphagenome-server-port --host --port --open --no-add-datasets --no-remote --verbose" -- "$cur") )
             return
             ;;
         genotype)
@@ -110,6 +110,17 @@ _genomics_completion()
             fi
             if [[ ${words[2]} == catalog && ${cur} == -* ]]; then
                 COMPREPLY=( $(compgen -W "--output --csv" -- "$cur") ); return
+            fi
+            if [[ ${words[2]} == server ]]; then
+                if [[ ${cword} -eq 3 ]]; then COMPREPLY=( $(compgen -W "setup start check" -- "$cur") ); return; fi
+                if [[ ${cur} == -* ]]; then
+                    case "${words[3]}" in
+                        setup) COMPREPLY=( $(compgen -W "--dir --python --conda-env --jax --download-weights --update --reinstall --dry-run" -- "$cur") ) ;;
+                        start) COMPREPLY=( $(compgen -W "--dir --python --host --port --model-version --checkpoint --plaintext --allow-cpu" -- "$cur") ) ;;
+                        check) COMPREPLY=( $(compgen -W "--dir --python --address --port --predict" -- "$cur") ) ;;
+                    esac
+                    return
+                fi
             fi
             _genomics_filedir; return ;;
         references)

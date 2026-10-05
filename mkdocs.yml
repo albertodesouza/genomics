@@ -52,6 +52,7 @@ nav:
   - Home: index.md
   - Getting Started:
       - Installation: getting-started/installation.md
+      - Requirements: getting-started/requirements.md
       - Environment: getting-started/environment.md
       - Building 1000 Genomes Dataset: getting-started/building-1000-genomes-dataset.md
       - Training And Running Predictions: getting-started/training-and-running-predictions.md

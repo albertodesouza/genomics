@@ -5,18 +5,19 @@ calls it in-process (:meth:`AlphaGenomeBackend.create_client`); background predi
 through ``ALPHAGENOME_ADDRESS`` / ``ALPHAGENOME_TLS_CA_CERT`` (read by
 :func:`genomics.core.alphagenome_connection.create_dna_client`).
 
-"This machine" runs ``server.py`` from an ``alphagenome_research`` checkout (JAX + model weights)
-in its own Python environment, by default the conda env named ``alphagenome``. That server always
-listens on 0.0.0.0:50051 and uses TLS when ``certs/server.crt`` and ``certs/server.key`` exist.
+"This machine" serves the model from an ``alphagenome_research`` checkout in its own Python
+environment (JAX + weights) through :mod:`genomics.workflows.alphagenome.model_server`; discovery,
+probing and installation live in :mod:`genomics.workflows.alphagenome.local_server`
+(``genomics alphagenome server setup`` prepares everything). The server listens on 127.0.0.1:50051
+by default (``$ALPHAGENOME_SERVER_HOST`` / ``$ALPHAGENOME_SERVER_PORT``) and uses TLS when
+``certs/server.crt`` and ``certs/server.key`` exist in the checkout.
 """
 from __future__ import annotations
 
 import json
 import os
 import signal
-import socket
 import subprocess
-import sys
 import tempfile
 import threading
 from collections import deque
@@ -26,44 +27,30 @@ from typing import Any, Dict, List, Optional
 from genomics.core.alphagenome_connection import (
     ADDRESS_ENV,
     CA_CERT_ENV,
-    DEFAULT_SERVER_PORT,
     api_key_available,
     parse_address,
+)
+from genomics.workflows.alphagenome.local_server import (  # noqa: F401 (re-exported for callers/tests)
+    MODEL_SERVER,
+    PROBE_CPU,
+    PROBE_GPU,
+    PROBE_MISSING,
+    SERVER_DIR_ENV,
+    SERVER_PYTHON_ENV,
+    default_host,
+    default_port,
+    default_server_dir,
+    default_server_python,
+    port_open,
+    probe,
+    server_command,
+    server_env,
+    tls_files,
 )
 
 MODES = ("cloud", "remote", "local")
 MODE_LABELS = {"cloud": "AlphaGenome API (hosted)", "remote": "Remote server", "local": "Server on this machine"}
-SERVER_DIR_ENV = "ALPHAGENOME_SERVER_DIR"
-SERVER_PYTHON_ENV = "ALPHAGENOME_SERVER_PYTHON"
-SERVER_CONDA_ENV = "alphagenome"
-# Exit 0: alphagenome_research + jax with a CUDA plugin; 2: CPU-only jax; 1: missing packages.
-# alphagenome_research needs a recent alphagenome SDK (alphagenome.io); older SDKs lack it.
-_PROBE_CODE = (
-    "import importlib.util, sys\n"
-    "def has(m):\n"
-    "    try: return importlib.util.find_spec(m) is not None\n"
-    "    except ImportError: return False  # parent package missing\n"
-    "if not all(has(m) for m in ('alphagenome_research', 'alphagenome.io', 'jax')): sys.exit(1)\n"
-    "sys.exit(0 if any(has(m) for m in ('jax_cuda12_plugin', 'jax_cuda13_plugin', 'jax_plugins.xla_cuda12', 'jax_plugins.xla_cuda13')) else 2)\n"
-)
-_PROBE_CACHE: Dict[str, int] = {}
-
-
-def probe_python(python: Path) -> int:
-    """0 = can run the server on GPU, 2 = CPU-only jax, 1 = missing packages or not runnable."""
-    key = str(python)
-    if key not in _PROBE_CACHE:
-        try:
-            _PROBE_CACHE[key] = subprocess.run([key, "-c", _PROBE_CODE], timeout=60, capture_output=True).returncode
-        except (OSError, subprocess.TimeoutExpired):
-            _PROBE_CACHE[key] = 1
-    return _PROBE_CACHE[key]
-
-
-def port_open(port: int, host: str = "127.0.0.1") -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(0.2)
-        return sock.connect_ex((host, port)) == 0
+SETUP_COMMAND = "genomics alphagenome server setup"
 
 
 def default_settings_path() -> Path:
@@ -71,89 +58,64 @@ def default_settings_path() -> Path:
     return Path(base) / "genomics" / "visualizer_alphagenome.json"
 
 
-def default_server_dir() -> Optional[Path]:
-    if os.environ.get(SERVER_DIR_ENV):
-        return Path(os.environ[SERVER_DIR_ENV]).expanduser()
-    from genomics.workspace import repo_root
-
-    candidate = repo_root().parent / "alphagenome_research"
-    return candidate if (candidate / "server.py").exists() else None
-
-
-def default_server_python() -> Path:
-    """``$ALPHAGENOME_SERVER_PYTHON``; else the first conda env (``alphagenome`` first) that has
-    ``alphagenome_research`` and a CUDA-enabled jax, else one with CPU-only jax, else this one."""
-    if os.environ.get(SERVER_PYTHON_ENV):
-        return Path(os.environ[SERVER_PYTHON_ENV]).expanduser()
-    bases = []
-    if os.environ.get("CONDA_EXE"):
-        bases.append(Path(os.environ["CONDA_EXE"]).resolve().parents[1])
-    prefix = Path(sys.prefix)
-    bases.append(prefix.parent.parent if prefix.parent.name == "envs" else prefix)
-    candidates: List[Path] = []
-    for base in dict.fromkeys(bases):
-        preferred = base / "envs" / SERVER_CONDA_ENV / "bin" / "python"
-        others = sorted((base / "envs").glob("*/bin/python")) if (base / "envs").is_dir() else []
-        candidates += [c for c in [preferred, *others] if c.exists() and c not in candidates]
-    candidates.append(Path(sys.executable))
-    codes = [probe_python(c) for c in candidates]
-    for wanted in (0, 2):
-        if wanted in codes:
-            return candidates[codes.index(wanted)]
-    return candidates[0]
-
-
 class LocalAlphaGenomeServer:
-    """Starts/stops ``alphagenome_research/server.py`` as a child process and reports its state."""
+    """Starts/stops the model server (``model_server.py`` in the server environment) as a child process."""
 
-    def __init__(self, server_dir: Optional[Path], python: Optional[Path], log_dir: Path, port: int = DEFAULT_SERVER_PORT):
+    def __init__(
+        self,
+        server_dir: Optional[Path],
+        python: Optional[Path],
+        log_dir: Path,
+        port: Optional[int] = None,
+        host: Optional[str] = None,
+        launcher: Path = MODEL_SERVER,
+    ):
         self.server_dir = Path(server_dir).expanduser().resolve() if server_dir else None
         self.python = Path(python).expanduser() if python else None
         self.log_path = Path(log_dir) / "alphagenome_server.log"
-        self.port = port
+        self.port = port or default_port()
+        self.host = host or default_host()
+        self.launcher = Path(launcher)
         self._process: Optional[subprocess.Popen] = None
         self._lock = threading.Lock()
 
     # -- configuration -------------------------------------------------------------------
-    def _cert_paths(self):
-        assert self.server_dir is not None
-        cert = self.server_dir / os.environ.get("ALPHAGENOME_TLS_CERT", "certs/server.crt")
-        key = self.server_dir / os.environ.get("ALPHAGENOME_TLS_KEY", "certs/server.key")
-        ca = self.server_dir / "certs" / "ca.crt"
-        return cert, key, ca
+    @property
+    def connect_host(self) -> str:
+        return "127.0.0.1" if self.host in ("0.0.0.0", "::", "") else self.host
 
     @property
     def tls(self) -> bool:
         if self.server_dir is None:
             return False
-        cert, key, _ = self._cert_paths()
-        return cert.exists() and key.exists()
+        files = tls_files(self.server_dir)
+        return files["cert"].exists() and files["key"].exists()
 
     @property
     def address(self) -> str:
-        return f"{'grpcs' if self.tls else 'grpc'}://127.0.0.1:{self.port}"
+        return f"{'grpcs' if self.tls else 'grpc'}://{self.connect_host}:{self.port}"
 
     @property
     def ca_cert(self) -> Optional[str]:
         if not self.tls:
             return None
-        ca = self._cert_paths()[2]
+        ca = tls_files(self.server_dir)["ca"]  # type: ignore[arg-type]
         return str(ca) if ca.exists() else None
 
     def reasons(self) -> List[str]:
         reasons = []
         if self.server_dir is None:
-            reasons.append(f"alphagenome_research checkout not found (set {SERVER_DIR_ENV} or --alphagenome-server-dir)")
+            reasons.append(f"alphagenome_research checkout not found: run `{SETUP_COMMAND}` (or set {SERVER_DIR_ENV} / --alphagenome-server-dir)")
         elif not (self.server_dir / "server.py").exists():
             reasons.append(f"server.py not found in {self.server_dir}")
         if self.python is None or not self.python.exists():
-            reasons.append(f"Python interpreter not found: {self.python} (set {SERVER_PYTHON_ENV} or --alphagenome-server-python)")
+            reasons.append(f"Python interpreter not found: {self.python}: run `{SETUP_COMMAND}` (or set {SERVER_PYTHON_ENV} / --alphagenome-server-python)")
         else:
-            code = probe_python(self.python)
-            if code == 1:
-                reasons.append(f"{self.python} lacks alphagenome_research, a recent alphagenome SDK or jax (pip install -e {self.server_dir or 'alphagenome_research'})")
-            elif code == 2:
-                reasons.append(f"jax in {self.python} has no CUDA support, and server.py needs a GPU (pip install -U 'jax[cuda12]', or set {SERVER_PYTHON_ENV})")
+            state = probe(self.python)
+            if state.code == PROBE_MISSING:
+                reasons.append(f"{self.python}: {'; '.join(state.problems)}; run `{SETUP_COMMAND}`")
+            elif state.code == PROBE_CPU:
+                reasons.append(f"{self.python}: {'; '.join(state.problems)}, and the server needs a GPU; run `{SETUP_COMMAND}`")
         if self.tls and self.ca_cert is None:
             reasons.append("server uses TLS but certs/ca.crt is missing, so clients cannot verify it")
         return reasons
@@ -164,7 +126,7 @@ class LocalAlphaGenomeServer:
         return self._process is not None and self._process.poll() is None
 
     def state(self) -> str:
-        listening = port_open(self.port)
+        listening = port_open(self.port, self.connect_host)
         if self.owned_running:
             return "ready" if listening else "starting"
         if listening:
@@ -187,11 +149,15 @@ class LocalAlphaGenomeServer:
             "pid": self._process.pid if self.owned_running else None,
             "exit_code": self._process.returncode if state == "exited" and self._process is not None else None,
             "address": self.address,
+            "host": self.host,
+            "port": self.port,
             "tls": self.tls,
             "ca_cert": self.ca_cert,
             "server_dir": str(self.server_dir) if self.server_dir else None,
             "python": str(self.python) if self.python else None,
             "reasons": self.reasons(),
+            "environment": probe(self.python).describe() if self.python and self.python.exists() else None,
+            "setup_command": SETUP_COMMAND,
             "log": str(self.log_path),
             "log_tail": self.log_tail() if state in ("starting", "ready", "exited") else [],
         }
@@ -200,25 +166,20 @@ class LocalAlphaGenomeServer:
         with self._lock:
             if self.owned_running:
                 return self.info()
-            if port_open(self.port):
+            if port_open(self.port, self.connect_host):
                 raise RuntimeError(f"port {self.port} is already in use (an AlphaGenome server may already be running)")
             reasons = self.reasons()
             if reasons:
                 raise RuntimeError("; ".join(reasons))
             assert self.server_dir is not None and self.python is not None
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
-            env = os.environ.copy()
-            env_bin = str(self.python.parent)
-            env["PATH"] = env_bin + os.pathsep + env.get("PATH", "")
-            env["CONDA_PREFIX"] = str(self.python.parent.parent)
-            env["PYTHONUNBUFFERED"] = "1"
             with open(self.log_path, "w", encoding="utf-8") as log:
                 self._process = subprocess.Popen(
-                    [str(self.python), "server.py"],
+                    server_command(self.python, self.server_dir, self.host, self.port, launcher=self.launcher),
                     cwd=str(self.server_dir),
                     stdout=log,
                     stderr=subprocess.STDOUT,
-                    env=env,
+                    env=server_env(self.python),
                     start_new_session=True,  # Ctrl-C in the visualizer's terminal is handled by stop()
                 )
         return self.info()
@@ -370,6 +331,7 @@ def create_backend(args: Any, log_dir: Optional[Path]) -> AlphaGenomeBackend:
     local = LocalAlphaGenomeServer(
         server_dir=getattr(args, "alphagenome_server_dir", None) or default_server_dir(),
         python=getattr(args, "alphagenome_server_python", None) or default_server_python(),
+        port=getattr(args, "alphagenome_server_port", None),
         log_dir=log_dir or Path(tempfile.gettempdir()) / "genomics_visualizer_logs",
     )
     return AlphaGenomeBackend(

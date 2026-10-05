@@ -23,10 +23,12 @@ OUTPUT_METADATA_ATTRS = [
 ]
 
 
-def export_tracks(api_key: str, output: Path) -> pd.DataFrame:
+def export_tracks(api_key: Optional[str], output: Path) -> pd.DataFrame:
     from alphagenome.models import dna_client as alphagenome_client
 
-    alphagenome_model = alphagenome_client.create(api_key=api_key)
+    from genomics.core.alphagenome_connection import create_dna_client
+
+    alphagenome_model = create_dna_client(api_key=api_key)
     metadata = alphagenome_model.output_metadata(organism=alphagenome_client.Organism.HOMO_SAPIENS)
 
     frames = []
@@ -50,8 +52,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--output", type=Path, default=Path("alpha_genome_all_tracks.csv"))
     args = parser.parse_args(argv)
 
-    if not args.api_key:
-        parser.error("--api-key is required or set ALPHAGENOME_API_KEY")
+    from genomics.core.alphagenome_connection import backend_configured
+
+    if not backend_configured(args.api_key):
+        parser.error("--api-key is required (or set ALPHAGENOME_API_KEY, or ALPHAGENOME_ADDRESS for a self-hosted server)")
 
     tracks = export_tracks(args.api_key, args.output)
     print(f"Saved {len(tracks)} AlphaGenome tracks to {args.output}")

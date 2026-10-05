@@ -21,8 +21,8 @@ from genomics.core.alphagenome_connection import (
     parse_address,
     speaks_tls,
 )
-from genomics.visualizer import alphagenome as backend_module
 from genomics.visualizer.alphagenome import AlphaGenomeBackend, LocalAlphaGenomeServer
+from genomics.workflows.alphagenome import local_server as server_module
 
 
 def _free_port() -> int:
@@ -152,12 +152,15 @@ def test_check_connection_reports_unreachable_and_missing_ca(tmp_path):
 
 # -- visualizer backend ------------------------------------------------------------------------------
 
-def _local(tmp_path, port=None, server_code=None):
+def _local(tmp_path, port=None, launcher_code=None):
     server_dir = tmp_path / "alphagenome_research"
     server_dir.mkdir(exist_ok=True)
-    (server_dir / "server.py").write_text(server_code or "print('hi')\n", encoding="utf-8")
-    backend_module._PROBE_CACHE[sys.executable] = 0  # pretend alphagenome_research + CUDA jax are installed
-    return LocalAlphaGenomeServer(server_dir, Path(sys.executable), tmp_path / "logs", port=port or _free_port())
+    (server_dir / "server.py").write_text("print('hi')\n", encoding="utf-8")
+    launcher = tmp_path / "fake_model_server.py"
+    launcher.write_text(launcher_code or "print('hi')\n", encoding="utf-8")
+    # pretend alphagenome_research + CUDA jax are installed
+    server_module._PROBE_CACHE[sys.executable] = server_module.Probe(sys.executable, server_module.PROBE_GPU)
+    return LocalAlphaGenomeServer(server_dir, Path(sys.executable), tmp_path / "logs", port=port or _free_port(), launcher=launcher)
 
 
 def test_backend_settings_persist_and_drive_lab_env(tmp_path):
@@ -190,15 +193,17 @@ def test_backend_settings_persist_and_drive_lab_env(tmp_path):
 
 def test_local_server_lifecycle_and_tls_detection(tmp_path, monkeypatch):
     port = _free_port()
+    # Stands in for model_server.py: must receive --server-dir, --host and --port.
     code = (
-        "import os, socket, time\n"
+        "import argparse, socket, time\n"
+        "p = argparse.ArgumentParser(); p.add_argument('--server-dir'); p.add_argument('--host'); p.add_argument('--port', type=int)\n"
+        "a = p.parse_args()\n"
         "s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
-        "time.sleep(0.3); s.bind(('127.0.0.1', int(os.environ['FAKE_PORT']))); s.listen()\n"
-        "print('listening', flush=True)\n"
+        "time.sleep(0.3); s.bind((a.host, a.port)); s.listen()\n"
+        "print('listening', a.server_dir, flush=True)\n"
         "time.sleep(60)\n"
     )
-    monkeypatch.setenv("FAKE_PORT", str(port))
-    local = _local(tmp_path, port=port, server_code=code)
+    local = _local(tmp_path, port=port, launcher_code=code)
     backend = AlphaGenomeBackend(local, settings_path=tmp_path / "settings.json")
     backend.update({"mode": "local"})
     assert local.state() == "stopped" and local.address == f"grpc://127.0.0.1:{port}"
@@ -212,11 +217,11 @@ def test_local_server_lifecycle_and_tls_detection(tmp_path, monkeypatch):
         assert local.state() == "ready" and backend.reasons() == []
         assert backend.child_env({})[ADDRESS_ENV] == f"grpc://127.0.0.1:{port}"
         with pytest.raises(RuntimeError):
-            LocalAlphaGenomeServer(local.server_dir, Path(sys.executable), tmp_path, port=port).start()  # port taken
+            LocalAlphaGenomeServer(local.server_dir, Path(sys.executable), tmp_path, port=port, launcher=local.launcher).start()  # port taken
     finally:
         local.stop()
     assert local.state() == "stopped"
-    assert any("listening" in line for line in local.log_tail())
+    assert any(line.startswith("listening") and str(local.server_dir) in line for line in local.log_tail())
 
     certs = local.server_dir / "certs"
     certs.mkdir()
@@ -242,17 +247,93 @@ def test_default_server_python_prefers_a_gpu_env(tmp_path, monkeypatch):
         python.write_text("", encoding="utf-8")
         pythons[env] = python
     codes = {str(pythons["alphagenome"]): 2, str(pythons["cpu-only"]): 2, str(pythons["gpu"]): 0, sys.executable: 1}
-    monkeypatch.setattr(backend_module, "probe_python", lambda python: codes.get(str(python), 1))
-    monkeypatch.delenv(backend_module.SERVER_PYTHON_ENV, raising=False)
+    monkeypatch.setattr(server_module, "probe_python", lambda python: codes.get(str(python), 1))
+    monkeypatch.delenv(server_module.SERVER_PYTHON_ENV, raising=False)
+    (base / "bin").mkdir()
+    (base / "bin" / "conda").write_text("", encoding="utf-8")
     monkeypatch.setenv("CONDA_EXE", str(base / "bin" / "conda"))
-    assert backend_module.default_server_python() == pythons["gpu"]
+    assert server_module.default_server_python(tmp_path) == pythons["gpu"]
     codes[str(pythons["gpu"])] = 2
-    assert backend_module.default_server_python() == pythons["alphagenome"]
-    local = LocalAlphaGenomeServer(tmp_path, pythons["alphagenome"], tmp_path)
-    (tmp_path / "server.py").write_text("", encoding="utf-8")
-    assert any("no CUDA support" in r for r in local.reasons())
-    monkeypatch.setenv(backend_module.SERVER_PYTHON_ENV, "/opt/py")
-    assert backend_module.default_server_python() == Path("/opt/py")
+    assert server_module.default_server_python(tmp_path) == pythons["alphagenome"]
+    monkeypatch.setenv(server_module.SERVER_PYTHON_ENV, "/opt/py")
+    assert server_module.default_server_python() == Path("/opt/py")
+
+
+def test_probe_classifies_environments():
+    def info(**versions):
+        modules = {"alphagenome": True, "alphagenome.io": True, "alphagenome_research": True, "jax": True}
+        return {"python": "3.11.0", "modules": modules, "versions": {"alphagenome": "0.7.0", "jax": "0.10.2", "jaxlib": "0.10.2", **versions}}
+
+    assert server_module._analyse("py", info(**{"jax-cuda12-plugin": "0.10.2"})).code == server_module.PROBE_GPU
+    cpu = server_module._analyse("py", info())
+    assert cpu.code == server_module.PROBE_CPU and "no CUDA plugin" in cpu.problems[0]
+    mismatch = server_module._analyse("py", info(**{"jax-cuda12-plugin": "0.10.1"}))
+    assert mismatch.code == server_module.PROBE_CPU and "does not match jaxlib" in mismatch.problems[0]
+    old_sdk = info(**{"jax-cuda12-plugin": "0.10.2", "alphagenome": "0.6.1"})
+    old_sdk["modules"]["alphagenome.io"] = False
+    missing = server_module._analyse("py", old_sdk)
+    assert missing.code == server_module.PROBE_MISSING and "alphagenome>=0.7" in missing.problems[0]
+    # A real interpreter is probed without importing jax; this one has no alphagenome_research.
+    probed = server_module.probe(Path(sys.executable), refresh=True)
+    assert probed.info["python"].startswith("%d.%d" % sys.version_info[:2])
+
+
+def test_local_server_reasons_point_to_setup(tmp_path):
+    server_dir = tmp_path / "alphagenome_research"
+    server_dir.mkdir()
+    (server_dir / "server.py").write_text("", encoding="utf-8")
+    python = tmp_path / "py"
+    server_module._PROBE_CACHE[str(python)] = server_module.Probe(str(python), server_module.PROBE_CPU, ["jax 0.10.2 has no CUDA plugin (CPU only)"])
+    python.write_text("", encoding="utf-8")
+    local = LocalAlphaGenomeServer(server_dir, python, tmp_path)
+    reasons = local.reasons()
+    assert len(reasons) == 1 and "needs a GPU" in reasons[0] and "genomics alphagenome server setup" in reasons[0]
+    assert local.address == "grpc://127.0.0.1:50051" and local.info()["host"] == "127.0.0.1"
+    shared = LocalAlphaGenomeServer(server_dir, python, tmp_path, host="0.0.0.0", port=50070)
+    assert shared.address == "grpc://127.0.0.1:50070"
+
+
+def test_server_command_and_env(tmp_path, monkeypatch):
+    cmd = server_module.server_command(Path("/envs/ag/bin/python"), tmp_path, "127.0.0.1", 50052, ["--allow-cpu"])
+    assert cmd[:2] == ["/envs/ag/bin/python", str(server_module.MODEL_SERVER)]
+    assert cmd[2:] == ["--server-dir", str(tmp_path), "--host", "127.0.0.1", "--port", "50052", "--allow-cpu"]
+    env = server_module.server_env(Path("/envs/ag/bin/python"), {"PATH": "/usr/bin", "PYTHONPATH": "/genomics/src", "CONDA_PREFIX": "/envs/genomics"})
+    assert env["PATH"].startswith("/envs/ag/bin") and "PYTHONPATH" not in env and "CONDA_PREFIX" not in env
+
+
+def test_model_server_is_standalone():
+    """model_server.py runs in the server environment, which has no genomics package."""
+    source = server_module.MODEL_SERVER.read_text(encoding="utf-8")
+    assert "genomics." not in source.split('"""', 2)[2].replace("genomics.core.alphagenome_connection", "")
+    done = subprocess.run([sys.executable, "-S", str(server_module.MODEL_SERVER), "--help"], capture_output=True, text=True, timeout=30)
+    assert done.returncode == 0 and "--server-dir" in done.stdout
+    # XLA must be told not to preallocate before jax is first imported (check_device), or the server
+    # takes 75% of GPU memory (~90 GB of a DGX Spark's unified memory).
+    main = source[source.index("def main("):]
+    assert main.index('"XLA_PYTHON_CLIENT_PREALLOCATE", "false"') < main.index("check_device(args.allow_cpu)")
+
+
+def test_model_server_metadata_response():
+    pytest.importorskip("alphagenome")
+    pd = pytest.importorskip("pandas")
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("model_server", server_module.MODEL_SERVER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    from alphagenome.models import dna_client, dna_output
+
+    rna = pd.DataFrame({"name": ["UBERON:0002107 total RNA-seq"], "strand": ["+"], "ontology_curie": ["UBERON:0002107"]})
+    junctions = pd.DataFrame({"name": ["UBERON:0002107"], "ontology_curie": ["UBERON:0002107"]})
+
+    class FakeModel:
+        def output_metadata(self, organism):
+            return dna_output.OutputMetadata(rna_seq=rna, splice_junctions=junctions)
+
+    response = module.metadata_response(FakeModel(), dna_client.Organism.HOMO_SAPIENS)
+    parsed = dna_client.construct_output_metadata(iter([response]))
+    assert list(parsed.rna_seq["name"]) == ["UBERON:0002107 total RNA-seq"]
+    assert list(parsed.splice_junctions["name"]) == ["UBERON:0002107"] and parsed.cage is None
 
 
 def test_backend_client_uses_selected_endpoint(tmp_path, monkeypatch):
@@ -316,3 +397,13 @@ def test_checkpoint_check_resolves_relative_results_dir_against_repo_root(tmp_pa
     monkeypatch.setattr(genomics_workbench, "repo_root", lambda: tmp_path / "repo")
     monkeypatch.chdir(tmp_path)  # not the repo root, as when `genomics visualize` runs from $HOME
     assert genomics_workbench._pigmentation_checkpoint_exists(Path("cfg.yaml"))
+
+
+def test_read_dotenv_needs_no_python_dotenv(tmp_path):
+    from genomics.core.alphagenome_connection import read_dotenv
+
+    env = tmp_path / ".env"
+    env.write_text("# comment\nexport ALPHAGENOME_API_KEY='abc 123'\nOTHER=x # trailing\nEMPTY=\nbroken line\n", encoding="utf-8")
+    values = read_dotenv(env)
+    assert values == {"ALPHAGENOME_API_KEY": "abc 123", "OTHER": "x", "EMPTY": ""}
+    assert read_dotenv(tmp_path / "missing") == {}

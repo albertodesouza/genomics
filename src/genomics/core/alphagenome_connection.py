@@ -35,20 +35,38 @@ PLACEHOLDER_API_KEY = "self-hosted"
 _TLS_SCHEMES = {"grpcs": "tls", "https": "tls", "grpc": "insecure", "http": "insecure"}
 
 
+def read_dotenv(path: Path) -> Dict[str, str]:
+    """``KEY=value`` lines of a ``.env`` file (``export`` prefixes, quotes and comments allowed).
+
+    Standard library only, so the key in ``~/.env`` is found without python-dotenv."""
+    values: Dict[str, str] = {}
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return values
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if key.startswith("export "):
+            key = key[len("export "):].strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        elif " #" in value:
+            value = value.split(" #", 1)[0].rstrip()
+        values[key] = value
+    return values
+
+
 def resolve_api_key(explicit: Optional[str] = None) -> str:
     """Resolve the AlphaGenome API key from an explicit argument, the environment, or ``~/.env``,
     raising a clear error if none is found."""
     if explicit:
         return explicit
-    api_key = os.environ.get(API_KEY_ENV)
-    if api_key:
-        return api_key
-    try:
-        from dotenv import dotenv_values
-
-        api_key = dotenv_values(Path.home() / ".env").get(API_KEY_ENV)
-    except ImportError:
-        api_key = None
+    api_key = os.environ.get(API_KEY_ENV) or read_dotenv(Path.home() / ".env").get(API_KEY_ENV)
     if not api_key:
         raise RuntimeError(f"{API_KEY_ENV} not found in the environment, an explicit argument, or ~/.env.")
     return api_key
