@@ -10,6 +10,11 @@ The visualizer is the main way to use this repository: one local web app to expl
 AlphaGenome prediction tracks, haplotype sequences and experiment runs, and to start imports,
 predictions and training jobs.
 
+![genomics visualize: cohort builder, AlphaGenome tracks with group means and observed data, population heatmap, haplotype sequences and experiment runs](docs/assets/visualizer-demo.gif)
+
+<sub>1000 Genomes cohort (3,202 samples), TYRP1 window. Higher quality:
+[visualizer-demo.mp4](docs/assets/visualizer-demo.mp4).</sub>
+
 **1. Install** (once, from the repository root):
 
 ```bash
