@@ -37,6 +37,7 @@ GitHub workflow.
 | Samples | Faceted cohort builder (counts update across facets), virtualized table, sample details, pin individuals, CSV export, save the cohort as a training `.view.json` (former View Builder) |
 | Tracks | Canvas genome browser: overview strip, ruler, gene models, a sequence lane and one panel per AlphaGenome track. Tracks of several outputs (RNA-seq, CAGE, DNase, ChIP, …) can be shown together, up to 16 at once; drag a panel's grip (⋮⋮, or focus it and press ↑ / ↓) to reorder them (the order is remembered, new tracks are added at the bottom). Shows pinned **individuals**, cohort **group means** ± SD (or each group's difference from the cohort mean) by any facet, or a **population heatmap** with every cohort sample as a row. *Compare with* adds AlphaGenome's prediction of the **reference genome** (dashed line) and the **observed** ENCODE / FANTOM5 signal behind each track (a lane under it); see [Reference and observed data](#reference-and-observed-data). Track names open a track card, gene models and the gene button a gene card (see [Links to databases](#links-to-ontologies-and-databases)). The sequence lane shows the letter frequency per base over the pinned haplotypes (or the reference genome): letters scaled by frequency when zoomed in, stacked base composition per bin when zoomed out |
 | Sequence | Pinned haplotypes against the reference: gene models, bases when zoomed in (mismatches coloured, matches as dots, deletions and insertions marked), mismatch/indel density when zoomed out, variant lane and genotype table |
+| Variant | One site across the cohort: genotype counts and ALT frequency by any sample field, AlphaGenome's predicted signal by genotype over a region (an in-silico eQTL) and GTEx's measured eQTL of the same variant, with whether the directions agree; see [Variant page](#variant-page) |
 | Perturbation Lab | Edit an individual's haplotypes (scramble, overwrite, revert to reference, custom sequence), re-predict them with AlphaGenome and re-score them with any trained model; gene models, original vs edited tracks, class means and class probabilities |
 | Experiments | Runs table with any numeric metric (`weighted_*` included), training curves, run comparison, confusion matrix, per-class metrics, config, plots. Start a training run, evaluate a checkpoint on a split, or open a run in the Perturbation Lab |
 | Jobs | Background jobs (imports, AlphaGenome predictions, training, evaluation): progress, live log, cancel. They keep running when the tab closes or the visualizer stops |
@@ -249,6 +250,42 @@ CNN kernel heights follow the number of tracks per gene. *Preview config* shows 
 written to `<runs root>/<run name>/` and appear on the Experiments page with their curves; the best
 checkpoint is evaluated on the test split afterwards. **Evaluate…** on a run evaluates any
 checkpoint on any split (`<split>_<checkpoint>_results.json`).
+
+## Variant page
+
+Open a variant from the Sequence page (*Variant →* in the variants table, or Shift+click a variant
+tick) or type it on the Variant page: an rsID (resolved through GTEx), `chr15:28120472 A>G`,
+`chr15_28120472_A_G_b38` or a position (lists the sites there). Without a variant the page lists the
+window's common sites (ALT frequency ≥ 5%).
+
+| Card | Shows |
+|---|---|
+| Header | Position, type, rsID (dbSNP), links to gnomAD and the GTEx variant page; genotype counts and ALT frequency in the cohort and by a sample field (superpopulation by default) |
+| Direction: AlphaGenome vs GTEx | Per GTEx tissue: GTEx NES, the AlphaGenome slope and a verdict (*agree* / *disagree* when both have p < 0.05, else which side is not significant) |
+| AlphaGenome by genotype | Each sample's predicted signal (mean of H1 and H2 over the region) by genotype as box and points; the OLS slope per ALT allele with SE, t and p; ALT vs REF haplotypes as log2 fold change; AlphaGenome on the reference genome (dashed) |
+| GTEx v8 eQTL | For the target gene and chosen tissues (sun-exposed and not sun-exposed skin by default): GTEx's association (NES, p) with the donors' normalized expression by genotype, and the variant's significant eQTLs in every tissue |
+
+**Choices.** *Target gene*: an annotated gene of the window (the window's gene, else the one
+containing the variant, else the nearest). *Region*: the target's gene body, its promoter (TSS ± 1 kb),
+the variant ± 1 kb or a custom range. *Track*: by default the track with the highest cohort mean over
+the region on the target gene's strand. *Tracks by genotype →* opens the Tracks page with group means
+by genotype at the site (group field `variant:<pos>:<ref>:<alt>`).
+
+**How it is computed.** Genotypes of every sample at every site of a window come from the samples'
+phased window VCFs (a sample without a record at a site is homozygous REF; multi-allelic records are
+split per ALT allele). They are read once per window as a background job (about 80 s for the 3,202
+samples of the 1000 Genomes dataset) and cached on disk (`<cache>/cohort_genotypes`). The mean
+signal of every haplotype over a region is computed for all tracks of an output at once (about 80 s
+for 6,404 haplotypes) and cached (`<cache>/region_means`), so switching track, cohort filters or site
+afterwards is instant. The AlphaGenome slope is an association across the cohort, like an eQTL: it
+includes the effect of variants in linkage disequilibrium with this one. GTEx lookups use the GTEx
+portal API v2 (dataset `gtex_v8`: GRCh38, GENCODE v26; only variants with MAF ≥ 1% among GTEx donors
+were tested) and are cached under `<cache>/remote` (`--no-remote` uses cached answers only). GTEx's NES
+is the effect of the ALT allele on normalized expression: compare signs, not magnitudes.
+
+On rs12913832 (HERC2 intron, the OCA2 enhancer; G is the blue-eye allele) GTEx skin shows lower OCA2
+with G (NES −0.13 sun-exposed, −0.17 not sun-exposed), while AlphaGenome's melanocyte RNA-seq over
+the OCA2 gene body shows no association (slope p = 0.89 over 3,202 samples).
 
 ## Perturbation Lab
 

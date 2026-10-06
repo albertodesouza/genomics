@@ -68,6 +68,7 @@ export class SvgContext {
   }
   translate(x, y) { this.transform(1, 0, 0, 1, x, y); }
   scale(x, y) { this.transform(x, 0, 0, y, 0, 0); }
+  rotate(a) { const c = Math.cos(a); const s = Math.sin(a); this.transform(c, s, -s, c, 0, 0); }
   measureText(text) { this._measure.font = this.font; return this._measure.measureText(text); }
 
   // paths (points are stored in device space, like canvas does)
@@ -222,31 +223,58 @@ function boxes(item) {
   return shapes;
 }
 
-/** Text runs of an element's own text nodes, positioned and clipped like the page shows them. */
+/** Text runs of an element's own text nodes, one per rendered line, positioned and clipped like the page. */
 function texts(item, ox, oy, measure) {
   const { el, cs, alpha } = item;
   const runs = [];
   const clipped = cs.overflow === 'hidden' || cs.overflowX === 'hidden';
+  const font = `${cs.fontStyle === 'italic' ? 'italic ' : ''}${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  const [color, a] = splitAlpha(cs.color);
+  const upper = cs.textTransform === 'uppercase';
+  measure.font = font;
+  const ascent = measure.measureText('Mg').fontBoundingBoxAscent || parseFloat(cs.fontSize) * 0.8;
+  const push = (text, rect) => {
+    let t = text.replace(/\s+/g, ' ');
+    if (upper) t = t.toUpperCase();
+    const trimmed = t.trim();
+    if (!trimmed) return;
+    // A leading space is part of the rect only when the layout rendered it (not collapsed).
+    let lead = 0;
+    if (/^\s/.test(t)) {
+      const withSpace = measure.measureText(` ${trimmed}`).width;
+      const without = measure.measureText(trimmed).width;
+      if (Math.abs(rect.width - withSpace) < Math.abs(rect.width - without)) lead = withSpace - without;
+    }
+    runs.push({ text: trimmed, font, color, alpha: a * alpha, x: rect.left - ox + lead, y: rect.top - oy + ascent, clip: clipped ? { x: item.x, y: item.y, w: item.w, h: item.h } : null });
+  };
   for (const node of el.childNodes) {
     if (node.nodeType !== 3 || !node.textContent.trim()) continue;
     const range = document.createRange();
     range.selectNodeContents(node);
     const rects = [...range.getClientRects()].filter((r) => r.width > 0);
     if (!rects.length) continue;
-    let text = node.textContent.replace(/\s+/g, ' ');
-    if (cs.textTransform === 'uppercase') text = text.toUpperCase();
-    const font = `${cs.fontStyle === 'italic' ? 'italic ' : ''}${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
-    measure.font = font;
-    const m = measure.measureText(text.trim() || 'M');
-    const ascent = m.fontBoundingBoxAscent || parseFloat(cs.fontSize) * 0.8;
-    const [color, a] = splitAlpha(cs.color);
-    const r = rects[0];
-    // Leading/trailing collapsed whitespace has no width in the layout: start where the glyphs start.
-    const lead = /^\s/.test(text) && !/\s$/.test(node.previousSibling ? node.previousSibling.textContent || '' : ' ') ? measure.measureText(' ').width : 0;
-    runs.push({
-      text: text.trim(), font, color, alpha: a * alpha, x: r.left - ox + lead, y: r.top - oy + ascent,
-      clip: clipped ? { x: item.x, y: item.y, w: item.w, h: item.h } : null,
-    });
+    if (rects.length === 1) { push(node.textContent, rects[0]); continue; }
+    // Wrapped text: group the words by the line they were laid out on.
+    const content = node.textContent;
+    // Browsers also break lines after hyphens ("RNA-" / "seq"), so tokens end at a hyphen too.
+    const words = [...content.matchAll(/\s*(?:[^\s-]+-?|-)/g)];
+    let line = null;
+    for (const w of words) {
+      range.setStart(node, w.index); range.setEnd(node, w.index + w[0].length);
+      const wr = [...range.getClientRects()].filter((r) => r.width > 0);
+      const r = wr[wr.length - 1];
+      if (!r) continue;
+      const top = Math.round(r.top);
+      if (line && Math.abs(line.top - top) <= 2) { line.end = w.index + w[0].length; line.right = r.right; continue; }
+      if (line) push(content.slice(line.start, line.end), { left: line.left, top: line.top, width: line.right - line.left });
+      // The word's first rect may hold only its leading space at the end of the previous line.
+      const glyphs = content.slice(w.index).match(/^\s*/)[0].length;
+      range.setStart(node, w.index + glyphs);
+      const gr = [...range.getClientRects()].filter((x) => x.width > 0);
+      const g = gr[0] || r;
+      line = { start: w.index + glyphs, end: w.index + w[0].length, top: Math.round(g.top), left: g.left, right: r.right };
+    }
+    if (line) push(content.slice(line.start, line.end), { left: line.left, top: line.top, width: line.right - line.left });
   }
   return runs;
 }

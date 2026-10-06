@@ -85,7 +85,7 @@ class SequencePage {
       h('button', { class: 'btn small', onclick: () => this.viewport.set(0, this.viewport.length) }, icon('expand', 14), 'Whole window'),
       h('button', { class: 'btn small ghost', onclick: () => navigate('tracks', { gene: this.cfg.gene }) }, 'Tracks →'),
       exportMenu(() => this.figureOptions()),
-      h('span', { class: 'hint' }, 'Zoom below 4 kb for bases · click a variant tick to center it'));
+      h('span', { class: 'hint' }, 'Zoom below 4 kb for bases · click a variant tick to center it, Shift+click for its Variant page'));
     this.host = h('div', { class: 'seq-host canvas-host' }, h('canvas'));
     this.loadingLine = h('div', { class: 'loading-line', hidden: true });
     this.table = h('div', { style: { padding: '0 16px 24px' } });
@@ -488,8 +488,13 @@ class SequencePage {
     const hit = this.hitTest(e);
     if (hit.lane !== 'variants') return;
     const v = this.variantAt(hit.pos);
-    if (v) this.viewport.center(v.pos + 0.5, Math.min(this.viewport.span, 80));
+    if (!v) return;
+    if (e.shiftKey) { this.openVariant(v); return; }
+    this.viewport.center(v.pos + 0.5, Math.min(this.viewport.span, 80));
   }
+
+  /** The Variant page for one site (genotypes across the cohort, AlphaGenome by genotype, GTEx). */
+  openVariant(v) { navigate('variant', { gene: this.cfg.gene, pos: v.genomic, ref: v.ref, alt: v.alt }); }
 
   renderTable() {
     clear(this.table);
@@ -504,11 +509,12 @@ class SequencePage {
     if (!list.length) { this.table.appendChild(h('div', { class: 'muted' }, this.cfg.coords === 'haplotype' ? 'Variant positions are not defined in raw haplotype coordinates.' : 'No variants carried by the pinned samples in this view.')); return; }
     const pinned = new Set(state.pinned);
     this.table.appendChild(h('div', { class: 'table-wrap card', style: { maxHeight: '360px' } }, h('table', { class: 'table variants-table' },
-      h('thead', null, h('tr', null, h('th', null, 'Position'), h('th', null, 'ID'), h('th', null, 'Ref'), h('th', null, 'Alt'), h('th', null, 'Type'), h('th', null, 'Carriers (GT)'))),
+      h('thead', null, h('tr', null, h('th', null, 'Position'), h('th', null, 'ID'), h('th', null, 'Ref'), h('th', null, 'Alt'), h('th', null, 'Type'), h('th', null, 'Carriers (GT)'), h('th', null, ''))),
       h('tbody', null, list.slice(0, 400).map((x) => h('tr', { class: 'clickable', onclick: () => this.viewport.center(x.pos + 0.5, Math.min(this.viewport.span, 80)) },
         h('td', null, `${this.info.chromosome}:${fmtInt(x.genomic)}`), h('td', null, x.id || '–'), h('td', null, x.ref), h('td', null, x.alt),
         h('td', null, h('span', { class: 'pill' }, x.type)),
-        h('td', null, x.carriers.filter((c) => pinned.has(c.sample)).map((c) => `${c.sample} ${c.gt}`).join(', '))))))));
+        h('td', null, x.carriers.filter((c) => pinned.has(c.sample)).map((c) => `${c.sample} ${c.gt}`).join(', ')),
+        h('td', null, h('button', { class: 'btn small ghost', title: 'Genotypes across the cohort, AlphaGenome by genotype and GTEx eQTL', onclick: (e) => { e.stopPropagation(); this.openVariant(x); } }, 'Variant →'))))))));
   }
 
   onEvent(topic) { if (topic === 'pinned') this.fetch(true); }
@@ -527,5 +533,6 @@ function variantHtml(v) {
   const carriers = v.carriers.map((c) => `${escapeHtml(c.sample)} <span class="muted">${escapeHtml(c.gt)}</span>`).slice(0, 8).join('<br>');
   return `<div class="tt-title">${escapeHtml(v.type)} · ${fmtInt(v.genomic)}</div>`
     + `<div class="tt-row"><span class="tt-key">${escapeHtml(v.id || 'no id')}</span><span class="tt-val mono">${escapeHtml(v.ref)} → ${escapeHtml(v.alt)}</span></div>`
-    + `<div class="tt-sub">${carriers}${v.carriers.length > 8 ? '<br>…' : ''}</div>`;
+    + `<div class="tt-sub">${carriers}${v.carriers.length > 8 ? '<br>…' : ''}</div>`
+    + '<div class="tt-sub">Shift+click: Variant page (cohort genotypes, AlphaGenome by genotype, GTEx)</div>';
 }

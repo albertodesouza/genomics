@@ -11,10 +11,11 @@ import threading
 import pytest
 
 from test_visualizer import _free_port, _write_reference_prediction, dataset_dir  # noqa: F401 (fixture)
+from test_visualizer_variants import GTEX_ANSWERS, INS, FakeRemote
 
 sync_api = pytest.importorskip("playwright.sync_api")
 
-PAGES = ["overview", "samples", "tracks", "sequence", "perturb", "experiments", "jobs", "alphagenome", "system", "import"]
+PAGES = ["overview", "samples", "tracks", "sequence", "variant", "perturb", "experiments", "jobs", "alphagenome", "system", "import"]
 # Resource loads the app does not control (the browser asks for a favicon).
 IGNORED_CONSOLE = ("favicon",)
 
@@ -32,6 +33,9 @@ def server_url(dataset_dir, tmp_path_factory):  # noqa: F811 (fixture imported a
     # A backend with no server checkout and settings in the temp dir (never ~/.config).
     backend = AlphaGenomeBackend(LocalAlphaGenomeServer(server_dir=None, python=None, log_dir=tmp), settings_path=tmp / "alphagenome.json")
     app = VisualizerApp(catalog, cache_dir=tmp / "cache", memory_bytes=256 << 20, workers=2, runs_roots=[], remote=False, alphagenome=backend)
+    from genomics.visualizer.gtex import GtexClient
+
+    app.gtex = GtexClient(FakeRemote(GTEX_ANSWERS))  # canned GTEx answers (no network in tests)
     handler = type("SmokeHandler", (Handler,), {"app": app})
     port = _free_port()
     server = Server(("127.0.0.1", port), handler)
@@ -112,4 +116,32 @@ def test_tracks_figure_export(page, server_url, tmp_path, fmt, label):
         assert svg.lstrip().startswith("<?xml") and "<svg" in svg
         assert "GENE1" in svg and "S1" in svg  # title and legend
         assert "<path" in svg and "data:image" not in svg  # plots are vector, not embedded bitmaps
+    assert page.errors == []
+
+
+def test_variant_page_shows_genotypes_effect_and_gtex(page, server_url, tmp_path):
+    pos, ref, alt = INS
+    _open(page, f"{server_url}/#/variant?gene=GENE1&pos={pos}&ref={ref}&alt={alt}&region=custom&custom=chr1:1001-1300&track=1")
+    page.wait_for_selector(".verdict", timeout=20000)
+    text = page.locator("#page").inner_text()
+    assert f"chr1:{pos:,}" in text and "rs1" in text  # header with the rsID from GTEx
+    assert "-0.5" in text  # AlphaGenome slope per ALT allele (track 1 = per-sample constant)
+    assert page.locator(".verdict").first.inner_text() in ("agree", "disagree", "AlphaGenome n.s.", "GTEx n.s.", "both n.s.")
+    assert page.locator("canvas").count() >= 2  # AlphaGenome by genotype + GTEx tissue
+    page.get_by_role("button", name="Export").click()
+    with page.expect_download() as info:
+        page.get_by_role("menuitem").filter(has_text="SVG").first.click()
+    out = tmp_path / info.value.suggested_filename
+    info.value.save_as(out)
+    svg = out.read_text(encoding="utf-8")
+    assert "GENE1" in svg and "<path" in svg
+    assert page.errors == []
+
+
+def test_variant_page_lists_sites_and_opens_one(page, server_url):
+    _open(page, f"{server_url}/#/variant?gene=GENE1")
+    page.wait_for_selector("table tbody tr")
+    page.locator("table tbody tr").first.click()
+    page.wait_for_selector(".variant-title")
+    assert "pos=" in page.url
     assert page.errors == []

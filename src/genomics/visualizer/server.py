@@ -33,6 +33,8 @@ from genomics.visualizer import launch
 from genomics.visualizer.alignment import AlignmentService
 from genomics.visualizer.alphagenome import AlphaGenomeBackend, create_backend
 from genomics.visualizer.gene_index import GeneIndex, find_table
+from genomics.visualizer.genotypes import GENOTYPE_LABELS, GenotypeService
+from genomics.visualizer.gtex import DEFAULT_TISSUES, GtexClient, GtexError
 from genomics.visualizer.annotations import AnnotationService
 from genomics.visualizer.cli_args import build_arg_parser
 from genomics.visualizer.cache import DiskArrayCache, stable_key
@@ -170,6 +172,8 @@ class VisualizerApp:
         self.remote = RemoteCache(cache_dir, offline=not remote)
         self.knowledge = KnowledgeBase(self.remote)
         self.observed = ObservedService(self.remote, DiskArrayCache(cache_dir), cache_bytes=max(memory_bytes // 8, 64 << 20))
+        self.genotypes = GenotypeService(self.signals, DiskArrayCache(cache_dir), cache_bytes=max(memory_bytes // 8, 64 << 20))
+        self.gtex = GtexClient(self.remote)
         self._ag_catalog: Optional[Dict[str, Any]] = None
         self._ag_catalog_lock = threading.Lock()
         self.experiments = ExperimentService(runs_roots)
@@ -210,6 +214,12 @@ class VisualizerApp:
         r("GET", r"/api/d/(?P<ds>[^/]+)/population", self.api_population)
         r("GET", r"/api/d/(?P<ds>[^/]+)/observed", self.api_observed)
         r("GET", r"/api/d/(?P<ds>[^/]+)/sequence", self.api_sequence)
+        r("GET", r"/api/d/(?P<ds>[^/]+)/variant/sites", self.api_variant_sites)
+        r("GET", r"/api/d/(?P<ds>[^/]+)/variant/site", self.api_variant_site)
+        r("GET", r"/api/d/(?P<ds>[^/]+)/variant/effect", self.api_variant_effect)
+        r("GET", r"/api/gtex/variant", self.api_gtex_variant)
+        r("GET", r"/api/gtex/resolve", self.api_gtex_resolve)
+        r("GET", r"/api/gtex/tissues", self.api_gtex_tissues)
         r("GET", r"/api/d/(?P<ds>[^/]+)/composition", self.api_composition)
         r("POST", r"/api/d/(?P<ds>[^/]+)/views/preview", self.api_view_preview)
         r("POST", r"/api/d/(?P<ds>[^/]+)/views/save", self.api_view_save)
@@ -532,7 +542,18 @@ class VisualizerApp:
         field = query.str("field", required=True)
         cohort = self._cohort(dataset, query)
         values = query.list("groups")
-        if not values:
+        if field.startswith("variant:"):
+            # Genotype classes at one site: "variant:<pos>:<ref>:<alt>" (from the Variant page).
+            geno, pending = self._genotypes_or_pending(dataset, gene)
+            if pending is not None:
+                return pending
+            site = self._site(geno, field)
+            labels = self._genotype_labels(geno, site)
+            dose = geno.dosage(site)
+            gindex = {sample: i for i, sample in enumerate(geno.samples)}
+            groups = {labels[k]: [smp for smp in cohort if smp in gindex and dose[gindex[smp]] == k] for k in range(3)}
+            values = list(groups)
+        elif not values:
             counts: Dict[str, int] = {}
             for sample in cohort:
                 key = str(dataset.samples[dataset.sample_index[sample]].get(field, ""))
@@ -540,7 +561,8 @@ class VisualizerApp:
                     counts[key] = counts.get(key, 0) + 1
             values = sorted(counts, key=lambda k: (-counts[k], k))[:MAX_GROUPS]
         values = values[:MAX_GROUPS]
-        groups = dataset.group_samples(field, values, cohort)
+        if not field.startswith("variant:"):
+            groups = dataset.group_samples(field, values, cohort)
         groups = {k: v for k, v in groups.items() if v}
         if not groups:
             raise HttpError(HTTPStatus.BAD_REQUEST, "No samples in the selected groups")
@@ -571,6 +593,142 @@ class VisualizerApp:
         payload = self.signals.group_payload({k: v for k, v in cached.items() if v is not None}, {k: len(v) for k, v in groups.items()}, tracks, domain, start, end, bins)
         payload.update({"gene": gene, "output": output, "coords": coords, "field": field, "haplotypes": haps})
         return payload
+
+    # -- variants (Variant page) -------------------------------------------------------
+    def _genotypes_or_pending(self, dataset, gene: str):
+        """(CohortGenotypes, None) once built, else (None, pending job response)."""
+        geno = self.genotypes.cached(dataset, gene)
+        if geno is not None:
+            return geno, None
+        key = "genotypes:" + self.genotypes.key(dataset, gene)
+        result = self._job_response(key, f"Genotypes of the cohort in {gene}", lambda progress: self.genotypes.genotypes(dataset, gene, progress))
+        if isinstance(result, dict) and result.get("pending"):
+            return None, result
+        return result, None
+
+    @staticmethod
+    def _site(geno, spec: str) -> int:
+        """Site index of "variant:<pos>:<ref>:<alt>" or "<pos>:<ref>:<alt>"."""
+        parts = spec.split(":")
+        if parts[0] == "variant":
+            parts = parts[1:]
+        if len(parts) != 3 or not parts[0].isdigit():
+            raise HttpError(HTTPStatus.BAD_REQUEST, f"Variant must be <pos>:<ref>:<alt>, got {spec!r}")
+        try:
+            return geno.find(int(parts[0]), parts[1].upper(), parts[2].upper())
+        except KeyError as exc:
+            raise HttpError(HTTPStatus.NOT_FOUND, str(exc.args[0]))
+
+    @staticmethod
+    def _genotype_labels(geno, site: int) -> List[str]:
+        ref, alt = geno.refs[site], geno.alts[site]
+        if len(ref) <= 3 and len(alt) <= 3:
+            return [f"{ref}/{ref}", f"{ref}/{alt}", f"{alt}/{alt}"]
+        return list(GENOTYPE_LABELS)
+
+    def _variant_query(self, dataset, query: Query):
+        gene = self._gene(dataset, query.str("gene", required=True))
+        geno, pending = self._genotypes_or_pending(dataset, gene)
+        if pending is not None:
+            return gene, None, None, pending
+        spec = f"{query.int('pos', 0, lo=1)}:{query.str('ref', required=True)}:{query.str('alt', required=True)}"
+        return gene, geno, self._site(geno, spec), None
+
+    def api_variant_sites(self, query: Query, body: Any, ds: str) -> Any:
+        """Sites carried in the cohort over genomic positions [start, end] (default: the window), by position."""
+        dataset = self.dataset(ds)
+        gene = self._gene(dataset, query.str("gene", required=True))
+        geno, pending = self._genotypes_or_pending(dataset, gene)
+        if pending is not None:
+            return pending
+        window = dataset.window(gene)
+        lo = query.int("start", window.start or 0)
+        hi = query.int("end", window.end or 2 ** 62)
+        min_af = float(query.str("min_af", "0") or 0)
+        limit = query.int("limit", 2000, lo=1, hi=20000)
+        n_haps = 2 * max(len(geno.samples), 1)
+        i0 = int(np.searchsorted(geno.positions, lo, side="left"))
+        i1 = int(np.searchsorted(geno.positions, hi, side="right"))
+        counts = geno.allele_counts()
+        sites = []
+        for i in range(i0, i1):
+            af = float(counts[i]) / n_haps
+            if af < min_af:
+                continue
+            rec = self.genotypes.site_record(geno, i, window.chromosome)
+            rec["af"] = af
+            sites.append(rec)
+            if len(sites) >= limit:
+                break
+        return {"gene": gene, "chromosome": window.chromosome, "samples": len(geno.samples), "sites": sites, "truncated": len(sites) >= limit}
+
+    def api_variant_site(self, query: Query, body: Any, ds: str) -> Any:
+        dataset = self.dataset(ds)
+        gene, geno, site, pending = self._variant_query(dataset, query)
+        if pending is not None:
+            return pending
+        window = dataset.window(gene)
+        field = query.str("field", "") or None
+        if field and not any(f["name"] == field for f in dataset.fields):
+            field = None
+        record = self.genotypes.site_record(geno, site, window.chromosome)
+        record.update(gene=gene, window={"chromosome": window.chromosome, "start": window.start, "end": window.end},
+                      labels=self._genotype_labels(geno, site), af_dataset=float(geno.allele_counts()[site]) / (2 * len(geno.samples)))
+        record["cohort"] = self.genotypes.site_summary(dataset, geno, site, self._cohort(dataset, query), field)
+        return record
+
+    def api_variant_effect(self, query: Query, body: Any, ds: str) -> Any:
+        """AlphaGenome track summarised over [start, end) (reference offsets) by genotype at the site."""
+        dataset = self.dataset(ds)
+        gene, geno, site, pending = self._variant_query(dataset, query)
+        if pending is not None:
+            return pending
+        output = query.str("output", required=True)
+        track = query.int("track", 0, lo=0)
+        start = query.int("start", 0, lo=0)
+        end = query.int("end", start + 1, lo=start + 1)
+        if end - start > 2_000_000:
+            raise HttpError(HTTPStatus.BAD_REQUEST, "Region too long")
+        region = self.genotypes.cached_region_means(dataset, gene, output, start, end)
+        if region is None:
+            key = "region:" + self.genotypes.region_key(dataset, gene, output, start, end)
+            result = self._job_response(key, f"{gene} {output} per haplotype over the region", lambda progress: self.genotypes.region_means(dataset, gene, output, start, end, progress))
+            if isinstance(result, dict) and result.get("pending"):
+                return result
+            region = result
+        if track >= region["means"].shape[2]:
+            raise HttpError(HTTPStatus.BAD_REQUEST, f"{output} has {region['means'].shape[2]} tracks")
+        payload = self.genotypes.effect(geno, site, region, track, self._cohort(dataset, query))
+        payload.update(gene=gene, output=output, track=track, start=start, end=end, labels=self._genotype_labels(geno, site))
+        return payload
+
+    def api_gtex_variant(self, query: Query, body: Any) -> Any:
+        variant_id = query.str("variant_id", required=True)
+        if not re.match(r"^chr[0-9XYM]+_\d+_[ACGTN]+_[ACGTN]+_b38$", variant_id):
+            raise HttpError(HTTPStatus.BAD_REQUEST, "variant_id must look like chr15_28120472_A_G_b38")
+        tissues = query.list("tissues") or list(DEFAULT_TISSUES)
+        try:
+            return self.gtex.report(variant_id, query.str("gene", "") or None, tissues[:8])
+        except GtexError as exc:
+            raise HttpError(HTTPStatus.BAD_GATEWAY, f"GTEx: {exc}")
+
+    def api_gtex_resolve(self, query: Query, body: Any) -> Any:
+        rsid = query.str("rsid", required=True).strip()
+        if not re.match(r"^rs\d+$", rsid, re.I):
+            raise HttpError(HTTPStatus.BAD_REQUEST, "Expected an rsID such as rs12913832")
+        try:
+            info = self.gtex.variant(snp_id=rsid.lower())
+        except GtexError as exc:
+            raise HttpError(HTTPStatus.BAD_GATEWAY, f"GTEx: {exc}")
+        if info is None:
+            raise HttpError(HTTPStatus.NOT_FOUND, f"{rsid} is not in GTEx v8 (only variants with MAF >= 1% in GTEx donors are)")
+        return {"rsid": info.get("snpId"), "variant_id": info.get("variantId"), "chromosome": info.get("chromosome"), "pos": info.get("pos"), "ref": info.get("ref"), "alt": info.get("alt")}
+
+    def api_gtex_tissues(self, query: Query, body: Any) -> Any:
+        try:
+            return {"tissues": self.gtex.tissues(), "default": list(DEFAULT_TISSUES)}
+        except GtexError as exc:
+            raise HttpError(HTTPStatus.BAD_GATEWAY, f"GTEx: {exc}")
 
     def api_population(self, query: Query, body: Any, ds: str) -> Any:
         dataset = self.dataset(ds)

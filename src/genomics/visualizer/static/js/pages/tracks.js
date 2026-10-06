@@ -38,6 +38,9 @@ function parseTrackKey(key) {
   const k = String(key).lastIndexOf(':');
   return k < 0 ? [null, Number(key)] : [key.slice(0, k), Number(key.slice(k + 1))];
 }
+const isVariantField = (f) => typeof f === 'string' && /^variant:\d+:[A-Z]+:[A-Z]+$/i.test(f);
+const groupFieldLabel = (f) => { if (!isVariantField(f)) return f; const [, pos, ref, alt] = f.split(':'); return `genotype at ${Number(pos).toLocaleString('en-US')} ${ref}>${alt}`; };
+const defaultGroupField = (cats) => (cats.find((f) => f.name === 'superpopulation') || cats[0] || {}).name;
 const COORD_OPTIONS = [
   { value: 'reference', label: 'Genomic', title: 'Reference coordinates: each haplotype is remapped through its own indels (deleted bases are gaps)' },
   { value: 'haplotype', label: 'Haplotype', title: 'Raw prediction index of each haplotype sequence (positions drift after indels)' },
@@ -83,7 +86,10 @@ class TracksPage {
       mode: params.mode || saved.mode || 'individuals',
       hap: saved.hap || 'H1+H2',
       tracks: Array.isArray(saved.tracks) ? saved.tracks.map(migrate).filter(Boolean) : null,
-      groupField: saved.groupField && cats.some((f) => f.name === saved.groupField) ? saved.groupField : (cats.find((f) => f.name === 'superpopulation') || cats[0] || {}).name,
+      // "variant:<pos>:<ref>:<alt>" groups the cohort by genotype at a site (from the Variant page).
+      groupField: isVariantField(params.groupField) ? params.groupField
+        : saved.groupField && (cats.some((f) => f.name === saved.groupField) || (isVariantField(saved.groupField) && saved.gene === gene)) ? saved.groupField
+          : defaultGroupField(cats),
       groups: saved.groups || null,
       yScale: saved.yScale || 'linear',
       sharedY: saved.sharedY ?? false,
@@ -199,6 +205,10 @@ class TracksPage {
 
   // ------------------------------------------------------------------ gene / coords
   async setGene(gene, { start, end, keepView } = {}) {
+    if (this.cfg.gene !== gene && isVariantField(this.cfg.groupField) && this.info) {
+      this.cfg.groupField = defaultGroupField(categoricalFields()); // the site belongs to the previous window
+      this.cfg.groups = null;
+    }
     this.cfg.gene = gene;
     this.geneSelect.value = gene;
     this.data = null; this.pop = null; this.annotations = null; this.axis = null; this.seq = null;
@@ -445,6 +455,7 @@ class TracksPage {
   }
 
   groupValues() {
+    if (isVariantField(this.cfg.groupField)) return []; // the server forms the genotype classes
     const counts = this.cohortCounts();
     const all = [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a) || a.localeCompare(b));
     const chosen = (this.cfg.groups || []).filter((g) => counts.has(g));
@@ -1334,7 +1345,7 @@ class TracksPage {
     const outputs = this.shownOutputs().map(outputLabel).join(', ') || 'no output';
     const view = c.mode === 'population'
       ? `Population heatmap of ${this.cfg.popTrack ? this.trackLabel(this.cfg.popTrack) : 'no track'}, rows sorted by ${c.groupField || 'sample'}`
-      : c.mode === 'groups' ? `Group means by ${c.groupField}${c.diff ? ' (difference from the cohort mean)' : ''}` : `Pinned individuals (${c.hap === 'both' ? 'H1 and H2' : c.hap})`;
+      : c.mode === 'groups' ? `Group means by ${groupFieldLabel(c.groupField)}${c.diff ? ' (difference from the cohort mean)' : ''}` : `Pinned individuals (${c.hap === 'both' ? 'H1 and H2' : c.hap})`;
     const compare = [this.cfg.showRef && c.mode !== 'population' ? 'reference genome prediction (dashed)' : '', this.cfg.showObserved && c.mode !== 'population' ? 'observed ENCODE / FANTOM5 signal' : ''].filter(Boolean).join(' and ');
     const today = new Date().toISOString().slice(0, 10);
     return {
@@ -1608,8 +1619,10 @@ class TracksPage {
     const filterText = Object.entries(state.filters).map(([k, v]) => `${k} ∈ {${v.join(', ')}}`).join('; ');
     return h('div', { class: 'side-section' },
       h('h3', null, this.cfg.mode === 'population' ? 'Rows' : 'Groups'),
-      field(this.cfg.mode === 'population' ? 'Sort rows by' : 'Group by', select(cats.map((f) => ({ value: f.name, label: f.label })), this.cfg.groupField, (v) => { this.cfg.groupField = v; this.cfg.groups = null; this.renderSide(); this.invalidate(); })),
-      this.cfg.mode === 'groups' ? h('div', null, h('div', { class: 'label', style: { marginBottom: '4px' } }, 'Groups (max 8)'), list) : null,
+      field(this.cfg.mode === 'population' ? 'Sort rows by' : 'Group by', select([...cats.map((f) => ({ value: f.name, label: f.label })), ...(isVariantField(this.cfg.groupField) ? [{ value: this.cfg.groupField, label: groupFieldLabel(this.cfg.groupField) }] : [])], this.cfg.groupField, (v) => { this.cfg.groupField = v; this.cfg.groups = null; this.renderSide(); this.invalidate(); })),
+      this.cfg.mode === 'groups' && isVariantField(this.cfg.groupField)
+        ? h('p', { class: 'help' }, 'Genotype classes at this site (REF/REF, REF/ALT, ALT/ALT) over the cohort. ', h('a', { href: `#/variant?${new URLSearchParams({ gene: this.cfg.gene, pos: this.cfg.groupField.split(':')[1], ref: this.cfg.groupField.split(':')[2], alt: this.cfg.groupField.split(':')[3] })}` }, 'Variant page'))
+        : this.cfg.mode === 'groups' ? h('div', null, h('div', { class: 'label', style: { marginBottom: '4px' } }, 'Groups (max 8)'), list) : null,
       h('p', { class: 'help' }, `Cohort: ${fmtInt(cohort)} samples${filterText ? ` (${filterText})` : ' (all)'}. `, h('a', { href: '#/samples' }, 'Edit cohort')),
       this.cfg.mode === 'groups' ? h('p', { class: 'help' }, 'Means are computed once over every haplotype in each group (progress is shown) and cached on disk, so later views are instant.') : null,
       this.cfg.coords === 'aligned' ? h('p', { class: 'help', style: { color: 'var(--ink-2)' } }, 'Training-axis aggregates need a bcftools alignment entry per haplotype; uncached entries are built on first use, which is slow for large cohorts. Genomic coordinates give the same per-base alignment without that cost.') : null);

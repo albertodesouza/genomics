@@ -437,3 +437,18 @@ a.curie::after { content: " ↗"; font-size: 10px; opacity: .7; }
 .menu-item .muted { font-size: 11.5px; }
 .menu-sep { height: 1px; margin: 4px 2px; background: var(--line); }
 .menu-row { padding: 4px 8px; font-size: 12.5px; }
+
+/* Variant page */
+.variant-head { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.variant-title { font-size: 18px; font-weight: 600; }
+.variant-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.gtex-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.gtex-tissue-head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12.5px; margin-bottom: 4px; }
+.table.compact td, .table.compact th { padding: 4px 8px; }
+.af-bar { position: relative; display: inline-flex; align-items: center; width: 90px; height: 14px; background: var(--surface-2); border-radius: 3px; overflow: hidden; vertical-align: middle; }
+.af-bar > span:first-child { position: absolute; left: 0; top: 0; bottom: 0; background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.af-bar .af-val { position: relative; padding-left: 4px; font-size: 11px; }
+.verdict { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; border: 1px solid var(--line); color: var(--ink-2); }
+.verdict.agree { border-color: color-mix(in srgb, var(--good) 50%, transparent); background: color-mix(in srgb, var(--good) 12%, transparent); color: var(--ink); }
+.verdict.disagree { border-color: color-mix(in srgb, var(--critical) 50%, transparent); background: color-mix(in srgb, var(--critical) 12%, transparent); color: var(--ink); }
+@media (max-width: 900px) { .variant-head, .variant-grid { grid-template-columns: minmax(0, 1fr); } }

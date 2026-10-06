@@ -41,4 +41,4 @@ jobs:
         run: python -m playwright install --with-deps chromium
 
       - name: Run visualizer tests (API, workflows and browser smoke tests)
-        run: python -m pytest tests/test_visualizer.py tests/test_visualizer_startup.py tests/test_visualizer_knowledge.py tests/test_visualizer_workflows.py tests/test_visualizer_frontend.py -q
+        run: python -m pytest tests/test_visualizer.py tests/test_visualizer_startup.py tests/test_visualizer_knowledge.py tests/test_visualizer_workflows.py tests/test_visualizer_variants.py tests/test_visualizer_frontend.py -q
