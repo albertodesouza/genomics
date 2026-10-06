@@ -465,3 +465,11 @@ a.curie::after { content: " ↗"; font-size: 10px; opacity: .7; }
 .obs-stats { position: absolute; right: 16px; z-index: 2; display: flex; gap: 8px; font-size: 11px; color: var(--ink-3); background: color-mix(in srgb, var(--surface) 85%, transparent); padding: 1px 6px; border-radius: 4px; cursor: help; font-variant-numeric: tabular-nums; }
 .obs-stats.warn { border: 1px solid color-mix(in srgb, var(--warning) 50%, transparent); }
 .obs-stats .bad { color: var(--warning); font-weight: 600; }
+
+/* Saved views (Overview card) */
+.session-list { display: grid; gap: 4px; }
+.session-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid var(--line); border-radius: 8px; padding: 2px 6px 2px 2px; }
+.session-open { display: grid; gap: 1px; flex: 1; text-align: left; background: none; border: 0; cursor: pointer; padding: 7px 8px; border-radius: 7px; color: inherit; font: inherit; }
+.session-open:hover { background: var(--surface-2); }
+.session-name { font-weight: 600; font-size: 13px; }
+.session-meta { color: var(--ink-3); font-size: 11.5px; }

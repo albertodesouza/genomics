@@ -15,6 +15,7 @@ import { navigate, updateRouteParams, watchJobs } from '../app.js';
 import { state, ds, geneInfo, setLocus, setPinned, togglePinned, categoricalFields, filterRows, cohortDescription } from '../state.js';
 import { exportMenu, slug } from '../figure.js';
 import { LOCUS_HINT, resolveLocus } from '../locus.js';
+import { saveSessionForm } from '../sessions.js';
 import { h, clear, icon, iconButton, segmented, select, field, fmtInt, fmtBp, fmtNum, fmtPct, showTooltip, hideTooltip, toast, jobOverlay, debounce, escapeHtml, errorBox } from '../ui.js';
 import { Viewport, ColorSlots, setupCanvas, theme, ticks, withAlpha, seqColor, onResize, css } from '../plot.js';
 import { loadGeneAnnotations, packGenes, drawGeneLanes, geneLanesHeight, geneAt, geneTooltip } from '../gene_lanes.js';
@@ -182,7 +183,8 @@ class TracksPage {
       h('button', { class: 'btn small', title: 'Show the whole prediction window', onclick: () => this.viewport.set(0, this.viewport.length) }, icon('expand', 14), 'Whole window'),
       h('button', { class: 'btn small ghost', title: 'Open this locus on the Sequence page', onclick: () => navigate('sequence', { gene: this.cfg.gene }) }, 'Sequence →'),
       h('button', { class: 'btn small ghost', title: 'Define one number per sample from the first track over the visible range (a sample field for filters and group means)', onclick: () => this.openScalar() }, 'Region scalar…'),
-      exportMenu(() => this.figureOptions()),
+      h('button', { class: 'btn small ghost', title: 'Save this locus, these tracks, the cohort and the pinned individuals under a name (listed on the Overview)', onclick: () => { this.persist(); saveSessionForm(); } }, 'Save view…'),
+      exportMenu(() => this.figureOptions(), { python: () => this.pythonSnippet() }),
       this.statusEl,
       h('span', { class: 'hint' }, 'Drag to pan · ⌘/Ctrl+scroll zoom · Shift+drag region'),
       iconButton('panel', 'Toggle settings panel', () => { this.workspace.classList.toggle('side-collapsed'); this.render(); }, 'icon-btn bordered'));
@@ -476,6 +478,41 @@ class TracksPage {
   seriesSpec() {
     const haps = this.cfg.hap === 'both' ? ['H1', 'H2'] : [this.cfg.hap];
     return this.individuals().flatMap((s) => haps.map((hp) => `${s}:${hp}`)).join(',');
+  }
+
+  /** The client call that returns what this view is drawing (Export → Copy as Python). */
+  pythonSnippet() {
+    if (!this.info) return null;
+    const c = this.cfg;
+    const start = Math.max(0, Math.floor(this.viewport.start));
+    const end = Math.ceil(this.viewport.end);
+    const bins = Math.max(32, Math.min(8192, Math.round(this.geom().width)));
+    const py = (v) => JSON.stringify(v === undefined ? null : v).replace(/"/g, "'");
+    const output = this.outputs()[0] || 'rna_seq';
+    // Track keys are "<output>:<index>"; the client takes indices of one output.
+    const tracks = (c.tracks || []).filter((k) => String(k).startsWith(`${output}:`)).map((k) => Number(String(k).split(':').pop())).filter(Number.isFinite);
+    const haps = c.hap === 'both' ? ['H1', 'H2'] : [c.hap];
+    const where = `tracks=${py(tracks.length ? tracks : [0])}, start=${start}, end=${end}, bins=${bins}`;
+    const lines = [
+      'from genomics.visualizer.client import Visualizer',
+      '',
+      `v = Visualizer(${py(location.origin)}, dataset=${py(state.datasetId)})`,
+    ];
+    const common = `${py(c.gene)}, ${py(output)}`;
+    if (c.mode === 'groups') {
+      const filters = Object.keys(state.filters || {}).length ? `, filters=${py(state.filters)}` : '';
+      lines.push(`data = v.group_means(${common}, field=${py(c.groupField)}, groups=${py(this.groupValues())}, haps=${py(haps)}, ${where}, coords=${py(c.coords)}${filters})`,
+        "for g in data['groups']:",
+        "    print(g['group'], g['samples'], g['mean'].shape)");
+    } else {
+      lines.push(`data = v.signal(${common}, series=${py(this.seriesSpec().split(',').filter(Boolean))}, ${where}, coords=${py(c.coords)})`,
+        "for s in data['series']:",
+        "    print(s['label'], s['mean'].shape)");
+    }
+    if (this.showReference(output)) lines.push(`reference = v.reference_signal(${common}, ${where})`);
+    if (c.showObserved) lines.push(`observed = v.observed(${common}, ${where}, scale=${py(c.obsScale)})`);
+    lines.push('', "# data['edges'] are bin edges in reference offsets of the window; v.summary() has its coordinates.");
+    return lines.join('\n');
   }
 
   /** Outputs of this gene with an AlphaGenome prediction of the reference window. */

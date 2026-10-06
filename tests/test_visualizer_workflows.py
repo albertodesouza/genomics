@@ -626,3 +626,35 @@ def test_negative_control_adds_label_permutation_to_the_config(lab_dataset, tmp_
                 {"labels": "permute_within", "stratify_field": "pop"}):  # within the target itself is a no-op
         with pytest.raises(launch.LaunchError):
             launch.build_train_config(dataset, {**body, "negative_control": bad}, {}, tmp_path, tmp_path)
+
+
+def test_task_retry_runs_the_same_recipe_in_a_new_directory(tmp_path):
+    """Retry re-runs a finished task's recipe, with its own task dir and its own copy of the files."""
+    tm = TaskManager(tmp_path / "tasks")
+    py = sys.executable
+    # The step writes into its own task dir, so a retry must not touch the first task's output.
+    step = [py, "-c", "import sys; open(sys.argv[1], 'a').write(open(sys.argv[2]).read())", "{task_dir}/out.txt", "{task_dir}/in.txt"]
+    first = _wait(tm, tm.create("demo", "Demo", [{"title": "one", "command": step}], params={"k": "v"}, files={"in.txt": "data"})["id"])
+    assert first["status"] == "done"
+
+    second = tm.retry(first["id"])
+    done = _wait(tm, second["id"])
+    assert done["id"] != first["id"] and done["status"] == "done"
+    assert done["title"] == first["title"] and done["kind"] == first["kind"] and done["params"] == {"k": "v"}
+    assert (Path(done["dir"]) / "out.txt").read_text() == "data"  # its own copy, written once
+    assert (Path(first["dir"]) / "out.txt").read_text() == "data"  # the first task's output is untouched
+
+    running = tm.create("demo", "Slow", [{"title": "s", "command": [py, "-c", "import time; time.sleep(30)"]}])
+    with pytest.raises(ValueError, match="still running"):
+        tm.retry(running["id"])
+    tm.cancel(running["id"])
+
+    # A task written before recipes were stored says so instead of running the wrong thing.
+    spec_path = Path(first["dir"]) / "task.json"
+    spec = json.loads(spec_path.read_text())
+    spec.pop("recipe")
+    spec_path.write_text(json.dumps(spec))
+    with pytest.raises(ValueError, match="older version"):
+        tm.retry(first["id"])
+    with pytest.raises(KeyError):
+        tm.retry("no-such-task")

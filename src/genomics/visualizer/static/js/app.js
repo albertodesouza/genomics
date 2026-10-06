@@ -1,5 +1,6 @@
 // App shell: navigation, hash router, dataset switcher, theme, cohort chip and job indicator.
 import { api } from './api.js';
+import { notifyFinished } from './notify.js';
 import { state, loadStatus, setDataset, subscribe, cohortSize, emit } from './state.js';
 import { h, clear, icon, toast, progressBar, fmtInt, errorBox } from './ui.js';
 
@@ -184,7 +185,10 @@ function notifyFinishedTasks(active) {
     for (const [id, title] of lastTaskStates) {
       if (!now.has(id)) {
         api(`/api/tasks/${encodeURIComponent(id)}`, { params: { log: 0 } }).then((t) => {
-          toast(`${title}: ${t.status === 'done' ? 'finished' : t.status}`, t.status === 'done' ? 'info' : 'error', 8000);
+          const outcome = t.status === 'done' ? 'finished' : t.status;
+          toast(`${title}: ${outcome}`, t.status === 'done' ? 'info' : 'error', 8000);
+          // Only fires when this tab is hidden and notifications were turned on (Jobs page).
+          notifyFinished(`${title}: ${outcome}`, t.message || '', { onClick: () => navigate('jobs', { task: t.id }) });
           emit('task', t);
         }).catch(() => {});
       }

@@ -1,9 +1,11 @@
-"""Matched control windows: the crop statistic, the 1:1 assignment and the HTTP endpoint."""
+"""Matched control windows (crop statistic, 1:1 assignment, HTTP) and the notebook client."""
 import json
 import math
 
 import numpy as np
 import pytest
+
+from test_visualizer import dataset_dir  # noqa: F401 (fixture)
 
 from genomics.visualizer.cache import DiskArrayCache
 from genomics.visualizer.controls import ControlError, ControlService, crop_signal, match_windows
@@ -49,6 +51,30 @@ def control_dataset(tmp_path):
                          ("CTRL_TINY", (0.01, 0.01)), ("CTRL_HUGE", (900.0, 900.0))]:
         _window(root, gene, tracks)
     return Dataset(root)
+
+
+@pytest.fixture
+def live_server(dataset_dir, tmp_path):  # noqa: F811
+    """The real HTTP server on a port, for the notebook client to talk to."""
+    import threading
+
+    from test_visualizer import _free_port, _write_reference_prediction
+
+    from genomics.visualizer.datasets import DatasetCatalog
+    from genomics.visualizer.server import Handler, Server, VisualizerApp
+
+    _write_reference_prediction(dataset_dir)
+    catalog = DatasetCatalog()
+    ds = catalog.add(dataset_dir)
+    app = VisualizerApp(catalog, cache_dir=tmp_path / "cache", memory_bytes=64 << 20, workers=2, runs_roots=[], remote=False)
+    srv = Server(("127.0.0.1", _free_port()), type("ClientHandler", (Handler,), {"app": app}))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{srv.server_address[1]}", ds.id
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        app.shutdown()
 
 
 @pytest.fixture
@@ -117,3 +143,38 @@ def test_matched_panel_needs_enough_candidates_with_predictions(control_dataset,
     # Every window listed in the metadata is panel, so a panel covering them all has no candidates.
     with pytest.raises(ControlError, match="no windows outside"):
         service.matched_panel(control_dataset, [g for g in control_dataset.genes], "rna_seq", TERMS, CROP)
+
+
+def test_client_reads_the_same_arrays_as_the_pages(live_server):
+    """The notebook client against a live server: arrays, the cohort, and a clear error."""
+    import numpy as np
+
+    from genomics.visualizer.client import Visualizer, VisualizerError, _arrays
+
+    url, dataset_id = live_server
+    v = Visualizer(url, dataset=dataset_id)
+    assert v.dataset == dataset_id and dataset_id in repr(v)
+    assert "GENE1" in v.genes()
+
+    samples = v.samples(as_frame=False)
+    assert samples["columns"][0] == "sample_id" and len(samples["rows"]) == 3
+    assert v.cohort({"superpopulation": ["AFR"]}) == ["S1", "S3"]
+    assert v.cohort() == ["S1", "S2", "S3"]
+
+    sig = v.signal("GENE1", "rna_seq", series=["S1:H1"], tracks=[0, 1], start=0, end=40, bins=20)
+    assert sig["edges"].shape == (21,) and sig["series"][0]["mean"].shape == (2, 20)
+    assert sig["series"][0]["label"] == "S1 H1" and sig["series"][0]["mean"].dtype == np.float32
+
+    with pytest.raises(VisualizerError, match="Unknown gene"):
+        v.signal("NOPE", "rna_seq", series=["S1:H1"], end=10)
+    with pytest.raises(VisualizerError, match="no dataset|Unknown dataset"):
+        Visualizer(url, dataset="not-a-dataset")
+    with pytest.raises(VisualizerError, match="Cannot reach"):
+        Visualizer("http://127.0.0.1:1", timeout=2)
+
+    # float32 blobs decode to the right shape; integer lists named in ARRAY_KEYS become arrays.
+    import base64
+    blob = {"$f32": base64.b64encode(np.arange(6, dtype="<f4").tobytes()).decode(), "shape": [2, 3]}
+    np.testing.assert_array_equal(_arrays({"mean": blob})["mean"], np.arange(6, dtype=np.float32).reshape(2, 3))
+    np.testing.assert_array_equal(_arrays({"edges": [1, 2, None]})["edges"], [1.0, 2.0, np.nan])
+    assert _arrays({"label": [1, 2]})["label"] == [1, 2]  # not an array key: left alone

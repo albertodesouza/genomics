@@ -454,7 +454,17 @@ const LIGHT_KEY = 'gv.figureLight';
  * exportFigure options except ``format``/``scale``/``light`` (root, redraw, title, caption, filename),
  * or null when there is nothing to export yet.
  */
-export function exportMenu(getOptions, { label = 'Export' } = {}) {
+/** Copy text to the clipboard, falling back to a prompt where the API is unavailable (http://). */
+export async function copyText(text, what = 'Copied') {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(`${what} to the clipboard`);
+  } catch (e) {
+    window.prompt('Copy this:', text);
+  }
+}
+
+export function exportMenu(getOptions, { label = 'Export', python = null } = {}) {
   let light = true;
   try { light = localStorage.getItem(LIGHT_KEY) !== '0'; } catch (e) { /* ignore */ }
   const pop = h('div', { class: 'menu-pop', role: 'menu', hidden: true });
@@ -475,6 +485,13 @@ export function exportMenu(getOptions, { label = 'Export' } = {}) {
     item('PNG', '2× pixels', () => run('png', 2)),
     item('PNG, print', '4× pixels', () => run('png', 4)),
     item('SVG', 'vector, editable', () => run('svg', 1)),
+    python ? h('div', { class: 'menu-sep' }) : null,
+    python ? item('Copy as Python', 'the same arrays in a notebook', () => {
+      close();
+      const code = python();
+      if (!code) { toast('Nothing to copy yet', 'info'); return; }
+      copyText(code, 'Python snippet copied');
+    }) : null,
     h('div', { class: 'menu-sep' }),
     h('div', { class: 'menu-row' }, checkbox('Light background', light, (v) => {
       light = v;

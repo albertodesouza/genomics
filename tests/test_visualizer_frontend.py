@@ -382,3 +382,124 @@ def test_tracks_y_scale_lock_keeps_the_range_across_views(page, server_url):
     page.wait_for_timeout(400)
     assert shot() != locked_elsewhere
     assert page.errors == []
+
+
+def test_saved_views_round_trip(page, server_url):
+    """Save the Tracks view under a name, change things, then restore it from the Overview."""
+    _open(page, f"{server_url}/#/samples")
+    page.evaluate("async () => { const m = await import('/static/js/state.js'); m.setPinned(['S1']); m.setFilters({ superpopulation: ['AFR'] }); }")
+    _open(page, f"{server_url}/#/tracks?gene=GENE1")
+    page.wait_for_function("document.querySelectorAll('.panel canvas').length >= 1")
+    box = page.locator(".locus-input")
+    box.fill("20-60")
+    box.press("Enter")
+    page.wait_for_timeout(300)
+
+    page.get_by_role("button", name="Save view…").click()
+    page.locator(".modal input.input").first.fill("my spot")
+    page.get_by_role("button", name="Save", exact=True).click()
+    page.locator(".toast", has_text="Saved").wait_for()
+
+    # Move away from everything the session captured.
+    page.evaluate("async () => { const m = await import('/static/js/state.js'); m.setPinned(['S2']); m.setFilters({}); }")
+    box.fill("1-10")
+    box.press("Enter")
+    page.wait_for_timeout(300)
+
+    _open(page, f"{server_url}/#/overview")
+    card = page.locator("section.card", has_text="Saved views")
+    card.get_by_text("my spot").click()
+    page.locator(".toast", has_text="Opened").wait_for()
+    _wait_state(page, "m.state.pinned.join() === 'S1'")
+    restored = page.evaluate("async () => { const m = await import('/static/js/state.js'); return [m.state.filters, m.state.locus.start, m.state.locus.end, m.state.locus.gene]; }")
+    assert restored[0] == {"superpopulation": ["AFR"]}
+    assert round(restored[1]) == 19 and round(restored[2]) == 60 and restored[3] == "GENE1"
+
+    _open(page, f"{server_url}/#/overview")  # opening a session navigates to its locus on Tracks
+    card = page.locator("section.card", has_text="Saved views")
+    page.once("dialog", lambda d: d.accept("renamed spot"))
+    card.get_by_role("button", name="Rename").click()
+    card.get_by_text("renamed spot").wait_for()
+    page.once("dialog", lambda d: d.accept())  # the delete confirm takes no text
+    card.locator(".session-item button").last.click()
+    card.get_by_text("None yet").wait_for()
+    assert page.errors == []
+
+
+def test_jobs_page_eta_retry_and_notification_toggle(page, server_url):
+    """The Jobs page: time left for a running job, Retry on a finished one, and the notify opt-in."""
+    import json
+    import re
+
+    now = 1_700_000_000.0
+    tasks = {"tasks": [
+        {"id": "t-run", "kind": "train", "title": "Half done", "status": "running", "progress": 0.25,
+         "message": "epoch 25/100", "created": now, "started": now, "finished": None, "elapsed": 60.0,
+         "params": {}, "result": {}, "steps": 1, "step": 0, "step_title": "", "last_line": "", "dir": "/tmp/t-run"},
+        {"id": "t-done", "kind": "predict", "title": "Finished one", "status": "failed", "progress": 1.0,
+         "message": "exit 1", "created": now, "started": now, "finished": now + 5, "elapsed": 5.0,
+         "params": {}, "result": {}, "steps": 1, "step": 0, "step_title": "", "last_line": "", "dir": "/tmp/t-done"},
+    ], "available": True, "allow": True, "dir": "/tmp/tasks"}
+    retried = []
+
+    def handle(route):
+        url = route.request.url
+        if re.search(r"/api/tasks/[^/]+/retry", url):
+            retried.append(url)
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps({**tasks["tasks"][1], "id": "t-new", "title": "Finished one", "status": "running"}))
+        elif re.search(r"/api/tasks/[^/]+$", url):
+            route.fulfill(status=200, content_type="application/json", body=json.dumps({**tasks["tasks"][0], "log": ["line"], "commands": []}))
+        elif url.endswith("/api/tasks"):
+            route.fulfill(status=200, content_type="application/json", body=json.dumps(tasks))
+        else:
+            route.continue_()
+
+    page.route(re.compile(r".*/api/tasks.*"), handle)
+    _open(page, f"{server_url}/#/jobs")
+    rows = page.locator("table.jobs-table tbody tr")
+    rows.first.wait_for()
+    # 25% in 60 s implies about 3 minutes left.
+    assert "~3m 0s left" in rows.nth(0).inner_text()
+    assert "left" not in rows.nth(1).inner_text()  # a finished job has no estimate
+
+    page.locator("label.check", has_text="Notify me when a job finishes").locator("input").wait_for()
+    rows.nth(1).get_by_role("button", name="Retry").click()
+    page.locator(".toast", has_text="Started again").wait_for()
+    assert len(retried) == 1 and "t-done" in retried[0]
+    assert rows.nth(0).get_by_role("button", name="Retry").count() == 0  # not while it runs
+    assert page.errors == []
+
+
+def test_tracks_copy_as_python_runs_and_returns_the_view(page, server_url):
+    """Export → Copy as Python writes a client call for what is on screen — and it runs."""
+    _open(page, f"{server_url}/#/samples")
+    page.evaluate("async () => { const m = await import('/static/js/state.js'); m.setPinned(['S1', 'S2']); }")
+    _open(page, f"{server_url}/#/tracks?gene=GENE1")
+    page.wait_for_function("document.querySelectorAll('.panel canvas').length >= 1")
+    box = page.locator(".locus-input")
+    box.fill("10-50")
+    box.press("Enter")
+    page.wait_for_timeout(300)
+
+    page.get_by_role("button", name="Export").click()
+    # Headless has no clipboard permission, so copyText falls back to a prompt with the text.
+    prompts = []
+    page.on("dialog", lambda d: (prompts.append(d.default_value), d.accept()))
+    page.get_by_role("menuitem", name="Copy as Python").click()
+    page.wait_for_timeout(500)
+    assert prompts, "no snippet offered"
+    snippet = prompts[0]
+    assert "from genomics.visualizer.client import Visualizer" in snippet
+    assert "v.signal('GENE1', 'rna_seq'" in snippet and "series=['S1:H1+H2','S2:H1+H2']" in snippet
+    assert "start=9, end=50" in snippet and f"Visualizer('{server_url}'" in snippet
+
+    # The point of the snippet is that it runs: execute it and check it returns this view's arrays.
+    namespace: dict = {}
+    exec(snippet, namespace)  # noqa: S102 - text generated by the app under test
+    data = namespace["data"]
+    assert [s["label"] for s in data["series"]] == ["S1 H1+H2", "S2 H1+H2"]
+    assert data["edges"][0] == 9 and data["edges"][-1] == 50
+    assert data["series"][0]["mean"].shape[0] == 2  # both chosen tracks
+    assert namespace["reference"]["series"][0]["label"] == "Reference genome"
+    assert page.errors == []

@@ -116,3 +116,40 @@ def test_http_scalar_becomes_sample_fields(server):
     status, samples = call("GET", f"{base}/samples")
     assert "rna_b" not in samples["columns"]
     assert call("POST", f"{base}/scalars/delete", body={"name": "rna_b"})[0] == 404
+
+
+def test_saved_sessions_round_trip_and_limits(server, tmp_path):  # noqa: F811
+    """Saved sessions: save, list without the blobs, open, rename, replace, delete."""
+    from genomics.visualizer.sessions import MAX_PAYLOAD, SessionStore
+
+    call, base, app, ds = server
+    app.sessions = SessionStore(tmp_path / "sessions.json")
+    view = {"locus": {"gene": "GENE1", "start": 10, "end": 50}, "pinned": ["S1"], "filters": {"superpopulation": ["AFR"]}}
+
+    status, saved = call("POST", f"{base}/sessions", body={"name": "my spot", "description": "the promoter", "state": view})
+    assert status == 200 and saved["name"] == "my spot" and saved["state"] == view and saved["saved_at"] > 0
+
+    status, listing = call("GET", f"{base}/sessions")
+    assert status == 200 and [s["name"] for s in listing["sessions"]] == ["my spot"]
+    assert "state" not in listing["sessions"][0] and listing["sessions"][0]["description"] == "the promoter"
+
+    status, one = call("GET", f"{base}/sessions", {"name": "my spot"})
+    assert status == 200 and one["state"] == view
+    assert call("GET", f"{base}/sessions", {"name": "nope"})[0] == 404
+
+    # The same name needs an explicit replace; the stored state is then the new one.
+    assert call("POST", f"{base}/sessions", body={"name": "my spot", "state": {"locus": {}}})[0] == 400
+    assert call("POST", f"{base}/sessions", body={"name": "my spot", "state": {"locus": {"gene": "EXTRA"}}, "replace": True})[0] == 200
+    assert call("GET", f"{base}/sessions", {"name": "my spot"})[1]["state"]["locus"]["gene"] == "EXTRA"
+
+    status, renamed = call("POST", f"{base}/sessions/rename", body={"name": "my spot", "new_name": "elsewhere"})
+    assert status == 200 and renamed["name"] == "elsewhere"
+    assert call("POST", f"{base}/sessions/rename", body={"name": "gone", "new_name": "x"})[0] == 400
+    assert call("POST", f"{base}/sessions", body={"name": "  ", "state": {}})[0] == 400
+    assert call("POST", f"{base}/sessions", body={"name": "big", "state": {"blob": "x" * (MAX_PAYLOAD + 10)}})[0] == 400
+
+    # Definitions outlive the app's in-memory state (they are a file beside the region scalars).
+    assert SessionStore(tmp_path / "sessions.json").get(app.dataset(ds.id), "elsewhere")["state"]["locus"]["gene"] == "EXTRA"
+    assert call("POST", f"{base}/sessions/delete", body={"name": "elsewhere"})[0] == 200
+    assert call("POST", f"{base}/sessions/delete", body={"name": "elsewhere"})[0] == 404
+    assert call("GET", f"{base}/sessions")[1]["sessions"] == []

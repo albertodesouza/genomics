@@ -44,6 +44,13 @@ GitHub workflow.
 | AlphaGenome | Chooses the AlphaGenome backend (hosted API, remote server, or a server started on this machine) used by the lab and by prediction jobs |
 | System | What this machine can run, feature by feature (packages, `bcftools`/`samtools`, AlphaGenome backend, PyTorch), hardware, and free disk space where the visualizer writes; the same report as `genomics doctor`, with the command that enables each missing piece |
 
+**Saved views.** *Save view…* on the Tracks page names what is on screen — the locus, the tracks and
+their order, the mode (individuals, group means, heatmap), the compare-with lanes, the cohort filters
+and the pinned individuals. Saved views are listed on the Overview, where clicking one restores all of
+it; they live in `~/.config/genomics/visualizer_sessions.json` beside the region scalars (per dataset
+path), so they survive a cleared browser cache and can be opened on another machine. A view whose
+samples or fields no longer exist opens as far as it still applies.
+
 Navigation: drag to pan, Ctrl/⌘+scroll to zoom, Shift+drag to zoom to a region, double-click to
 zoom in, ←/→ and +/− on the focused plot. The locus box accepts `chr:start-end`, `start-end`, a
 single position, a **gene name** or an **rsID**. A gene name goes to that gene where it is annotated
@@ -282,7 +289,12 @@ disappeared, e.g. after a reboot, shows as *lost*). Each job has a folder under 
 (default `results/visualizer/jobs`) with `task.json` (the exact commands, so any job can be re-run
 from a shell), `state.json` and `log.txt`. Training/evaluation jobs share a `gpu` queue and
 prediction jobs an `alphagenome` queue: one at a time each, in order. `--no-jobs` disables starting
-jobs from the UI. The top bar shows running jobs; a toast reports when one finishes.
+jobs from the UI. The top bar shows running jobs; a toast reports when one finishes, and
+*Notify me when a job finishes* on the Jobs page turns on a desktop notification for when the tab is
+in the background (the browser asks for permission on the first click). A running job shows roughly
+how much time is left, from the rate so far. **Retry** on a finished job runs it again as a new job
+with the same recipe, in its own folder — the commands and any files the form generated are stored
+with the job, so nothing has to be filled in again (jobs from before this was stored say so instead).
 
 **AlphaGenome predictions** (Overview, Jobs): every AlphaGenome output (RNA-seq, CAGE, PRO-cap,
 DNase, ATAC, histone and TF ChIP-seq in 128 bp bins, splice sites, splice-site usage, splice
@@ -466,6 +478,36 @@ line, overriding the saved setting.
 
 Outside the visualizer, `genomics.core.alphagenome_connection.create_dna_client()` honours the same
 environment variables, so any code that builds its client through it can use a self-hosted server.
+
+## From a notebook
+
+`genomics.visualizer.client` asks a running visualizer for the arrays it is drawing, so a notebook
+does not re-implement the window resolution, track matching, haplotype remapping and group
+aggregation (and does not quietly disagree with the app about them). It needs only the standard
+library and numpy, and polls through the background jobs the heavier endpoints start.
+
+```python
+from genomics.visualizer.client import Visualizer
+
+v = Visualizer("http://127.0.0.1:8791", dataset="1kg_high_coverage")
+sig = v.signal("TYRP1", "rna_seq", series=["HG00096:H1+H2"], tracks=[0], start=250_000, end=270_000)
+sig["edges"], sig["series"][0]["mean"]       # numpy arrays, (bins + 1,) and (tracks, bins)
+
+means = v.group_means("TYRP1", "rna_seq", field="pigmentation", groups=["weak", "strong"])
+v.samples()                                  # a pandas DataFrame when pandas is installed
+```
+
+| Method | Returns |
+|---|---|
+| `datasets`, `summary`, `genes`, `samples`, `cohort` | the dataset, its windows and its sample table (including region scalars and PC fields) |
+| `signal`, `reference_signal`, `observed` | per-haplotype predictions, the reference-window prediction and the measured ENCODE / FANTOM5 signal |
+| `group_means` | mean ± SD per group of a sample field over the cohort |
+| `variant_sites`, `variant_effect`, `genotypes` | cohort sites, the in-silico eQTL at one site, and genotype counts |
+| `scalars`, `pca` | region-scalar definitions and the genotype PCA |
+| `sessions`, `session` | saved views, to reproduce a figure's exact view |
+
+*Export → Copy as Python* on the Tracks page writes the call for the view on screen, with its gene,
+tracks, range, binning, haplotypes or groups and cohort filters already filled in.
 
 ## Legacy apps
 

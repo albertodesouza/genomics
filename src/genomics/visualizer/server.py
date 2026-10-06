@@ -36,6 +36,7 @@ from genomics.visualizer.gene_index import GeneIndex, find_table
 from genomics.visualizer.genotypes import GENOTYPE_LABELS, GenotypeService
 from genomics.visualizer.controls import ControlError, ControlService
 from genomics.visualizer.scalars import ScalarError, ScalarService, ScalarStore
+from genomics.visualizer.sessions import SessionError, SessionStore
 from genomics.visualizer.ancestry import AncestryService, default_windows, match_groups, window_coverage
 from genomics.visualizer.gtex import DEFAULT_TISSUES, GtexClient, GtexError
 from genomics.visualizer.annotations import AnnotationService
@@ -164,6 +165,7 @@ class VisualizerApp:
         perturb_default_config: Optional[Path] = None,
         remote: bool = True,
         scalar_store: Optional[ScalarStore] = None,
+        session_store: Optional[SessionStore] = None,
     ):
         self.catalog = catalog
         self.cache_dir = cache_dir
@@ -181,6 +183,7 @@ class VisualizerApp:
         self.ancestry = AncestryService(self.genotypes, DiskArrayCache(cache_dir))
         self.scalars = ScalarService(self.genotypes, scalar_store, ancestry=self.ancestry)
         self.controls = ControlService(self.signals)
+        self.sessions = session_store if session_store is not None else SessionStore()
         self._ag_catalog: Optional[Dict[str, Any]] = None
         self._ag_catalog_lock = threading.Lock()
         self.experiments = ExperimentService(runs_roots)
@@ -247,6 +250,7 @@ class VisualizerApp:
         r("GET", r"/api/tasks", self.api_tasks)
         r("GET", r"/api/tasks/(?P<task_id>[^/]+)", self.api_task)
         r("POST", r"/api/tasks/(?P<task_id>[^/]+)/cancel", self.api_task_cancel)
+        r("POST", r"/api/tasks/(?P<task_id>[^/]+)/retry", self.api_task_retry)
         r("POST", r"/api/tasks/(?P<task_id>[^/]+)/delete", self.api_task_delete)
         r("GET", r"/api/import/defaults", self.api_import_defaults)
         r("POST", r"/api/import/inspect", self.api_import_inspect)
@@ -259,6 +263,10 @@ class VisualizerApp:
         r("GET", r"/api/d/(?P<ds>[^/]+)/train/options", self.api_train_options)
         r("POST", r"/api/d/(?P<ds>[^/]+)/train/preview", self.api_train_preview)
         r("POST", r"/api/d/(?P<ds>[^/]+)/train/controls", self.api_train_controls)
+        r("GET", r"/api/d/(?P<ds>[^/]+)/sessions", self.api_sessions)
+        r("POST", r"/api/d/(?P<ds>[^/]+)/sessions", self.api_session_save)
+        r("POST", r"/api/d/(?P<ds>[^/]+)/sessions/rename", self.api_session_rename)
+        r("POST", r"/api/d/(?P<ds>[^/]+)/sessions/delete", self.api_session_delete)
         r("POST", r"/api/d/(?P<ds>[^/]+)/train", self.api_train_start)
         r("GET", r"/api/perturb/models", self.api_perturb_models)
         r("GET", r"/api/perturb/model", self.api_perturb_model)
@@ -612,6 +620,42 @@ class VisualizerApp:
         return payload
 
     # -- region scalars ---------------------------------------------------------------
+    # -- saved sessions ------------------------------------------------------------------------
+    def _session(self, fn: Callable[[], Any]) -> Any:
+        try:
+            return fn()
+        except SessionError as exc:
+            raise HttpError(HTTPStatus.BAD_REQUEST, str(exc))
+
+    def api_sessions(self, query: Query, body: Any, ds: str) -> Any:
+        """Saved sessions of a dataset; ``name`` returns one with its stored state."""
+        dataset = self.dataset(ds)
+        name = query.str("name", "")
+        if name:
+            entry = self.sessions.get(dataset, name)
+            if entry is None:
+                raise HttpError(HTTPStatus.NOT_FOUND, f"No saved session called {name!r}")
+            return entry
+        # The listing leaves out the state blobs: the pages only need them when one is opened.
+        return {"sessions": [{k: v for k, v in s.items() if k != "state"} for s in self.sessions.list(dataset)]}
+
+    def api_session_save(self, query: Query, body: Any, ds: str) -> Any:
+        dataset = self.dataset(ds)
+        body = body or {}
+        return self._session(lambda: self.sessions.save(
+            dataset, body.get("name"), body.get("state") or {}, body.get("description") or "", replace=bool(body.get("replace"))))
+
+    def api_session_rename(self, query: Query, body: Any, ds: str) -> Any:
+        body = body or {}
+        return self._session(lambda: self.sessions.rename(self.dataset(ds), str(body.get("name") or ""), body.get("new_name")))
+
+    def api_session_delete(self, query: Query, body: Any, ds: str) -> Any:
+        dataset = self.dataset(ds)
+        name = str((body or {}).get("name") or "")
+        if not self.sessions.delete(dataset, name):
+            raise HttpError(HTTPStatus.NOT_FOUND, f"No saved session called {name!r}")
+        return {"deleted": name}
+
     def api_scalars(self, query: Query, body: Any, ds: str) -> Any:
         dataset = self.dataset(ds)
         self.scalars.sync(dataset)
@@ -1088,6 +1132,17 @@ class VisualizerApp:
             return self._task_manager().cancel(task_id)
         except KeyError as exc:
             raise HttpError(HTTPStatus.NOT_FOUND, str(exc))
+
+    def api_task_retry(self, query: Query, body: Any, task_id: str) -> Any:
+        """Run a finished task again, with the same recipe, as a new task."""
+        if not self.allow_tasks:
+            raise HttpError(HTTPStatus.FORBIDDEN, "Background tasks are disabled (--no-jobs)")
+        try:
+            return self._task_manager().retry(task_id)
+        except KeyError as exc:
+            raise HttpError(HTTPStatus.NOT_FOUND, str(exc))
+        except ValueError as exc:
+            raise HttpError(HTTPStatus.BAD_REQUEST, str(exc))
 
     def api_task_delete(self, query: Query, body: Any, task_id: str) -> Any:
         try:
@@ -1790,6 +1845,7 @@ def create_app(args: argparse.Namespace) -> VisualizerApp:
         dataset_memory=memory,
         perturb_default_config=Path(default_config),
         scalar_store=ScalarStore.default(),
+        session_store=SessionStore.default(),
         remote=not getattr(args, "no_remote", False),
     )
 
