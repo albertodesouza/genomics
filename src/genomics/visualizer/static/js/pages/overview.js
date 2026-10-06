@@ -4,6 +4,7 @@ import { navigate } from '../app.js';
 import { state, setDataset, setFilters, emit, loadStatus, geneInfo, categoricalFields } from '../state.js';
 import { h, clear, icon, fmtInt, fmtBp, fmtDate, select, toast, errorBox } from '../ui.js';
 import { openPredictForm, openTrainForm } from '../forms.js';
+import { loadSessions, sessionList } from '../sessions.js';
 import { geneNames, openGeneCard, openTrackCard } from '../cards.js';
 import { assayTerm, curieLink } from '../links.js';
 
@@ -29,6 +30,7 @@ export async function mount(root) {
     runningNotice(),
     tiles(s),
     h('div', { class: 'grid cols-2', style: { marginTop: '16px' } }, compositionCard(), outputsCard(s)),
+    h('div', { style: { marginTop: '16px' } }, sessionsCard()),
     h('div', { style: { marginTop: '16px' } }, genesCard(s, genesWithData)),
     h('div', { style: { marginTop: '16px' } }, datasetsCard()),
   );
@@ -55,6 +57,18 @@ function tiles(s) {
     tile('Gene windows', fmtInt(s.gene_count), `${s.genes.filter((g) => g.in_metadata).length} listed in dataset metadata`),
     tile('Window size', s.window_size ? fmtBp(s.window_size) : '–', 'AlphaGenome input length'),
     tile('Outputs', s.outputs.length ? fmtInt(s.outputs.length) : '–', outputs));
+}
+
+/** Saved views of this dataset: click one to restore its locus, tracks, cohort and pinned samples. */
+function sessionsCard() {
+  const body = h('div', { class: 'card-body' }, h('div', { class: 'muted', style: { fontSize: '12.5px' } }, 'Loading…'));
+  const card = h('section', { class: 'card' },
+    h('div', { class: 'card-head' }, h('h2', null, 'Saved views'),
+      h('span', { class: 'muted', style: { fontSize: '12px' } }, 'locus, tracks, cohort and pinned individuals')),
+    body);
+  const refresh = () => loadSessions().then((list) => clear(body).appendChild(sessionList(list, { onChanged: refresh })));
+  refresh();
+  return card;
 }
 
 function compositionCard() {

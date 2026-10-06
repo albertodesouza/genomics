@@ -15,12 +15,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The visualizer with everything it can use: gene models / GTF tables (pandas + pyarrow) and the
-# AlphaGenome client for predictions and the Perturbation Lab (the client needs Python >= 3.10).
+# The visualizer with everything it can use: gene models / GTF tables (pandas + pyarrow), the
+# AlphaGenome client for predictions and the Perturbation Lab (the client needs Python >= 3.10),
+# and pydantic, which the training form needs to validate a config before starting a run.
 visualizer = [
     "alphagenome; python_version >= '3.10'",
     "pandas",
     "pyarrow",
+    "pydantic>=2",
 ]
 alphagenome = [
     "alphagenome; python_version >= '3.10'",
@@ -72,6 +74,11 @@ legacy = [
 ]
 test = [
     "pytest",
+]
+# Browser smoke tests of the visualizer (also run `python3 -m playwright install chromium`).
+test-ui = [
+    "pytest",
+    "playwright",
 ]
 docs = ["mkdocs-material>=9.5"]
 all = [

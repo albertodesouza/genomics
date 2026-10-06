@@ -114,6 +114,9 @@ class TaskManager:
             "params": params or {},
             "resource": resource,
             "locks_dir": str(self.root / "locks"),
+            # The recipe before {task_dir} was substituted, so `retry` can rebuild the task in a
+            # directory of its own instead of pointing at this one's files.
+            "recipe": {"steps": steps, "files": files or {}, "env": env},
         }
         (task_dir / "task.json").write_text(json.dumps(spec, indent=2, default=str), encoding="utf-8")
         (task_dir / "state.json").write_text(json.dumps({"status": "starting", "progress": 0.0, "message": "Starting"}), encoding="utf-8")
@@ -227,6 +230,28 @@ class TaskManager:
         return self._dir(task_id) / "log.txt"
 
     # -- control -------------------------------------------------------------------------------
+    def retry(self, task_id: str) -> Dict[str, Any]:
+        """Run a finished task again, as a new task with the same recipe.
+
+        Tasks written before the recipe was stored, and tasks still running, cannot be retried."""
+        task = self._describe(self._dir(task_id))
+        if task["status"] in ACTIVE:
+            raise ValueError("This task is still running")
+        spec = _read_json(self._dir(task_id) / "task.json")
+        recipe = spec.get("recipe") or {}
+        if not recipe.get("steps"):
+            raise ValueError("This task was started by an older version and cannot be retried; start it from its form again")
+        return self.create(
+            kind=spec.get("kind") or "task",
+            title=spec.get("title") or "Retry",
+            steps=recipe["steps"],
+            params=spec.get("params") or {},
+            cwd=Path(spec["cwd"]) if spec.get("cwd") else None,
+            env=recipe.get("env"),
+            resource=spec.get("resource"),
+            files=recipe.get("files") or {},
+        )
+
     def cancel(self, task_id: str) -> Dict[str, Any]:
         task_dir = self._dir(task_id)
         state = _read_json(task_dir / "state.json")

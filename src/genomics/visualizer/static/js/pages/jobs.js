@@ -6,9 +6,17 @@ import { navigate, updateRouteParams } from '../app.js';
 import { state, setDataset, emit, loadStatus } from '../state.js';
 import { h, clear, icon, toast, drawer, progressBar, segmented, taskStatus, fmtDate, fmtDuration, errorBox } from '../ui.js';
 import { openPredictForm, openTrainForm } from '../forms.js';
+import { notificationsBlocked, notificationsEnabled, notificationsSupported, setNotifications } from '../notify.js';
 
 const KIND_LABELS = { import: 'Import', predict: 'AlphaGenome', train: 'Training', evaluate: 'Evaluation' };
 const ACTIVE = ['starting', 'queued', 'running'];
+const MIN_ETA_PROGRESS = 0.03; // below this the rate estimate is noise
+
+/** Rough time left, assuming the rate so far holds; null when there is nothing to go on. */
+function eta(task) {
+  if (task.status !== 'running' || !(task.progress > MIN_ETA_PROGRESS) || task.progress >= 1 || !(task.elapsed > 0)) return null;
+  return (task.elapsed * (1 - task.progress)) / task.progress;
+}
 
 export async function mount(root, params) {
   const page = h('div', { class: 'page-inner' });
@@ -28,8 +36,9 @@ export async function mount(root, params) {
         h('button', { class: 'btn', onclick: () => navigate('import') }, icon('upload', 15), 'Import dataset'),
         h('button', { class: 'btn', disabled: !hasDataset(), title: 'For the dataset selected at the top', onclick: () => openPredictForm() }, icon('alphagenome', 15), 'AlphaGenome predictions'),
         h('button', { class: 'btn primary', disabled: !hasDataset(), title: 'For the dataset selected at the top', onclick: () => openTrainForm() }, icon('play', 14), 'Train a model'))),
-    h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px' } },
-      segmented([{ value: 'all', label: 'All' }, { value: 'active', label: 'Running' }, { value: 'finished', label: 'Finished' }], filter, (v) => { filter = v; render(); })),
+    h('div', { style: { display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap' } },
+      segmented([{ value: 'all', label: 'All' }, { value: 'active', label: 'Running' }, { value: 'finished', label: 'Finished' }], filter, (v) => { filter = v; render(); }),
+      notifyToggle()),
     listHost);
 
   async function refresh() {
@@ -41,6 +50,21 @@ export async function mount(root, params) {
     render();
     clearTimeout(timer);
     timer = setTimeout(refresh, tasks.some((t) => ACTIVE.includes(t.status)) ? 2000 : 10000);
+  }
+
+  /** Opt-in desktop notification when a job finishes (the browser asks on the first click). */
+  function notifyToggle() {
+    if (!notificationsSupported()) return null;
+    const box = h('input', { type: 'checkbox' });
+    box.checked = notificationsEnabled();
+    box.disabled = notificationsBlocked() && !box.checked;
+    const label = h('label', { class: 'check', title: box.disabled ? 'Notifications are blocked for this site in the browser settings' : 'Only while this tab is in the background; a toast is shown when it is in front' }, box, 'Notify me when a job finishes');
+    box.addEventListener('change', async () => {
+      const on = await setNotifications(box.checked);
+      box.checked = on;
+      if (!on && notificationsBlocked()) { box.disabled = true; toast('The browser is blocking notifications for this site; allow them in its site settings', 'error', 9000); }
+    });
+    return label;
   }
 
   function render() {
@@ -67,7 +91,9 @@ export async function mount(root, params) {
       h('td', null, active || task.status === 'done' ? bar : null,
         h('div', { class: 'muted', style: { fontSize: '11.5px', marginTop: '3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '520px' }, title: task.message }, `${stepText}${task.message || ''}${active && task.progress ? ` · ${Math.round(task.progress * 100)}%` : ''}`)),
       h('td', { class: 'muted', style: { whiteSpace: 'nowrap' } }, fmtDate(new Date((task.created || 0) * 1000).toISOString())),
-      h('td', { class: 'num' }, fmtDuration(task.elapsed)),
+      h('td', { class: 'num', title: eta(task) === null ? '' : 'Estimated from the rate so far' },
+        fmtDuration(task.elapsed),
+        eta(task) === null ? null : h('div', { class: 'muted', style: { fontSize: '11px' } }, `~${fmtDuration(eta(task))} left`)),
       h('td', null, h('div', { style: { display: 'flex', gap: '6px', justifyContent: 'flex-end' } }, actions(task))));
   }
 
@@ -79,6 +105,20 @@ export async function mount(root, params) {
     } else {
       const result = resultLink(task);
       if (result) out.push(result);
+      if (info.allow && task.status !== 'cancelled') {
+        out.push(h('button', {
+          class: 'btn small ghost', title: 'Run this job again with the same settings (as a new job)',
+          onclick: async (e) => {
+            stop(e);
+            try {
+              const next = await api(`/api/tasks/${task.id}/retry`, { method: 'POST', body: {} });
+              toast(`Started again: ${next.title}`);
+              refresh();
+              openDetail(next.id);
+            } catch (err) { toast(err.message, 'error', 8000); }
+          },
+        }, 'Retry'));
+      }
       out.push(h('button', { class: 'btn small ghost', title: 'Remove from the list (deletes the job folder, not its outputs)', onclick: async (e) => { stop(e); await api(`/api/tasks/${task.id}/delete`, { method: 'POST', body: {} }).catch((err) => toast(err.message, 'error')); refresh(); } }, icon('trash', 14)));
     }
     return out;
@@ -128,7 +168,7 @@ export async function mount(root, params) {
       }
       clear(head).append(
         h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', justifyContent: 'space-between' } }, h('h2', null, task.title), taskStatus(task)),
-        ACTIVE.includes(task.status) ? h('div', { style: { display: 'grid', gap: '4px', marginTop: '8px' } }, progressBar(task.progress), h('div', { class: 'muted', style: { fontSize: '12px' } }, task.message)) : h('div', { class: task.status === 'done' ? 'notice' : 'error-box', style: { marginTop: '8px' } }, task.message || task.status),
+        ACTIVE.includes(task.status) ? h('div', { style: { display: 'grid', gap: '4px', marginTop: '8px' } }, progressBar(task.progress), h('div', { class: 'muted', style: { fontSize: '12px' } }, task.message, eta(task) === null ? null : h('span', null, ` · ~${fmtDuration(eta(task))} left`))) : h('div', { class: task.status === 'done' ? 'notice' : 'error-box', style: { marginTop: '8px' } }, task.message || task.status),
         h('dl', { class: 'kv', style: { marginTop: '12px' } },
           h('dt', null, 'Started'), h('dd', null, fmtDate(new Date((task.created || 0) * 1000).toISOString())),
           h('dt', null, 'Duration'), h('dd', null, fmtDuration(task.elapsed)),

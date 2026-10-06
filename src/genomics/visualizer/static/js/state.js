@@ -49,17 +49,31 @@ export async function setDataset(id) {
   state.genes = new Map();
   const [summary, samples] = await Promise.all([api(`${ds()}/summary`), api(`${ds()}/samples`)]);
   state.summary = summary;
+  installSamples(samples);
+  state.filters = sanitizeFilters(load('filters', {}));
+  state.search = '';
+  state.pinned = (load('pinned', []) || []).filter((id) => state.samples.index.has(id)).slice(0, MAX_PINNED);
+  if (!state.pinned.length) state.pinned = samples.rows.slice(0, 3).map((r) => r[state.samples.col.sample_id]);
+  state.locus = load('locus', {}) || {};
+  emit('dataset');
+}
+
+function installSamples(samples) {
   const col = {};
   samples.columns.forEach((name, i) => { col[name] = i; });
   const index = new Map();
   samples.rows.forEach((row) => index.set(row[col.sample_id], row));
   state.samples = { ...samples, col, index };
-  state.filters = sanitizeFilters(load('filters', {}));
-  state.search = '';
-  state.pinned = (load('pinned', []) || []).filter((id) => index.has(id)).slice(0, MAX_PINNED);
-  if (!state.pinned.length) state.pinned = samples.rows.slice(0, 3).map((r) => r[col.sample_id]);
-  state.locus = load('locus', {}) || {};
-  emit('dataset');
+}
+
+/** Re-read sample rows and fields (after region scalars were added or removed); emits 'samples'. */
+export async function reloadSamples() {
+  installSamples(await api(`${ds()}/samples`));
+  const before = JSON.stringify(state.filters);
+  state.filters = sanitizeFilters(state.filters);
+  if (JSON.stringify(state.filters) !== before) save('filters', state.filters);
+  emit('samples');
+  if (JSON.stringify(state.filters) !== before) emit('cohort');
 }
 
 function sanitizeFilters(filters) {
@@ -114,6 +128,16 @@ export function filterRows(filters = state.filters, search = state.search, ignor
 }
 
 export function cohortSize() { return state.samples ? filterRows(state.filters, '').length : 0; }
+
+/** One line describing the cohort, e.g. "1,204 of 3,202 samples (superpopulation: AFR, EUR)". */
+export function cohortDescription() {
+  if (!state.samples) return '';
+  const total = state.samples.rows.length;
+  const size = cohortSize();
+  const parts = Object.entries(state.filters).filter(([, v]) => v && v.length).map(([k, v]) => `${k}: ${v.length > 6 ? `${v.slice(0, 6).join(', ')} +${v.length - 6}` : v.join(', ')}`);
+  const n = (x) => Number(x).toLocaleString('en-US');
+  return size === total ? `all ${n(total)} samples` : `${n(size)} of ${n(total)} samples (${parts.join('; ')})`;
+}
 
 export async function geneInfo(gene) {
   if (state.genes.has(gene)) return state.genes.get(gene);

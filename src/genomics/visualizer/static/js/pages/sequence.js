@@ -5,8 +5,10 @@ import { navigate, updateRouteParams } from '../app.js';
 import { state, ds, geneInfo, setLocus, togglePinned } from '../state.js';
 import { h, clear, icon, iconButton, segmented, select, field, fmtInt, fmtBp, fmtPct, showTooltip, hideTooltip, toast, jobOverlay, debounce, escapeHtml, errorBox } from '../ui.js';
 import { Viewport, setupCanvas, theme, ticks, withAlpha, onResize, css } from '../plot.js';
+import { LOCUS_HINT, resolveLocus } from '../locus.js';
 import { loadGeneAnnotations, packGenes, drawGeneLanes, geneLanesHeight, geneAt, geneTooltip } from '../gene_lanes.js';
 import { labelGeneOptions, openGeneCard } from '../cards.js';
+import { exportMenu, slug } from '../figure.js';
 
 const GUTTER_L = 120;
 const GUTTER_R = 14;
@@ -67,7 +69,7 @@ class SequencePage {
     ], this.cfg.coords, (v) => this.setCoords(v));
     this.hapSeg = segmented([{ value: 'H1', label: 'H1' }, { value: 'H2', label: 'H2' }, { value: 'H1+H2', label: 'Both' }], this.cfg.hap, (v) => { this.cfg.hap = v; this.persist(); this.fetch(true); });
     this.matchSeg = segmented([{ value: 'dots', label: 'Matches as ·' }, { value: 'bases', label: 'All bases' }], this.cfg.matches, (v) => { this.cfg.matches = v; this.persist(); this.render(); });
-    this.locusInput = h('input', { class: 'input locus-input', 'aria-label': 'Locus', spellcheck: 'false' });
+    this.locusInput = h('input', { class: 'input locus-input', 'aria-label': 'Locus', spellcheck: 'false', title: LOCUS_HINT });
     this.locusInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.gotoLocus(this.locusInput.value); });
     this.spanEl = h('span', { class: 'locus-span' });
     const toolbar = h('div', { class: 'ws-toolbar' },
@@ -83,7 +85,8 @@ class SequencePage {
       h('button', { class: 'btn small', onclick: () => { const mw = this.modelWindow(); if (mw) this.viewport.set(mw.start, mw.end); } }, icon('target', 14), 'Model window'),
       h('button', { class: 'btn small', onclick: () => this.viewport.set(0, this.viewport.length) }, icon('expand', 14), 'Whole window'),
       h('button', { class: 'btn small ghost', onclick: () => navigate('tracks', { gene: this.cfg.gene }) }, 'Tracks →'),
-      h('span', { class: 'hint' }, 'Zoom below 4 kb for bases · click a variant tick to center it'));
+      exportMenu(() => this.figureOptions()),
+      h('span', { class: 'hint' }, 'Zoom below 4 kb for bases · click a variant tick to center it, Shift+click for its Variant page'));
     this.host = h('div', { class: 'seq-host canvas-host' }, h('canvas'));
     this.loadingLine = h('div', { class: 'loading-line', hidden: true });
     this.table = h('div', { style: { padding: '0 16px 24px' } });
@@ -183,13 +186,35 @@ class SequencePage {
     this.spanEl.textContent = `${fmtBp(v.span)} of ${fmtBp(v.length)}`;
   }
 
-  gotoLocus(text) {
+  async gotoLocus(text) {
     const m = /^(?:([\w.]+):)?\s*(\d+)(?:\s*[-–]\s*(\d+))?$/.exec(text.replace(/,/g, '').trim());
-    if (!m) { toast('Use chr:start-end, start-end or a position', 'error'); return; }
+    if (!m) { await this.gotoNamed(text.trim()); return; }
     const genomic = this.info.start && !['hap', 'axis'].includes(m[1]) && Number(m[2]) >= this.info.start;
     const conv = (x) => (genomic ? this.fromGenomic(x - this.info.start) : x - 1);
     if (!m[3]) { this.viewport.center(conv(Number(m[2])), Math.min(this.viewport.span, 400)); return; }
     this.viewport.set(conv(Number(m[2])), conv(Number(m[3])) + 1);
+  }
+
+  /** A gene name or rsID in the locus box (see locus.js). */
+  async gotoNamed(text) {
+    try {
+      const target = await resolveLocus(text, {
+        gene: this.cfg.gene,
+        window: this.info ? { chromosome: this.info.chromosome, start: this.info.start, end: this.info.start + this.info.length - 1 } : {},
+        annotations: (this.annotations && this.annotations.genes) || [],
+        genes: (state.summary && state.summary.genes || []).map((g) => g.gene),
+        windows: (state.summary && state.summary.genes) || [],
+      });
+      if (target.kind === 'window') {
+        toast(`${target.label}: switched to the ${target.gene} window`);
+        await this.setGene(target.gene);
+        if (target.position && this.info) this.viewport.center(this.fromGenomic(target.position - this.info.start), Math.min(this.viewport.span, 400));
+        return;
+      }
+      if (target.kind === 'position') { this.viewport.center(this.fromGenomic(target.pos - this.info.start), Math.min(this.viewport.span, 400)); return; }
+      const lo = Math.max(0, this.fromGenomic(target.start));
+      this.viewport.set(lo, Math.max(lo + 1, this.fromGenomic(target.end)));
+    } catch (err) { toast(err.message, 'error', 8000); }
   }
 
   rows() {
@@ -251,6 +276,23 @@ class SequencePage {
 
   /** Gene x position (reference offset -> canvas x in the current coordinates). */
   geneX = (p) => this.xOf(this.fromGenomic(p));
+
+  /** Figure export: the sequence canvas (not the genotype table), the view described as caption. */
+  figureOptions() {
+    if (!this.info) return null;
+    const shown = state.pinned.slice(0, MAX_SAMPLES);
+    const today = new Date().toISOString().slice(0, 10);
+    return {
+      root: this.host,
+      redraw: () => this.render(),
+      title: `${this.cfg.gene} · haplotypes against the reference · ${this.locusInput.value}`,
+      caption: [
+        `${shown.length} pinned individual${shown.length === 1 ? '' : 's'}${shown.length ? `: ${shown.join(', ')}` : ''}.`,
+        `Dataset ${state.datasetId} · ${this.spanEl.textContent} · exported ${today} from genomics visualize`,
+      ],
+      filename: slug(`${state.datasetId}_${this.cfg.gene}_${this.locusInput.value.replace(/,/g, '')}_sequence`),
+    };
+  }
 
   render() {
     if (!this.info) return;
@@ -469,8 +511,13 @@ class SequencePage {
     const hit = this.hitTest(e);
     if (hit.lane !== 'variants') return;
     const v = this.variantAt(hit.pos);
-    if (v) this.viewport.center(v.pos + 0.5, Math.min(this.viewport.span, 80));
+    if (!v) return;
+    if (e.shiftKey) { this.openVariant(v); return; }
+    this.viewport.center(v.pos + 0.5, Math.min(this.viewport.span, 80));
   }
+
+  /** The Variant page for one site (genotypes across the cohort, AlphaGenome by genotype, GTEx). */
+  openVariant(v) { navigate('variant', { gene: this.cfg.gene, pos: v.genomic, ref: v.ref, alt: v.alt }); }
 
   renderTable() {
     clear(this.table);
@@ -485,11 +532,12 @@ class SequencePage {
     if (!list.length) { this.table.appendChild(h('div', { class: 'muted' }, this.cfg.coords === 'haplotype' ? 'Variant positions are not defined in raw haplotype coordinates.' : 'No variants carried by the pinned samples in this view.')); return; }
     const pinned = new Set(state.pinned);
     this.table.appendChild(h('div', { class: 'table-wrap card', style: { maxHeight: '360px' } }, h('table', { class: 'table variants-table' },
-      h('thead', null, h('tr', null, h('th', null, 'Position'), h('th', null, 'ID'), h('th', null, 'Ref'), h('th', null, 'Alt'), h('th', null, 'Type'), h('th', null, 'Carriers (GT)'))),
+      h('thead', null, h('tr', null, h('th', null, 'Position'), h('th', null, 'ID'), h('th', null, 'Ref'), h('th', null, 'Alt'), h('th', null, 'Type'), h('th', null, 'Carriers (GT)'), h('th', null, ''))),
       h('tbody', null, list.slice(0, 400).map((x) => h('tr', { class: 'clickable', onclick: () => this.viewport.center(x.pos + 0.5, Math.min(this.viewport.span, 80)) },
         h('td', null, `${this.info.chromosome}:${fmtInt(x.genomic)}`), h('td', null, x.id || '–'), h('td', null, x.ref), h('td', null, x.alt),
         h('td', null, h('span', { class: 'pill' }, x.type)),
-        h('td', null, x.carriers.filter((c) => pinned.has(c.sample)).map((c) => `${c.sample} ${c.gt}`).join(', '))))))));
+        h('td', null, x.carriers.filter((c) => pinned.has(c.sample)).map((c) => `${c.sample} ${c.gt}`).join(', ')),
+        h('td', null, h('button', { class: 'btn small ghost', title: 'Genotypes across the cohort, AlphaGenome by genotype and GTEx eQTL', onclick: (e) => { e.stopPropagation(); this.openVariant(x); } }, 'Variant →'))))))));
   }
 
   onEvent(topic) { if (topic === 'pinned') this.fetch(true); }
@@ -508,5 +556,6 @@ function variantHtml(v) {
   const carriers = v.carriers.map((c) => `${escapeHtml(c.sample)} <span class="muted">${escapeHtml(c.gt)}</span>`).slice(0, 8).join('<br>');
   return `<div class="tt-title">${escapeHtml(v.type)} · ${fmtInt(v.genomic)}</div>`
     + `<div class="tt-row"><span class="tt-key">${escapeHtml(v.id || 'no id')}</span><span class="tt-val mono">${escapeHtml(v.ref)} → ${escapeHtml(v.alt)}</span></div>`
-    + `<div class="tt-sub">${carriers}${v.carriers.length > 8 ? '<br>…' : ''}</div>`;
+    + `<div class="tt-sub">${carriers}${v.carriers.length > 8 ? '<br>…' : ''}</div>`
+    + '<div class="tt-sub">Shift+click: Variant page (cohort genotypes, AlphaGenome by genotype, GTEx)</div>';
 }

@@ -250,6 +250,17 @@ def test_predict_dataset_writes_canonical_files_and_skips_done(lab_dataset, monk
         predict_dataset.DatasetPredictor(lab_dataset.path, ["NOT_AN_OUTPUT"], ["CL:9"])
 
 
+def test_predict_dataset_includes_windows_missing_from_metadata(lab_dataset):
+    from genomics.workflows.alphagenome import predict_dataset
+
+    # A window added after the build (not in dataset_metadata.json "genes") is still predicted.
+    (lab_dataset.path / "references" / "windows" / "G2").mkdir()
+    assert predict_dataset.DatasetPredictor(lab_dataset.path, ["CAGE"], ["CL:9"]).genes == ["G1", "G2"]
+    assert predict_dataset.DatasetPredictor(lab_dataset.path, ["CAGE"], ["CL:9"], genes=["G2"]).genes == ["G2"]
+    with pytest.raises(ValueError):
+        predict_dataset.DatasetPredictor(lab_dataset.path, ["CAGE"], ["CL:9"], genes=["G3"])
+
+
 def test_predict_dataset_stores_every_output_kind(lab_dataset, monkeypatch, tmp_path):
     """Binned ChIP tracks, contact maps and splice junctions are stored in their own shapes and
     read back: binned tracks expand to bases (through each haplotype's indels), the others are
@@ -523,3 +534,127 @@ def test_vcf_import_builds_canonical_layout(tmp_path):
     assert json.loads((out / "window_extensions.json").read_text())[0]["regions"][0]["name"] == "R2"
     assert [r["name"] for r in json.loads((out / "import_spec.json").read_text())["regions"]] == ["R1", "R2"]
     assert Dataset(out).genes == ["R1", "R2"]
+
+
+def test_saturation_scan_scores_each_window_and_skips_unchanged(lab_dataset, tmp_path, monkeypatch):
+    from genomics.visualizer.jobs import JobCancelled
+
+    service = _service(tmp_path)
+    service.app.catalog = SimpleNamespace(add=lambda path: lab_dataset)
+    calls = []
+
+    def score(sample, overrides):
+        # P(b) grows with the edited haplotypes' signal in column 0 (the fake AlphaGenome counts A bases).
+        total = sum(float(o["rna_seq"][0][:, 0].sum()) for o in overrides.values())
+        p = min(0.99, 0.5 + total / 1000.0)
+        return np.array([1 - p, p])
+
+    service.context = SimpleNamespace(outputs=["rna_seq"], genes=["G1"], class_names=["a", "b"], window_center_size=40, dataset_dir=str(lab_dataset.path),
+                                      baseline=lambda sample: np.array([0.5, 0.5]), score=score)
+    service.context_id = ("run", "best.pt")
+    service._labels = {"S1": "a"}
+
+    def fake_predict(sequence, outputs, terms):
+        calls.append(sequence)
+        values = np.zeros((len(sequence), 2), np.float32)
+        values[:, 0] = np.frombuffer(sequence, np.uint8) == ord("A")
+        return {"rna_seq": (values, [{"ontology_curie": "CL:1", "strand": "+"}, {"ontology_curie": "CL:1", "strand": "-"}])}
+
+    service._predict = fake_predict
+    spec = service.scan_spec({"sample": "S1", "gene": "G1", "op": "overwrite", "base": "A", "haplotypes": ["H1"], "start": 0, "end": 40, "size": 10})
+    assert (spec["start"], spec["end"], spec["step"]) == (0, 40, 10)
+    result = service.scan(spec, lambda *a: None)
+    assert [r["start"] for r in result["rows"]] == [0, 10, 20, 30] and result["classes"] == ["a", "b"]
+    assert all(r["delta"][1] > 0 and r["delta"][0] == pytest.approx(-r["delta"][1]) for r in result["rows"])
+    assert result["calls"] == 4 and len(calls) == 4
+
+    # Reverting to the reference only changes windows that hold a variant of H1 (the SNV at offset 10).
+    calls.clear()
+    revert = service.scan(service.scan_spec({"sample": "S1", "gene": "G1", "op": "reference", "haplotypes": ["H1"], "start": 0, "end": 40, "size": 10}), lambda *a: None)
+    assert [r["changed"] for r in revert["rows"]] == [0, 1, 0, 0] and revert["calls"] == 1 and len(calls) == 1
+    assert revert["rows"][0]["delta"] == [0.0, 0.0]
+
+    with pytest.raises(PerturbError):
+        service.scan_spec({"sample": "S1", "gene": "G1", "op": "delete"})
+    with pytest.raises(PerturbError):
+        service.scan_spec({"sample": "S2", "gene": "G1"})
+    monkeypatch.setattr("genomics.visualizer.perturb.MAX_SCAN_POSITIONS", 10)
+    with pytest.raises(PerturbError):  # more windows than allowed
+        service.scan_spec({"sample": "S1", "gene": "G1", "start": 0, "end": 40, "size": 1, "step": 1})
+
+    def cancelled(*args):
+        return None
+
+    cancelled.cancelled = True
+    with pytest.raises(JobCancelled):
+        service.scan(spec, cancelled)
+
+
+def test_negative_control_adds_label_permutation_to_the_config(lab_dataset, tmp_path):
+    """The training form's negative controls: a global shuffle, a shuffle within a field, and off."""
+    from genomics.visualizer import launch
+
+    dataset = DatasetCatalog().add(lab_dataset.path)
+    dataset.set_field("pop", {"S1": "YRI"})
+    dataset.set_field("region", {"S1": "AFR"})
+    body = {
+        "target_field": "pop", "class_map": {"YRI": "dark", "CEU": "light"}, "genes": ["G1"], "output": "rna_seq",
+        "window_center_size": 64, "model_type": "CNN2", "num_epochs": 1,
+        "train_split": 0.6, "val_split": 0.2, "test_split": 0.2,
+    }
+    plain, _ = launch.build_train_config(dataset, body, {}, tmp_path / "runs", tmp_path / "cache")
+    assert "label_permutation" not in plain
+
+    shuffled, summary = launch.build_train_config(dataset, {**body, "negative_control": {"labels": "permute", "seed": 5}}, {}, tmp_path / "runs", tmp_path / "cache")
+    assert shuffled["label_permutation"] == {"enabled": True, "random_seed": 5}
+    assert "chance level" in summary["negative_control"]["description"]
+    launch.validate_config(shuffled, tmp_path / "scratch")
+
+    within, summary = launch.build_train_config(
+        dataset, {**body, "negative_control": {"labels": "permute_within", "stratify_field": "region", "seed": 5}},
+        {}, tmp_path / "runs", tmp_path / "cache")
+    assert within["label_permutation"] == {"enabled": True, "random_seed": 5, "stratify_field": "region"}
+    assert "within region" in summary["negative_control"]["description"]
+    assert "Negative control" in within["metadata"]["note"]
+    launch.validate_config(within, tmp_path / "scratch")
+
+    # A control panel is just a different gene set, but the run records that it is one.
+    _, summary = launch.build_train_config(dataset, {**body, "control_panel": True}, {}, tmp_path / "runs", tmp_path / "cache")
+    assert "matched control windows" in summary["negative_control"]["description"]
+
+    for bad in ({"labels": "sideways"}, {"labels": "permute_within", "stratify_field": "nope"},
+                {"labels": "permute_within", "stratify_field": "pop"}):  # within the target itself is a no-op
+        with pytest.raises(launch.LaunchError):
+            launch.build_train_config(dataset, {**body, "negative_control": bad}, {}, tmp_path, tmp_path)
+
+
+def test_task_retry_runs_the_same_recipe_in_a_new_directory(tmp_path):
+    """Retry re-runs a finished task's recipe, with its own task dir and its own copy of the files."""
+    tm = TaskManager(tmp_path / "tasks")
+    py = sys.executable
+    # The step writes into its own task dir, so a retry must not touch the first task's output.
+    step = [py, "-c", "import sys; open(sys.argv[1], 'a').write(open(sys.argv[2]).read())", "{task_dir}/out.txt", "{task_dir}/in.txt"]
+    first = _wait(tm, tm.create("demo", "Demo", [{"title": "one", "command": step}], params={"k": "v"}, files={"in.txt": "data"})["id"])
+    assert first["status"] == "done"
+
+    second = tm.retry(first["id"])
+    done = _wait(tm, second["id"])
+    assert done["id"] != first["id"] and done["status"] == "done"
+    assert done["title"] == first["title"] and done["kind"] == first["kind"] and done["params"] == {"k": "v"}
+    assert (Path(done["dir"]) / "out.txt").read_text() == "data"  # its own copy, written once
+    assert (Path(first["dir"]) / "out.txt").read_text() == "data"  # the first task's output is untouched
+
+    running = tm.create("demo", "Slow", [{"title": "s", "command": [py, "-c", "import time; time.sleep(30)"]}])
+    with pytest.raises(ValueError, match="still running"):
+        tm.retry(running["id"])
+    tm.cancel(running["id"])
+
+    # A task written before recipes were stored says so instead of running the wrong thing.
+    spec_path = Path(first["dir"]) / "task.json"
+    spec = json.loads(spec_path.read_text())
+    spec.pop("recipe")
+    spec_path.write_text(json.dumps(spec))
+    with pytest.raises(ValueError, match="older version"):
+        tm.retry(first["id"])
+    with pytest.raises(KeyError):
+        tm.retry("no-such-task")

@@ -362,6 +362,8 @@ details.collapsible > summary { cursor: pointer; font-weight: 600; padding: 4px 
 .delta.down { color: var(--critical); }
 .edit-list { display: grid; gap: 4px; }
 .edit-item { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; font-size: 12px; }
+.scan-lane { border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--surface-2) 45%, transparent); }
+.scan-summary { display: grid; gap: 4px; }
 
 @media (max-width: 1100px) {
   .workspace { grid-template-columns: minmax(0, 1fr); height: auto; }
@@ -428,3 +430,46 @@ a.curie::after { content: " ↗"; font-size: 10px; opacity: .7; }
 /* Import → Quickstart */
 .quickstart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 12px; }
 .quickstart-tile { display: flex; flex-direction: column; }
+
+/* Small dropdown menus (figure export) */
+.menu-wrap { position: relative; display: inline-flex; }
+.menu-pop { position: absolute; right: 0; top: calc(100% + 4px); z-index: 60; min-width: 210px; display: grid; gap: 2px; padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); }
+.menu-item { display: flex; justify-content: space-between; gap: 12px; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--ink); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
+.menu-item:hover, .menu-item:focus-visible { background: var(--surface-2); }
+.menu-item .muted { font-size: 11.5px; }
+.menu-sep { height: 1px; margin: 4px 2px; background: var(--line); }
+.menu-row { padding: 4px 8px; font-size: 12.5px; }
+
+/* Variant page */
+.variant-head { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.variant-title { font-size: 18px; font-weight: 600; }
+.variant-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.gtex-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.gtex-tissue-head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12.5px; margin-bottom: 4px; }
+.table.compact td, .table.compact th { padding: 4px 8px; }
+.af-bar { position: relative; display: inline-flex; align-items: center; width: 90px; height: 14px; background: var(--surface-2); border-radius: 3px; overflow: hidden; vertical-align: middle; }
+.af-bar > span:first-child { position: absolute; left: 0; top: 0; bottom: 0; background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.af-bar .af-val { position: relative; padding-left: 4px; font-size: 11px; }
+.verdict { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; border: 1px solid var(--line); color: var(--ink-2); }
+.verdict.agree { border-color: color-mix(in srgb, var(--good) 50%, transparent); background: color-mix(in srgb, var(--good) 12%, transparent); color: var(--ink); }
+.verdict.disagree { border-color: color-mix(in srgb, var(--critical) 50%, transparent); background: color-mix(in srgb, var(--critical) 12%, transparent); color: var(--ink); }
+@media (max-width: 900px) { .variant-head, .variant-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* Region scalars (Samples sidebar) */
+.scalar-item { display: grid; gap: 4px; padding: 6px 0; border-top: 1px dashed var(--line); position: relative; }
+.scalar-item:first-of-type { border-top: 0; }
+.scalar-name { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; align-items: baseline; }
+.scalar-desc { font-size: 11.5px; line-height: 1.35; overflow-wrap: anywhere; }
+
+/* Observed-vs-predicted agreement badge (Tracks, right of each observed lane) */
+.obs-stats { position: absolute; right: 16px; z-index: 2; display: flex; gap: 8px; font-size: 11px; color: var(--ink-3); background: color-mix(in srgb, var(--surface) 85%, transparent); padding: 1px 6px; border-radius: 4px; cursor: help; font-variant-numeric: tabular-nums; }
+.obs-stats.warn { border: 1px solid color-mix(in srgb, var(--warning) 50%, transparent); }
+.obs-stats .bad { color: var(--warning); font-weight: 600; }
+
+/* Saved views (Overview card) */
+.session-list { display: grid; gap: 4px; }
+.session-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid var(--line); border-radius: 8px; padding: 2px 6px 2px 2px; }
+.session-open { display: grid; gap: 1px; flex: 1; text-align: left; background: none; border: 0; cursor: pointer; padding: 7px 8px; border-radius: 7px; color: inherit; font: inherit; }
+.session-open:hover { background: var(--surface-2); }
+.session-name { font-weight: 600; font-size: 13px; }
+.session-meta { color: var(--ink-3); font-size: 11.5px; }

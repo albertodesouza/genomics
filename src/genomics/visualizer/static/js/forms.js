@@ -1,9 +1,9 @@
 // Forms that start background jobs: AlphaGenome predictions, training and evaluation.
 // Jobs run as separate processes (see the Jobs page) and survive closing the browser.
-import { api } from './api.js';
+import { api, apiJob } from './api.js';
 import { navigate, watchJobs } from './app.js';
 import { state, filterRows } from './state.js';
-import { h, clear, modal, drawer, toast, field, select, segmented, checkbox, fmtInt, fmtBp, errorBox } from './ui.js';
+import { h, clear, modal, drawer, toast, field, select, segmented, checkbox, fmtInt, fmtBp, fmtNum, errorBox } from './ui.js';
 import { fmtBytes, ontologyPicker, outputPicker, section, storedBytes, windowPicker } from './alphagenome_pickers.js';
 
 export { COMMON_ONTOLOGIES, ontologyPicker } from './alphagenome_pickers.js';
@@ -133,10 +133,13 @@ export async function openTrainForm(datasetId = state.datasetId, preset = {}) {
     seed: 13,
     run_name: '',
     evaluate_test: true,
+    negative_control: { labels: 'none', stratify_field: '', seed: 13 },
+    control_panel: false,
   };
   const scope = sampleScope(datasetId);
   const classHost = h('div');
   const tracksHost = h('div');
+  const controlHost = h('div', { style: { display: 'grid', gap: '8px' } });
   const preview = h('div');
   const num = (key, attrs = {}) => {
     const input = h('input', { class: 'input', type: 'number', value: cfg[key], style: { width: '110px' }, ...attrs });
@@ -170,12 +173,22 @@ export async function openTrainForm(datasetId = state.datasetId, preset = {}) {
       return h('label', null, box, h('span', null, o.name || o.curie), h('span', { class: 'meta mono' }, `${o.curie} ${o.strands.join('/')}`));
     })));
   };
-  const geneList = h('div', { class: 'checklist', style: { maxHeight: '140px' } }, options.genes.map((g) => {
+  const geneList = h('div', { class: 'checklist', style: { maxHeight: '140px' } });
+  const geneBoxes = new Map();
+  for (const g of options.genes) {
     const box = h('input', { type: 'checkbox' });
     box.checked = true;
-    box.addEventListener('change', () => { cfg.genes = box.checked ? [...cfg.genes, g] : cfg.genes.filter((x) => x !== g); });
-    return h('label', null, box, h('span', null, g));
-  }));
+    box.addEventListener('change', () => {
+      cfg.genes = box.checked ? [...cfg.genes, g] : cfg.genes.filter((x) => x !== g);
+      if (cfg.control_panel) { cfg.control_panel = false; renderControl(); }  // hand-edited: no longer the matched set
+    });
+    geneBoxes.set(g, box);
+    geneList.appendChild(h('label', null, box, h('span', null, g)));
+  }
+  const setGenes = (genes) => {
+    cfg.genes = [...genes];
+    for (const [g, box] of geneBoxes) box.checked = cfg.genes.includes(g);
+  };
   const baseOptions = [
     ...options.base_configs.map((c) => ({ value: `config:${c.path}`, label: c.name })),
     ...options.runs.map((r) => ({ value: `run:${r.id}`, label: `run · ${r.name}` })),
@@ -183,6 +196,69 @@ export async function openTrainForm(datasetId = state.datasetId, preset = {}) {
   const baseSelect = select(baseOptions, cfg.base_run ? `run:${cfg.base_run}` : `config:${cfg.base_config}`, (v) => {
     if (v.startsWith('run:')) { cfg.base_run = v.slice(4); cfg.base_config = ''; } else { cfg.base_config = v.slice(7); cfg.base_run = ''; }
   }, { style: { width: '100%' } });
+
+  // ------------------------------------------------------------- negative controls
+  // Two ablations that say what a result is worth: permuted labels (what the pipeline scores with
+  // no real label signal) and a control panel of windows matched on the signal the model reads.
+  let matched = null;
+  const renderControl = () => {
+    clear(controlHost);
+    const mode = cfg.negative_control.labels;
+    const strata = fields.filter((f) => f.name !== cfg.target_field);
+    if (mode === 'permute_within' && !strata.some((f) => f.name === cfg.negative_control.stratify_field)) {
+      cfg.negative_control.stratify_field = (strata.find((f) => f.name === 'superpopulation') || strata[0] || {}).name || '';
+    }
+    const modes = [
+      { value: 'none', label: 'Off', title: 'Train on the real labels' },
+      { value: 'permute', label: 'Shuffle labels', title: 'Shuffle labels across all samples: the chance-level floor' },
+      { value: 'permute_within', label: 'Shuffle within…', title: 'Shuffle labels inside each group of a field, keeping the group-class association: what that field alone explains', disabled: !strata.length },
+    ];
+    const explain = {
+      none: null,
+      permute: 'Each sample keeps a label drawn from the same pool, so nothing links genotype to class. Accuracy above chance here means the pipeline leaks (through the split, normalization or the cache).',
+      permute_within: `Labels are shuffled inside each ${cfg.negative_control.stratify_field || 'group'}, so every group keeps its own class mix but no individual keeps their own label. What this run scores is what ${cfg.negative_control.stratify_field || 'that field'} alone explains; a real run must beat it to be about anything else.`,
+    }[mode];
+    const panelNote = matched && cfg.control_panel
+      ? h('div', { class: 'notice', style: { fontSize: '12px' } },
+          h('div', null, h('b', null, 'Matched control windows in use.'), ` Total signal ${fmtPctRatio(matched.total_ratio)} of the panel's, typical pair within ${fmtNum(Math.pow(10, matched.mean_abs_log_ratio), 2)}x.`),
+          h('div', { class: 'table-wrap', style: { maxHeight: '150px', marginTop: '6px' } }, h('table', { class: 'table' },
+            h('thead', null, h('tr', null, h('th', null, 'Panel window'), h('th', { class: 'num' }, 'Signal'), h('th', null, 'Control'), h('th', { class: 'num' }, 'Signal'), h('th', { class: 'num' }, 'Ratio'))),
+            h('tbody', null, matched.pairs.map((pr) => h('tr', null,
+              h('td', null, pr.gene), h('td', { class: 'num' }, fmtInt(pr.signal)),
+              h('td', null, pr.control), h('td', { class: 'num' }, fmtInt(pr.control_signal)),
+              h('td', { class: 'num' }, pr.ratio === null ? '–' : `${fmtNum(pr.ratio, 2)}x`)))))),
+          h('button', { class: 'btn small', style: { marginTop: '6px' }, onclick: () => { setGenes(matched.panel_genes); cfg.control_panel = false; matched = null; renderControl(); } }, 'Back to the panel'))
+      : null;
+    // `append` would turn a null child into the text "null"; `h` drops them.
+    controlHost.appendChild(h('div', { style: { display: 'grid', gap: '8px' } },
+      field('Negative control', segmented(modes, mode, (v) => { cfg.negative_control.labels = v; renderControl(); })),
+      mode === 'permute_within'
+        ? h('div', { style: { display: 'flex', gap: '12px', flexWrap: 'wrap' } },
+            field('Within', select(strata.map((f) => ({ value: f.name, label: f.label })), cfg.negative_control.stratify_field, (v) => { cfg.negative_control.stratify_field = v; renderControl(); })),
+            field('Permutation seed', (() => { const i = h('input', { class: 'input', type: 'number', value: cfg.negative_control.seed, style: { width: '110px' } }); i.addEventListener('input', () => { cfg.negative_control.seed = Number(i.value) || 0; }); return i; })()))
+        : null,
+      explain ? h('p', { class: 'help', style: { margin: 0 } }, explain) : null,
+      panelNote || h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+        h('button', { class: 'btn small', onclick: () => matchControls() }, 'Matched control windows…'),
+        h('span', { class: 'muted', style: { fontSize: '12px' } }, 'Swap the chosen windows for phenotype-irrelevant ones carrying comparable signal.'))));
+  };
+  const fmtPctRatio = (r) => (r === null || r === undefined ? '–' : `${Math.round(r * 100)}%`);
+  const matchControls = async () => {
+    const panelGenes = [...cfg.genes];
+    if (!panelGenes.length) { toast('Choose at least one gene window first', 'error'); return; }
+    try {
+      const res = await apiJob(`/api/d/${encodeURIComponent(datasetId)}/train/controls`, {
+        method: 'POST',
+        body: { genes: panelGenes, output: cfg.output, ontology_terms: cfg.ontology_terms, window_center_size: cfg.window_center_size },
+      });
+      matched = { ...res, panel_genes: panelGenes };
+      setGenes(res.controls);
+      cfg.control_panel = true;
+      renderControl();
+      toast(`${res.controls.length} control windows matched on the signal the model reads`);
+    } catch (err) { toast(err.message, 'error', 10000); }
+  };
+
   const payload = () => ({ ...cfg, sample_ids: scope.samples() });
   const doPreview = async () => {
     clear(preview).appendChild(h('div', { class: 'muted' }, 'Building the config…'));
@@ -194,7 +270,8 @@ export async function openTrainForm(datasetId = state.datasetId, preset = {}) {
           h('dt', null, 'Target'), h('dd', null, `${s.target}: ${s.classes.join(', ')}`),
           h('dt', null, 'Input'), h('dd', null, `${s.genes.length} genes × ${s.output} × ${s.ontology_terms.length} tissues → ${s.input_shape.join(' × ')} per haplotype pair`),
           h('dt', null, 'Samples'), h('dd', null, fmtInt(s.samples)),
-          h('dt', null, 'Results'), h('dd', { class: 'mono' }, s.results_dir)),
+          h('dt', null, 'Results'), h('dd', { class: 'mono' }, s.results_dir),
+          ...(s.negative_control ? [h('dt', null, 'Negative control'), h('dd', null, s.negative_control.description)] : [])),
         h('details', { class: 'collapsible' }, h('summary', null, 'config.yaml'), h('pre', { class: 'code-block' }, res.config)));
       return true;
     } catch (err) { clear(preview).appendChild(errorBox(err)); return false; }
@@ -202,7 +279,7 @@ export async function openTrainForm(datasetId = state.datasetId, preset = {}) {
   const body = h('div', { style: { display: 'grid', gap: '14px' } },
     field('Start from', baseSelect),
     h('div', { class: 'grid cols-2', style: { gap: '12px' } },
-      field('Predict', select(fields.map((f) => ({ value: f.name, label: `${f.label} (${f.distinct} values)` })), cfg.target_field, (v) => { cfg.target_field = v; renderClasses(); })),
+      field('Predict', select(fields.map((f) => ({ value: f.name, label: `${f.label} (${f.distinct} values)` })), cfg.target_field, (v) => { cfg.target_field = v; renderClasses(); renderControl(); })),
       field('Target name (when grouping)', (() => { const i = h('input', { class: 'input', placeholder: 'e.g. pigmentation' }); i.addEventListener('input', () => { cfg.target_name = i.value; }); return i; })())),
     classHost,
     field('Samples', scope),
@@ -211,6 +288,7 @@ export async function openTrainForm(datasetId = state.datasetId, preset = {}) {
       field('Model', select(options.model_types, cfg.model_type, (v) => { cfg.model_type = v; }))),
     field('Tissue tracks', tracksHost),
     field(`Gene windows (${options.genes.length})`, geneList),
+    controlHost,
     h('div', { class: 'grid cols-2', style: { gap: '12px' } },
       field('Window around each gene', select([8192, 16384, 32768, 65536, 131072].map((n) => ({ value: n, label: fmtBp(n) })), cfg.window_center_size, (v) => { cfg.window_center_size = Number(v); })),
       field('Features', select([{ value: 'signals_only', label: 'Signals' }, { value: 'signals_and_masks', label: 'Signals + variant masks' }, { value: 'masks_only', label: 'Variant masks only' }], cfg.feature_mode, (v) => { cfg.feature_mode = v; }))),
@@ -224,6 +302,7 @@ export async function openTrainForm(datasetId = state.datasetId, preset = {}) {
     preview);
   renderClasses();
   renderTracks();
+  renderControl();
   const startBtn = h('button', { class: 'btn primary', onclick: async () => {
     startBtn.disabled = true;
     try {

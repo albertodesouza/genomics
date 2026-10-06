@@ -145,6 +145,7 @@ class Dataset:
         self._lock = threading.Lock()
         self._gene_cache: Dict[str, Dict[str, Any]] = {}
         self._windows: Dict[str, GeneWindow] = {}
+        self.field_kinds: Dict[str, str] = {}  # forced kinds of fields added with set_field
         self.samples, self.fields = self._build_samples()
         self.sample_index = {row["sample_id"]: i for i, row in enumerate(self.samples)}
         self.genes = self._discover_genes()
@@ -203,7 +204,7 @@ class Dataset:
         return rows, self._describe_fields(rows)
 
     @staticmethod
-    def _describe_fields(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _describe_fields(rows: List[Dict[str, Any]], kinds: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
         names: List[str] = []
         for row in rows:
             for key in row:
@@ -221,6 +222,10 @@ class Dataset:
             categorical = name != "sample_id" and 1 < len(counts) <= MAX_FACET_VALUES and not (numeric and len(counts) > 12)
             if name == "family_id" and len(counts) > 0.5 * max(len(rows), 1):
                 categorical = False
+            forced = (kinds or {}).get(name)
+            if forced:
+                categorical = forced == "categorical"
+                numeric = numeric and forced == "numeric"
             fields.append(
                 {
                     "name": name,
@@ -235,8 +240,9 @@ class Dataset:
             )
         return fields
 
-    def set_field(self, name: str, values: Dict[str, Any]) -> None:
-        """Add or replace a sample field (e.g. a model's derived target) and refresh the facets."""
+    def set_field(self, name: str, values: Dict[str, Any], kind: Optional[str] = None) -> None:
+        """Add or replace a sample field (e.g. a model's derived target) and refresh the facets.
+        ``kind`` ("categorical", "numeric" or "text") overrides the kind guessed from the values."""
         with self._lock:
             for row in self.samples:
                 value = values.get(row["sample_id"])
@@ -244,7 +250,11 @@ class Dataset:
                     row.pop(name, None)
                 else:
                     row[name] = _scalar(value)
-            self.fields = self._describe_fields(self.samples)
+            if kind and values:
+                self.field_kinds[name] = kind
+            else:
+                self.field_kinds.pop(name, None)
+            self.fields = self._describe_fields(self.samples, self.field_kinds)
 
     def reset_gene_cache(self) -> None:
         """Forget discovered outputs/tracks (after new predictions were written)."""

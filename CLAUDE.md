@@ -16,6 +16,7 @@ genomics doctor                             # what this machine can run, per fea
 python3 -m pip install -e .                # base install (numpy, PyYAML: CLI + visualizer browsing)
 python3 -m pip install -e ".[visualizer]"   # + pandas/pyarrow (gene models, VCF import) + alphagenome client
 python3 -m pip install -e ".[test]"         # + pytest
+python3 -m pip install -e ".[test-ui]"      # + playwright (then `python3 -m playwright install chromium`) for visualizer browser tests
 python3 -m pip install -e ".[genotype]"     # + torch/sklearn/scipy for genotype predictor
 python3 -m pip install -e ".[variant]"      # + torch/sklearn for variant transformer
 python3 -m pip install -e ".[snp-ancestry]" # + sklearn/scipy for SNP ancestry
@@ -57,6 +58,7 @@ python3 -m pytest tests/test_repository_layout.py tests/test_config_compatibilit
 python3 -m pytest tests/test_genomics_cli.py tests/test_genomics_namespace.py
 python3 -m pytest tests/test_canonical_dataset_layout.py
 python3 -m pytest tests/test_some_file.py::test_name                           # single test
+python3 -m pytest tests/test_visualizer_frontend.py                             # visualizer pages in headless Chromium (skips without playwright)
 python3 -m compileall -q src legacy tests
 ```
 

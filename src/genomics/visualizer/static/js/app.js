@@ -1,5 +1,6 @@
 // App shell: navigation, hash router, dataset switcher, theme, cohort chip and job indicator.
 import { api } from './api.js';
+import { notifyFinished } from './notify.js';
 import { state, loadStatus, setDataset, subscribe, cohortSize, emit } from './state.js';
 import { h, clear, icon, toast, progressBar, fmtInt, errorBox } from './ui.js';
 
@@ -8,6 +9,7 @@ const PAGES = [
   { key: 'samples', label: 'Samples', icon: 'samples', load: () => import('./pages/samples.js') },
   { key: 'tracks', label: 'Tracks', icon: 'tracks', load: () => import('./pages/tracks.js') },
   { key: 'sequence', label: 'Sequence', icon: 'sequence', load: () => import('./pages/sequence.js') },
+  { key: 'variant', label: 'Variant', icon: 'target', load: () => import('./pages/variant.js') },
   { key: 'perturb', label: 'Perturbation Lab', icon: 'perturb', load: () => import('./pages/perturb.js') },
   { sep: true },
   { key: 'experiments', label: 'Experiments', icon: 'experiments', load: () => import('./pages/experiments.js') },
@@ -53,6 +55,13 @@ function renderNav(active) {
     navEl.appendChild(h('a', { href: `#/${p.key}`, class: p.key === active ? 'active' : '', title: p.label, 'aria-current': p.key === active ? 'page' : null }, icon(p.icon, 18), h('span', null, p.label)));
   }
   navEl.appendChild(h('div', { class: 'nav-foot' }, state.status ? `v${state.status.version}` : ''));
+}
+
+/** Mount the current page again (e.g. after the sample fields changed). */
+export function remount() {
+  if (current && current.instance.unmount) current.instance.unmount();
+  current = null;
+  route();
 }
 
 async function route() {
@@ -176,7 +185,10 @@ function notifyFinishedTasks(active) {
     for (const [id, title] of lastTaskStates) {
       if (!now.has(id)) {
         api(`/api/tasks/${encodeURIComponent(id)}`, { params: { log: 0 } }).then((t) => {
-          toast(`${title}: ${t.status === 'done' ? 'finished' : t.status}`, t.status === 'done' ? 'info' : 'error', 8000);
+          const outcome = t.status === 'done' ? 'finished' : t.status;
+          toast(`${title}: ${outcome}`, t.status === 'done' ? 'info' : 'error', 8000);
+          // Only fires when this tab is hidden and notifications were turned on (Jobs page).
+          notifyFinished(`${title}: ${outcome}`, t.message || '', { onClick: () => navigate('jobs', { task: t.id }) });
           emit('task', t);
         }).catch(() => {});
       }

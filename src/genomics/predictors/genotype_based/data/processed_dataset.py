@@ -599,38 +599,68 @@ class ProcessedGenomicDataset(Dataset):
         if self.prediction_target == "frog_likelihood":
             raise ValueError("label_permutation não é suportado para prediction_target='frog_likelihood'")
 
-        pairs: List[Tuple[str, str]] = []
+        # (sample_id, label, estrato): sem stratify_field todos caem no mesmo estrato.
+        triples: List[Tuple[str, str, str]] = []
         for base_idx in self.valid_sample_indices:
             sample_id = self._sample_id_for_base_index(base_idx)
             if not sample_id:
                 continue
             target_text = None
             pedigree = self.dataset_metadata.get("individuals_pedigree", {}) or {}
+            record = pedigree.get(sample_id, {}) or {}
             if sample_id in pedigree:
-                target_text = self._get_target_value(pedigree.get(sample_id, {}))
+                target_text = self._get_target_value(record)
             if target_text is None:
                 try:
                     _input_data, output_data = self.base_dataset[base_idx]
                     target_text = self._get_target_value(output_data)
+                    if not record:
+                        record = output_data or {}
                 except Exception:
                     target_text = None
             if target_text in self.target_to_idx:
-                pairs.append((sample_id, str(target_text)))
+                stratum = ""
+                if lp.stratify_field:
+                    value = record.get(lp.stratify_field)
+                    if value is None:
+                        raise ValueError(
+                            f"label_permutation.stratify_field='{lp.stratify_field}' ausente para a amostra {sample_id}"
+                        )
+                    stratum = str(value)
+                triples.append((sample_id, str(target_text), stratum))
 
-        if not pairs:
+        if not triples:
             raise ValueError("label_permutation não encontrou labels válidos para permutar")
 
-        labels = [target_text for _sample_id, target_text in pairs]
         rng = np.random.default_rng(lp.random_seed)
-        permuted = list(rng.permutation(labels))
-        self.permuted_targets_by_sample_id = {
-            sample_id: str(permuted_label)
-            for (sample_id, _target_text), permuted_label in zip(pairs, permuted)
-        }
+        mapping: Dict[str, str] = {}
+        # Permuta dentro de cada estrato, em ordem determinística dos estratos.
+        by_stratum: Dict[str, List[Tuple[str, str]]] = {}
+        for sample_id, target_text, stratum in triples:
+            by_stratum.setdefault(stratum, []).append((sample_id, target_text))
+        singletons = []
+        for stratum in sorted(by_stratum):
+            members = by_stratum[stratum]
+            permuted = list(rng.permutation([label for _sid, label in members]))
+            if len(members) == 1:
+                singletons.append(stratum)
+            mapping.update({sid: str(label) for (sid, _old), label in zip(members, permuted)})
+        self.permuted_targets_by_sample_id = mapping
+        scope = (
+            f"dentro de {len(by_stratum)} grupos de '{lp.stratify_field}'"
+            if lp.stratify_field
+            else "globalmente"
+        )
         console.print(
-            f"[yellow]Label permutation ativo: {len(self.permuted_targets_by_sample_id)} labels permutados "
+            f"[yellow]Label permutation ativo: {len(mapping)} labels permutados {scope} "
             f"(seed={lp.random_seed})[/yellow]"
         )
+        if singletons:
+            # Um estrato com uma amostra devolve o label original: a permutação não o altera.
+            console.print(
+                f"[yellow]  {len(singletons)} grupo(s) com uma única amostra mantêm o label original: "
+                f"{', '.join(sorted(singletons)[:5])}[/yellow]"
+            )
 
     def _get_derived_target_value(self, output_data: Dict) -> Optional[str]:
         return target_value(output_data, self.prediction_target, self.derived_targets)

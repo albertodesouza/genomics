@@ -12,12 +12,16 @@
 // button for the gene card (HGNC, database links, Gene Ontology).
 import { api, apiJob, isAbort, Latest } from '../api.js';
 import { navigate, updateRouteParams, watchJobs } from '../app.js';
-import { state, ds, geneInfo, setLocus, setPinned, togglePinned, categoricalFields, filterRows } from '../state.js';
-import { h, clear, icon, iconButton, segmented, select, field, fmtInt, fmtBp, fmtNum, showTooltip, hideTooltip, toast, jobOverlay, debounce, escapeHtml, errorBox } from '../ui.js';
+import { state, ds, geneInfo, setLocus, setPinned, togglePinned, categoricalFields, filterRows, cohortDescription } from '../state.js';
+import { exportMenu, slug } from '../figure.js';
+import { LOCUS_HINT, resolveLocus } from '../locus.js';
+import { saveSessionForm } from '../sessions.js';
+import { h, clear, icon, iconButton, segmented, select, field, fmtInt, fmtBp, fmtNum, fmtPct, showTooltip, hideTooltip, toast, jobOverlay, debounce, escapeHtml, errorBox } from '../ui.js';
 import { Viewport, ColorSlots, setupCanvas, theme, ticks, withAlpha, seqColor, onResize, css } from '../plot.js';
 import { loadGeneAnnotations, packGenes, drawGeneLanes, geneLanesHeight, geneAt, geneTooltip } from '../gene_lanes.js';
 import { labelGeneOptions, openGeneCard, openTrackCard } from '../cards.js';
 import { openPredictForm } from '../forms.js';
+import { openScalarForm } from '../scalars.js';
 
 const GUTTER_L = 64;
 const GUTTER_R = 14;
@@ -37,6 +41,9 @@ function parseTrackKey(key) {
   const k = String(key).lastIndexOf(':');
   return k < 0 ? [null, Number(key)] : [key.slice(0, k), Number(key.slice(k + 1))];
 }
+const isVariantField = (f) => typeof f === 'string' && /^variant:\d+:[A-Z]+:[A-Z]+$/i.test(f);
+const groupFieldLabel = (f) => { if (!isVariantField(f)) return f; const [, pos, ref, alt] = f.split(':'); return `genotype at ${Number(pos).toLocaleString('en-US')} ${ref}>${alt}`; };
+const defaultGroupField = (cats) => (cats.find((f) => f.name === 'superpopulation') || cats[0] || {}).name;
 const COORD_OPTIONS = [
   { value: 'reference', label: 'Genomic', title: 'Reference coordinates: each haplotype is remapped through its own indels (deleted bases are gaps)' },
   { value: 'haplotype', label: 'Haplotype', title: 'Raw prediction index of each haplotype sequence (positions drift after indels)' },
@@ -82,10 +89,14 @@ class TracksPage {
       mode: params.mode || saved.mode || 'individuals',
       hap: saved.hap || 'H1+H2',
       tracks: Array.isArray(saved.tracks) ? saved.tracks.map(migrate).filter(Boolean) : null,
-      groupField: saved.groupField && cats.some((f) => f.name === saved.groupField) ? saved.groupField : (cats.find((f) => f.name === 'superpopulation') || cats[0] || {}).name,
+      // "variant:<pos>:<ref>:<alt>" groups the cohort by genotype at a site (from the Variant page).
+      groupField: isVariantField(params.groupField) || cats.some((f) => f.name === params.groupField) ? params.groupField
+        : saved.groupField && (cats.some((f) => f.name === saved.groupField) || (isVariantField(saved.groupField) && saved.gene === gene)) ? saved.groupField
+          : defaultGroupField(cats),
       groups: saved.groups || null,
       yScale: saved.yScale || 'linear',
       sharedY: saved.sharedY ?? false,
+      lockY: saved.lockY ?? false,
       diff: saved.diff ?? false,
       envelope: saved.envelope ?? true,
       band: saved.band ?? true,
@@ -150,7 +161,7 @@ class TracksPage {
       { value: 'H1+H2', label: 'Mean', title: 'Diploid mean of H1 and H2' },
     ], this.cfg.hap, (v) => { this.cfg.hap = v; this.invalidate(); });
 
-    this.locusInput = h('input', { class: 'input locus-input', 'aria-label': 'Locus', spellcheck: 'false' });
+    this.locusInput = h('input', { class: 'input locus-input', 'aria-label': 'Locus', spellcheck: 'false', title: LOCUS_HINT });
     this.locusInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.gotoLocus(this.locusInput.value); });
     this.spanEl = h('span', { class: 'locus-span' });
     this.statusEl = h('span', { class: 'muted', style: { fontSize: '12px' } });
@@ -171,11 +182,14 @@ class TracksPage {
       h('button', { class: 'btn small', title: 'Jump to the CNN training window', onclick: () => this.gotoModelWindow() }, icon('target', 14), 'Model window'),
       h('button', { class: 'btn small', title: 'Show the whole prediction window', onclick: () => this.viewport.set(0, this.viewport.length) }, icon('expand', 14), 'Whole window'),
       h('button', { class: 'btn small ghost', title: 'Open this locus on the Sequence page', onclick: () => navigate('sequence', { gene: this.cfg.gene }) }, 'Sequence →'),
+      h('button', { class: 'btn small ghost', title: 'Define one number per sample from the first track over the visible range (a sample field for filters and group means)', onclick: () => this.openScalar() }, 'Region scalar…'),
+      h('button', { class: 'btn small ghost', title: 'Save this locus, these tracks, the cohort and the pinned individuals under a name (listed on the Overview)', onclick: () => { this.persist(); saveSessionForm(); } }, 'Save view…'),
+      exportMenu(() => this.figureOptions(), { python: () => this.pythonSnippet() }),
       this.statusEl,
       h('span', { class: 'hint' }, 'Drag to pan · ⌘/Ctrl+scroll zoom · Shift+drag region'),
       iconButton('panel', 'Toggle settings panel', () => { this.workspace.classList.toggle('side-collapsed'); this.render(); }, 'icon-btn bordered'));
 
-    this.overviewHost = h('div', { class: 'canvas-host', style: { borderBottom: '1px solid var(--line)' } }, h('canvas'));
+    this.overviewHost = h('div', { class: 'canvas-host', style: { borderBottom: '1px solid var(--line)' }, 'data-export': 'skip' }, h('canvas'));
     this.rulerHost = h('div', { class: 'canvas-host', style: { borderBottom: '1px solid var(--line)' } }, h('canvas'));
     this.seqHost = h('div', { class: 'canvas-host seq-track', style: { borderBottom: '1px solid var(--line)' } }, h('canvas'));
     this.panelsHost = h('div', { class: 'canvas-host' });
@@ -197,6 +211,10 @@ class TracksPage {
 
   // ------------------------------------------------------------------ gene / coords
   async setGene(gene, { start, end, keepView } = {}) {
+    if (this.cfg.gene !== gene && isVariantField(this.cfg.groupField) && this.info) {
+      this.cfg.groupField = defaultGroupField(categoricalFields()); // the site belongs to the previous window
+      this.cfg.groups = null;
+    }
     this.cfg.gene = gene;
     this.geneSelect.value = gene;
     this.data = null; this.pop = null; this.annotations = null; this.axis = null; this.seq = null;
@@ -384,10 +402,10 @@ class TracksPage {
     this.spanEl.textContent = `${fmtBp(v.span)} of ${fmtBp(v.length)}`;
   }
 
-  gotoLocus(text) {
+  async gotoLocus(text) {
     const clean = text.replace(/,/g, '').trim();
     const m = /^(?:([\w.]+):)?\s*(\d+)(?:\s*[-–]\s*(\d+))?$/.exec(clean);
-    if (!m) { toast('Use chr:start-end, start-end or a single position', 'error'); this.renderLocus(); return; }
+    if (!m) { await this.gotoNamed(clean); return; }
     const prefix = m[1];
     let a = Number(m[2]);
     let b = m[3] ? Number(m[3]) : null;
@@ -399,6 +417,43 @@ class TracksPage {
     if (b === null) { this.viewport.center(conv(a)); return; }
     if (b < a) [a, b] = [b, a];
     this.viewport.set(conv(a), conv(b) + 1);
+  }
+
+  /** A gene name or rsID in the locus box (coordinates are handled by gotoLocus). */
+  async gotoNamed(text) {
+    this.status('Looking up…');
+    try {
+      const target = await resolveLocus(text, {
+        gene: this.cfg.gene,
+        window: this.info ? { chromosome: this.info.chromosome, start: this.info.start, end: this.info.start + this.info.length - 1 } : {},
+        annotations: this.annotationGenes(),
+        genes: (state.summary && state.summary.genes || []).map((g) => g.gene),
+        windows: (state.summary && state.summary.genes) || [],
+      });
+      this.applyTarget(target);
+    } catch (err) {
+      toast(err.message, 'error', 8000);
+      this.renderLocus();
+    } finally {
+      this.status('');
+    }
+  }
+
+  applyTarget(target) {
+    if (target.kind === 'window') {
+      this.setGene(target.gene, {}).then(() => {
+        if (target.position && this.info) this.viewport.center(this.fromGenomicOffset(target.position - (this.info.start || 0)));
+      });
+      toast(`${target.label}: switched to the ${target.gene} window`);
+      return;
+    }
+    if (target.kind === 'position') {
+      this.viewport.center(this.fromGenomicOffset(target.pos - (this.info.start || 0)));
+      return;
+    }
+    const lo = Math.max(0, this.fromGenomicOffset(target.start));
+    const hi = this.fromGenomicOffset(target.end);
+    this.viewport.set(lo, Math.max(lo + 1, hi));
   }
 
   status(text) { this.statusEl.textContent = text || ''; }
@@ -425,6 +480,41 @@ class TracksPage {
     return this.individuals().flatMap((s) => haps.map((hp) => `${s}:${hp}`)).join(',');
   }
 
+  /** The client call that returns what this view is drawing (Export → Copy as Python). */
+  pythonSnippet() {
+    if (!this.info) return null;
+    const c = this.cfg;
+    const start = Math.max(0, Math.floor(this.viewport.start));
+    const end = Math.ceil(this.viewport.end);
+    const bins = Math.max(32, Math.min(8192, Math.round(this.geom().width)));
+    const py = (v) => JSON.stringify(v === undefined ? null : v).replace(/"/g, "'");
+    const output = this.outputs()[0] || 'rna_seq';
+    // Track keys are "<output>:<index>"; the client takes indices of one output.
+    const tracks = (c.tracks || []).filter((k) => String(k).startsWith(`${output}:`)).map((k) => Number(String(k).split(':').pop())).filter(Number.isFinite);
+    const haps = c.hap === 'both' ? ['H1', 'H2'] : [c.hap];
+    const where = `tracks=${py(tracks.length ? tracks : [0])}, start=${start}, end=${end}, bins=${bins}`;
+    const lines = [
+      'from genomics.visualizer.client import Visualizer',
+      '',
+      `v = Visualizer(${py(location.origin)}, dataset=${py(state.datasetId)})`,
+    ];
+    const common = `${py(c.gene)}, ${py(output)}`;
+    if (c.mode === 'groups') {
+      const filters = Object.keys(state.filters || {}).length ? `, filters=${py(state.filters)}` : '';
+      lines.push(`data = v.group_means(${common}, field=${py(c.groupField)}, groups=${py(this.groupValues())}, haps=${py(haps)}, ${where}, coords=${py(c.coords)}${filters})`,
+        "for g in data['groups']:",
+        "    print(g['group'], g['samples'], g['mean'].shape)");
+    } else {
+      lines.push(`data = v.signal(${common}, series=${py(this.seriesSpec().split(',').filter(Boolean))}, ${where}, coords=${py(c.coords)})`,
+        "for s in data['series']:",
+        "    print(s['label'], s['mean'].shape)");
+    }
+    if (this.showReference(output)) lines.push(`reference = v.reference_signal(${common}, ${where})`);
+    if (c.showObserved) lines.push(`observed = v.observed(${common}, ${where}, scale=${py(c.obsScale)})`);
+    lines.push('', "# data['edges'] are bin edges in reference offsets of the window; v.summary() has its coordinates.");
+    return lines.join('\n');
+  }
+
   /** Outputs of this gene with an AlphaGenome prediction of the reference window. */
   hasReference(output) { return ((this.info && this.info.reference_outputs) || []).includes(output); }
 
@@ -443,6 +533,7 @@ class TracksPage {
   }
 
   groupValues() {
+    if (isVariantField(this.cfg.groupField)) return []; // the server forms the genotype classes
     const counts = this.cohortCounts();
     const all = [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a) || a.localeCompare(b));
     const chosen = (this.cfg.groups || []).filter((g) => counts.has(g));
@@ -461,7 +552,7 @@ class TracksPage {
 
   persist() {
     const c = this.cfg;
-    setLocus({ gene: c.gene, output: null, coords: c.coords, mode: c.mode, hap: c.hap, tracks: c.tracks, groupField: c.groupField, groups: c.groups, yScale: c.yScale, sharedY: c.sharedY, diff: c.diff, envelope: c.envelope, band: c.band, popTrack: c.popTrack, popRows: c.popRows, seqSource: c.seqSource, showRef: c.showRef, showObserved: c.showObserved, obsScale: c.obsScale, start: this.viewport.start, end: this.viewport.end });
+    setLocus({ gene: c.gene, output: null, coords: c.coords, mode: c.mode, hap: c.hap, tracks: c.tracks, groupField: c.groupField, groups: c.groups, yScale: c.yScale, sharedY: c.sharedY, lockY: c.lockY, diff: c.diff, envelope: c.envelope, band: c.band, popTrack: c.popTrack, popRows: c.popRows, seqSource: c.seqSource, showRef: c.showRef, showObserved: c.showObserved, obsScale: c.obsScale, start: this.viewport.start, end: this.viewport.end });
     updateRouteParams({ gene: c.gene, coords: c.coords !== 'reference' ? c.coords : null, mode: c.mode !== 'individuals' ? c.mode : null, start: this.viewport.start, end: this.viewport.end });
   }
 
@@ -877,12 +968,13 @@ class TracksPage {
       for (let i = 0; i < n; i++) {
         const label = h('div', { class: 'lane-label clickable', style: { top: '6px' }, title: 'Track card: ontology terms, assay, experiments', onpointerdown: (e) => e.stopPropagation(), onclick: (e) => { e.stopPropagation(); this.openTrack(label.dataset.key); } });
         const obsLabel = h('div', { class: 'lane-label clickable obs-label', style: { top: `${height + 4}px` }, title: 'The observed experiments behind this track', onpointerdown: (e) => e.stopPropagation(), onclick: (e) => { e.stopPropagation(); this.openTrack(label.dataset.key); } });
-        const panel = h('div', { class: 'panel has-grip' }, label, h('canvas', { class: 'pred' }), this.cfg.showObserved ? [obsLabel, h('canvas', { class: 'obs' })] : null);
+        const obsStats = h('div', { class: 'obs-stats', style: { top: `${height + 4}px` } });
+        const panel = h('div', { class: 'panel has-grip' }, label, h('canvas', { class: 'pred' }), this.cfg.showObserved ? [obsLabel, obsStats, h('canvas', { class: 'obs' })] : null);
         panel.prepend(this.panelGrip(panel));
         host.appendChild(panel);
       }
     }
-    return [...host.children].map((p) => ({ el: p, label: p.querySelector('.lane-label'), canvas: p.querySelector('canvas.pred'), obsLabel: p.querySelector('.obs-label'), obsCanvas: p.querySelector('canvas.obs'), height }));
+    return [...host.children].map((p) => ({ el: p, label: p.querySelector('.lane-label'), canvas: p.querySelector('canvas.pred'), obsLabel: p.querySelector('.obs-label'), obsStats: p.querySelector('.obs-stats'), obsCanvas: p.querySelector('canvas.obs'), height }));
   }
 
   /**
@@ -1045,11 +1137,12 @@ class TracksPage {
         shared.set(panel.output, cur ? [Math.min(cur[0], range[0]), Math.max(cur[1], range[1])] : range);
       }
     }
+    const locked = this.lockedRanges(views, shared);
     views.forEach(({ panel, items, i0, i1, range }, pi) => {
       const p = panels[pi];
       if (!p) return;
       this.setPanelLabel(p, panel.trackKey);
-      const [ylo, yhiRaw] = shared.get(panel.output) || range;
+      const [ylo, yhiRaw] = locked.get(panel.trackKey) || shared.get(panel.output) || range;
       const yhi = yhiRaw > ylo ? yhiRaw * 1.06 : ylo + 1;
       this.drawPanel(p.canvas, t, g, panel, items, ylo, yhi, i0, i1);
       p.yRange = [ylo, yhi];
@@ -1058,12 +1151,26 @@ class TracksPage {
     this.panelGeom = { top: 0, height: PANEL_H, count: data.panels.length };
   }
 
+  /** Frozen y-ranges while 'Lock y-scale' is on, so panning and zooming cannot rescale the panels.
+   *
+   * The lock is taken from the ranges of the view it was switched on in, and is dropped whenever a
+   * setting that changes what the y-axis means (scale, shared, mode, envelope/band) changes. */
+  lockedRanges(views, shared) {
+    const key = JSON.stringify([this.cfg.yScale, this.cfg.sharedY, this.cfg.mode, this.cfg.envelope, this.cfg.band, this.cfg.diff, views.map((v) => v.panel.trackKey)]);
+    if (!this.cfg.lockY) { this.yLock = null; return new Map(); }
+    if (!this.yLock || this.yLock.key !== key) {
+      this.yLock = { key, ranges: new Map(views.map(({ panel, range }) => [panel.trackKey, shared.get(panel.output) || range])) };
+    }
+    return this.yLock.ranges;
+  }
+
   /** Observed signal lane of one track (own y-scale: units are the source's, not AlphaGenome's). */
   drawObserved(p, t, g, panel) {
     const H = OBS_H;
     const ctx = setupCanvas(p.obsCanvas, g.total, H);
     const obs = this.data.observed ? this.data.observed.get(panel.trackKey) : null;
     const color = css('--observed') || t.ink2;
+    this.renderAgreement(p, null);
     if (!obs) {
       p.obsLabel.textContent = 'Observed · loading…';
       return;
@@ -1081,6 +1188,7 @@ class TracksPage {
     let i0 = 0; let i1 = e.length - 1;
     while (i0 < e.length - 1 && e[i0 + 1] <= v.start) i0++;
     while (i1 > i0 && e[i1 - 1] >= v.end) i1--;
+    this.renderAgreement(p, this.agreement(panel, obs, i0, i1));
     let hi = 0;
     const top = this.cfg.envelope && obs.max ? obs.max : obs.mean;
     for (let i = i0; i < i1; i++) { const a = top[i]; if (a > hi) hi = a; }
@@ -1104,6 +1212,72 @@ class TracksPage {
       ctx.fillRect(xa, y, Math.max(pxPerBin > 2 ? xb - xa - 0.5 : 1, 1), y1 - y);
     }
     ctx.restore();
+  }
+
+  /**
+   * Agreement of a prediction with the observed lane over the bins in view: Pearson r (linear and of
+   * log1p values), the share of the observed peak bins (top decile) that are also predicted peak bins,
+   * and the ratio of means (predicted / observed). The ratio is only flagged for FANTOM5 CAGE in TPM, the
+   * units AlphaGenome's CAGE tracks are trained on (a large ratio there is a magnitude bias, like the
+   * exon/promoter CAGE bias on TYRP1); ENCODE signal tracks use other units. Compared against the
+   * reference-genome prediction when shown, else the first series.
+   */
+  agreement(panel, obs, i0, i1) {
+    const pred = panel.items.find((it) => it.reference && it.mean) || panel.items.find((it) => it.mean);
+    if (!pred || !obs.mean || pred.mean.length !== obs.mean.length) return null;
+    const xs = []; const ys = []; const at = [];
+    for (let i = i0; i < i1; i++) {
+      const x = pred.mean[i]; const y = obs.mean[i];
+      if (Number.isFinite(x) && Number.isFinite(y)) { xs.push(x); ys.push(y); at.push(i); }
+    }
+    if (xs.length < 3) return null;
+    const pearson = (a, b) => {
+      const n = a.length; let ma = 0; let mb = 0;
+      for (let i = 0; i < n; i++) { ma += a[i]; mb += b[i]; }
+      ma /= n; mb /= n;
+      let sab = 0; let saa = 0; let sbb = 0;
+      for (let i = 0; i < n; i++) { const da = a[i] - ma; const db = b[i] - mb; sab += da * db; saa += da * da; sbb += db * db; }
+      return saa > 0 && sbb > 0 ? sab / Math.sqrt(saa * sbb) : NaN;
+    };
+    const log = (a) => a.map((v) => Math.log1p(Math.max(0, v)));
+    // Top-decile bins (with signal) of each; ties at the threshold are included.
+    const top = (a) => {
+      const k = Math.max(1, Math.round(a.length * 0.1));
+      const threshold = [...a].sort((u, v) => v - u)[k - 1];
+      return new Set(a.map((v, i) => (v >= threshold && v > 0 ? i : -1)).filter((i) => i >= 0));
+    };
+    const tp = top(xs); const to = top(ys);
+    const shared = to.size ? [...to].filter((i) => tp.has(i)).length / to.size : NaN;
+    const argmax = (a) => a.reduce((best, v, i) => (v > a[best] ? i : best), 0);
+    const centre = (i) => (obs.edges[at[i]] + obs.edges[at[i] + 1]) / 2;
+    const meanOf = (a) => a.reduce((acc, v) => acc + v, 0) / a.length;
+    const mo = meanOf(ys);
+    return {
+      against: pred.reference ? 'reference genome' : pred.label, n: xs.length,
+      r: pearson(xs, ys), rlog: pearson(log(xs), log(ys)), shared,
+      peak: Math.abs(centre(argmax(xs)) - centre(argmax(ys))),
+      ratio: mo > 0 ? meanOf(xs) / mo : NaN,
+      sameUnits: obs.provider === 'FANTOM5' && this.cfg.obsScale === 'tpm',
+    };
+  }
+
+  renderAgreement(p, a) {
+    if (!p.obsStats) return;
+    clear(p.obsStats);
+    p.obsStats.hidden = !a;
+    if (!a) return;
+    const weak = !(a.rlog >= 0.3);
+    const biased = a.sameUnits && Number.isFinite(a.ratio) && Math.abs(Math.log2(a.ratio)) > 2;
+    p.obsStats.classList.toggle('warn', weak || biased);
+    p.obsStats.append(
+      h('span', { class: weak ? 'bad' : '' }, `r ${fmtNum(a.r, 2)} · log r ${fmtNum(a.rlog, 2)}`),
+      h('span', null, `peaks ${fmtPct(a.shared, 0)} shared`),
+      h('span', { class: biased ? 'bad' : a.sameUnits ? '' : 'muted' }, `pred/obs ×${fmtNum(a.ratio, 2)}`));
+    p.obsStats.title = `Observed vs AlphaGenome (${a.against}) over the ${fmtInt(a.n)} bins in view:\n`
+      + `Pearson r ${fmtNum(a.r, 3)} (of log1p values: ${fmtNum(a.rlog, 3)})\n`
+      + `${fmtPct(a.shared, 0)} of the observed top-decile bins are also predicted top-decile bins; the two maxima are ${fmtBp(a.peak)} apart\n`
+      + `mean predicted / mean observed ${fmtNum(a.ratio, 3)}${a.sameUnits ? '' : ' (different units: not flagged)'}\n`
+      + 'Flagged when log r < 0.3, or for FANTOM5 TPM when the ratio is beyond 4× either way. Zoom to a gene or exon to judge it locally.';
   }
 
   /** The ±SD band is within-group spread; it is hidden when showing differences between groups. */
@@ -1325,6 +1499,41 @@ class TracksPage {
     else if (this.cfg.envelope) this.legend.append(h('span', { class: 'muted' }, 'Shaded: min–max within each pixel bin'));
   }
 
+  /** Figure export: the plot area (without the overview strip) with the view described as caption. */
+  /** Region scalar form prefilled with the first data track and the visible range (reference offsets). */
+  openScalar() {
+    const [output, track] = parseTrackKey((this.cfg.tracks || [])[0] || '');
+    const prefill = { gene: this.cfg.gene, output: output || undefined, track: Number.isInteger(track) ? track : undefined };
+    if (this.cfg.coords !== 'haplotype') {
+      prefill.start = Math.round(this.toGenomicOffset(this.viewport.start));
+      prefill.end = Math.round(this.toGenomicOffset(this.viewport.end));
+    }
+    openScalarForm(prefill, { onSaved: (sc) => {
+      if (sc.bin_field && this.cfg.mode === 'groups') toast(`Pick ${sc.bin_field} in Group by to split the cohort by it`);
+    } });
+  }
+
+  figureOptions() {
+    if (!this.info) return null;
+    const c = this.cfg;
+    const outputs = this.shownOutputs().map(outputLabel).join(', ') || 'no output';
+    const view = c.mode === 'population'
+      ? `Population heatmap of ${this.cfg.popTrack ? this.trackLabel(this.cfg.popTrack) : 'no track'}, rows sorted by ${c.groupField || 'sample'}`
+      : c.mode === 'groups' ? `Group means by ${groupFieldLabel(c.groupField)}${c.diff ? ' (difference from the cohort mean)' : ''}` : `Pinned individuals (${c.hap === 'both' ? 'H1 and H2' : c.hap})`;
+    const compare = [this.cfg.showRef && c.mode !== 'population' ? 'reference genome prediction (dashed)' : '', this.cfg.showObserved && c.mode !== 'population' ? 'observed ENCODE / FANTOM5 signal' : ''].filter(Boolean).join(' and ');
+    const today = new Date().toISOString().slice(0, 10);
+    return {
+      root: this.scroll,
+      redraw: () => this.render(),
+      title: `${c.gene} · ${outputs} · ${this.locusInput.value}`,
+      caption: [
+        `${view}${compare ? `; with ${compare}` : ''}. Cohort: ${cohortDescription()}.`,
+        `Dataset ${state.datasetId} · ${this.spanEl.textContent} · exported ${today} from genomics visualize`,
+      ],
+      filename: slug(`${state.datasetId}_${c.gene}_${this.locusInput.value.replace(/,/g, '')}_${c.mode}`),
+    };
+  }
+
   renderFooter() {
     const c = this.cfg;
     const coordText = { reference: 'genomic coordinates (haplotypes remapped through their indels; deletions show as gaps)', haplotype: 'raw haplotype prediction index', aligned: 'bcftools_chain training axis (insertion columns shared across the cohort)' }[c.coords];
@@ -1423,6 +1632,7 @@ class TracksPage {
       h('h3', null, 'Display'),
       field('Value scale', segmented([{ value: 'linear', label: 'Linear' }, { value: 'log', label: 'log(1+x)' }], this.cfg.yScale, (v) => { this.cfg.yScale = v; this.persist(); this.render(); })),
       this.cfg.mode !== 'population' ? checkbox('Same y-scale for all tracks', this.cfg.sharedY, (v) => { this.cfg.sharedY = v; this.persist(); this.render(); }) : null,
+      this.cfg.mode !== 'population' ? checkbox('Lock y-scale while panning', this.cfg.lockY, (v) => { this.cfg.lockY = v; this.yLock = null; this.persist(); this.render(); }, { title: 'Freeze the current y-range so panning and zooming do not rescale the panels (for comparing regions, and for a figure series)' }) : null,
       this.cfg.mode === 'individuals' ? checkbox('Min–max envelope when zoomed out', this.cfg.envelope, (v) => { this.cfg.envelope = v; this.persist(); this.render(); }) : null,
       this.cfg.mode === 'groups' ? checkbox('±1 SD band', this.cfg.band, (v) => { this.cfg.band = v; this.persist(); this.render(); }) : null,
       this.cfg.mode === 'groups' ? checkbox('Show difference from cohort mean', this.cfg.diff, (v) => { this.cfg.diff = v; this.persist(); this.render(); }) : null,
@@ -1584,8 +1794,10 @@ class TracksPage {
     const filterText = Object.entries(state.filters).map(([k, v]) => `${k} ∈ {${v.join(', ')}}`).join('; ');
     return h('div', { class: 'side-section' },
       h('h3', null, this.cfg.mode === 'population' ? 'Rows' : 'Groups'),
-      field(this.cfg.mode === 'population' ? 'Sort rows by' : 'Group by', select(cats.map((f) => ({ value: f.name, label: f.label })), this.cfg.groupField, (v) => { this.cfg.groupField = v; this.cfg.groups = null; this.renderSide(); this.invalidate(); })),
-      this.cfg.mode === 'groups' ? h('div', null, h('div', { class: 'label', style: { marginBottom: '4px' } }, 'Groups (max 8)'), list) : null,
+      field(this.cfg.mode === 'population' ? 'Sort rows by' : 'Group by', select([...cats.map((f) => ({ value: f.name, label: f.label })), ...(isVariantField(this.cfg.groupField) ? [{ value: this.cfg.groupField, label: groupFieldLabel(this.cfg.groupField) }] : [])], this.cfg.groupField, (v) => { this.cfg.groupField = v; this.cfg.groups = null; this.renderSide(); this.invalidate(); })),
+      this.cfg.mode === 'groups' && isVariantField(this.cfg.groupField)
+        ? h('p', { class: 'help' }, 'Genotype classes at this site (REF/REF, REF/ALT, ALT/ALT) over the cohort. ', h('a', { href: `#/variant?${new URLSearchParams({ gene: this.cfg.gene, pos: this.cfg.groupField.split(':')[1], ref: this.cfg.groupField.split(':')[2], alt: this.cfg.groupField.split(':')[3] })}` }, 'Variant page'))
+        : this.cfg.mode === 'groups' ? h('div', null, h('div', { class: 'label', style: { marginBottom: '4px' } }, 'Groups (max 8)'), list) : null,
       h('p', { class: 'help' }, `Cohort: ${fmtInt(cohort)} samples${filterText ? ` (${filterText})` : ' (all)'}. `, h('a', { href: '#/samples' }, 'Edit cohort')),
       this.cfg.mode === 'groups' ? h('p', { class: 'help' }, 'Means are computed once over every haplotype in each group (progress is shown) and cached on disk, so later views are instant.') : null,
       this.cfg.coords === 'aligned' ? h('p', { class: 'help', style: { color: 'var(--ink-2)' } }, 'Training-axis aggregates need a bcftools alignment entry per haplotype; uncached entries are built on first use, which is slow for large cohorts. Genomic coordinates give the same per-base alignment without that cost.') : null);
@@ -1599,6 +1811,14 @@ class TracksPage {
       else if (this.cfg.seqSource === 'pinned') this.requestSequenceNow();
     }
     if (topic === 'cohort' && this.cfg.mode !== 'individuals') { this.renderSide(); this.invalidate(); }
+    if (topic === 'samples') {
+      const cats = categoricalFields();
+      if (!isVariantField(this.cfg.groupField) && !cats.some((f) => f.name === this.cfg.groupField)) {
+        this.cfg.groupField = defaultGroupField(cats); this.cfg.groups = null;
+        if (this.cfg.mode !== 'individuals') this.invalidate();
+      }
+      this.renderSide();
+    }
   }
 
   update(params) {

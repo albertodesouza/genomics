@@ -60,10 +60,10 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
 });
 
 /** Request an endpoint that may answer {pending, job}; poll until it returns data. */
-export async function apiJob(path, { params, signal, onProgress } = {}) {
+export async function apiJob(path, { params, signal, onProgress, method = 'GET', body } = {}) {
   let delay = 350;
   for (;;) {
-    const data = await api(path, { params, signal });
+    const data = await api(path, { params, signal, method, body });
     if (!data || !data.pending) return data;
     if (onProgress) onProgress(data.job);
     await sleep(delay, signal);

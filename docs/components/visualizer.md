@@ -24,25 +24,49 @@ the printed URL uses `localhost`.
 
 Code: `src/genomics/visualizer/` (Python stdlib HTTP server + JSON API, static single-page app in
 `static/`, no build step and no new runtime dependencies).
+`tests/test_visualizer_frontend.py` opens every page in headless Chromium against a synthetic dataset
+and fails on any JavaScript error; it also round-trips the figure export. It needs the `test-ui` extra
+and `python3 -m playwright install chromium` (skipped otherwise), and runs in the *Visualizer tests*
+GitHub workflow.
 
 ## Pages
 
 | Page | What it does |
 |---|---|
 | Overview | Dataset summary, cohort composition by any sample field, gene windows, outputs/tracks, open other datasets |
-| Samples | Faceted cohort builder (counts update across facets), virtualized table, sample details, pin individuals, CSV export, save the cohort as a training `.view.json` (former View Builder) |
-| Tracks | Canvas genome browser: overview strip, ruler, gene models, a sequence lane and one panel per AlphaGenome track. Tracks of several outputs (RNA-seq, CAGE, DNase, ChIP, …) can be shown together, up to 16 at once; drag a panel's grip (⋮⋮, or focus it and press ↑ / ↓) to reorder them (the order is remembered, new tracks are added at the bottom). Shows pinned **individuals**, cohort **group means** ± SD (or each group's difference from the cohort mean) by any facet, or a **population heatmap** with every cohort sample as a row. *Compare with* adds AlphaGenome's prediction of the **reference genome** (dashed line) and the **observed** ENCODE / FANTOM5 signal behind each track (a lane under it); see [Reference and observed data](#reference-and-observed-data). Track names open a track card, gene models and the gene button a gene card (see [Links to databases](#links-to-ontologies-and-databases)). The sequence lane shows the letter frequency per base over the pinned haplotypes (or the reference genome): letters scaled by frequency when zoomed in, stacked base composition per bin when zoomed out |
+| Samples | Faceted cohort builder (counts update across facets), virtualized table, sample details, pin individuals, CSV export, save the cohort as a training `.view.json` (former View Builder). *Region scalars* turn a track's signal over a region into a sample field; the *Ancestry PCA* view shows genotype PCs and matches two groups on them; see [Region scalars](#region-scalars) and [Ancestry PCA and matching](#ancestry-pca-and-matching) |
+| Tracks | Canvas genome browser: overview strip, ruler, gene models, a sequence lane and one panel per AlphaGenome track. Tracks of several outputs (RNA-seq, CAGE, DNase, ChIP, …) can be shown together, up to 16 at once; drag a panel's grip (⋮⋮, or focus it and press ↑ / ↓) to reorder them (the order is remembered, new tracks are added at the bottom). Shows pinned **individuals**, cohort **group means** ± SD (or each group's difference from the cohort mean) by any facet, or a **population heatmap** with every cohort sample as a row. *Compare with* adds AlphaGenome's prediction of the **reference genome** (dashed line) and the **observed** ENCODE / FANTOM5 signal behind each track (a lane under it, with an agreement badge); see [Reference and observed data](#reference-and-observed-data). *Region scalar…* defines a per-sample scalar from the view. The y-axis can be linear or log(1+x), shared by every track of an output, and **locked**: with *Lock y-scale while panning* on, the range the panels had when it was switched on is kept, so moving the view cannot rescale them and a quiet region reads as genuinely quiet rather than being stretched to fill the panel (also what a figure series of several loci needs). Track names open a track card, gene models and the gene button a gene card (see [Links to databases](#links-to-ontologies-and-databases)). The sequence lane shows the letter frequency per base over the pinned haplotypes (or the reference genome): letters scaled by frequency when zoomed in, stacked base composition per bin when zoomed out |
 | Sequence | Pinned haplotypes against the reference: gene models, bases when zoomed in (mismatches coloured, matches as dots, deletions and insertions marked), mismatch/indel density when zoomed out, variant lane and genotype table |
-| Perturbation Lab | Edit an individual's haplotypes (scramble, overwrite, revert to reference, custom sequence), re-predict them with AlphaGenome and re-score them with any trained model; gene models, original vs edited tracks, class means and class probabilities |
+| Variant | One site across the cohort: genotype counts and ALT frequency by any sample field, AlphaGenome's predicted signal by genotype over a region (an in-silico eQTL) and GTEx's measured eQTL of the same variant, with whether the directions agree; see [Variant page](#variant-page) |
+| Perturbation Lab | Edit an individual's haplotypes (scramble, overwrite, revert to reference, custom sequence), re-predict them with AlphaGenome and re-score them with any trained model; gene models, original vs edited tracks, class means and class probabilities. A *saturation scan* slides one edit across a range and shows how much each window moves a class probability |
 | Experiments | Runs table with any numeric metric (`weighted_*` included), training curves, run comparison, confusion matrix, per-class metrics, config, plots. Start a training run, evaluate a checkpoint on a split, or open a run in the Perturbation Lab |
 | Jobs | Background jobs (imports, AlphaGenome predictions, training, evaluation): progress, live log, cancel. They keep running when the tab closes or the visualizer stops |
 | AlphaGenome | Chooses the AlphaGenome backend (hosted API, remote server, or a server started on this machine) used by the lab and by prediction jobs |
 | System | What this machine can run, feature by feature (packages, `bcftools`/`samtools`, AlphaGenome backend, PyTorch), hardware, and free disk space where the visualizer writes; the same report as `genomics doctor`, with the command that enables each missing piece |
 
+**Saved views.** *Save view…* on the Tracks page names what is on screen — the locus, the tracks and
+their order, the mode (individuals, group means, heatmap), the compare-with lanes, the cohort filters
+and the pinned individuals. Saved views are listed on the Overview, where clicking one restores all of
+it; they live in `~/.config/genomics/visualizer_sessions.json` beside the region scalars (per dataset
+path), so they survive a cleared browser cache and can be opened on another machine. A view whose
+samples or fields no longer exist opens as far as it still applies.
+
 Navigation: drag to pan, Ctrl/⌘+scroll to zoom, Shift+drag to zoom to a region, double-click to
-zoom in, ←/→ and +/− on the focused plot. The locus box accepts `chr:start-end`, `start-end` or a
-single position. Pinned samples, cohort filters and the locus are shared between pages and kept
-per dataset in the browser; the URL is shareable.
+zoom in, ←/→ and +/− on the focused plot. The locus box accepts `chr:start-end`, `start-end`, a
+single position, a **gene name** or an **rsID**. A gene name goes to that gene where it is annotated
+in the current window, else to the dataset window of that name; an rsID is resolved to its GRCh38
+position through GTEx (cached) and goes to whichever window holds it, or says where it is if no
+window does. Pinned samples, cohort filters and the locus are shared between pages and kept per
+dataset in the browser; the URL is shareable.
+
+**Figure export.** *Export* on the Tracks, Sequence and Perturbation Lab pages downloads the current
+view as a **PNG** (2× or 4× pixels) or an **SVG**. The SVG is vector: the plots are re-drawn into SVG
+paths and text (not embedded bitmaps; only the population heatmap stays a bitmap), so it can be
+edited in Inkscape or Illustrator. The figure has a title and caption with the gene, locus, outputs,
+what is shown (individuals, group means by a field, heatmap; reference / observed lanes), the cohort
+filters (or the Perturbation Lab's model, individual and edits), the dataset and the date. *Light
+background* (on by default) draws the figure with the light theme whatever theme the page uses.
+The overview strip, buttons and hints are left out.
 
 ## Reference and observed data
 
@@ -74,6 +98,64 @@ has its own scale). Coverage of the AlphaGenome catalog: 524 of 546 CAGE tracks 
 libraries. On TYRP1 the observed FANTOM5 melanocyte TSS peaks (+0, +67, +70 bp from the MANE TSS)
 are exactly where AlphaGenome predicts them. Hovering a lane shows its value; clicking its name
 lists the experiments with links.
+
+**Agreement badge.** Each observed lane carries a badge comparing it with the predicted track over the
+bins in view: Pearson r of the values and of log(1 + x), the share of the observed peak bins (top
+decile) that are also predicted peak bins, and the ratio of the means (predicted / observed). Units
+differ between sources, so the ratio is only meaningful, and only flagged, for FANTOM5 CAGE in TPM
+(beyond 4× either way); the badge is also flagged when log r < 0.3. Hover it for the details. On
+TYRP1, melanocyte RNA-seq agrees well (r 0.84, 96% of the observed peak bins shared), while melanocyte
+CAGE is predicted about 4.5× higher than FANTOM5 measures. The statistics depend on the view: zoom to
+a gene or exon to judge it locally.
+
+## Region scalars
+
+A region scalar is one number per sample: the mean of one AlphaGenome track over a region, averaged
+over H1 and H2, optionally summed over the region's length and log2(x + 1) transformed. Define one
+with *Region scalar…* on the Tracks page (prefilled with the view's window, output, first track and
+locus) or *New…* under *Region scalars* in the Samples sidebar. The region is a gene's TSS ± a
+flank (500 bp by default), a gene body, or a custom genomic range. The scalar becomes a numeric sample field (a
+Samples column, exported with the CSV) and, with bins, a categorical field `<name>_bin` with quantile
+bins `Q1` (lowest) … `Qk`, so it can filter the cohort and split group means on Tracks. The Samples
+sidebar shows each scalar's histogram and bin edges.
+
+Values come from the per-haplotype region means of the Variant page (computed for all tracks of an
+output at once and cached under `<cache>/region_means`); for melanocyte RNA-seq over the TYRP1 gene
+body that takes about 20 s for the 3,202 samples of the 1000 Genomes dataset, and other tracks of the
+same output and region are then instant. Definitions are kept per dataset path in
+`~/.config/genomics/visualizer_scalars.json` and re-applied from the cache whenever the samples are
+listed. A scalar needs every sample's prediction of that output: per-sample CAGE predictions, for
+example, must be made before CAGE scalars are useful.
+
+## Ancestry PCA and matching
+
+*Ancestry PCA* on the Samples page (the *Table / Ancestry PCA* switch) shows a principal component
+analysis of the cohort's genotypes, as a scatter of any two PCs coloured by any sample field (the
+current cohort in front, the other samples dimmed; click a point to pin or unpin the sample).
+
+**How it is computed** (`genomics.visualizer.ancestry`). Sites are biallelic SNVs with minor allele
+frequency ≥ 5% over all samples, thinned to one per 2,000 bp (a crude stand-in for LD pruning), from
+the cohort genotype matrices of the chosen windows (see [Variant page](#variant-page)). Dosages are
+standardised per site and the scores come from the eigendecomposition of the samples' genetic
+relationship matrix, as in EIGENSOFT; 10 components by default (up to 20). Only samples genotyped in
+every chosen window get PCs. By default the windows covering the most samples are used, preferring
+control windows (windows not listed in the dataset metadata's genes). *Windows & filters…* changes
+the windows, MAF, spacing and number of components. Results are cached under `<cache>/ancestry_pca`.
+*Add PC fields* adds `pc1` … `pcK` as numeric sample fields.
+
+**Matching.** *Match two groups* pairs each sample of group A with its nearest unused sample of group
+B on the first k PCs (greedy 1:1 nearest neighbour, among the samples of the current cohort, within a
+caliper in pooled SDs of the PC space; 0 = no limit). The table shows the standardised mean difference
+of each PC before and after matching. The matched samples become a categorical sample field (named by
+you; group A's and B's labels, empty for unmatched samples) for *Use as cohort* or *Group means in
+Tracks →*, so a comparison of the groups is not driven by ancestry differences between them.
+
+In the 1000 Genomes dataset the 33 control windows have VCFs for only 1,072 of the 3,202 samples (AFR
+and EUR), so the default PCA uses the 11 pigmentation windows, which cover every sample. On it, the
+pigmentation labels' *weak* (EUR) and *strong* (AFR) groups differ by 10.4 pooled SDs on PC1 and no
+pair falls within the default caliper: the label is population membership, and no ancestry-matched
+comparison exists within this cohort. AMR vs EUR, by contrast, gives 79 pairs with every PC balanced
+(|SMD| < 0.12).
 
 ## Links to ontologies and databases
 
@@ -207,7 +289,12 @@ disappeared, e.g. after a reboot, shows as *lost*). Each job has a folder under 
 (default `results/visualizer/jobs`) with `task.json` (the exact commands, so any job can be re-run
 from a shell), `state.json` and `log.txt`. Training/evaluation jobs share a `gpu` queue and
 prediction jobs an `alphagenome` queue: one at a time each, in order. `--no-jobs` disables starting
-jobs from the UI. The top bar shows running jobs; a toast reports when one finishes.
+jobs from the UI. The top bar shows running jobs; a toast reports when one finishes, and
+*Notify me when a job finishes* on the Jobs page turns on a desktop notification for when the tab is
+in the background (the browser asks for permission on the first click). A running job shows roughly
+how much time is left, from the rate so far. **Retry** on a finished job runs it again as a new job
+with the same recipe, in its own folder — the commands and any files the form generated are stored
+with the job, so nothing has to be filled in again (jobs from before this was stored say so instead).
 
 **AlphaGenome predictions** (Overview, Jobs): every AlphaGenome output (RNA-seq, CAGE, PRO-cap,
 DNase, ATAC, histone and TF ChIP-seq in 128 bp bins, splice sites, splice-site usage, splice
@@ -237,6 +324,73 @@ written to `<runs root>/<run name>/` and appear on the Experiments page with the
 checkpoint is evaluated on the test split afterwards. **Evaluate…** on a run evaluates any
 checkpoint on any split (`<split>_<checkpoint>_results.json`).
 
+### Negative controls
+
+A classifier's accuracy only means something next to what the same pipeline scores when the signal
+it is supposed to use is gone. The training form offers two such ablations, which can be combined.
+
+**Shuffled labels** (`label_permutation` in the config). *Shuffle labels* permutes the labels over
+all samples: each class keeps its size, but nothing links a genotype to a class, so this run is the
+pipeline's chance-level floor. Scoring above it means something leaks (through the split, the
+normalization or a cache). *Shuffle within…* permutes inside each group of a chosen field instead:
+every group keeps its own class mix, so the group → class association survives while no individual
+keeps their own label. What that run scores is what the field alone explains, and a real run has to
+beat it to be about anything else. With this dataset's pigmentation labels and *superpopulation* as
+the field, that is the number the pigmentation results must be read against, because the label is
+population membership (`notebooks/REPORT.md` §14). The permutation is deterministic from its seed,
+and the run folder is tagged `_yrand` (or `_yrand_within_<field>`).
+
+**Matched control windows** (`genomics.visualizer.controls`). *Matched control windows…* swaps the
+chosen gene panel for an equal number of windows outside the dataset's own gene list. Picking
+phenotype-irrelevant windows is easy; picking windows the model reads *comparably much* from is what
+makes the control readable, since a window carrying almost no signal is flat for reasons that have
+nothing to do with biology. So candidates are matched on the total predicted signal inside the crop
+the model actually reads, on the reference window, over the chosen ontology terms and strands — the
+statistic `scripts/experiments/specificity_control_preflight.py` established for this (it tracks the
+realised perturbation over the published panel at Spearman rho = 0.855). Matching needs no
+AlphaGenome calls, only the stored reference predictions, and is an exact minimum-total-cost 1:1
+assignment on log10 of that total, so pairs are comparable by ratio. The form shows the pairing with
+each pair's ratio before you start the run. On `1kg_high_coverage`, the eleven pigmentation windows
+pair with SEM1, TRHR, FOXN2, ATP11B, HSH2D, PPP1R3E, CD47, PSMC4, SMCR8, TPM2 and SUMF2 for a
+control panel carrying 79% of the panel's total signal (typical pair within 1.2x).
+
+## Variant page
+
+Open a variant from the Sequence page (*Variant →* in the variants table, or Shift+click a variant
+tick) or type it on the Variant page: an rsID (resolved through GTEx), `chr15:28120472 A>G`,
+`chr15_28120472_A_G_b38` or a position (lists the sites there). Without a variant the page lists the
+window's common sites (ALT frequency ≥ 5%).
+
+| Card | Shows |
+|---|---|
+| Header | Position, type, rsID (dbSNP), links to gnomAD and the GTEx variant page; genotype counts and ALT frequency in the cohort and by a sample field (superpopulation by default) |
+| Direction: AlphaGenome vs GTEx | Per GTEx tissue: GTEx NES, the AlphaGenome slope and a verdict (*agree* / *disagree* when both have p < 0.05, else which side is not significant) |
+| AlphaGenome by genotype | Each sample's predicted signal (mean of H1 and H2 over the region) by genotype as box and points; the OLS slope per ALT allele with SE, t and p; ALT vs REF haplotypes as log2 fold change; AlphaGenome on the reference genome (dashed) |
+| GTEx v8 eQTL | For the target gene and chosen tissues (sun-exposed and not sun-exposed skin by default): GTEx's association (NES, p) with the donors' normalized expression by genotype, and the variant's significant eQTLs in every tissue |
+
+**Choices.** *Target gene*: an annotated gene of the window (the window's gene, else the one
+containing the variant, else the nearest). *Region*: the target's gene body, its promoter (TSS ± 1 kb),
+the variant ± 1 kb or a custom range. *Track*: by default the track with the highest cohort mean over
+the region on the target gene's strand. *Tracks by genotype →* opens the Tracks page with group means
+by genotype at the site (group field `variant:<pos>:<ref>:<alt>`).
+
+**How it is computed.** Genotypes of every sample at every site of a window come from the samples'
+phased window VCFs (a sample with a VCF but no record at a site is homozygous REF; a sample without a
+VCF for the window is not genotyped and left out of the counts; multi-allelic records are split per ALT
+allele). They are read once per window as a background job, in parallel worker processes (3–8 s per
+window for the 3,202 samples of the 1000 Genomes dataset), and cached on disk (`<cache>/cohort_genotypes`). The mean
+signal of every haplotype over a region is computed for all tracks of an output at once (about 80 s
+for 6,404 haplotypes) and cached (`<cache>/region_means`), so switching track, cohort filters or site
+afterwards is instant. The AlphaGenome slope is an association across the cohort, like an eQTL: it
+includes the effect of variants in linkage disequilibrium with this one. GTEx lookups use the GTEx
+portal API v2 (dataset `gtex_v8`: GRCh38, GENCODE v26; only variants with MAF ≥ 1% among GTEx donors
+were tested) and are cached under `<cache>/remote` (`--no-remote` uses cached answers only). GTEx's NES
+is the effect of the ALT allele on normalized expression: compare signs, not magnitudes.
+
+On rs12913832 (HERC2 intron, the OCA2 enhancer; G is the blue-eye allele) GTEx skin shows lower OCA2
+with G (NES −0.13 sun-exposed, −0.17 not sun-exposed), while AlphaGenome's melanocyte RNA-seq over
+the OCA2 gene body shows no association (slope p = 0.89 over 3,202 samples).
+
 ## Perturbation Lab
 
 Pick a trained run (NN, CNN or CNN2; any target, layout and feature mode) and load it; the lab
@@ -259,6 +413,18 @@ rebuilds the model input and shows every class probability before and after. Tra
 and edited signal (or their difference), optionally with each class's mean over the cohort; the
 sequence lane shows reference, original and edited bases. AlphaGenome results are cached by
 sequence (`<cache>/perturb`). Re-predicting an unedited haplotype reproduces its stored tracks.
+
+**Saturation scan.** The *Saturation scan* section slides one edit (scramble, overwrite or revert to
+the reference) across a range (the model window, the view or the selection) in windows of a chosen
+size every *step* bp (step = window: tiled; smaller: overlapping), on H1, H2 or both, and re-scores
+the model after each window. It is a background job (`POST /api/perturb/scan`, at most 256 windows);
+each window costs one AlphaGenome call per edited haplotype, and windows where the edit changes no
+base (reverting a stretch without variants) are scored as unchanged without a call. The result is a
+lane above the tracks with the change in one class probability per window (the individual's true
+class by default; green up, red down, grey ticks for unchanged windows; hover for every class) and a
+list of the windows with the largest changes: *Show* zooms to one, *+* adds it as an edit so *Run*
+shows its effect on the tracks. *Download TSV* saves every window's genomic range, changed bases,
+probabilities and changes.
 
 ## AlphaGenome backend
 
@@ -312,6 +478,36 @@ line, overriding the saved setting.
 
 Outside the visualizer, `genomics.core.alphagenome_connection.create_dna_client()` honours the same
 environment variables, so any code that builds its client through it can use a self-hosted server.
+
+## From a notebook
+
+`genomics.visualizer.client` asks a running visualizer for the arrays it is drawing, so a notebook
+does not re-implement the window resolution, track matching, haplotype remapping and group
+aggregation (and does not quietly disagree with the app about them). It needs only the standard
+library and numpy, and polls through the background jobs the heavier endpoints start.
+
+```python
+from genomics.visualizer.client import Visualizer
+
+v = Visualizer("http://127.0.0.1:8791", dataset="1kg_high_coverage")
+sig = v.signal("TYRP1", "rna_seq", series=["HG00096:H1+H2"], tracks=[0], start=250_000, end=270_000)
+sig["edges"], sig["series"][0]["mean"]       # numpy arrays, (bins + 1,) and (tracks, bins)
+
+means = v.group_means("TYRP1", "rna_seq", field="pigmentation", groups=["weak", "strong"])
+v.samples()                                  # a pandas DataFrame when pandas is installed
+```
+
+| Method | Returns |
+|---|---|
+| `datasets`, `summary`, `genes`, `samples`, `cohort` | the dataset, its windows and its sample table (including region scalars and PC fields) |
+| `signal`, `reference_signal`, `observed` | per-haplotype predictions, the reference-window prediction and the measured ENCODE / FANTOM5 signal |
+| `group_means` | mean ± SD per group of a sample field over the cohort |
+| `variant_sites`, `variant_effect`, `genotypes` | cohort sites, the in-silico eQTL at one site, and genotype counts |
+| `scalars`, `pca` | region-scalar definitions and the genotype PCA |
+| `sessions`, `session` | saved views, to reproduce a figure's exact view |
+
+*Export → Copy as Python* on the Tracks page writes the call for the view on screen, with its gene,
+tracks, range, binning, haplotypes or groups and cohort filters already filled in.
 
 ## Legacy apps
 

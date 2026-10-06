@@ -33,6 +33,12 @@ from genomics.visualizer import launch
 from genomics.visualizer.alignment import AlignmentService
 from genomics.visualizer.alphagenome import AlphaGenomeBackend, create_backend
 from genomics.visualizer.gene_index import GeneIndex, find_table
+from genomics.visualizer.genotypes import GENOTYPE_LABELS, GenotypeService
+from genomics.visualizer.controls import ControlError, ControlService
+from genomics.visualizer.scalars import ScalarError, ScalarService, ScalarStore
+from genomics.visualizer.sessions import SessionError, SessionStore
+from genomics.visualizer.ancestry import AncestryService, default_windows, match_groups, window_coverage
+from genomics.visualizer.gtex import DEFAULT_TISSUES, GtexClient, GtexError
 from genomics.visualizer.annotations import AnnotationService
 from genomics.visualizer.cli_args import build_arg_parser
 from genomics.visualizer.cache import DiskArrayCache, stable_key
@@ -158,6 +164,8 @@ class VisualizerApp:
         dataset_memory: Optional[DatasetMemory] = None,
         perturb_default_config: Optional[Path] = None,
         remote: bool = True,
+        scalar_store: Optional[ScalarStore] = None,
+        session_store: Optional[SessionStore] = None,
     ):
         self.catalog = catalog
         self.cache_dir = cache_dir
@@ -170,6 +178,12 @@ class VisualizerApp:
         self.remote = RemoteCache(cache_dir, offline=not remote)
         self.knowledge = KnowledgeBase(self.remote)
         self.observed = ObservedService(self.remote, DiskArrayCache(cache_dir), cache_bytes=max(memory_bytes // 8, 64 << 20))
+        self.genotypes = GenotypeService(self.signals, DiskArrayCache(cache_dir), cache_bytes=max(memory_bytes // 8, 64 << 20))
+        self.gtex = GtexClient(self.remote)
+        self.ancestry = AncestryService(self.genotypes, DiskArrayCache(cache_dir))
+        self.scalars = ScalarService(self.genotypes, scalar_store, ancestry=self.ancestry)
+        self.controls = ControlService(self.signals)
+        self.sessions = session_store if session_store is not None else SessionStore()
         self._ag_catalog: Optional[Dict[str, Any]] = None
         self._ag_catalog_lock = threading.Lock()
         self.experiments = ExperimentService(runs_roots)
@@ -210,6 +224,19 @@ class VisualizerApp:
         r("GET", r"/api/d/(?P<ds>[^/]+)/population", self.api_population)
         r("GET", r"/api/d/(?P<ds>[^/]+)/observed", self.api_observed)
         r("GET", r"/api/d/(?P<ds>[^/]+)/sequence", self.api_sequence)
+        r("GET", r"/api/d/(?P<ds>[^/]+)/variant/sites", self.api_variant_sites)
+        r("GET", r"/api/d/(?P<ds>[^/]+)/variant/site", self.api_variant_site)
+        r("GET", r"/api/d/(?P<ds>[^/]+)/variant/effect", self.api_variant_effect)
+        r("GET", r"/api/d/(?P<ds>[^/]+)/scalars", self.api_scalars)
+        r("POST", r"/api/d/(?P<ds>[^/]+)/scalars", self.api_scalar_save)
+        r("POST", r"/api/d/(?P<ds>[^/]+)/scalars/delete", self.api_scalar_delete)
+        r("GET", r"/api/d/(?P<ds>[^/]+)/ancestry/windows", self.api_ancestry_windows)
+        r("GET", r"/api/d/(?P<ds>[^/]+)/ancestry/pca", self.api_ancestry_pca)
+        r("POST", r"/api/d/(?P<ds>[^/]+)/ancestry/fields", self.api_ancestry_fields)
+        r("POST", r"/api/d/(?P<ds>[^/]+)/ancestry/match", self.api_ancestry_match)
+        r("GET", r"/api/gtex/variant", self.api_gtex_variant)
+        r("GET", r"/api/gtex/resolve", self.api_gtex_resolve)
+        r("GET", r"/api/gtex/tissues", self.api_gtex_tissues)
         r("GET", r"/api/d/(?P<ds>[^/]+)/composition", self.api_composition)
         r("POST", r"/api/d/(?P<ds>[^/]+)/views/preview", self.api_view_preview)
         r("POST", r"/api/d/(?P<ds>[^/]+)/views/save", self.api_view_save)
@@ -223,6 +250,7 @@ class VisualizerApp:
         r("GET", r"/api/tasks", self.api_tasks)
         r("GET", r"/api/tasks/(?P<task_id>[^/]+)", self.api_task)
         r("POST", r"/api/tasks/(?P<task_id>[^/]+)/cancel", self.api_task_cancel)
+        r("POST", r"/api/tasks/(?P<task_id>[^/]+)/retry", self.api_task_retry)
         r("POST", r"/api/tasks/(?P<task_id>[^/]+)/delete", self.api_task_delete)
         r("GET", r"/api/import/defaults", self.api_import_defaults)
         r("POST", r"/api/import/inspect", self.api_import_inspect)
@@ -234,6 +262,11 @@ class VisualizerApp:
         r("POST", r"/api/d/(?P<ds>[^/]+)/predict", self.api_predict_start)
         r("GET", r"/api/d/(?P<ds>[^/]+)/train/options", self.api_train_options)
         r("POST", r"/api/d/(?P<ds>[^/]+)/train/preview", self.api_train_preview)
+        r("POST", r"/api/d/(?P<ds>[^/]+)/train/controls", self.api_train_controls)
+        r("GET", r"/api/d/(?P<ds>[^/]+)/sessions", self.api_sessions)
+        r("POST", r"/api/d/(?P<ds>[^/]+)/sessions", self.api_session_save)
+        r("POST", r"/api/d/(?P<ds>[^/]+)/sessions/rename", self.api_session_rename)
+        r("POST", r"/api/d/(?P<ds>[^/]+)/sessions/delete", self.api_session_delete)
         r("POST", r"/api/d/(?P<ds>[^/]+)/train", self.api_train_start)
         r("GET", r"/api/perturb/models", self.api_perturb_models)
         r("GET", r"/api/perturb/model", self.api_perturb_model)
@@ -241,6 +274,7 @@ class VisualizerApp:
         r("POST", r"/api/perturb/sequence", self.api_perturb_sequence)
         r("POST", r"/api/perturb/apply", self.api_perturb_apply)
         r("GET", r"/api/perturb/result", self.api_perturb_result)
+        r("POST", r"/api/perturb/scan", self.api_perturb_scan)
         r("GET", r"/api/perturb/signal", self.api_perturb_signal)
         r("GET", r"/api/system", self.api_system)
         r("GET", r"/api/alphagenome", self.api_alphagenome)
@@ -399,6 +433,7 @@ class VisualizerApp:
 
     def api_samples(self, query: Query, body: Any, ds: str) -> Any:
         dataset = self.dataset(ds)
+        self.scalars.sync(dataset)
         columns = [f["name"] for f in dataset.fields]
         return {
             "fields": dataset.fields,
@@ -532,7 +567,18 @@ class VisualizerApp:
         field = query.str("field", required=True)
         cohort = self._cohort(dataset, query)
         values = query.list("groups")
-        if not values:
+        if field.startswith("variant:"):
+            # Genotype classes at one site: "variant:<pos>:<ref>:<alt>" (from the Variant page).
+            geno, pending = self._genotypes_or_pending(dataset, gene)
+            if pending is not None:
+                return pending
+            site = self._site(geno, field)
+            labels = self._genotype_labels(geno, site)
+            dose = geno.dosage(site)
+            gindex = {sample: i for i, sample in enumerate(geno.samples)}
+            groups = {labels[k]: [smp for smp in cohort if smp in gindex and dose[gindex[smp]] == k] for k in range(3)}
+            values = list(groups)
+        elif not values:
             counts: Dict[str, int] = {}
             for sample in cohort:
                 key = str(dataset.samples[dataset.sample_index[sample]].get(field, ""))
@@ -540,7 +586,8 @@ class VisualizerApp:
                     counts[key] = counts.get(key, 0) + 1
             values = sorted(counts, key=lambda k: (-counts[k], k))[:MAX_GROUPS]
         values = values[:MAX_GROUPS]
-        groups = dataset.group_samples(field, values, cohort)
+        if not field.startswith("variant:"):
+            groups = dataset.group_samples(field, values, cohort)
         groups = {k: v for k, v in groups.items() if v}
         if not groups:
             raise HttpError(HTTPStatus.BAD_REQUEST, "No samples in the selected groups")
@@ -571,6 +618,344 @@ class VisualizerApp:
         payload = self.signals.group_payload({k: v for k, v in cached.items() if v is not None}, {k: len(v) for k, v in groups.items()}, tracks, domain, start, end, bins)
         payload.update({"gene": gene, "output": output, "coords": coords, "field": field, "haplotypes": haps})
         return payload
+
+    # -- region scalars ---------------------------------------------------------------
+    # -- saved sessions ------------------------------------------------------------------------
+    def _session(self, fn: Callable[[], Any]) -> Any:
+        try:
+            return fn()
+        except SessionError as exc:
+            raise HttpError(HTTPStatus.BAD_REQUEST, str(exc))
+
+    def api_sessions(self, query: Query, body: Any, ds: str) -> Any:
+        """Saved sessions of a dataset; ``name`` returns one with its stored state."""
+        dataset = self.dataset(ds)
+        name = query.str("name", "")
+        if name:
+            entry = self.sessions.get(dataset, name)
+            if entry is None:
+                raise HttpError(HTTPStatus.NOT_FOUND, f"No saved session called {name!r}")
+            return entry
+        # The listing leaves out the state blobs: the pages only need them when one is opened.
+        return {"sessions": [{k: v for k, v in s.items() if k != "state"} for s in self.sessions.list(dataset)]}
+
+    def api_session_save(self, query: Query, body: Any, ds: str) -> Any:
+        dataset = self.dataset(ds)
+        body = body or {}
+        return self._session(lambda: self.sessions.save(
+            dataset, body.get("name"), body.get("state") or {}, body.get("description") or "", replace=bool(body.get("replace"))))
+
+    def api_session_rename(self, query: Query, body: Any, ds: str) -> Any:
+        body = body or {}
+        return self._session(lambda: self.sessions.rename(self.dataset(ds), str(body.get("name") or ""), body.get("new_name")))
+
+    def api_session_delete(self, query: Query, body: Any, ds: str) -> Any:
+        dataset = self.dataset(ds)
+        name = str((body or {}).get("name") or "")
+        if not self.sessions.delete(dataset, name):
+            raise HttpError(HTTPStatus.NOT_FOUND, f"No saved session called {name!r}")
+        return {"deleted": name}
+
+    def api_scalars(self, query: Query, body: Any, ds: str) -> Any:
+        dataset = self.dataset(ds)
+        self.scalars.sync(dataset)
+        return {"scalars": [self.scalars.describe(dataset, spec) for spec in self.scalars.specs(dataset)]}
+
+    def api_scalar_save(self, query: Query, body: Any, ds: str) -> Any:
+        """Define (or with ``replace``, redefine) a region scalar and compute it; pending while the
+        per-haplotype region means are computed. The sample fields appear on the next samples listing."""
+        dataset = self.dataset(ds)
+        body = body or {}
+        gene = self._gene(dataset, str(body.get("gene") or ""))
+        try:
+            spec = self.scalars.validate(dataset, body, self._gene_info(dataset, gene), replace=bool(body.get("replace")))
+        except ScalarError as exc:
+            raise HttpError(HTTPStatus.BAD_REQUEST, str(exc))
+        if not self.scalars.is_cached(dataset, spec):
+            key = "region:" + self.scalars.region_key(dataset, spec)
+            title = f"{gene} {spec['output']} per haplotype over the region"
+            result = self._job_response(key, title, lambda progress: self.genotypes.region_means(dataset, gene, spec["output"], spec["start"], spec["end"], progress))
+            if isinstance(result, dict) and result.get("pending"):
+                return result
+        try:
+            self.scalars.save(dataset, spec)
+        except ScalarError as exc:
+            raise HttpError(HTTPStatus.BAD_REQUEST, str(exc))
+        return {"scalar": self.scalars.describe(dataset, spec)}
+
+    def api_scalar_delete(self, query: Query, body: Any, ds: str) -> Any:
+        dataset = self.dataset(ds)
+        name = str((body or {}).get("name") or "")
+        if not self.scalars.store.delete(dataset, name):
+            raise HttpError(HTTPStatus.NOT_FOUND, f"No region scalar named {name!r}")
+        self.scalars.unapply(dataset, name)
+        return {"deleted": name}
+
+    # -- ancestry PCA and matching ----------------------------------------------------
+    def api_ancestry_windows(self, query: Query, body: Any, ds: str) -> Any:
+        dataset = self.dataset(ds)
+        coverage = window_coverage(dataset)
+        listed = {str(g) for g in dataset.metadata.get("genes") or []}
+        return {
+            "samples": len(dataset.samples),
+            "windows": [{"gene": g, "coverage": round(coverage.get(g, 0.0), 3), "listed": g in listed,
+                         "cached": self.genotypes.cached(dataset, g) is not None} for g in dataset.genes],
+            "default": default_windows(dataset, coverage),
+            "derived": [self.scalars.describe(dataset, sp) for sp in self.scalars.specs(dataset) if sp.get("kind") in ("pca", "match")],
+        }
+
+    def _pca_params(self, dataset, source: Dict[str, Any]) -> Dict[str, Any]:
+        genes = source.get("genes")
+        if isinstance(genes, str):
+            genes = [g for g in genes.split(",") if g]
+        try:
+            return self.ancestry.params(dataset, genes or None, float(source.get("min_maf") or 0.05),
+                                        int(source.get("spacing") if source.get("spacing") not in (None, "") else 2000),
+                                        int(source.get("components") or 10))
+        except KeyError as exc:
+            raise HttpError(HTTPStatus.NOT_FOUND, str(exc.args[0]))
+        except (TypeError, ValueError) as exc:
+            raise HttpError(HTTPStatus.BAD_REQUEST, str(exc))
+
+    def _pca_or_pending(self, dataset, params: Dict[str, Any]):
+        result = self.ancestry.cached(dataset, params)
+        if result is not None:
+            return result, None
+        key = "pca:" + self.ancestry.key(dataset, params)
+        title = f"Genotype PCA over {len(params['genes'])} window{'s' if len(params['genes']) != 1 else ''}"
+        result = self._job_response(key, title, lambda progress: self.ancestry.compute(dataset, params, progress))
+        if isinstance(result, dict) and result.get("pending"):
+            return None, result
+        return result, None
+
+    def api_ancestry_pca(self, query: Query, body: Any, ds: str) -> Any:
+        dataset = self.dataset(ds)
+        params = self._pca_params(dataset, {k: query.str(k, "") for k in ("genes", "min_maf", "spacing", "components")})
+        if query.str("cached_only", "") in ("1", "true") and self.ancestry.cached(dataset, params) is None:
+            return {"cached": False}
+        result, pending = self._pca_or_pending(dataset, params)
+        if pending is not None:
+            return pending
+        payload = self.ancestry.payload(result, params)
+        payload["sample_count"] = len(dataset.samples)
+        return payload
+
+    def api_ancestry_fields(self, query: Query, body: Any, ds: str) -> Any:
+        """Store the PCs of a computed PCA as numeric sample fields pc1..pcK (``count``); count 0 removes them."""
+        dataset = self.dataset(ds)
+        body = body or {}
+        params = self._pca_params(dataset, body.get("params") or {})
+        count = int(body.get("count") or 0)
+        if count <= 0:
+            self.scalars.store.delete(dataset, "pcs")
+            self.scalars.unapply(dataset, "pcs")
+            return {"fields": []}
+        if self.ancestry.cached(dataset, params) is None:
+            raise HttpError(HTTPStatus.CONFLICT, "Compute the PCA first")
+        spec = {"kind": "pca", "name": "pcs", "params": params, "count": max(1, min(count, params["components"]))}
+        try:
+            self.scalars.check_name(dataset, "pcs", ScalarService.spec_fields(spec), replace=True, what="PC set")
+            self.scalars.save(dataset, spec)
+        except ScalarError as exc:
+            raise HttpError(HTTPStatus.BAD_REQUEST, str(exc))
+        return {"fields": ScalarService.spec_fields(spec), "derived": self.scalars.describe(dataset, spec)}
+
+    def api_ancestry_match(self, query: Query, body: Any, ds: str) -> Any:
+        """Pair group A with group B (values of one sample field, within the cohort) on the first k PCs and
+        store the matched samples as a categorical field (``name``) with the two group labels."""
+        dataset = self.dataset(ds)
+        body = body or {}
+        params = self._pca_params(dataset, body.get("params") or {})
+        result = self.ancestry.cached(dataset, params)
+        if result is None:
+            raise HttpError(HTTPStatus.CONFLICT, "Compute the PCA first")
+        field_name = str(body.get("field") or "")
+        a_values = [str(v) for v in body.get("group_a") or []]
+        b_values = [str(v) for v in body.get("group_b") or []]
+        if not field_name or not a_values or not b_values:
+            raise HttpError(HTTPStatus.BAD_REQUEST, "field, group_a and group_b are required")
+        if set(a_values) & set(b_values):
+            raise HttpError(HTTPStatus.BAD_REQUEST, "The two groups overlap")
+        name = str(body.get("name") or "").strip().lower()
+        label_a = str(body.get("label_a") or "+".join(a_values))[:40]
+        label_b = str(body.get("label_b") or "+".join(b_values))[:40]
+        if label_a == label_b:
+            raise HttpError(HTTPStatus.BAD_REQUEST, "The two groups need different labels")
+        filters = body.get("filters") or {}
+        if not isinstance(filters, dict):
+            raise HttpError(HTTPStatus.BAD_REQUEST, "filters must be a JSON object")
+        cohort = set(dataset.filter_samples({str(k): [str(x) for x in (v or [])] for k, v in filters.items()}))
+        samples = result["samples"].tolist()
+
+        def members(values):
+            wanted = set(values)
+            return [i for i, s in enumerate(samples) if s in cohort and str(dataset.samples[dataset.sample_index[s]].get(field_name, "")) in wanted]
+
+        group_a, group_b = members(a_values), members(b_values)
+        if not group_a or not group_b:
+            raise HttpError(HTTPStatus.BAD_REQUEST, f"No samples with PCs in {'group A' if not group_a else 'group B'} (samples need genotypes in every PCA window)")
+        try:
+            k = int(body.get("k") or 4)
+            caliper = float(body.get("caliper") if body.get("caliper") not in (None, "") else 0.2)
+            matched = match_groups(result["scores"], group_a, group_b, k, caliper)
+        except (TypeError, ValueError) as exc:
+            raise HttpError(HTTPStatus.BAD_REQUEST, str(exc))
+        values = {}
+        for ia, ib, _ in matched["pairs"]:
+            values[samples[ia]] = label_a
+            values[samples[ib]] = label_b
+        spec = {"kind": "match", "name": name, "params": params, "field": field_name, "group_a": a_values, "group_b": b_values,
+                "label_a": label_a, "label_b": label_b, "k": matched["k"], "caliper": caliper, "filters": filters, "values": values}
+        try:
+            self.scalars.check_name(dataset, name, [name], replace=bool(body.get("replace")), what="matched set")
+            if not values:
+                raise ScalarError("No pairs within the caliper; widen it or use fewer PCs")
+            self.scalars.save(dataset, spec)
+        except ScalarError as exc:
+            raise HttpError(HTTPStatus.BAD_REQUEST, str(exc))
+        distances = [d for _, _, d in matched["pairs"]]
+        return {
+            "name": name, "label_a": label_a, "label_b": label_b, "pairs": len(matched["pairs"]),
+            "group_a": len(group_a), "group_b": len(group_b), "k": matched["k"], "caliper_distance": matched["caliper_distance"],
+            "median_distance": float(np.median(distances)) if distances else None,
+            "balance_before": matched["balance_before"], "balance_after": matched["balance_after"],
+        }
+
+    # -- variants (Variant page) -------------------------------------------------------
+    def _genotypes_or_pending(self, dataset, gene: str):
+        """(CohortGenotypes, None) once built, else (None, pending job response)."""
+        geno = self.genotypes.cached(dataset, gene)
+        if geno is not None:
+            return geno, None
+        key = "genotypes:" + self.genotypes.key(dataset, gene)
+        result = self._job_response(key, f"Genotypes of the cohort in {gene}", lambda progress: self.genotypes.genotypes(dataset, gene, progress))
+        if isinstance(result, dict) and result.get("pending"):
+            return None, result
+        return result, None
+
+    @staticmethod
+    def _site(geno, spec: str) -> int:
+        """Site index of "variant:<pos>:<ref>:<alt>" or "<pos>:<ref>:<alt>"."""
+        parts = spec.split(":")
+        if parts[0] == "variant":
+            parts = parts[1:]
+        if len(parts) != 3 or not parts[0].isdigit():
+            raise HttpError(HTTPStatus.BAD_REQUEST, f"Variant must be <pos>:<ref>:<alt>, got {spec!r}")
+        try:
+            return geno.find(int(parts[0]), parts[1].upper(), parts[2].upper())
+        except KeyError as exc:
+            raise HttpError(HTTPStatus.NOT_FOUND, str(exc.args[0]))
+
+    @staticmethod
+    def _genotype_labels(geno, site: int) -> List[str]:
+        ref, alt = geno.refs[site], geno.alts[site]
+        if len(ref) <= 3 and len(alt) <= 3:
+            return [f"{ref}/{ref}", f"{ref}/{alt}", f"{alt}/{alt}"]
+        return list(GENOTYPE_LABELS)
+
+    def _variant_query(self, dataset, query: Query):
+        gene = self._gene(dataset, query.str("gene", required=True))
+        geno, pending = self._genotypes_or_pending(dataset, gene)
+        if pending is not None:
+            return gene, None, None, pending
+        spec = f"{query.int('pos', 0, lo=1)}:{query.str('ref', required=True)}:{query.str('alt', required=True)}"
+        return gene, geno, self._site(geno, spec), None
+
+    def api_variant_sites(self, query: Query, body: Any, ds: str) -> Any:
+        """Sites carried in the cohort over genomic positions [start, end] (default: the window), by position."""
+        dataset = self.dataset(ds)
+        gene = self._gene(dataset, query.str("gene", required=True))
+        geno, pending = self._genotypes_or_pending(dataset, gene)
+        if pending is not None:
+            return pending
+        window = dataset.window(gene)
+        lo = query.int("start", window.start or 0)
+        hi = query.int("end", window.end or 2 ** 62)
+        min_af = float(query.str("min_af", "0") or 0)
+        limit = query.int("limit", 2000, lo=1, hi=20000)
+        n_haps = 2 * max(len(geno.samples), 1)
+        i0 = int(np.searchsorted(geno.positions, lo, side="left"))
+        i1 = int(np.searchsorted(geno.positions, hi, side="right"))
+        counts = geno.allele_counts()
+        sites = []
+        for i in range(i0, i1):
+            af = float(counts[i]) / n_haps
+            if af < min_af:
+                continue
+            rec = self.genotypes.site_record(geno, i, window.chromosome)
+            rec["af"] = af
+            sites.append(rec)
+            if len(sites) >= limit:
+                break
+        return {"gene": gene, "chromosome": window.chromosome, "samples": len(geno.samples), "sites": sites, "truncated": len(sites) >= limit}
+
+    def api_variant_site(self, query: Query, body: Any, ds: str) -> Any:
+        dataset = self.dataset(ds)
+        gene, geno, site, pending = self._variant_query(dataset, query)
+        if pending is not None:
+            return pending
+        window = dataset.window(gene)
+        field = query.str("field", "") or None
+        if field and not any(f["name"] == field for f in dataset.fields):
+            field = None
+        record = self.genotypes.site_record(geno, site, window.chromosome)
+        record.update(gene=gene, window={"chromosome": window.chromosome, "start": window.start, "end": window.end},
+                      labels=self._genotype_labels(geno, site), af_dataset=float(geno.allele_counts()[site]) / (2 * len(geno.samples)))
+        record["cohort"] = self.genotypes.site_summary(dataset, geno, site, self._cohort(dataset, query), field)
+        return record
+
+    def api_variant_effect(self, query: Query, body: Any, ds: str) -> Any:
+        """AlphaGenome track summarised over [start, end) (reference offsets) by genotype at the site."""
+        dataset = self.dataset(ds)
+        gene, geno, site, pending = self._variant_query(dataset, query)
+        if pending is not None:
+            return pending
+        output = query.str("output", required=True)
+        track = query.int("track", 0, lo=0)
+        start = query.int("start", 0, lo=0)
+        end = query.int("end", start + 1, lo=start + 1)
+        if end - start > 2_000_000:
+            raise HttpError(HTTPStatus.BAD_REQUEST, "Region too long")
+        region = self.genotypes.cached_region_means(dataset, gene, output, start, end)
+        if region is None:
+            key = "region:" + self.genotypes.region_key(dataset, gene, output, start, end)
+            result = self._job_response(key, f"{gene} {output} per haplotype over the region", lambda progress: self.genotypes.region_means(dataset, gene, output, start, end, progress))
+            if isinstance(result, dict) and result.get("pending"):
+                return result
+            region = result
+        if track >= region["means"].shape[2]:
+            raise HttpError(HTTPStatus.BAD_REQUEST, f"{output} has {region['means'].shape[2]} tracks")
+        payload = self.genotypes.effect(geno, site, region, track, self._cohort(dataset, query))
+        payload.update(gene=gene, output=output, track=track, start=start, end=end, labels=self._genotype_labels(geno, site))
+        return payload
+
+    def api_gtex_variant(self, query: Query, body: Any) -> Any:
+        variant_id = query.str("variant_id", required=True)
+        if not re.match(r"^chr[0-9XYM]+_\d+_[ACGTN]+_[ACGTN]+_b38$", variant_id):
+            raise HttpError(HTTPStatus.BAD_REQUEST, "variant_id must look like chr15_28120472_A_G_b38")
+        tissues = query.list("tissues") or list(DEFAULT_TISSUES)
+        try:
+            return self.gtex.report(variant_id, query.str("gene", "") or None, tissues[:8])
+        except GtexError as exc:
+            raise HttpError(HTTPStatus.BAD_GATEWAY, f"GTEx: {exc}")
+
+    def api_gtex_resolve(self, query: Query, body: Any) -> Any:
+        rsid = query.str("rsid", required=True).strip()
+        if not re.match(r"^rs\d+$", rsid, re.I):
+            raise HttpError(HTTPStatus.BAD_REQUEST, "Expected an rsID such as rs12913832")
+        try:
+            info = self.gtex.variant(snp_id=rsid.lower())
+        except GtexError as exc:
+            raise HttpError(HTTPStatus.BAD_GATEWAY, f"GTEx: {exc}")
+        if info is None:
+            raise HttpError(HTTPStatus.NOT_FOUND, f"{rsid} is not in GTEx v8 (only variants with MAF >= 1% in GTEx donors are)")
+        return {"rsid": info.get("snpId"), "variant_id": info.get("variantId"), "chromosome": info.get("chromosome"), "pos": info.get("pos"), "ref": info.get("ref"), "alt": info.get("alt")}
+
+    def api_gtex_tissues(self, query: Query, body: Any) -> Any:
+        try:
+            return {"tissues": self.gtex.tissues(), "default": list(DEFAULT_TISSUES)}
+        except GtexError as exc:
+            raise HttpError(HTTPStatus.BAD_GATEWAY, f"GTEx: {exc}")
 
     def api_population(self, query: Query, body: Any, ds: str) -> Any:
         dataset = self.dataset(ds)
@@ -747,6 +1132,17 @@ class VisualizerApp:
             return self._task_manager().cancel(task_id)
         except KeyError as exc:
             raise HttpError(HTTPStatus.NOT_FOUND, str(exc))
+
+    def api_task_retry(self, query: Query, body: Any, task_id: str) -> Any:
+        """Run a finished task again, with the same recipe, as a new task."""
+        if not self.allow_tasks:
+            raise HttpError(HTTPStatus.FORBIDDEN, "Background tasks are disabled (--no-jobs)")
+        try:
+            return self._task_manager().retry(task_id)
+        except KeyError as exc:
+            raise HttpError(HTTPStatus.NOT_FOUND, str(exc))
+        except ValueError as exc:
+            raise HttpError(HTTPStatus.BAD_REQUEST, str(exc))
 
     def api_task_delete(self, query: Query, body: Any, task_id: str) -> Any:
         try:
@@ -951,6 +1347,47 @@ class VisualizerApp:
         config, summary = self._train_config(self.dataset(ds), body)
         return {"summary": summary, "config": yaml.safe_dump(config, sort_keys=False, allow_unicode=True)}
 
+    def api_train_controls(self, query: Query, body: Any, ds: str) -> Any:
+        """A control window per chosen window, matched on the signal the model reads (a background job)."""
+        body = body or {}
+        dataset = self.dataset(ds)
+        genes = [str(g) for g in (body.get("genes") or [])]
+        output = str(body.get("output") or "rna_seq").lower()
+        terms = [str(t) for t in (body.get("ontology_terms") or [])]
+        size = max(1, int(body.get("window_center_size") or 32768))
+        if not terms:
+            info = dataset.gene_info(genes[0]) if genes else {}
+            terms = sorted({str((t.get("metadata") or {}).get("ontology_curie"))
+                            for t in ((info.get("outputs") or {}).get(output) or {}).get("tracks", [])
+                            if (t.get("metadata") or {}).get("ontology_curie")})
+        key = stable_key({"v": 1, "dataset": dataset.fingerprint, "genes": sorted(genes), "output": output, "terms": sorted(terms), "size": size})
+        # Cheap checks first, so a bad request is a 400 rather than a failed background job.
+        try:
+            unknown = [g for g in genes if g not in dataset.genes]
+            if not genes:
+                raise ControlError("Choose at least one window for the panel")
+            if unknown:
+                raise ControlError(f"Unknown window(s): {', '.join(unknown)}")
+            candidates = self.controls.candidates(dataset, genes)
+            if len(candidates) < len(set(genes)):
+                raise ControlError("This dataset has fewer windows outside its gene panel than the panel needs")
+            # Which windows have a reference prediction is a file check, so it need not cost a job.
+            missing = [g for g in dict.fromkeys(genes) if not dataset.reference_prediction_path(g, output).exists()]
+            if missing:
+                raise ControlError(
+                    f"No reference {output} prediction for {', '.join(sorted(missing))}. "
+                    "Predict the reference window of every chosen gene first (haplotype 'ref').")
+            usable = [g for g in candidates if dataset.reference_prediction_path(g, output).exists()]
+            if len(usable) < len(set(genes)):
+                raise ControlError(
+                    f"Only {len(usable)} control window(s) have a reference {output} prediction, for a panel of "
+                    f"{len(set(genes))}. Predict the reference window of the control windows first.")
+        except ControlError as exc:
+            raise HttpError(HTTPStatus.BAD_REQUEST, str(exc))
+        return self._job_response(
+            f"controls:{key}", f"Matching control windows ({len(genes)} windows)",
+            lambda progress: self.controls.matched_panel(dataset, genes, output, terms, size, progress))
+
     def api_train_start(self, query: Query, body: Any, ds: str) -> Any:
         config, summary = self._train_config(self.dataset(ds), body)
         title, steps, params, files = launch.train_task(config, summary, evaluate_test=bool((body or {}).get("evaluate_test", True)))
@@ -999,6 +1436,13 @@ class VisualizerApp:
             return cached
         job = self.jobs.run(f"perturb:{key}", f"Perturbation: {sample} {gene}", lambda progress: self.perturb.apply(sample, gene, edits, outputs, progress))
         return {"pending": True, "key": key, "job": job.as_dict()}
+
+    def api_perturb_scan(self, query: Query, body: Any) -> Any:
+        """Saturation scan of the loaded model (a background job; poll by posting the same body)."""
+        spec = self._perturb(lambda: self.perturb.scan_spec(body or {}))
+        key = self.perturb.scan_key(spec)
+        positions = (spec["end"] - spec["start"] - spec["size"]) // spec["step"] + 1
+        return self._perturb(lambda: self._job_response(f"scan:{key}", f"Saturation scan: {spec['sample']} {spec['gene']} ({positions} windows)", lambda progress: self.perturb.scan(spec, progress)))
 
     def api_perturb_result(self, query: Query, body: Any) -> Any:
         key = query.str("key", required=True)
@@ -1400,6 +1844,8 @@ def create_app(args: argparse.Namespace) -> VisualizerApp:
         allow_tasks=not args.no_jobs,
         dataset_memory=memory,
         perturb_default_config=Path(default_config),
+        scalar_store=ScalarStore.default(),
+        session_store=SessionStore.default(),
         remote=not getattr(args, "no_remote", False),
     )
 
