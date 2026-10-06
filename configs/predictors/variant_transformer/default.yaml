@@ -1,0 +1,149 @@
+# Default example config for the active variant transformer predictor.
+#
+# Usage:
+#   genomics config describe variant
+#   genomics config validate configs/predictors/variant_transformer/default.yaml
+#   genomics variant train configs/predictors/variant_transformer/default.yaml
+#
+# The processed_dir dataset must already be materialized. See:
+#   genomics variant materialize --help
+
+dataset:
+  # Directory containing the materialized sparse variant transformer dataset.
+  processed_dir: "results/variant_transformer/superpopulation"
+
+  # Registered source dataset ID used when materializing or resolving metadata.
+  source_dataset_id: "1kg_high_coverage"
+
+  # Optional explicit source dataset directory. Leave null when source_dataset_id
+  # is set.
+  source_dataset_dir: null
+
+  # Root directory for training/evaluation runs.
+  results_dir: "results/variant_transformer_predictor/runs"
+
+  # Metadata target to predict.
+  target: "superpopulation"
+
+  # Fixed class order for classification.
+  classes: ["AFR", "AMR", "EAS", "EUR", "SAS"]
+
+  # Maximum number of variant tokens per sample/window. null keeps full materialized
+  # sequences unless the loader/model imposes another limit.
+  max_sequence_length: 1024
+
+  # Behavior when a sequence is longer than max_sequence_length: error, keep_first,
+  # or keep_last.
+  truncate_policy: "keep_first"
+
+  # Dataset loading strategy: lazy reads records on demand; preload loads records in
+  # memory before training.
+  loading_strategy: "lazy"
+
+variants:
+  # Maximum encoded allele length retained per variant.
+  l_max: 16
+
+  # Maximum INDEL size included in the sparse representation.
+  max_indel_size: 50
+
+  # How to handle unphased genotypes: skip them or fail with error.
+  unphased_policy: "skip"
+
+model:
+  # Embedding dimension for variant type tokens.
+  d_type: 32
+
+  # Embedding dimension for haplotype tokens.
+  d_hap: 16
+
+  # Embedding dimension for gene/window identity.
+  d_gene: 64
+
+  # Embedding dimension for variant length features.
+  d_len: 16
+
+  # Embedding dimension for reference/alternate base features.
+  d_base: 16
+
+  # Intermediate allele embedding width.
+  d_allele: 128
+
+  # Transformer hidden size. Must be divisible by heads and produce an even
+  # per-head dimension for RoPE.
+  d_model: 256
+
+  # Number of transformer encoder layers.
+  layers: 6
+
+  # Attention heads. d_model / heads must be even.
+  heads: 8
+
+  # MLP expansion ratio inside transformer blocks.
+  mlp_ratio: 4
+
+  # Dropout probability.
+  dropout: 0.1
+
+  # Rotary positional embedding base.
+  rope_base: 10000.0
+
+training:
+  # Number of samples per optimizer step.
+  batch_size: 8
+
+  # Maximum number of epochs.
+  num_epochs: 100
+
+  # Initial learning rate.
+  learning_rate: 0.0003
+
+  # L2 weight decay.
+  weight_decay: 0.01
+
+  # Optimizer: adamw, adam, or sgd.
+  optimizer: "adamw"
+
+  # DataLoader worker processes.
+  num_workers: 0
+
+  # Optional early stopping patience. null disables early stopping.
+  early_stopping_patience: null
+
+data_split:
+  # Train/validation/test fractions.
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+
+  # Seed for reproducible split generation.
+  random_seed: 13
+
+  # family_aware keeps related samples in the same split; ignore splits per sample.
+  family_split_mode: "family_aware"
+
+checkpointing:
+  # Save checkpoints every N epochs.
+  save_frequency: 10
+
+  # If false, only final/best artifacts are saved by training code.
+  save_during_training: true
+
+  # Optional checkpoint path/name to load before training/evaluation.
+  load_checkpoint: null
+
+wandb:
+  # Enable Weights & Biases logging.
+  use_wandb: false
+
+  # W&B project name.
+  project_name: "variant-transformer"
+
+  # Optional W&B run name. null lets the code generate one.
+  run_name: null
+
+# Execution mode for modules that support both training and testing.
+mode: "train"
+
+# Split used by evaluation/test flows by default.
+test_dataset: "test"

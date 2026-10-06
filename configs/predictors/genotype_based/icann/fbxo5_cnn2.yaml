@@ -1,0 +1,129 @@
+metadata:
+  source: "genes_1000_all_cnn2.yaml"
+  paper: "ICANN accepted paper"
+  migration_mode: "raw_center_crop"
+  note: "CNN2 configuration for the 1GR/FBXO5-only ablation using the latest CNN2 parameters."
+
+dataset_input:
+  dataset_id: null
+  dataset_dir: "/dados/GENOMICS_DATA/top3/non_longevous_results_fbxo5"
+  processed_cache_dir: "results/cache/genotype_based_predictor"
+  results_dir: "results/genotype_based_predictor/icann/runs"
+  cache_processed_tensors: true
+  tensor_layout: "raw_center_crop"
+  feature_mode: "signals_only"
+  alphagenome_outputs:
+    - "rna_seq"
+  haplotype_mode: "H1"
+  window_center_size: 32768
+  downsample_factor: 1
+  genes_to_use:
+    - "FBXO5"
+  normalization_method: "log"
+  normalization_value: 0.0
+  normalization_fit_splits: ["train"]
+  normalization_fit_sample_fraction: 1.0
+  normalization_fit_min_samples: 0
+  normalization_fit_min_samples_per_class: 0
+  normalization_fit_random_seed: 13
+  normalization_fit_stratify: true
+
+output:
+  prediction_target: "superpopulation"
+  known_classes: null
+
+model:
+  type: "CNN2"
+  hidden_layers: [100, 40]
+  activation: "relu"
+  dropout_rate: 0.5
+  cnn:
+    kernel_size: [6, 32]
+    num_filters: 5
+    stride: [6, 32]
+    padding: 0
+    pool_size: null
+  cnn2:
+    num_filters_stage1: 16
+    kernel_stage1: [6, 1024]
+    stride_stage1: [6, 1024]
+    num_filters_stage2: 32
+    num_filters_stage3: 64
+    kernel_stages23: [1, 11]
+    stride_stages23: [1, 2]
+    padding_stages23: [0, 5]
+    fc_hidden_size: 64
+    global_pool_type: "avg"
+  sklearn:
+    pca_components: 300
+    use_pca_cache: true
+    pca_align_n_train: false
+
+data_loading:
+  loading_strategy: "lazy"
+
+training:
+  optimizer: "adam"
+  random_seed: 13
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  loss_function: "cross_entropy"
+  batch_size: 50
+  num_epochs: 400
+  validation_frequency: 3
+  lr_scheduler:
+    enabled: true
+    type: "cosine_warm_restarts"
+    mode: "min"
+    factor: 0.5
+    patience: 30
+    min_lr: 0.0000001
+    step_size: 30
+    gamma: 0.1
+    milestones: [30, 60, 90]
+    T_max: 300
+    eta_min: 0.0000001
+    T_0: 50
+    T_mult: 1
+
+data_split:
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  random_seed: 13
+  family_split_mode: "family_aware"
+  balancing_strategy: "shuffle"
+  strict_determinism: true
+
+wandb:
+  use_wandb: true
+  project_name: "genotype-based-predictor-icann"
+  run_name: "fbxo5-cnn2-1gr"
+  log_frequency: 100
+
+checkpointing:
+  checkpoint_dir: "models"
+  save_during_training: true
+  save_frequency: 100
+  load_checkpoint: null
+
+debug:
+  enable_visualization: false
+  force_pca_cache_rebuild: false
+  max_samples_per_epoch: null
+  visualization:
+    width: 600
+    height: 660
+  taint_at_cache_save: false
+  taint_at_runtime: false
+
+evaluation:
+  confidence_intervals:
+    enabled: true
+    method: "stratified_bootstrap"
+    n_bootstrap: 2000
+    confidence_level: 0.95
+    random_seed: 13
+
+mode: "train"
+test_dataset: "test"

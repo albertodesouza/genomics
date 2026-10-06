@@ -1,0 +1,6 @@
+OpenAlex API usage notice
+Recorded: 2026-09-17T21:49:56Z
+
+This workspace uses the literature_search_openalex skill to query the OpenAlex
+API (https://openalex.org). Check terms at https://developers.openalex.org/
+and verify the license of any retrieved paper before redistributing it.

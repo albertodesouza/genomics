@@ -1,0 +1,5 @@
+Ensembl REST API usage notification
+Recorded: 2026-07-14
+User notified that Ensembl data/API usage is subject to terms at:
+https://useast.ensembl.org/index.html
+https://github.com/Ensembl/ensembl-rest/wiki

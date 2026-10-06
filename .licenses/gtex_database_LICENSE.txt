@@ -1,0 +1,5 @@
+GTEx Portal API usage notification
+Recorded: 2026-07-18
+User notified that GTEx Portal data/API usage is subject to terms at:
+https://gtexportal.org/home/license
+https://gtexportal.org/home/documentationPage#gtexApi

@@ -1,0 +1,3 @@
+User notified on 2026-07-11T00:37:49Z that use of the dbsnp_database
+skill queries NCBI's dbSNP database. NCBI Terms of Use apply:
+https://www.ncbi.nlm.nih.gov/snp/

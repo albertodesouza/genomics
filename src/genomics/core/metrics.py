@@ -1,0 +1,518 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any, Dict, List, Mapping, Sequence
+
+import numpy as np
+from rich.console import Console
+from rich.table import Table
+
+
+def _fallback_classification_metrics(y_true: Sequence[int], y_pred: Sequence[int], class_names: Sequence[str]) -> Dict[str, Any]:
+    labels = list(range(len(class_names)))
+    y_true_arr = np.asarray(list(y_true), dtype=int)
+    y_pred_arr = np.asarray(list(y_pred), dtype=int)
+    cm = np.zeros((len(labels), len(labels)), dtype=int)
+    for target, pred in zip(y_true_arr, y_pred_arr):
+        if 0 <= target < len(labels) and 0 <= pred < len(labels):
+            cm[target, pred] += 1
+
+    total = int(cm.sum())
+    acc = float(np.trace(cm) / total) if total else 0.0
+    rows = ["              precision    recall  f1-score   support"]
+    weighted_p = weighted_r = weighted_f1 = 0.0
+    per_class = {}
+    for idx, name in enumerate(class_names):
+        tp = float(cm[idx, idx])
+        fp = float(cm[:, idx].sum() - cm[idx, idx])
+        fn = float(cm[idx, :].sum() - cm[idx, idx])
+        support = float(cm[idx, :].sum())
+        precision = tp / (tp + fp) if (tp + fp) else 0.0
+        recall = tp / (tp + fn) if (tp + fn) else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+        weighted_p += precision * support
+        weighted_r += recall * support
+        weighted_f1 += f1 * support
+        per_class[name] = {
+            "precision": float(precision),
+            "recall": float(recall),
+            "f1": float(f1),
+            "support": int(support),
+        }
+        rows.append(f"{name:>12} {precision:10.2f} {recall:9.2f} {f1:9.2f} {int(support):9d}")
+    if total:
+        weighted_p /= total
+        weighted_r /= total
+        weighted_f1 /= total
+    rows.append("")
+    rows.append(f"{'accuracy':>12} {'':>10} {'':>9} {acc:9.2f} {total:9d}")
+    rows.append(f"{'weighted avg':>12} {weighted_p:10.2f} {weighted_r:9.2f} {weighted_f1:9.2f} {total:9d}")
+    return with_weighted_metric_aliases({
+        "accuracy": acc,
+        "precision": float(weighted_p),
+        "recall": float(weighted_r),
+        "f1": float(weighted_f1),
+        "confusion_matrix": cm.tolist(),
+        "per_class_metrics": per_class,
+        "classification_report": "\n".join(rows),
+        "num_samples": total,
+    })
+
+
+def classification_metrics(y_true: Sequence[int], y_pred: Sequence[int], class_names: Sequence[str]) -> Dict[str, Any]:
+    try:
+        from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, precision_recall_fscore_support
+
+        labels = list(range(len(class_names)))
+        p, r, f1, _ = precision_recall_fscore_support(y_true, y_pred, average="weighted", zero_division=0)
+        acc = accuracy_score(y_true, y_pred)
+        per_p, per_r, per_f1, per_support = precision_recall_fscore_support(y_true, y_pred, labels=labels, average=None, zero_division=0)
+        per_class = {
+            str(name): {
+                "precision": float(per_p[idx]),
+                "recall": float(per_r[idx]),
+                "f1": float(per_f1[idx]),
+                "support": int(per_support[idx]),
+            }
+            for idx, name in enumerate(class_names)
+        }
+        return with_weighted_metric_aliases({
+            "accuracy": float(acc),
+            "precision": float(p),
+            "recall": float(r),
+            "f1": float(f1),
+            "confusion_matrix": confusion_matrix(y_true, y_pred, labels=labels).tolist(),
+            "per_class_metrics": per_class,
+            "classification_report": classification_report(y_true, y_pred, labels=labels, target_names=list(class_names), zero_division=0),
+            "num_samples": len(y_true),
+        })
+    except ImportError:
+        return _fallback_classification_metrics(y_true, y_pred, class_names)
+
+
+def weighted_metric_aliases(results: Mapping[str, Any]) -> Dict[str, float]:
+    """Return explicit support-weighted metric fields for classification results.
+
+    Existing ``precision``, ``recall`` and ``f1`` are already support-weighted in
+    this package. These aliases make that explicit in saved JSONs and tables.
+    """
+    per_class = results.get("per_class_metrics") or {}
+    total_support = sum(float(row.get("support", 0.0)) for row in per_class.values() if isinstance(row, Mapping))
+
+    def weighted_from_per_class(metric: str) -> float:
+        if not total_support:
+            return 0.0
+        return float(
+            sum(
+                float(row.get(metric, 0.0)) * float(row.get("support", 0.0))
+                for row in per_class.values()
+                if isinstance(row, Mapping)
+            )
+            / total_support
+        )
+
+    def accuracy_from_confusion() -> float:
+        confusion = results.get("confusion_matrix") or []
+        matrix = np.asarray(confusion, dtype=float)
+        total = float(matrix.sum()) if matrix.size else 0.0
+        if not total:
+            return 0.0
+        return float(np.trace(matrix) / total)
+
+    accuracy = float(results["accuracy"]) if "accuracy" in results else accuracy_from_confusion()
+    precision = float(results["precision"]) if "precision" in results else weighted_from_per_class("precision")
+    recall = float(results["recall"]) if "recall" in results else weighted_from_per_class("recall")
+    f1 = float(results["f1"]) if "f1" in results else weighted_from_per_class("f1")
+    return {
+        "weighted_accuracy": accuracy,
+        "weighted_precision": precision,
+        "weighted_recall": recall,
+        "weighted_f1_score": f1,
+    }
+
+
+def with_weighted_metric_aliases(results: Dict[str, Any]) -> Dict[str, Any]:
+    aliases = weighted_metric_aliases(results)
+    results.setdefault("accuracy", aliases["weighted_accuracy"])
+    results.setdefault("precision", aliases["weighted_precision"])
+    results.setdefault("recall", aliases["weighted_recall"])
+    results.setdefault("f1", aliases["weighted_f1_score"])
+    results.update(aliases)
+    return results
+
+
+def bootstrap_confidence_intervals(
+    y_true: Sequence[int],
+    y_pred: Sequence[int],
+    class_names: Sequence[str],
+    *,
+    method: str = "stratified_bootstrap",
+    n_bootstrap: int = 2000,
+    confidence_level: float = 0.95,
+    seed: int = 13,
+) -> Dict[str, Any]:
+    y_true_arr = np.asarray(list(y_true), dtype=int)
+    y_pred_arr = np.asarray(list(y_pred), dtype=int)
+    labels = sorted(set(y_true_arr.tolist()))
+    label_indices = {label: np.where(y_true_arr == label)[0] for label in labels}
+    rng = np.random.default_rng(seed)
+    alpha = 1.0 - float(confidence_level)
+    metric_values: Dict[str, List[float]] = {"accuracy": [], "precision": [], "recall": [], "f1": []}
+    per_class_values: Dict[str, Dict[str, List[float]]] = {
+        str(class_names[label]): {"precision": [], "recall": [], "f1": []}
+        for label in labels
+        if 0 <= label < len(class_names)
+    }
+
+    n_samples = len(y_true_arr)
+    for _ in range(int(n_bootstrap)):
+        if method == "stratified_bootstrap":
+            sampled = []
+            for indices in label_indices.values():
+                if len(indices):
+                    sampled.append(rng.choice(indices, size=len(indices), replace=True))
+            if not sampled:
+                continue
+            idx = np.concatenate(sampled)
+        elif method == "bootstrap":
+            if n_samples == 0:
+                continue
+            idx = rng.choice(np.arange(n_samples), size=n_samples, replace=True)
+        else:
+            raise ValueError(f"Metodo de bootstrap nao suportado: {method}")
+        metrics = classification_metrics(y_true_arr[idx], y_pred_arr[idx], class_names)
+        for metric in metric_values:
+            metric_values[metric].append(float(metrics.get(metric, 0.0)))
+        for class_name, row in (metrics.get("per_class_metrics") or {}).items():
+            if class_name in per_class_values:
+                for metric in per_class_values[class_name]:
+                    per_class_values[class_name][metric].append(float(row.get(metric, 0.0)))
+
+    def interval(values: Sequence[float]) -> Dict[str, float]:
+        if not values:
+            return {"low": 0.0, "high": 0.0}
+        arr = np.asarray(values, dtype=float)
+        return {
+            "low": float(np.quantile(arr, alpha / 2.0)),
+            "high": float(np.quantile(arr, 1.0 - alpha / 2.0)),
+        }
+
+    return {
+        "method": method,
+        "n_bootstrap": int(n_bootstrap),
+        "confidence_level": float(confidence_level),
+        "seed": int(seed),
+        "metrics": {metric: interval(values) for metric, values in metric_values.items()},
+        "per_class_metrics": {
+            class_name: {metric: interval(values) for metric, values in metrics.items()}
+            for class_name, metrics in per_class_values.items()
+        },
+    }
+
+
+def _fallback_auc_score(y_true: Sequence[int], y_score: Sequence[float]) -> float:
+    y_true_arr = np.asarray(list(y_true), dtype=int)
+    y_score_arr = np.asarray(list(y_score), dtype=float)
+    n_pos = int((y_true_arr == 1).sum())
+    n_neg = int((y_true_arr == 0).sum())
+    if n_pos == 0 or n_neg == 0:
+        return float("nan")
+    ranks = np.empty_like(y_score_arr, dtype=float)
+    order = np.argsort(y_score_arr, kind="mergesort")
+    sorted_scores = y_score_arr[order]
+    # Average tied ranks (1-indexed), matching scipy.stats.rankdata's default "average" method.
+    rank_values = np.empty(len(sorted_scores), dtype=float)
+    i = 0
+    while i < len(sorted_scores):
+        j = i
+        while j + 1 < len(sorted_scores) and sorted_scores[j + 1] == sorted_scores[i]:
+            j += 1
+        rank_values[i : j + 1] = (i + j) / 2.0 + 1.0
+        i = j + 1
+    ranks[order] = rank_values
+    sum_ranks_pos = float(ranks[y_true_arr == 1].sum())
+    auc = (sum_ranks_pos - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg)
+    return float(auc)
+
+
+def auc_score(y_true: Sequence[int], y_score: Sequence[float]) -> Dict[str, Any]:
+    """Binary-label AUROC, equivalent to the (rescaled) Mann-Whitney U statistic.
+
+    ``y_true`` must be binary (1 = positive class, 0 = negative class); rows with
+    any other label should be filtered out by the caller. Falls back to a
+    rank-based computation (ties averaged) plus scipy's Mann-Whitney U test when
+    sklearn/scipy are unavailable.
+    """
+    y_true_arr = np.asarray(list(y_true), dtype=int)
+    y_score_arr = np.asarray(list(y_score), dtype=float)
+    n_pos = int((y_true_arr == 1).sum())
+    n_neg = int((y_true_arr == 0).sum())
+    result: Dict[str, Any] = {"n_pos": n_pos, "n_neg": n_neg, "auc": float("nan"), "p_value": None}
+    if n_pos == 0 or n_neg == 0:
+        return result
+
+    try:
+        from sklearn.metrics import roc_auc_score
+
+        result["auc"] = float(roc_auc_score(y_true_arr, y_score_arr))
+    except ImportError:
+        result["auc"] = _fallback_auc_score(y_true_arr, y_score_arr)
+
+    try:
+        from scipy.stats import mannwhitneyu
+
+        stat = mannwhitneyu(y_score_arr[y_true_arr == 1], y_score_arr[y_true_arr == 0], alternative="two-sided")
+        result["p_value"] = float(stat.pvalue)
+    except ImportError:
+        pass
+    return result
+
+
+def bootstrap_auc_ci(
+    y_true: Sequence[int],
+    y_score: Sequence[float],
+    *,
+    n_bootstrap: int = 2000,
+    confidence_level: float = 0.95,
+    seed: int = 13,
+) -> Dict[str, Any]:
+    """Stratified-bootstrap confidence interval for :func:`auc_score`'s AUC."""
+    y_true_arr = np.asarray(list(y_true), dtype=int)
+    y_score_arr = np.asarray(list(y_score), dtype=float)
+    base = auc_score(y_true_arr, y_score_arr)
+    pos_idx = np.where(y_true_arr == 1)[0]
+    neg_idx = np.where(y_true_arr == 0)[0]
+    alpha = 1.0 - float(confidence_level)
+    if len(pos_idx) == 0 or len(neg_idx) == 0:
+        return {**base, "confidence_level": float(confidence_level), "n_bootstrap": int(n_bootstrap), "low": float("nan"), "high": float("nan")}
+
+    rng = np.random.default_rng(seed)
+    values: List[float] = []
+    for _ in range(int(n_bootstrap)):
+        sample_pos = rng.choice(pos_idx, size=len(pos_idx), replace=True)
+        sample_neg = rng.choice(neg_idx, size=len(neg_idx), replace=True)
+        idx = np.concatenate([sample_pos, sample_neg])
+        auc = auc_score(y_true_arr[idx], y_score_arr[idx])["auc"]
+        if not np.isnan(auc):
+            values.append(auc)
+
+    if not values:
+        return {**base, "confidence_level": float(confidence_level), "n_bootstrap": int(n_bootstrap), "low": float("nan"), "high": float("nan")}
+    arr = np.asarray(values, dtype=float)
+    return {
+        **base,
+        "confidence_level": float(confidence_level),
+        "n_bootstrap": int(n_bootstrap),
+        "low": float(np.quantile(arr, alpha / 2.0)),
+        "high": float(np.quantile(arr, 1.0 - alpha / 2.0)),
+    }
+
+
+def stratified_bootstrap_confidence_intervals(
+    y_true: Sequence[int],
+    y_pred: Sequence[int],
+    class_names: Sequence[str],
+    *,
+    n_bootstrap: int = 2000,
+    confidence_level: float = 0.95,
+    seed: int = 13,
+) -> Dict[str, Any]:
+    return bootstrap_confidence_intervals(
+        y_true,
+        y_pred,
+        class_names,
+        method="stratified_bootstrap",
+        n_bootstrap=n_bootstrap,
+        confidence_level=confidence_level,
+        seed=seed,
+    )
+
+
+def print_classification_metrics(results: Dict[str, Any], title: str, console: Console) -> None:
+    table = Table(title=title, show_header=True)
+    table.add_column("Métrica")
+    table.add_column("Valor", justify="right")
+    table.add_row("W-Accuracy", f"{float(results.get('weighted_accuracy', results['accuracy'])):.4f}")
+    table.add_row("W-Precision", f"{float(results.get('weighted_precision', results['precision'])):.4f}")
+    table.add_row("W-Recall", f"{float(results.get('weighted_recall', results['recall'])):.4f}")
+    table.add_row("W-F1-score", f"{float(results.get('weighted_f1_score', results['f1'])):.4f}")
+    table.add_row("Amostras", str(results.get("num_samples", "")))
+    console.print(table)
+    ci = results.get("confidence_intervals") or {}
+    ci_metrics = ci.get("metrics") or {}
+    if ci_metrics:
+        ci_table = Table(title="Confidence intervals", show_header=True)
+        ci_table.add_column("Métrica")
+        ci_table.add_column("Valor", justify="right")
+        ci_table.add_column("CI low", justify="right")
+        ci_table.add_column("CI high", justify="right")
+        metric_labels = [
+            ("weighted_accuracy", "accuracy", "W-Accuracy"),
+            ("weighted_precision", "precision", "W-Precision"),
+            ("weighted_recall", "recall", "W-Recall"),
+            ("weighted_f1_score", "f1", "W-F1-score"),
+        ]
+        for weighted_key, legacy_key, label in metric_labels:
+            interval = ci_metrics.get(weighted_key) or ci_metrics.get(legacy_key) or {}
+            ci_table.add_row(
+                label,
+                f"{float(results.get(weighted_key, results.get(legacy_key, 0.0))):.4f}",
+                f"{float(interval.get('low', 0.0)):.4f}",
+                f"{float(interval.get('high', 0.0)):.4f}",
+            )
+        console.print(ci_table)
+    report = results.get("classification_report")
+    if report:
+        console.print(report)
+    per_class = results.get("per_class_metrics") or {}
+    if per_class:
+        pct = Table(title="Per-class metrics", show_header=True)
+        pct.add_column("Classe")
+        pct.add_column("Precision", justify="right")
+        pct.add_column("Recall", justify="right")
+        pct.add_column("F1", justify="right")
+        pct.add_column("Support", justify="right")
+        for class_name, row in per_class.items():
+            pct.add_row(
+                str(class_name),
+                f"{float(row.get('precision', 0.0)):.4f}",
+                f"{float(row.get('recall', 0.0)):.4f}",
+                f"{float(row.get('f1', 0.0)):.4f}",
+                str(row.get("support", 0)),
+            )
+        console.print(pct)
+    confusion = results.get("confusion_matrix") or []
+    if confusion:
+        labels = list(per_class) if per_class else [str(i) for i in range(len(confusion))]
+        cmt = Table(title="Confusion matrix", show_header=True)
+        cmt.add_column("true\\pred")
+        for label in labels:
+            cmt.add_column(str(label), justify="right")
+        for idx, row in enumerate(confusion):
+            cmt.add_row(str(labels[idx] if idx < len(labels) else idx), *(str(value) for value in row))
+        console.print(cmt)
+
+
+def public_classification_results(results: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return the user-facing classification payload with explicit weighted names.
+
+    Internally several training components still use the short metric names for
+    model selection and checkpoint bookkeeping. Persisted classification result
+    JSONs should avoid duplicating those names when they are identical to the
+    explicit weighted metrics.
+    """
+    payload = dict(results)
+    if not {"confusion_matrix", "per_class_metrics"}.issubset(payload):
+        return payload
+    payload.update(weighted_metric_aliases(payload))
+    for key in ("accuracy", "precision", "recall", "f1"):
+        payload.pop(key, None)
+    ci = payload.get("confidence_intervals")
+    if isinstance(ci, dict) and isinstance(ci.get("metrics"), dict):
+        metrics = dict(ci["metrics"])
+        aliases = {
+            "accuracy": "weighted_accuracy",
+            "precision": "weighted_precision",
+            "recall": "weighted_recall",
+            "f1": "weighted_f1_score",
+        }
+        for old_key, new_key in aliases.items():
+            if old_key in metrics and new_key not in metrics:
+                metrics[new_key] = metrics[old_key]
+            metrics.pop(old_key, None)
+        payload["confidence_intervals"] = {**ci, "metrics": metrics}
+    return payload
+
+
+def save_results_json(results: Dict[str, Any], output_path: Path, console: Console | None = None) -> None:
+    serializable: Dict[str, Any] = {}
+    for key, value in public_classification_results(results).items():
+        if isinstance(value, np.ndarray):
+            serializable[key] = value.tolist()
+        else:
+            serializable[key] = value
+    with open(output_path, "w") as f:
+        json.dump(serializable, f, indent=2)
+    if console is not None:
+        console.print(f"[green]Resultados salvos:[/green] {output_path}")
+
+
+def save_classification_plots(results: Dict[str, Any], output_dir: Path, prefix: str, console: Console | None = None) -> None:
+    """Save ready-to-use PNG plots for classification metrics when matplotlib is available."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
+        import matplotlib.pyplot as plt
+    except ImportError:
+        if console is not None:
+            console.print("[yellow]matplotlib indisponível; plots PNG não foram gerados.[/yellow]")
+        return
+
+    per_class = results.get("per_class_metrics") or {}
+    if per_class:
+        labels = list(per_class)
+        metrics = ["precision", "recall", "f1"]
+        x = np.arange(len(labels))
+        width = 0.25
+        fig, ax = plt.subplots(figsize=(max(8, len(labels) * 1.2), 5))
+        for offset, metric in enumerate(metrics):
+            values = [float(per_class[label].get(metric, 0.0)) for label in labels]
+            ax.bar(x + (offset - 1) * width, values, width, label=metric)
+        ax.set_ylim(0.0, 1.0)
+        ax.set_ylabel("Score")
+        ax.set_title(f"{prefix} per-class metrics")
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=45, ha="right")
+        ax.legend()
+        fig.tight_layout()
+        fig.savefig(output_dir / f"{prefix}_per_class_metrics.png", dpi=160)
+        plt.close(fig)
+
+    confusion = results.get("confusion_matrix") or []
+    if confusion:
+        labels = list(per_class) if per_class else [str(i) for i in range(len(confusion))]
+        matrix = np.asarray(confusion, dtype=float)
+        fig, ax = plt.subplots(figsize=(max(6, len(labels) * 1.0), max(5, len(labels) * 0.9)))
+        im = ax.imshow(matrix, cmap="Blues")
+        ax.set_title(f"{prefix} confusion matrix")
+        ax.set_xlabel("Predicted")
+        ax.set_ylabel("True")
+        ax.set_xticks(np.arange(len(labels)))
+        ax.set_yticks(np.arange(len(labels)))
+        ax.set_xticklabels(labels, rotation=45, ha="right")
+        ax.set_yticklabels(labels)
+        threshold = matrix.max() / 2.0 if matrix.size else 0.0
+        for i in range(matrix.shape[0]):
+            for j in range(matrix.shape[1]):
+                ax.text(j, i, str(int(matrix[i, j])), ha="center", va="center", color="white" if matrix[i, j] > threshold else "black")
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        fig.tight_layout()
+        fig.savefig(output_dir / f"{prefix}_confusion_matrix.png", dpi=160)
+        plt.close(fig)
+    ci = results.get("confidence_intervals") or {}
+    if ci.get("metrics"):
+        _save_metric_ci_plot(results, ci["metrics"], output_dir / f"{prefix}_metric_confidence_intervals.png", prefix, plt)
+    if console is not None:
+        console.print(f"[green]Plots salvos em:[/green] {output_dir}")
+
+
+def _save_metric_ci_plot(results: Mapping[str, Any], intervals: Mapping[str, Any], output_path: Path, prefix: str, plt: Any) -> None:
+    metrics = ["accuracy", "precision", "recall", "f1"]
+    values = np.asarray([float(results.get(metric, 0.0)) for metric in metrics], dtype=float)
+    lows = np.asarray([float((intervals.get(metric) or {}).get("low", values[idx])) for idx, metric in enumerate(metrics)], dtype=float)
+    highs = np.asarray([float((intervals.get(metric) or {}).get("high", values[idx])) for idx, metric in enumerate(metrics)], dtype=float)
+    yerr = np.vstack([values - lows, highs - values])
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    bars = ax.bar(metrics, values, yerr=yerr, capsize=5)
+    ax.set_ylim(0.0, 1.0)
+    ax.set_ylabel("Score")
+    ax.set_title(f"{prefix} metric confidence intervals")
+    for bar, value in zip(bars, values):
+        ax.annotate(f"{value:.3f}", xy=(bar.get_x() + bar.get_width() / 2, value), xytext=(0, 3), textcoords="offset points", ha="center", va="bottom", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=160)
+    plt.close(fig)

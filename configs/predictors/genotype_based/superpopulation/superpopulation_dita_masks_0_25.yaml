@@ -1,0 +1,165 @@
+metadata:
+  note: >
+    Superpopulation classifier (CNN2), the "DITA masks 0/0.25" config in the
+    alignment-comparison set -- mirrors pigmentation/pigmentation_binary_dita_masks_0_25.yaml
+    exactly (feature_mode="signals_and_masks", indel_mask_positive_value=0.25, part of the
+    mask-magnitude sweep 0/1, 0/0.5, 0/0.25) except output.prediction_target="superpopulation"
+    instead of the derived pigmentation binary label. See superpopulation.yaml's note for the
+    full rationale shared by all 5 companion configs -- not repeated here.
+
+    data_loading stays single-process-safe the same way the pigmentation sibling is
+    (that config forces train_num_workers=0/val_num_workers=0 to avoid multi-worker RAM
+    multiplication under "preload"), but here loading_strategy="lazy" already forces
+    num_workers=0 unconditionally (see _make_data_loaders in data/pipeline.py), so no
+    explicit worker overrides are needed.
+
+dataset_input:
+  dataset_id: "1kg_high_coverage"
+  processed_cache_dir: "results/cache/genotype_based_predictor/superpopulation"
+  results_dir: "results/genotype_based_predictor/runs"
+  cache_processed_tensors: true
+
+  # Track selection
+  alphagenome_outputs:
+    - "rna_seq"
+  haplotype_mode: "H1+H2"
+  window_center_size: 32768
+  downsample_factor: 1
+  genes_to_use:
+    - "MC1R"
+    - "TYRP1"
+    - "TYR"
+    - "SLC45A2"
+    - "DDB1"
+    - "EDAR"
+    - "MFSD12"
+    - "OCA2"
+    - "HERC2"
+    - "SLC24A5"
+    - "TCHH"
+  ontology_terms:
+    - "CL:1000458"
+    - "CL:0000346"
+    - "CL:2000092"
+
+  # Alignment and feature selection
+  tensor_layout: "haplotype_channels"
+  feature_mode: "signals_and_masks"
+  selected_track_index: 0
+  indel_include_valid_mask: true
+  indel_include_snp_mask: true
+  indel_mask_positive_value: 0.25
+  alignment_mapping: "bcftools_chain"
+  consensus_dataset_dir: "/dados/GENOMICS_DATA/v1/1kG_high_coverage"
+  alignment_axis_splits:
+    - train
+
+  # Normalization
+  normalization_method: "log"
+  normalization_value: 0.0
+  normalization_fit_splits: ["train"]
+  normalization_fit_sample_fraction: 1.0
+  normalization_fit_min_samples: 0
+  normalization_fit_min_samples_per_class: 0
+  normalization_fit_random_seed: 13
+  normalization_fit_stratify: true
+
+output:
+  prediction_target: "superpopulation"
+  known_classes: null
+
+model:
+  type: "CNN2"
+  hidden_layers: [100, 40]
+  activation: "relu"
+  dropout_rate: 0.5
+  cnn:
+    kernel_size: [6, 32]
+    num_filters: 5
+    stride: [6, 32]
+    padding: 0
+    pool_size: null
+  cnn2:
+    num_filters_stage1: 16
+    # 6 signal channels (2 strands x 3 ontology terms) + 4 mask channels
+    # (insertion, deletion, valid, snp) = 10, matching the pigmentation sibling.
+    kernel_stage1: [10, 32]
+    stride_stage1: [10, 32]
+    num_filters_stage2: 32
+    num_filters_stage3: 64
+    kernel_stages23: [1, 5]
+    stride_stages23: [1, 2]
+    padding_stages23: [0, 2]
+    fc_hidden_size: 256
+    global_pool_type: "avg"
+  sklearn:
+    pca_components: 300
+    use_pca_cache: true
+    pca_align_n_train: false
+    xgboost:
+      n_estimators: 200
+      max_depth: 4
+      learning_rate: 0.1
+      subsample: 0.8
+      colsample_bytree: 0.8
+      tree_method: "hist"
+      random_state: 42
+      n_jobs: -1
+      eval_metric: "logloss"
+
+training:
+  optimizer: "adam"
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  loss_function: "cross_entropy"
+  batch_size: 256
+  num_epochs: 400
+  validation_frequency: 3
+  lr_scheduler:
+    enabled: true
+    type: "cosine_warm_restarts"
+    mode: "min"
+    factor: 0.5
+    patience: 30
+    min_lr: 0.0000001
+    step_size: 30
+    T_max: 300
+    eta_min: 0.0000001
+    T_0: 50
+    T_mult: 1
+
+data_split:
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  random_seed: 13
+  family_split_mode: "family_aware"
+  balancing_strategy: "shuffle"
+  strict_determinism: true
+
+wandb:
+  use_wandb: false
+  project_name: "genotype-based-predictor-neural-legacy"
+  run_name: "superpopulation-dita-masks-0-25"
+  log_frequency: 100
+
+checkpointing:
+  checkpoint_dir: "models"
+  save_frequency: 50
+  save_during_training: true
+  load_checkpoint: null
+
+debug:
+  enable_visualization: false
+  force_pca_cache_rebuild: false
+  max_samples_per_epoch: null
+  taint_at_cache_save: false
+  taint_at_runtime: false
+  visualization: {}
+
+data_loading:
+  loading_strategy: "lazy"
+  cache_size: 50
+
+mode: "train"
+test_dataset: "test"

@@ -1,0 +1,150 @@
+metadata:
+  note: >
+    Plain fully-connected (flatten -> MLP) baseline for the pigmentation binary task, sharing
+    the exact same dataset_input/output config as pigmentation_binary.yaml (CNN2) so results
+    are directly comparable -- see
+    notebooks/pigmentation_alphagenome_cnn_variant_scoring.ipynb Section 9 (TWAS-vs-GWAS
+    comparison) for how this is used. This isolates how much of CNN2's performance comes from
+    convolutional structure vs. simply having access to the same AlphaGenome-derived features.
+
+dataset_input:
+  dataset_id: "1kg_high_coverage"
+  processed_cache_dir: "results/cache/genotype_based_predictor/pigmentation"
+  results_dir: "results/genotype_based_predictor/runs"
+  cache_processed_tensors: true
+
+  # Track selection
+  alphagenome_outputs:
+    - "rna_seq"
+  haplotype_mode: "H1+H2"
+  window_center_size: 32768
+  downsample_factor: 1
+  genes_to_use:
+    - "MC1R"
+    - "TYRP1"
+    - "TYR"
+    - "SLC45A2"
+    - "DDB1"
+    - "EDAR"
+    - "MFSD12"
+    - "OCA2"
+    - "HERC2"
+    - "SLC24A5"
+    - "TCHH"
+  ontology_terms:
+    - "CL:1000458"
+    - "CL:0000346"
+    - "CL:2000092"
+
+  # Alignment and feature selection
+  tensor_layout: "haplotype_channels"
+  feature_mode: "signals_only"
+  selected_track_index: 0
+  indel_include_valid_mask: false
+  indel_include_snp_mask: false
+  alignment_mapping: "bcftools_chain"
+  consensus_dataset_dir: "/dados/GENOMICS_DATA/v1/1kG_high_coverage"
+  alignment_axis_splits:
+    - train
+
+  # Normalization
+  normalization_method: "log"
+  normalization_value: 0.0
+  normalization_fit_splits: ["train"]
+  normalization_fit_sample_fraction: 1.0
+  normalization_fit_min_samples: 0
+  normalization_fit_min_samples_per_class: 0
+  normalization_fit_random_seed: 13
+  normalization_fit_stratify: true
+
+output:
+  prediction_target: "pigmentation"
+  known_classes:
+    - "strong pigmentation"
+    - "weak pigmentation"
+  derived_targets:
+    pigmentation:
+      source_field: "population"
+      exclude_unmapped: true
+      class_map:
+        strong pigmentation: ["YRI", "ESN", "LWK", "MSL", "GWD"]
+        weak pigmentation: ["FIN", "CEU", "GBR"]
+
+model:
+  type: "NN"
+  hidden_layers: [100, 40]
+  activation: "relu"
+  # dropout_rate: 0.5 collapsed training entirely -- with batch_size=8 (forced small by the
+  # 4.3M-dim flattened input, see below) and this many parameters, 50% dropout produced gradient
+  # noise that overwhelmed any real training signal: both train and val accuracy froze at the
+  # exact majority-class baseline (0.7248 val) from epoch ~45 through a full LR-restart cycle at
+  # epoch 100 with zero movement. Dropped to a much lighter rate as the fix.
+  dropout_rate: 0.1
+
+training:
+  optimizer: "adam"
+  # 0.001 reached val acc 0.9664/loss 0.236 by epoch 24 (batch_size=32, dropout_rate=0.1) --
+  # genuinely competitive with CNN2/LOGREG/RF -- but then diverged at epoch ~27 (val acc
+  # crashed to 0.2752, below the majority baseline: a gradient blow-up, not a plateau) and
+  # never recovered, even across a full cosine_warm_restarts cycle. This pipeline has no
+  # gradient-clipping option to guard against that, so the fix is a lower base LR.
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  loss_function: "cross_entropy"
+  # The first Linear layer ingests the full flattened (2*rows*L=4,325,376)-dim tensor directly
+  # (unlike CNN2, whose conv stages downsample before any FC layer) -- that one layer alone is
+  # ~1.7GB of weights, another ~1.7GB gradients, ~3.4GB Adam state, plus a per-batch input tensor
+  # that scales with batch_size (~17MB/sample). batch_size=256 blew out this machine's
+  # unified-memory GPU (CUDA OOM); batch_size=8 ran stably (~62GB peak system RAM) but contributed
+  # to the training collapse above. 32 is a middle ground: still far under the OOM threshold,
+  # while giving far less noisy gradient estimates than 8.
+  batch_size: 32
+  num_epochs: 400
+  validation_frequency: 3
+  lr_scheduler:
+    enabled: true
+    type: "cosine_warm_restarts"
+    mode: "min"
+    factor: 0.5
+    patience: 30
+    min_lr: 0.0000001
+    step_size: 30
+    T_max: 300
+    eta_min: 0.0000001
+    T_0: 50
+    T_mult: 1
+
+data_split:
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  random_seed: 13
+  family_split_mode: "family_aware"
+  balancing_strategy: "shuffle"
+  strict_determinism: true
+
+wandb:
+  use_wandb: false
+  project_name: "genotype-based-predictor-pigmentation-nn"
+  run_name: "pigmentation-binary-nn"
+  log_frequency: 100
+
+checkpointing:
+  checkpoint_dir: "models"
+  save_frequency: 100
+  save_during_training: true
+  load_checkpoint: null
+
+debug:
+  enable_visualization: false
+  force_pca_cache_rebuild: false
+  max_samples_per_epoch: null
+  taint_at_cache_save: false
+  taint_at_runtime: false
+  visualization: {}
+
+data_loading:
+  loading_strategy: "preload"
+
+mode: "train"
+test_dataset: "test"

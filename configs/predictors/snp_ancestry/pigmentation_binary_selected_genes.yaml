@@ -1,0 +1,88 @@
+# Binary pigmentation classification restricted to the same 32 kb gene windows
+# used by neural_ancestry_predictor/configs/genes_1000_all.yaml.
+
+input:
+  dataset_id: "1kg_high_coverage"
+  # Repointed from a stale hash (view9d9f894aa231, from an older genotype_based_predictor cache
+  # layout/location that no longer exists on disk) to the current pigmentation dataset_input
+  # cache -- same dataset_input as configs/predictors/genotype_based/pigmentation/*.yaml -- so
+  # splits and gene windows match exactly what the genotype_based TWAS arms were
+  # trained/evaluated on.
+  genotype_cache_dir: "../../../results/cache/genotype_based_predictor/pigmentation/datasets/rna_seq_H1+H2_32768_ds1_log_shuf_ont3_view568c1eff121a"
+  chromosomes:
+    - "chr1"
+    - "chr2"
+    - "chr5"
+    - "chr9"
+    - "chr11"
+    - "chr15"
+    - "chr16"
+    - "chr19"
+  validate_family_aware_splits: false
+
+conversion:
+  output_filename: "{sample_id}_genes_1000_all_w32768_23andme.txt"
+  skip_no_rsid: true
+  filter_by_chip_panel: false
+  format_version: "V5"
+  annotate_dbsnp: true
+  genome_build: "GRCh38"
+  ref_dir: "results/snp_ancestry_predictor/refs"
+  # region_bed previously pointed at "genes_1000_all_w32768.bed", which does not exist anywhere
+  # in the repo or generated refs -- removed so the region filter auto-derives from
+  # genotype_cache_dir's own window metadata instead (the same mechanism
+  # configs/predictors/snp_ancestry/pigmentation_binary.yaml already uses successfully, producing
+  # results/snp_ancestry_predictor/refs/generated_regions/genotype_effective_windows_*.bed).
+
+statistics:
+  output_dir: "../../../results/snp_ancestry_predictor/statistics_pigmentation_selected_genes"
+  reference_subsets:
+    - "train"
+  min_maf: 0.001
+  max_snps: null
+  snp_panel: null
+
+# NOTE: pipeline.py never reads this `output:` block -- see `prediction:` below, which is what
+# sample_metadata()/_build_statistics_path()/step2/step3 actually consume. Kept for
+# cross-pipeline readability alongside configs/predictors/genotype_based/pigmentation/*.yaml.
+output:
+  prediction_target: "pigmentation"
+  known_classes:
+    - "strong pigmentation"
+    - "weak pigmentation"
+  derived_targets:
+    pigmentation:
+      source_field: "population"
+      exclude_unmapped: true
+      class_map:
+        strong pigmentation: ["YRI", "ESN", "LWK", "MSL", "GWD"]
+        weak pigmentation: ["FIN", "CEU", "GBR"]
+
+prediction:
+  haplotype_mode: "H1"
+  method: "mle"
+  level: "pigmentation"
+  derived_targets:
+    pigmentation:
+      source_field: "population"
+      exclude_unmapped: true
+      class_map:
+        strong pigmentation: ["YRI", "ESN", "LWK", "MSL", "GWD"]
+        weak pigmentation: ["FIN", "CEU", "GBR"]
+  evaluation_subsets:
+    - "train"
+    - "val"
+    - "test"
+  results_dir: "../../../results/snp_ancestry_predictor/ancestry_results_pigmentation_selected_genes"
+  admixture_em:
+    max_iter: 1000
+    tol: 1.0e-7
+  admixture_mle:
+    n_restarts: 20
+
+pipeline:
+  steps:
+    generate_23andme: true
+    compute_statistics: true
+    predict_ancestry: true
+    binary_association: false

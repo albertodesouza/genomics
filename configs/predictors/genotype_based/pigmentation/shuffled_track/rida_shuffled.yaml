@@ -1,0 +1,162 @@
+checkpointing:
+  checkpoint_dir: models
+  load_checkpoint: null
+  save_during_training: true
+  save_frequency: 100
+data_loading:
+  loading_strategy: preload
+data_split:
+  balancing_strategy: shuffle
+  family_split_mode: family_aware
+  random_seed: 13
+  strict_determinism: true
+  test_split: 0.15
+  train_split: 0.7
+  val_split: 0.15
+dataset_input:
+  alignment_axis_splits:
+  - train
+  alignment_mapping: bcftools_chain
+  alphagenome_outputs:
+  - rna_seq
+  cache_processed_tensors: true
+  consensus_dataset_dir: /dados/GENOMICS_DATA/v1/1kG_high_coverage
+  dataset_id: 1kg_high_coverage
+  downsample_factor: 1
+  feature_mode: signals_only
+  genes_to_use:
+  - RIDA
+  haplotype_mode: H1+H2
+  indel_include_snp_mask: false
+  indel_include_valid_mask: false
+  normalization_fit_min_samples: 0
+  normalization_fit_min_samples_per_class: 0
+  normalization_fit_random_seed: 13
+  normalization_fit_sample_fraction: 1.0
+  normalization_fit_splits:
+  - train
+  normalization_fit_stratify: true
+  normalization_method: log
+  normalization_value: 0.0
+  ontology_terms:
+  - CL:1000458
+  processed_cache_dir: results/cache/genotype_based_predictor/poolmax_draw3_rida_poolmax_draw3
+  results_dir: results/genotype_based_predictor/runs_shuffled/rida_shuffled
+  selected_track_index: 0
+  tensor_layout: haplotype_channels
+  track_strands:
+  - '-'
+  window_center_size: 32768
+  dataset_dir: /dados/GENOMICS_DATA/v1/1kG_high_coverage
+debug:
+  enable_visualization: false
+  force_pca_cache_rebuild: false
+  max_samples_per_epoch: null
+  taint_at_cache_save: false
+  taint_at_runtime: false
+  visualization: {}
+metadata:
+  note: SWEEP CORRIGIDO (poolmax_draw3), gene RIDA, melanocito CL:1000458 + strand
+    do gene, eixo DITA. batch_size=256, scheduler=off, num_epochs=600 -> ~1800 passos
+    de otimizador (a config que colapsou fazia 1200), global_pool_type=max. Gerado
+    por scripts/experiments/parallel_sweep_fixed.py. Identico ao braco melstranddita
+    em split, seed, crop, layout, ontologia e arquitetura.
+mode: train
+model:
+  activation: relu
+  cnn:
+    kernel_size:
+    - 1
+    - 32
+    num_filters: 5
+    padding: 0
+    pool_size: null
+    stride:
+    - 1
+    - 32
+  cnn2:
+    fc_hidden_size: 256
+    global_pool_type: max
+    kernel_stage1:
+    - 1
+    - 32
+    kernel_stages23:
+    - 1
+    - 5
+    num_filters_stage1: 16
+    num_filters_stage2: 32
+    num_filters_stage3: 64
+    padding_stages23:
+    - 0
+    - 2
+    stride_stage1:
+    - 1
+    - 32
+    stride_stages23:
+    - 1
+    - 2
+  dropout_rate: 0.5
+  hidden_layers:
+  - 100
+  - 40
+  sklearn:
+    pca_align_n_train: false
+    pca_components: 300
+    use_pca_cache: true
+    xgboost:
+      colsample_bytree: 0.8
+      eval_metric: logloss
+      learning_rate: 0.1
+      max_depth: 4
+      n_estimators: 200
+      n_jobs: -1
+      random_state: 42
+      subsample: 0.8
+      tree_method: hist
+  type: CNN2
+output:
+  derived_targets:
+    pigmentation:
+      class_map:
+        strong pigmentation:
+        - YRI
+        - ESN
+        - LWK
+        - MSL
+        - GWD
+        weak pigmentation:
+        - FIN
+        - CEU
+        - GBR
+      exclude_unmapped: true
+      source_field: population
+  known_classes:
+  - strong pigmentation
+  - weak pigmentation
+  prediction_target: pigmentation
+test_dataset: test
+training:
+  batch_size: 256
+  learning_rate: 0.001
+  loss_function: cross_entropy
+  lr_scheduler:
+    T_0: 50
+    T_max: 300
+    T_mult: 1
+    enabled: false
+    eta_min: 1.0e-07
+    factor: 0.5
+    min_lr: 1.0e-07
+    mode: min
+    patience: 30
+    step_size: 30
+    type: cosine_warm_restarts
+  num_epochs: 600
+  optimizer: adam
+  validation_frequency: 3
+  weight_decay: 0.0001
+wandb:
+  log_frequency: 100
+  project_name: genotype-based-predictor-neural-legacy
+  run_name: shuffled-rida
+  use_wandb: false

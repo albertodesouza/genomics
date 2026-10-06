@@ -1,0 +1,168 @@
+,name,strand,Assay title,ontology_curie,biosample_name,biosample_type,biosample_life_stage,data_source,endedness,genetically_modified,nonzero_mean
+0,CL:0000084 ATAC-seq,.,ATAC-seq,CL:0000084,T-cell,primary_cell,adult,encode,paired,False,0.7397409677505493
+1,CL:0000100 ATAC-seq,.,ATAC-seq,CL:0000100,motor neuron,in_vitro_differentiated_cells,adult,encode,paired,False,0.27313634753227234
+2,CL:0000236 ATAC-seq,.,ATAC-seq,CL:0000236,B cell,primary_cell,adult,encode,paired,False,4.7000813484191895
+3,CL:0000623 ATAC-seq,.,ATAC-seq,CL:0000623,natural killer cell,primary_cell,adult,encode,paired,False,0.9387146234512329
+4,CL:0000624 ATAC-seq,.,ATAC-seq,CL:0000624,"CD4-positive, alpha-beta T cell",primary_cell,adult,encode,paired,False,4.365206241607666
+5,CL:0000625 ATAC-seq,.,ATAC-seq,CL:0000625,"CD8-positive, alpha-beta T cell",primary_cell,adult,encode,paired,False,4.313536643981934
+6,CL:0000787 ATAC-seq,.,ATAC-seq,CL:0000787,memory B cell,primary_cell,adult,encode,paired,False,2.8392298221588135
+7,CL:0000788 ATAC-seq,.,ATAC-seq,CL:0000788,naive B cell,primary_cell,adult,encode,paired,False,1.5962289571762085
+8,CL:0000792 ATAC-seq,.,ATAC-seq,CL:0000792,"CD4-positive, CD25-positive, alpha-beta regulatory T cell",primary_cell,adult,encode,paired,False,1.5548043251037598
+9,CL:0000895 ATAC-seq,.,ATAC-seq,CL:0000895,"naive thymus-derived CD4-positive, alpha-beta T cell",primary_cell,adult,encode,paired,False,1.0227291584014893
+10,CL:0000899 ATAC-seq,.,ATAC-seq,CL:0000899,T-helper 17 cell,primary_cell,adult,encode,paired,False,1.5611252784729004
+11,CL:0000900 ATAC-seq,.,ATAC-seq,CL:0000900,"naive thymus-derived CD8-positive, alpha-beta T cell",primary_cell,adult,encode,paired,False,1.8816421031951904
+12,CL:0000907 ATAC-seq,.,ATAC-seq,CL:0000907,"central memory CD8-positive, alpha-beta T cell",primary_cell,adult,encode,paired,False,4.821074485778809
+13,CL:0000913 ATAC-seq,.,ATAC-seq,CL:0000913,"effector memory CD8-positive, alpha-beta T cell",primary_cell,adult,encode,paired,False,2.472047805786133
+14,CL:1001606 ATAC-seq,.,ATAC-seq,CL:1001606,foreskin keratinocyte,primary_cell,newborn,encode,paired,False,0.4663943946361542
+15,CLO:0013950 ATAC-seq,.,ATAC-seq,CLO:0013950,GM21619,cell_line,adult,encode,paired,False,1.7834908962249756
+16,CLO:0014043 ATAC-seq,.,ATAC-seq,CLO:0014043,GM21717,cell_line,adult,encode,paired,False,1.2564560174942017
+17,CLO:0014078 ATAC-seq,.,ATAC-seq,CLO:0014078,GM21529,cell_line,adult,encode,paired,False,1.5800923109054565
+18,CLO:0014080 ATAC-seq,.,ATAC-seq,CLO:0014080,GM21528,cell_line,adult,encode,paired,False,1.3013041019439697
+19,CLO:0014083 ATAC-seq,.,ATAC-seq,CLO:0014083,GM21526,cell_line,adult,encode,paired,False,1.3625142574310303
+20,CLO:0014097 ATAC-seq,.,ATAC-seq,CLO:0014097,GM21576,cell_line,adult,encode,paired,False,1.7179261445999146
+21,CLO:0014163 ATAC-seq,.,ATAC-seq,CLO:0014163,GM21447,cell_line,adult,encode,paired,False,2.170809030532837
+22,CLO:0014886 ATAC-seq,.,ATAC-seq,CLO:0014886,GM21723,cell_line,adult,encode,paired,False,1.3347936868667603
+23,CLO:0014941 ATAC-seq,.,ATAC-seq,CLO:0014941,GM21825,cell_line,adult,encode,paired,False,1.5821340084075928
+24,CLO:0015884 ATAC-seq,.,ATAC-seq,CLO:0015884,GM21390,cell_line,adult,encode,paired,False,1.7690157890319824
+25,CLO:0015895 ATAC-seq,.,ATAC-seq,CLO:0015895,GM21381,cell_line,adult,encode,paired,False,1.7851890325546265
+26,CLO:0015900 ATAC-seq,.,ATAC-seq,CLO:0015900,GM21367,cell_line,adult,encode,paired,False,2.0021002292633057
+27,CLO:0015908 ATAC-seq,.,ATAC-seq,CLO:0015908,GM21360,cell_line,adult,encode,paired,False,1.826042890548706
+28,CLO:0015947 ATAC-seq,.,ATAC-seq,CLO:0015947,GM21423,cell_line,adult,encode,paired,False,1.6216312646865845
+29,CLO:0024877 ATAC-seq,.,ATAC-seq,CLO:0024877,GM18511,cell_line,adult,encode,paired,False,1.3245776891708374
+30,CLO:0024886 ATAC-seq,.,ATAC-seq,CLO:0024886,GM18519,cell_line,adult,encode,paired,False,1.904711365699768
+31,CLO:0024890 ATAC-seq,.,ATAC-seq,CLO:0024890,GM18517,cell_line,adult,encode,paired,False,1.3415968418121338
+32,CLO:0024898 ATAC-seq,.,ATAC-seq,CLO:0024898,GM18520,cell_line,adult,encode,paired,False,1.8731361627578735
+33,CLO:0024919 ATAC-seq,.,ATAC-seq,CLO:0024919,GM18508,cell_line,adult,encode,paired,False,2.859638214111328
+34,CLO:0024933 ATAC-seq,.,ATAC-seq,CLO:0024933,GM18499,cell_line,adult,encode,paired,False,3.3136110305786133
+35,CLO:0024937 ATAC-seq,.,ATAC-seq,CLO:0024937,GM18498,cell_line,adult,encode,paired,False,1.1740740537643433
+36,CLO:0025816 ATAC-seq,.,ATAC-seq,CLO:0025816,GM19035,cell_line,adult,encode,paired,False,1.7000188827514648
+37,CLO:0026238 ATAC-seq,.,ATAC-seq,CLO:0026238,GM18907,cell_line,adult,encode,paired,False,0.7575818300247192
+38,CLO:0026245 ATAC-seq,.,ATAC-seq,CLO:0026245,GM18873,cell_line,adult,encode,paired,False,1.4657907485961914
+39,CLO:0026249 ATAC-seq,.,ATAC-seq,CLO:0026249,GM18870,cell_line,adult,encode,paired,False,1.5401667356491089
+40,CLO:0026250 ATAC-seq,.,ATAC-seq,CLO:0026250,GM18867,cell_line,adult,encode,paired,False,1.0017602443695068
+41,CLO:0026253 ATAC-seq,.,ATAC-seq,CLO:0026253,GM18868,cell_line,adult,encode,paired,False,1.1957333087921143
+42,CLO:0026256 ATAC-seq,.,ATAC-seq,CLO:0026256,GM18861,cell_line,adult,encode,paired,False,1.6442385911941528
+43,CLO:0026258 ATAC-seq,.,ATAC-seq,CLO:0026258,GM18858,cell_line,adult,encode,paired,False,2.154571056365967
+44,CLO:0026782 ATAC-seq,.,ATAC-seq,CLO:0026782,GM19397,cell_line,adult,encode,paired,False,1.8430635929107666
+45,CLO:0026790 ATAC-seq,.,ATAC-seq,CLO:0026790,GM19395,cell_line,adult,encode,paired,False,1.3690444231033325
+46,CLO:0026824 ATAC-seq,.,ATAC-seq,CLO:0026824,GM19438,cell_line,adult,encode,paired,False,2.8961288928985596
+47,CLO:0026846 ATAC-seq,.,ATAC-seq,CLO:0026846,GM19452,cell_line,adult,encode,paired,False,2.1193931102752686
+48,CLO:0026863 ATAC-seq,.,ATAC-seq,CLO:0026863,GM19455,cell_line,adult,encode,paired,False,2.0495858192443848
+49,CLO:0026874 ATAC-seq,.,ATAC-seq,CLO:0026874,GM19463,cell_line,adult,encode,paired,False,2.3056650161743164
+50,CLO:0026877 ATAC-seq,.,ATAC-seq,CLO:0026877,GM19467,cell_line,adult,encode,paired,False,1.7229173183441162
+51,CLO:0027429 ATAC-seq,.,ATAC-seq,CLO:0027429,GM19372,cell_line,adult,encode,paired,False,2.746520519256592
+52,CLO:0027432 ATAC-seq,.,ATAC-seq,CLO:0027432,GM19351,cell_line,adult,encode,paired,False,1.6009893417358398
+53,CLO:0027443 ATAC-seq,.,ATAC-seq,CLO:0027443,GM19324,cell_line,adult,encode,paired,False,1.1978780031204224
+54,CLO:0027445 ATAC-seq,.,ATAC-seq,CLO:0027445,GM19328,cell_line,adult,encode,paired,False,2.474120855331421
+55,EFO:0001086 ATAC-seq,.,ATAC-seq,EFO:0001086,A549,cell_line,adult,encode,single,False,1.4976966381072998
+56,EFO:0001187 ATAC-seq,.,ATAC-seq,EFO:0001187,HepG2,cell_line,child,encode,paired,False,0.3457242250442505
+57,EFO:0001196 ATAC-seq,.,ATAC-seq,EFO:0001196,IMR-90,cell_line,embryonic,encode,paired,False,1.5381346940994263
+58,EFO:0001203 ATAC-seq,.,ATAC-seq,EFO:0001203,MCF-7,cell_line,adult,encode,paired,False,1.545133113861084
+59,EFO:0001221 ATAC-seq,.,ATAC-seq,EFO:0001221,NCI-H929,cell_line,adult,encode,paired,False,0.8327634930610657
+60,EFO:0002067 ATAC-seq,.,ATAC-seq,EFO:0002067,K562,cell_line,adult,encode,paired,False,0.3458327054977417
+61,EFO:0002074 ATAC-seq,.,ATAC-seq,EFO:0002074,PC-3,cell_line,adult,encode,paired,False,1.5142802000045776
+62,EFO:0002713 ATAC-seq,.,ATAC-seq,EFO:0002713,Panc1,cell_line,adult,encode,paired,False,1.317395806312561
+63,EFO:0002784 ATAC-seq,.,ATAC-seq,EFO:0002784,GM12878,cell_line,adult,encode,paired,False,0.37652507424354553
+64,EFO:0002824 ATAC-seq,.,ATAC-seq,EFO:0002824,HCT116,cell_line,adult,encode,paired,False,1.5315731763839722
+65,EFO:0005332 ATAC-seq,.,ATAC-seq,EFO:0005332,GM18505,cell_line,adult,encode,paired,False,1.7733904123306274
+66,EFO:0007074 ATAC-seq,.,ATAC-seq,EFO:0007074,DND-41,cell_line,child,encode,paired,False,1.5603737831115723
+67,EFO:0007610 ATAC-seq,.,ATAC-seq,EFO:0007610,RWPE2,cell_line,unknown,encode,paired,False,1.0684702396392822
+68,EFO:0007950 ATAC-seq,.,ATAC-seq,EFO:0007950,GM23338,cell_line,adult,encode,paired,False,0.39514708518981934
+69,EFO:0009747 ATAC-seq,.,ATAC-seq,EFO:0009747,WTC11,cell_line,adult,encode,paired,False,1.1249884366989136
+70,EFO:0010835 ATAC-seq,.,ATAC-seq,EFO:0010835,GM19023,cell_line,adult,encode,paired,False,2.2722747325897217
+71,EFO:0010836 ATAC-seq,.,ATAC-seq,EFO:0010836,GM19025,cell_line,adult,encode,paired,False,2.6639323234558105
+72,EFO:0010837 ATAC-seq,.,ATAC-seq,EFO:0010837,GM19043,cell_line,adult,encode,paired,False,2.891838312149048
+73,EFO:0010838 ATAC-seq,.,ATAC-seq,EFO:0010838,GM21515,cell_line,adult,encode,paired,False,1.4099575281143188
+74,EFO:0010839 ATAC-seq,.,ATAC-seq,EFO:0010839,GM21737,cell_line,adult,encode,paired,False,1.7709256410598755
+75,EFO:0010840 ATAC-seq,.,ATAC-seq,EFO:0010840,GM21786,cell_line,adult,encode,paired,False,2.0250661373138428
+76,EFO:0010841 ATAC-seq,.,ATAC-seq,EFO:0010841,HG02571,cell_line,adult,encode,paired,False,2.0339393615722656
+77,EFO:0010842 ATAC-seq,.,ATAC-seq,EFO:0010842,HG02588,cell_line,adult,encode,paired,False,1.6361886262893677
+78,EFO:0010843 ATAC-seq,.,ATAC-seq,EFO:0010843,HG02610,cell_line,adult,encode,paired,False,1.073131799697876
+79,EFO:0010844 ATAC-seq,.,ATAC-seq,EFO:0010844,HG02623,cell_line,adult,encode,paired,False,2.20443058013916
+80,EFO:0010846 ATAC-seq,.,ATAC-seq,EFO:0010846,HG02678,cell_line,adult,encode,paired,False,1.3135043382644653
+81,EFO:0010847 ATAC-seq,.,ATAC-seq,EFO:0010847,HG02759,cell_line,adult,encode,paired,False,1.389145851135254
+82,EFO:0010848 ATAC-seq,.,ATAC-seq,EFO:0010848,HG02763,cell_line,adult,encode,paired,False,1.718657374382019
+83,EFO:0010850 ATAC-seq,.,ATAC-seq,EFO:0010850,HG02840,cell_line,adult,encode,paired,False,1.8972817659378052
+84,EFO:0010851 ATAC-seq,.,ATAC-seq,EFO:0010851,HG02852,cell_line,adult,encode,paired,False,1.8264821767807007
+85,EFO:0010852 ATAC-seq,.,ATAC-seq,EFO:0010852,HG02870,cell_line,adult,encode,paired,False,1.808053970336914
+86,EFO:0010853 ATAC-seq,.,ATAC-seq,EFO:0010853,HG02884,cell_line,adult,encode,paired,False,2.4083950519561768
+87,EFO:0010855 ATAC-seq,.,ATAC-seq,EFO:0010855,HG02938,cell_line,adult,encode,paired,False,2.012936592102051
+88,EFO:0010856 ATAC-seq,.,ATAC-seq,EFO:0010856,HG02943,cell_line,adult,encode,paired,False,2.342193603515625
+89,EFO:0010857 ATAC-seq,.,ATAC-seq,EFO:0010857,HG02970,cell_line,adult,encode,paired,False,1.6933996677398682
+90,EFO:0010858 ATAC-seq,.,ATAC-seq,EFO:0010858,HG02973,cell_line,adult,encode,paired,False,1.6970741748809814
+91,EFO:0010859 ATAC-seq,.,ATAC-seq,EFO:0010859,HG02981,cell_line,adult,encode,paired,False,1.7394976615905762
+92,EFO:0010860 ATAC-seq,.,ATAC-seq,EFO:0010860,HG03025,cell_line,adult,encode,paired,False,2.08929181098938
+93,EFO:0010861 ATAC-seq,.,ATAC-seq,EFO:0010861,HG03039,cell_line,adult,encode,paired,False,1.887401819229126
+94,EFO:0010862 ATAC-seq,.,ATAC-seq,EFO:0010862,HG03045,cell_line,adult,encode,paired,False,1.4358277320861816
+95,EFO:0010863 ATAC-seq,.,ATAC-seq,EFO:0010863,HG03060,cell_line,adult,encode,paired,False,2.9752275943756104
+96,EFO:0010864 ATAC-seq,.,ATAC-seq,EFO:0010864,HG03064,cell_line,adult,encode,paired,False,2.4102463722229004
+97,EFO:0010865 ATAC-seq,.,ATAC-seq,EFO:0010865,HG03066,cell_line,adult,encode,paired,False,3.017244577407837
+98,EFO:0010866 ATAC-seq,.,ATAC-seq,EFO:0010866,HG03095,cell_line,adult,encode,paired,False,1.8795949220657349
+99,EFO:0010867 ATAC-seq,.,ATAC-seq,EFO:0010867,HG03097,cell_line,adult,encode,paired,False,1.5082517862319946
+100,EFO:0010868 ATAC-seq,.,ATAC-seq,EFO:0010868,HG03103,cell_line,adult,encode,paired,False,2.6086442470550537
+101,EFO:0010869 ATAC-seq,.,ATAC-seq,EFO:0010869,HG03108,cell_line,adult,encode,paired,False,2.047980546951294
+102,EFO:0010870 ATAC-seq,.,ATAC-seq,EFO:0010870,HG03135,cell_line,adult,encode,paired,False,1.6855212450027466
+103,EFO:0010871 ATAC-seq,.,ATAC-seq,EFO:0010871,HG03139,cell_line,adult,encode,paired,False,2.3533685207366943
+104,EFO:0010872 ATAC-seq,.,ATAC-seq,EFO:0010872,HG03159,cell_line,adult,encode,paired,False,1.4590009450912476
+105,EFO:0010873 ATAC-seq,.,ATAC-seq,EFO:0010873,HG03175,cell_line,adult,encode,paired,False,1.2928885221481323
+106,EFO:0010874 ATAC-seq,.,ATAC-seq,EFO:0010874,HG03196,cell_line,adult,encode,paired,False,1.3755143880844116
+107,EFO:0010875 ATAC-seq,.,ATAC-seq,EFO:0010875,HG03280,cell_line,adult,encode,paired,False,1.638237476348877
+108,EFO:0010876 ATAC-seq,.,ATAC-seq,EFO:0010876,HG03342,cell_line,adult,encode,paired,False,1.416108250617981
+109,EFO:0010878 ATAC-seq,.,ATAC-seq,EFO:0010878,HG03378,cell_line,adult,encode,paired,False,1.1888407468795776
+110,EFO:0010879 ATAC-seq,.,ATAC-seq,EFO:0010879,HG03432,cell_line,adult,encode,paired,False,0.9875123500823975
+111,EFO:0010880 ATAC-seq,.,ATAC-seq,EFO:0010880,HG03439,cell_line,adult,encode,paired,False,1.4904228448867798
+112,EFO:0010881 ATAC-seq,.,ATAC-seq,EFO:0010881,HG03442,cell_line,adult,encode,paired,False,1.7023717164993286
+113,EFO:0010882 ATAC-seq,.,ATAC-seq,EFO:0010882,HG03457,cell_line,adult,encode,paired,False,2.2997376918792725
+114,EFO:0010883 ATAC-seq,.,ATAC-seq,EFO:0010883,HG03460,cell_line,adult,encode,paired,False,2.209341287612915
+115,EFO:0010884 ATAC-seq,.,ATAC-seq,EFO:0010884,HG03469,cell_line,adult,encode,paired,False,2.4358503818511963
+116,EFO:0010885 ATAC-seq,.,ATAC-seq,EFO:0010885,HG03520,cell_line,adult,encode,paired,False,2.1533608436584473
+117,EFO:0010886 ATAC-seq,.,ATAC-seq,EFO:0010886,HG03521,cell_line,adult,encode,paired,False,2.1313838958740234
+118,EFO:0010888 ATAC-seq,.,ATAC-seq,EFO:0010888,HG03565,cell_line,adult,encode,paired,False,1.8451646566390991
+119,EFO:0010889 ATAC-seq,.,ATAC-seq,EFO:0010889,HG03571,cell_line,adult,encode,paired,False,1.9630107879638672
+120,NTR:0000491 ATAC-seq,.,ATAC-seq,NTR:0000491,Right ventricle myocardium inferior,tissue,adult,encode,paired,False,0.9412150382995605
+121,NTR:0000492 ATAC-seq,.,ATAC-seq,NTR:0000492,Right ventricle myocardium superior,tissue,adult,encode,paired,False,0.7204328179359436
+122,NTR:0000494 ATAC-seq,.,ATAC-seq,NTR:0000494,left ventricle myocardium superior,tissue,adult,encode,paired,False,0.427097350358963
+123,UBERON:0000056 ATAC-seq,.,ATAC-seq,UBERON:0000056,ureter,tissue,adult,encode,paired,False,0.48642194271087646
+124,UBERON:0000317 ATAC-seq,.,ATAC-seq,UBERON:0000317,colonic mucosa,tissue,adult,encode,paired,False,0.2913193702697754
+125,UBERON:0000945 ATAC-seq,.,ATAC-seq,UBERON:0000945,stomach,tissue,adult,encode,paired,False,1.1229300498962402
+126,UBERON:0000992 ATAC-seq,.,ATAC-seq,UBERON:0000992,ovary,tissue,adult,encode,paired,False,0.14541088044643402
+127,UBERON:0000995 ATAC-seq,.,ATAC-seq,UBERON:0000995,uterus,tissue,adult,encode,paired,False,0.3675922751426697
+128,UBERON:0001072 ATAC-seq,.,ATAC-seq,UBERON:0001072,posterior vena cava,tissue,adult,encode,paired,False,0.3368026912212372
+129,UBERON:0001114 ATAC-seq,.,ATAC-seq,UBERON:0001114,right lobe of liver,tissue,adult,encode,paired,False,0.5050563216209412
+130,UBERON:0001115 ATAC-seq,.,ATAC-seq,UBERON:0001115,left lobe of liver,tissue,adult,encode,paired,False,0.3790719211101532
+131,UBERON:0001150 ATAC-seq,.,ATAC-seq,UBERON:0001150,body of pancreas,tissue,adult,encode,paired,False,1.4392449855804443
+132,UBERON:0001157 ATAC-seq,.,ATAC-seq,UBERON:0001157,transverse colon,tissue,adult,encode,paired,False,1.2739818096160889
+133,UBERON:0001159 ATAC-seq,.,ATAC-seq,UBERON:0001159,sigmoid colon,tissue,adult,encode,paired,False,1.3383288383483887
+134,UBERON:0001259 ATAC-seq,.,ATAC-seq,UBERON:0001259,mucosa of urinary bladder,tissue,adult,encode,paired,False,0.6834927201271057
+135,UBERON:0001264 ATAC-seq,.,ATAC-seq,UBERON:0001264,pancreas,tissue,adult,encode,paired,False,0.28255096077919006
+136,UBERON:0001322 ATAC-seq,.,ATAC-seq,UBERON:0001322,sciatic nerve,tissue,adult,encode,paired,False,0.6590536236763
+137,UBERON:0002046 ATAC-seq,.,ATAC-seq,UBERON:0002046,thyroid gland,tissue,adult,encode,paired,False,1.391801118850708
+138,UBERON:0002048 ATAC-seq,.,ATAC-seq,UBERON:0002048,lung,tissue,adult,encode,paired,False,2.9806368350982666
+139,UBERON:0002078 ATAC-seq,.,ATAC-seq,UBERON:0002078,right cardiac atrium,tissue,adult,encode,paired,False,0.2509532570838928
+140,UBERON:0002079 ATAC-seq,.,ATAC-seq,UBERON:0002079,left cardiac atrium,tissue,adult,encode,paired,False,0.32439956068992615
+141,UBERON:0002080 ATAC-seq,.,ATAC-seq,UBERON:0002080,heart right ventricle,tissue,adult,encode,paired,False,0.1907806694507599
+142,UBERON:0002084 ATAC-seq,.,ATAC-seq,UBERON:0002084,heart left ventricle,tissue,adult,encode,paired,False,0.23439067602157593
+143,UBERON:0002099 ATAC-seq,.,ATAC-seq,UBERON:0002099,cardiac septum,tissue,adult,encode,paired,False,1.774492621421814
+144,UBERON:0002106 ATAC-seq,.,ATAC-seq,UBERON:0002106,spleen,tissue,adult,encode,paired,False,0.18534542620182037
+145,UBERON:0002107 ATAC-seq,.,ATAC-seq,UBERON:0002107,liver,tissue,adult,encode,paired,False,0.3416995704174042
+146,UBERON:0002113 ATAC-seq,.,ATAC-seq,UBERON:0002113,kidney,tissue,adult,encode,paired,False,0.40251538157463074
+147,UBERON:0002168 ATAC-seq,.,ATAC-seq,UBERON:0002168,left lung,tissue,child,encode,paired,False,0.4284360408782959
+148,UBERON:0002170 ATAC-seq,.,ATAC-seq,UBERON:0002170,upper lobe of right lung,tissue,adult,encode,paired,False,0.2896386384963989
+149,UBERON:0002171 ATAC-seq,.,ATAC-seq,UBERON:0002171,lower lobe of right lung,tissue,adult,encode,paired,False,0.2252897024154663
+150,UBERON:0002190 ATAC-seq,.,ATAC-seq,UBERON:0002190,subcutaneous adipose tissue,tissue,adult,encode,paired,False,0.9239097833633423
+151,UBERON:0002369 ATAC-seq,.,ATAC-seq,UBERON:0002369,adrenal gland,tissue,adult,encode,paired,False,0.9822091460227966
+152,UBERON:0002394 ATAC-seq,.,ATAC-seq,UBERON:0002394,bile duct,tissue,adult,encode,paired,False,0.4307073652744293
+153,UBERON:0002469 ATAC-seq,.,ATAC-seq,UBERON:0002469,esophagus mucosa,tissue,adult,encode,paired,False,0.3933384418487549
+154,UBERON:0003889 ATAC-seq,.,ATAC-seq,UBERON:0003889,fallopian tube,tissue,adult,encode,paired,False,0.25850507616996765
+155,UBERON:0004550 ATAC-seq,.,ATAC-seq,UBERON:0004550,gastroesophageal sphincter,tissue,adult,encode,paired,False,0.9912630915641785
+156,UBERON:0004992 ATAC-seq,.,ATAC-seq,UBERON:0004992,mucosa of descending colon,tissue,adult,encode,paired,False,0.2983551621437073
+157,UBERON:0005033 ATAC-seq,.,ATAC-seq,UBERON:0005033,mucosa of gallbladder,tissue,child,encode,paired,False,0.8860199451446533
+158,UBERON:0007610 ATAC-seq,.,ATAC-seq,UBERON:0007610,tibial artery,tissue,adult,encode,paired,False,1.0918642282485962
+159,UBERON:0008367 ATAC-seq,.,ATAC-seq,UBERON:0008367,breast epithelium,tissue,adult,encode,paired,False,0.5911307334899902
+160,UBERON:0008450 ATAC-seq,.,ATAC-seq,UBERON:0008450,psoas muscle,tissue,adult,encode,paired,False,0.6796603798866272
+161,UBERON:0008952 ATAC-seq,.,ATAC-seq,UBERON:0008952,upper lobe of left lung,tissue,adult,encode,paired,False,0.31991297006607056
+162,UBERON:0008953 ATAC-seq,.,ATAC-seq,UBERON:0008953,lower lobe of left lung,tissue,adult,encode,paired,False,0.3122468590736389
+163,UBERON:0008971 ATAC-seq,.,ATAC-seq,UBERON:0008971,left colon,tissue,adult,encode,paired,False,0.6758714914321899
+164,UBERON:0010414 ATAC-seq,.,ATAC-seq,UBERON:0010414,omental fat pad,tissue,adult,encode,paired,False,1.1185219287872314
+165,UBERON:0011907 ATAC-seq,.,ATAC-seq,UBERON:0011907,gastrocnemius medialis,tissue,adult,encode,paired,False,0.8114848732948303
+166,UBERON:0015143 ATAC-seq,.,ATAC-seq,UBERON:0015143,mesenteric fat pad,tissue,adult,encode,paired,False,0.4202614426612854

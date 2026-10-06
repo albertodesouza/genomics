@@ -1,2 +1,0 @@
-# Baselines: model.type XGBOOST requires xgboost
-xgboost>=2.0.0

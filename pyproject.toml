@@ -1,0 +1,107 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "genomics"
+version = "0.1.0"
+description = "Multi-pipeline genomics workspace"
+requires-python = ">=3.8"
+# Enough for the `genomics` CLI and `genomics visualize` (browsing datasets, tracks, sequences, jobs).
+# Feature extras: see docs/getting-started/requirements.md, or run `genomics doctor`.
+dependencies = [
+    "numpy",
+    "PyYAML",
+]
+
+[project.optional-dependencies]
+# The visualizer with everything it can use: gene models / GTF tables (pandas + pyarrow) and the
+# AlphaGenome client for predictions and the Perturbation Lab (the client needs Python >= 3.10).
+visualizer = [
+    "alphagenome; python_version >= '3.10'",
+    "pandas",
+    "pyarrow",
+]
+alphagenome = [
+    "alphagenome; python_version >= '3.10'",
+    "captum",
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "plotnine",
+    "rich",
+]
+genotype = [
+    "captum",
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "pydantic>=2",
+    "PyYAML",
+    "rich",
+    "scikit-learn",
+    "scipy",
+    "torch",
+]
+variant = [
+    "numpy",
+    "pandas",
+    "PyYAML",
+    "rich",
+    "scikit-learn",
+    "torch",
+]
+snp-ancestry = [
+    "matplotlib",
+    "numpy",
+    "PyYAML",
+    "rich",
+    "scikit-learn",
+    "scipy",
+]
+legacy = [
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "psutil",
+    "PyYAML",
+    "rich",
+    "scikit-learn",
+    "scipy",
+    "torch",
+]
+test = [
+    "pytest",
+]
+docs = ["mkdocs-material>=9.5"]
+all = [
+    "alphagenome; python_version >= '3.10'",
+    "captum",
+    "matplotlib",
+    "mkdocs-material>=9.5",
+    "numpy",
+    "pandas",
+    "plotnine",
+    "psutil",
+    "pyarrow",
+    "pydantic>=2",
+    "pytest",
+    "PyYAML",
+    "rich",
+    "scikit-learn",
+    "scipy",
+    "torch",
+]
+
+[project.scripts]
+genomics = "genomics.cli:cli_main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"genomics.completions" = ["*.bash"]
+"genomics.visualizer" = ["static/*.html", "static/css/*.css", "static/js/*.js", "static/js/pages/*.js"]
