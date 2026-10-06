@@ -591,7 +591,13 @@ def _control_summary(permutation: Optional[Dict[str, Any]], body: Dict[str, Any]
 
 def validate_config(config: Dict[str, Any], scratch: Path) -> None:
     """Typed validation with the genotype config schema (no torch needed)."""
-    from genomics.predictors.genotype_based.config import load_config
+    try:
+        from genomics.predictors.genotype_based.config import load_config
+    except ImportError as exc:  # a base install has no pydantic
+        raise LaunchError(
+            f"Validating a training config needs the visualizer extras ({exc}). "
+            'Install them with: python3 -m pip install -e ".[visualizer]"'
+        )
 
     scratch.mkdir(parents=True, exist_ok=True)
     path = scratch / "validate_config.yaml"

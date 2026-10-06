@@ -90,11 +90,17 @@ def _open(page, url):
     page.wait_for_timeout(300)
 
 
+# The Import page reports tools the machine lacks; on a runner without bcftools/samtools that is a
+# correct report, not a rendering failure.
+EXPECTED_BOXES = ("Missing on the server:",)
+
+
 @pytest.mark.parametrize("name", PAGES)
 def test_page_renders_without_errors(page, server_url, name):
     _open(page, f"{server_url}/#/{name}")
     assert page.locator("#page").inner_text().strip(), f"{name} rendered nothing"
-    assert page.locator(".error-box").count() == 0, f"{name}: {page.locator('.error-box').all_inner_texts()}"
+    boxes = [t for t in page.locator(".error-box").all_inner_texts() if not t.startswith(EXPECTED_BOXES)]
+    assert boxes == [], f"{name}: {boxes}"
     # Error toasts are app failures, except missing data in the fixture (EXTRA has no haplotype FASTA).
     toasts = [t for t in page.locator(".toast.error").all_inner_texts() if "No such file or directory" not in t]
     assert toasts == [], f"{name}: {toasts}"

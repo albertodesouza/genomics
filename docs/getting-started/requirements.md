@@ -17,6 +17,7 @@ report on its **System** page.
 |---|---|---|---|---|
 | **Browse** datasets, tracks, sequences, experiments, jobs (`genomics visualize`) | base install (`numpy`, `PyYAML`) | – | any machine; 4 GB RAM for the default cache (`--memory-mb`) | none (gene and ontology cards look up public databases when online; `--no-remote` turns that off) |
 | **Gene models** on Tracks/Sequence, gene search | `[visualizer]` (`pandas`, `pyarrow`) | – | – | – |
+| **Start a training run** from the visualizer (building and validating its config) | `[visualizer]` (`pydantic`) | – | – | – |
 | **Import a dataset** from a phased VCF | `[visualizer]` | `bcftools`, `samtools` (htslib) | – | only when the VCF/FASTA are URLs (regions are streamed) |
 | **AlphaGenome predictions** (prediction jobs, reference tracks, Perturbation Lab, track catalog) | `[visualizer]` (AlphaGenome client, Python ≥ 3.10) | one backend: hosted API key, a remote server, or a [local server](#alphagenome-on-your-own-gpu) | none for the hosted API; an NVIDIA GPU for a local server | hosted API or the server's address |
 | **Train / evaluate** models, Perturbation Lab scoring | `[genotype]` (`torch`, `scikit-learn`, `scipy`, `pydantic`, …) | `bcftools` for the training-axis alignment | an NVIDIA GPU is strongly recommended; 16 GB+ RAM | – |

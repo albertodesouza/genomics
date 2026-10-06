@@ -155,6 +155,7 @@ def import_feature() -> Feature:
     feature = Feature("import", "Gene models and dataset import", "gene models on Tracks/Sequence, gene search, importing a dataset from a VCF")
     feature.checks.append(package_check("pandas", fix="pip install -e '.[visualizer]'", why="gene models, sample tables"))
     feature.checks.append(package_check("pyarrow", fix="pip install -e '.[visualizer]'", why="reads gtf_cache.feather"))
+    feature.checks.append(package_check("pydantic", fix="pip install -e '.[visualizer]'", why="validates a training config before a run starts"))
     for tool in ("bcftools", "samtools"):
         found = tool_version(tool)
         feature.checks.append(Check(tool, OK if found else MISSING, found or "not on PATH (VCF import, new prediction windows, training-axis alignment)",
