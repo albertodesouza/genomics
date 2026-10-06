@@ -286,3 +286,99 @@ def test_perturbation_saturation_scan_lane(page, server_url):
     edits = page.locator(".side-section", has_text="Edits").locator(".edit-item").all_inner_texts()
     assert len(edits) == 1 and "Scramble" in edits[0] and "H1+H2" in edits[0]
     assert page.errors == []
+
+
+def test_train_form_negative_controls(page, server_url):
+    """The training form's negative-control section: label shuffling and matched control windows."""
+    import re
+
+    _open(page, f"{server_url}/#/jobs")
+    page.get_by_role("button", name="Train a model").click()
+    form = page.locator(".drawer")
+    control = form.locator("label.field", has_text="Negative control")
+    control.wait_for()
+    exactly_within = form.locator("label.field").filter(has=page.locator("span", has_text=re.compile(r"^Within$")))
+    assert exactly_within.count() == 0  # only for "shuffle within"
+
+    control.get_by_role("radio", name="Shuffle labels", exact=True).click()
+    assert "nothing links genotype to class" in form.inner_text()
+    control.get_by_role("radio", name="Shuffle within…", exact=True).click()
+    within = exactly_within.locator("select")
+    target = form.locator("label.field", has_text="Predict").locator("select").input_value()
+    choices = within.evaluate("el => [...el.options].map((o) => o.value)")
+    assert target not in choices and len(choices) >= 2  # within the target itself would be a no-op
+    assert "no individual keeps their own label" in form.inner_text()
+    other = next(c for c in choices if c != within.input_value())
+    within.select_option(other)
+    assert f"inside each {other}" in form.inner_text()
+
+    # The matched-control button swaps the gene selection; the fixture has one spare window.
+    assert "null" not in form.locator("div", has_text="Negative control").last.inner_text()
+
+    # Matching needs windows outside the panel: with every window chosen there are none left.
+    page.get_by_role("button", name="Matched control windows…").click()
+    page.locator(".toast.error").first.wait_for()
+    assert "fewer windows outside its gene panel" in page.locator(".toast.error").first.inner_text()
+
+    # Leaving EXTRA out makes it the only candidate, and it has no reference prediction to measure.
+    genes = form.locator("label.field", has_text="Gene windows")
+    genes.locator("label", has_text="EXTRA").locator("input").uncheck()
+    page.get_by_role("button", name="Matched control windows…").click()
+    page.locator(".toast.error").nth(1).wait_for()
+    assert "reference" in page.locator(".toast.error").nth(1).inner_text().lower()
+    # Both refusals are 400s the form reports: no failed job, and nothing worse in the console.
+    assert [e for e in page.errors if "400 (Bad Request)" not in e] == []
+
+
+def test_locus_box_accepts_gene_names(page, server_url):
+    """A gene name in the locus box jumps to it (coordinates and rsIDs are covered elsewhere)."""
+    _open(page, f"{server_url}/#/tracks?gene=GENE1")
+    page.wait_for_function("document.querySelectorAll('.panel canvas').length >= 1")
+    box = page.locator(".locus-input")
+    before = box.input_value()
+
+    # The fixture has no gene annotations, but EXTRA is a window of the dataset: typing it switches.
+    box.fill("EXTRA")
+    box.press("Enter")
+    page.locator(".toast", has_text="EXTRA").wait_for()
+    _wait_state(page, "m.state.locus && m.state.locus.gene === 'EXTRA'")
+    assert page.locator("select[aria-label='Gene']").input_value() == "EXTRA"
+
+    page.locator("select[aria-label='Gene']").select_option("GENE1")
+    _wait_state(page, "m.state.locus && m.state.locus.gene === 'GENE1'")
+    box.fill("NOSUCHGENE")
+    box.press("Enter")
+    page.locator(".toast.error", has_text="No gene").wait_for()
+    assert box.input_value() == "NOSUCHGENE" or box.input_value() == before  # the view did not move
+    assert page.locator("select[aria-label='Gene']").input_value() == "GENE1"
+    assert page.errors == []
+
+
+def test_tracks_y_scale_lock_keeps_the_range_across_views(page, server_url):
+    """With the lock on, moving the view must not rescale a panel; without it, it does."""
+    _open(page, f"{server_url}/#/samples")
+    page.evaluate("async () => { const m = await import('/static/js/state.js'); m.setPinned(['S1']); }")
+    _open(page, f"{server_url}/#/tracks?gene=GENE1")
+    page.wait_for_function("document.querySelectorAll('.panel canvas').length >= 1")
+    panel = page.locator(".panel canvas").first
+    shot = lambda: panel.evaluate("c => c.toDataURL()")
+    box = page.locator(".locus-input")
+
+    def goto(text):
+        box.fill(text)
+        box.press("Enter")
+        page.wait_for_timeout(400)
+
+    goto("1-40")
+    zoomed_auto = shot()
+    page.get_by_text("Lock y-scale while panning").click()
+    page.wait_for_timeout(300)
+    assert shot() == zoomed_auto  # locking alone keeps the range it was switched on with
+    _wait_state(page, "m.state.locus && m.state.locus.lockY === true")
+
+    goto("60-100")
+    locked_elsewhere = shot()
+    page.get_by_text("Lock y-scale while panning").click()  # unlock: the same view, now autoscaled
+    page.wait_for_timeout(400)
+    assert shot() != locked_elsewhere
+    assert page.errors == []

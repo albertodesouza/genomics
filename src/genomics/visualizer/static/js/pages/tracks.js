@@ -14,6 +14,7 @@ import { api, apiJob, isAbort, Latest } from '../api.js';
 import { navigate, updateRouteParams, watchJobs } from '../app.js';
 import { state, ds, geneInfo, setLocus, setPinned, togglePinned, categoricalFields, filterRows, cohortDescription } from '../state.js';
 import { exportMenu, slug } from '../figure.js';
+import { LOCUS_HINT, resolveLocus } from '../locus.js';
 import { h, clear, icon, iconButton, segmented, select, field, fmtInt, fmtBp, fmtNum, fmtPct, showTooltip, hideTooltip, toast, jobOverlay, debounce, escapeHtml, errorBox } from '../ui.js';
 import { Viewport, ColorSlots, setupCanvas, theme, ticks, withAlpha, seqColor, onResize, css } from '../plot.js';
 import { loadGeneAnnotations, packGenes, drawGeneLanes, geneLanesHeight, geneAt, geneTooltip } from '../gene_lanes.js';
@@ -94,6 +95,7 @@ class TracksPage {
       groups: saved.groups || null,
       yScale: saved.yScale || 'linear',
       sharedY: saved.sharedY ?? false,
+      lockY: saved.lockY ?? false,
       diff: saved.diff ?? false,
       envelope: saved.envelope ?? true,
       band: saved.band ?? true,
@@ -158,7 +160,7 @@ class TracksPage {
       { value: 'H1+H2', label: 'Mean', title: 'Diploid mean of H1 and H2' },
     ], this.cfg.hap, (v) => { this.cfg.hap = v; this.invalidate(); });
 
-    this.locusInput = h('input', { class: 'input locus-input', 'aria-label': 'Locus', spellcheck: 'false' });
+    this.locusInput = h('input', { class: 'input locus-input', 'aria-label': 'Locus', spellcheck: 'false', title: LOCUS_HINT });
     this.locusInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.gotoLocus(this.locusInput.value); });
     this.spanEl = h('span', { class: 'locus-span' });
     this.statusEl = h('span', { class: 'muted', style: { fontSize: '12px' } });
@@ -398,10 +400,10 @@ class TracksPage {
     this.spanEl.textContent = `${fmtBp(v.span)} of ${fmtBp(v.length)}`;
   }
 
-  gotoLocus(text) {
+  async gotoLocus(text) {
     const clean = text.replace(/,/g, '').trim();
     const m = /^(?:([\w.]+):)?\s*(\d+)(?:\s*[-–]\s*(\d+))?$/.exec(clean);
-    if (!m) { toast('Use chr:start-end, start-end or a single position', 'error'); this.renderLocus(); return; }
+    if (!m) { await this.gotoNamed(clean); return; }
     const prefix = m[1];
     let a = Number(m[2]);
     let b = m[3] ? Number(m[3]) : null;
@@ -413,6 +415,43 @@ class TracksPage {
     if (b === null) { this.viewport.center(conv(a)); return; }
     if (b < a) [a, b] = [b, a];
     this.viewport.set(conv(a), conv(b) + 1);
+  }
+
+  /** A gene name or rsID in the locus box (coordinates are handled by gotoLocus). */
+  async gotoNamed(text) {
+    this.status('Looking up…');
+    try {
+      const target = await resolveLocus(text, {
+        gene: this.cfg.gene,
+        window: this.info ? { chromosome: this.info.chromosome, start: this.info.start, end: this.info.start + this.info.length - 1 } : {},
+        annotations: this.annotationGenes(),
+        genes: (state.summary && state.summary.genes || []).map((g) => g.gene),
+        windows: (state.summary && state.summary.genes) || [],
+      });
+      this.applyTarget(target);
+    } catch (err) {
+      toast(err.message, 'error', 8000);
+      this.renderLocus();
+    } finally {
+      this.status('');
+    }
+  }
+
+  applyTarget(target) {
+    if (target.kind === 'window') {
+      this.setGene(target.gene, {}).then(() => {
+        if (target.position && this.info) this.viewport.center(this.fromGenomicOffset(target.position - (this.info.start || 0)));
+      });
+      toast(`${target.label}: switched to the ${target.gene} window`);
+      return;
+    }
+    if (target.kind === 'position') {
+      this.viewport.center(this.fromGenomicOffset(target.pos - (this.info.start || 0)));
+      return;
+    }
+    const lo = Math.max(0, this.fromGenomicOffset(target.start));
+    const hi = this.fromGenomicOffset(target.end);
+    this.viewport.set(lo, Math.max(lo + 1, hi));
   }
 
   status(text) { this.statusEl.textContent = text || ''; }
@@ -476,7 +515,7 @@ class TracksPage {
 
   persist() {
     const c = this.cfg;
-    setLocus({ gene: c.gene, output: null, coords: c.coords, mode: c.mode, hap: c.hap, tracks: c.tracks, groupField: c.groupField, groups: c.groups, yScale: c.yScale, sharedY: c.sharedY, diff: c.diff, envelope: c.envelope, band: c.band, popTrack: c.popTrack, popRows: c.popRows, seqSource: c.seqSource, showRef: c.showRef, showObserved: c.showObserved, obsScale: c.obsScale, start: this.viewport.start, end: this.viewport.end });
+    setLocus({ gene: c.gene, output: null, coords: c.coords, mode: c.mode, hap: c.hap, tracks: c.tracks, groupField: c.groupField, groups: c.groups, yScale: c.yScale, sharedY: c.sharedY, lockY: c.lockY, diff: c.diff, envelope: c.envelope, band: c.band, popTrack: c.popTrack, popRows: c.popRows, seqSource: c.seqSource, showRef: c.showRef, showObserved: c.showObserved, obsScale: c.obsScale, start: this.viewport.start, end: this.viewport.end });
     updateRouteParams({ gene: c.gene, coords: c.coords !== 'reference' ? c.coords : null, mode: c.mode !== 'individuals' ? c.mode : null, start: this.viewport.start, end: this.viewport.end });
   }
 
@@ -1061,17 +1100,31 @@ class TracksPage {
         shared.set(panel.output, cur ? [Math.min(cur[0], range[0]), Math.max(cur[1], range[1])] : range);
       }
     }
+    const locked = this.lockedRanges(views, shared);
     views.forEach(({ panel, items, i0, i1, range }, pi) => {
       const p = panels[pi];
       if (!p) return;
       this.setPanelLabel(p, panel.trackKey);
-      const [ylo, yhiRaw] = shared.get(panel.output) || range;
+      const [ylo, yhiRaw] = locked.get(panel.trackKey) || shared.get(panel.output) || range;
       const yhi = yhiRaw > ylo ? yhiRaw * 1.06 : ylo + 1;
       this.drawPanel(p.canvas, t, g, panel, items, ylo, yhi, i0, i1);
       p.yRange = [ylo, yhi];
       if (p.obsCanvas) this.drawObserved(p, t, g, panel);
     });
     this.panelGeom = { top: 0, height: PANEL_H, count: data.panels.length };
+  }
+
+  /** Frozen y-ranges while 'Lock y-scale' is on, so panning and zooming cannot rescale the panels.
+   *
+   * The lock is taken from the ranges of the view it was switched on in, and is dropped whenever a
+   * setting that changes what the y-axis means (scale, shared, mode, envelope/band) changes. */
+  lockedRanges(views, shared) {
+    const key = JSON.stringify([this.cfg.yScale, this.cfg.sharedY, this.cfg.mode, this.cfg.envelope, this.cfg.band, this.cfg.diff, views.map((v) => v.panel.trackKey)]);
+    if (!this.cfg.lockY) { this.yLock = null; return new Map(); }
+    if (!this.yLock || this.yLock.key !== key) {
+      this.yLock = { key, ranges: new Map(views.map(({ panel, range }) => [panel.trackKey, shared.get(panel.output) || range])) };
+    }
+    return this.yLock.ranges;
   }
 
   /** Observed signal lane of one track (own y-scale: units are the source's, not AlphaGenome's). */
@@ -1542,6 +1595,7 @@ class TracksPage {
       h('h3', null, 'Display'),
       field('Value scale', segmented([{ value: 'linear', label: 'Linear' }, { value: 'log', label: 'log(1+x)' }], this.cfg.yScale, (v) => { this.cfg.yScale = v; this.persist(); this.render(); })),
       this.cfg.mode !== 'population' ? checkbox('Same y-scale for all tracks', this.cfg.sharedY, (v) => { this.cfg.sharedY = v; this.persist(); this.render(); }) : null,
+      this.cfg.mode !== 'population' ? checkbox('Lock y-scale while panning', this.cfg.lockY, (v) => { this.cfg.lockY = v; this.yLock = null; this.persist(); this.render(); }, { title: 'Freeze the current y-range so panning and zooming do not rescale the panels (for comparing regions, and for a figure series)' }) : null,
       this.cfg.mode === 'individuals' ? checkbox('Min–max envelope when zoomed out', this.cfg.envelope, (v) => { this.cfg.envelope = v; this.persist(); this.render(); }) : null,
       this.cfg.mode === 'groups' ? checkbox('±1 SD band', this.cfg.band, (v) => { this.cfg.band = v; this.persist(); this.render(); }) : null,
       this.cfg.mode === 'groups' ? checkbox('Show difference from cohort mean', this.cfg.diff, (v) => { this.cfg.diff = v; this.persist(); this.render(); }) : null,

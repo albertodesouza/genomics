@@ -35,7 +35,7 @@ GitHub workflow.
 |---|---|
 | Overview | Dataset summary, cohort composition by any sample field, gene windows, outputs/tracks, open other datasets |
 | Samples | Faceted cohort builder (counts update across facets), virtualized table, sample details, pin individuals, CSV export, save the cohort as a training `.view.json` (former View Builder). *Region scalars* turn a track's signal over a region into a sample field; the *Ancestry PCA* view shows genotype PCs and matches two groups on them; see [Region scalars](#region-scalars) and [Ancestry PCA and matching](#ancestry-pca-and-matching) |
-| Tracks | Canvas genome browser: overview strip, ruler, gene models, a sequence lane and one panel per AlphaGenome track. Tracks of several outputs (RNA-seq, CAGE, DNase, ChIP, …) can be shown together, up to 16 at once; drag a panel's grip (⋮⋮, or focus it and press ↑ / ↓) to reorder them (the order is remembered, new tracks are added at the bottom). Shows pinned **individuals**, cohort **group means** ± SD (or each group's difference from the cohort mean) by any facet, or a **population heatmap** with every cohort sample as a row. *Compare with* adds AlphaGenome's prediction of the **reference genome** (dashed line) and the **observed** ENCODE / FANTOM5 signal behind each track (a lane under it, with an agreement badge); see [Reference and observed data](#reference-and-observed-data). *Region scalar…* defines a per-sample scalar from the view. Track names open a track card, gene models and the gene button a gene card (see [Links to databases](#links-to-ontologies-and-databases)). The sequence lane shows the letter frequency per base over the pinned haplotypes (or the reference genome): letters scaled by frequency when zoomed in, stacked base composition per bin when zoomed out |
+| Tracks | Canvas genome browser: overview strip, ruler, gene models, a sequence lane and one panel per AlphaGenome track. Tracks of several outputs (RNA-seq, CAGE, DNase, ChIP, …) can be shown together, up to 16 at once; drag a panel's grip (⋮⋮, or focus it and press ↑ / ↓) to reorder them (the order is remembered, new tracks are added at the bottom). Shows pinned **individuals**, cohort **group means** ± SD (or each group's difference from the cohort mean) by any facet, or a **population heatmap** with every cohort sample as a row. *Compare with* adds AlphaGenome's prediction of the **reference genome** (dashed line) and the **observed** ENCODE / FANTOM5 signal behind each track (a lane under it, with an agreement badge); see [Reference and observed data](#reference-and-observed-data). *Region scalar…* defines a per-sample scalar from the view. The y-axis can be linear or log(1+x), shared by every track of an output, and **locked**: with *Lock y-scale while panning* on, the range the panels had when it was switched on is kept, so moving the view cannot rescale them and a quiet region reads as genuinely quiet rather than being stretched to fill the panel (also what a figure series of several loci needs). Track names open a track card, gene models and the gene button a gene card (see [Links to databases](#links-to-ontologies-and-databases)). The sequence lane shows the letter frequency per base over the pinned haplotypes (or the reference genome): letters scaled by frequency when zoomed in, stacked base composition per bin when zoomed out |
 | Sequence | Pinned haplotypes against the reference: gene models, bases when zoomed in (mismatches coloured, matches as dots, deletions and insertions marked), mismatch/indel density when zoomed out, variant lane and genotype table |
 | Variant | One site across the cohort: genotype counts and ALT frequency by any sample field, AlphaGenome's predicted signal by genotype over a region (an in-silico eQTL) and GTEx's measured eQTL of the same variant, with whether the directions agree; see [Variant page](#variant-page) |
 | Perturbation Lab | Edit an individual's haplotypes (scramble, overwrite, revert to reference, custom sequence), re-predict them with AlphaGenome and re-score them with any trained model; gene models, original vs edited tracks, class means and class probabilities. A *saturation scan* slides one edit across a range and shows how much each window moves a class probability |
@@ -45,9 +45,12 @@ GitHub workflow.
 | System | What this machine can run, feature by feature (packages, `bcftools`/`samtools`, AlphaGenome backend, PyTorch), hardware, and free disk space where the visualizer writes; the same report as `genomics doctor`, with the command that enables each missing piece |
 
 Navigation: drag to pan, Ctrl/⌘+scroll to zoom, Shift+drag to zoom to a region, double-click to
-zoom in, ←/→ and +/− on the focused plot. The locus box accepts `chr:start-end`, `start-end` or a
-single position. Pinned samples, cohort filters and the locus are shared between pages and kept
-per dataset in the browser; the URL is shareable.
+zoom in, ←/→ and +/− on the focused plot. The locus box accepts `chr:start-end`, `start-end`, a
+single position, a **gene name** or an **rsID**. A gene name goes to that gene where it is annotated
+in the current window, else to the dataset window of that name; an rsID is resolved to its GRCh38
+position through GTEx (cached) and goes to whichever window holds it, or says where it is if no
+window does. Pinned samples, cohort filters and the locus are shared between pages and kept per
+dataset in the browser; the URL is shareable.
 
 **Figure export.** *Export* on the Tracks, Sequence and Perturbation Lab pages downloads the current
 view as a **PNG** (2× or 4× pixels) or an **SVG**. The SVG is vector: the plots are re-drawn into SVG
@@ -308,6 +311,36 @@ CNN kernel heights follow the number of tracks per gene. *Preview config* shows 
 written to `<runs root>/<run name>/` and appear on the Experiments page with their curves; the best
 checkpoint is evaluated on the test split afterwards. **Evaluate…** on a run evaluates any
 checkpoint on any split (`<split>_<checkpoint>_results.json`).
+
+### Negative controls
+
+A classifier's accuracy only means something next to what the same pipeline scores when the signal
+it is supposed to use is gone. The training form offers two such ablations, which can be combined.
+
+**Shuffled labels** (`label_permutation` in the config). *Shuffle labels* permutes the labels over
+all samples: each class keeps its size, but nothing links a genotype to a class, so this run is the
+pipeline's chance-level floor. Scoring above it means something leaks (through the split, the
+normalization or a cache). *Shuffle within…* permutes inside each group of a chosen field instead:
+every group keeps its own class mix, so the group → class association survives while no individual
+keeps their own label. What that run scores is what the field alone explains, and a real run has to
+beat it to be about anything else. With this dataset's pigmentation labels and *superpopulation* as
+the field, that is the number the pigmentation results must be read against, because the label is
+population membership (`notebooks/REPORT.md` §14). The permutation is deterministic from its seed,
+and the run folder is tagged `_yrand` (or `_yrand_within_<field>`).
+
+**Matched control windows** (`genomics.visualizer.controls`). *Matched control windows…* swaps the
+chosen gene panel for an equal number of windows outside the dataset's own gene list. Picking
+phenotype-irrelevant windows is easy; picking windows the model reads *comparably much* from is what
+makes the control readable, since a window carrying almost no signal is flat for reasons that have
+nothing to do with biology. So candidates are matched on the total predicted signal inside the crop
+the model actually reads, on the reference window, over the chosen ontology terms and strands — the
+statistic `scripts/experiments/specificity_control_preflight.py` established for this (it tracks the
+realised perturbation over the published panel at Spearman rho = 0.855). Matching needs no
+AlphaGenome calls, only the stored reference predictions, and is an exact minimum-total-cost 1:1
+assignment on log10 of that total, so pairs are comparable by ratio. The form shows the pairing with
+each pair's ratio before you start the run. On `1kg_high_coverage`, the eleven pigmentation windows
+pair with SEM1, TRHR, FOXN2, ATP11B, HSH2D, PPP1R3E, CD47, PSMC4, SMCR8, TPM2 and SUMF2 for a
+control panel carrying 79% of the panel's total signal (typical pair within 1.2x).
 
 ## Variant page
 

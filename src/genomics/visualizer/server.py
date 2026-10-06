@@ -34,6 +34,7 @@ from genomics.visualizer.alignment import AlignmentService
 from genomics.visualizer.alphagenome import AlphaGenomeBackend, create_backend
 from genomics.visualizer.gene_index import GeneIndex, find_table
 from genomics.visualizer.genotypes import GENOTYPE_LABELS, GenotypeService
+from genomics.visualizer.controls import ControlError, ControlService
 from genomics.visualizer.scalars import ScalarError, ScalarService, ScalarStore
 from genomics.visualizer.ancestry import AncestryService, default_windows, match_groups, window_coverage
 from genomics.visualizer.gtex import DEFAULT_TISSUES, GtexClient, GtexError
@@ -179,6 +180,7 @@ class VisualizerApp:
         self.gtex = GtexClient(self.remote)
         self.ancestry = AncestryService(self.genotypes, DiskArrayCache(cache_dir))
         self.scalars = ScalarService(self.genotypes, scalar_store, ancestry=self.ancestry)
+        self.controls = ControlService(self.signals)
         self._ag_catalog: Optional[Dict[str, Any]] = None
         self._ag_catalog_lock = threading.Lock()
         self.experiments = ExperimentService(runs_roots)
@@ -256,6 +258,7 @@ class VisualizerApp:
         r("POST", r"/api/d/(?P<ds>[^/]+)/predict", self.api_predict_start)
         r("GET", r"/api/d/(?P<ds>[^/]+)/train/options", self.api_train_options)
         r("POST", r"/api/d/(?P<ds>[^/]+)/train/preview", self.api_train_preview)
+        r("POST", r"/api/d/(?P<ds>[^/]+)/train/controls", self.api_train_controls)
         r("POST", r"/api/d/(?P<ds>[^/]+)/train", self.api_train_start)
         r("GET", r"/api/perturb/models", self.api_perturb_models)
         r("GET", r"/api/perturb/model", self.api_perturb_model)
@@ -1288,6 +1291,47 @@ class VisualizerApp:
 
         config, summary = self._train_config(self.dataset(ds), body)
         return {"summary": summary, "config": yaml.safe_dump(config, sort_keys=False, allow_unicode=True)}
+
+    def api_train_controls(self, query: Query, body: Any, ds: str) -> Any:
+        """A control window per chosen window, matched on the signal the model reads (a background job)."""
+        body = body or {}
+        dataset = self.dataset(ds)
+        genes = [str(g) for g in (body.get("genes") or [])]
+        output = str(body.get("output") or "rna_seq").lower()
+        terms = [str(t) for t in (body.get("ontology_terms") or [])]
+        size = max(1, int(body.get("window_center_size") or 32768))
+        if not terms:
+            info = dataset.gene_info(genes[0]) if genes else {}
+            terms = sorted({str((t.get("metadata") or {}).get("ontology_curie"))
+                            for t in ((info.get("outputs") or {}).get(output) or {}).get("tracks", [])
+                            if (t.get("metadata") or {}).get("ontology_curie")})
+        key = stable_key({"v": 1, "dataset": dataset.fingerprint, "genes": sorted(genes), "output": output, "terms": sorted(terms), "size": size})
+        # Cheap checks first, so a bad request is a 400 rather than a failed background job.
+        try:
+            unknown = [g for g in genes if g not in dataset.genes]
+            if not genes:
+                raise ControlError("Choose at least one window for the panel")
+            if unknown:
+                raise ControlError(f"Unknown window(s): {', '.join(unknown)}")
+            candidates = self.controls.candidates(dataset, genes)
+            if len(candidates) < len(set(genes)):
+                raise ControlError("This dataset has fewer windows outside its gene panel than the panel needs")
+            # Which windows have a reference prediction is a file check, so it need not cost a job.
+            missing = [g for g in dict.fromkeys(genes) if not dataset.reference_prediction_path(g, output).exists()]
+            if missing:
+                raise ControlError(
+                    f"No reference {output} prediction for {', '.join(sorted(missing))}. "
+                    "Predict the reference window of every chosen gene first (haplotype 'ref').")
+            usable = [g for g in candidates if dataset.reference_prediction_path(g, output).exists()]
+            if len(usable) < len(set(genes)):
+                raise ControlError(
+                    f"Only {len(usable)} control window(s) have a reference {output} prediction, for a panel of "
+                    f"{len(set(genes))}. Predict the reference window of the control windows first.")
+        except ControlError as exc:
+            raise HttpError(HTTPStatus.BAD_REQUEST, str(exc))
+        return self._job_response(
+            f"controls:{key}", f"Matching control windows ({len(genes)} windows)",
+            lambda progress: self.controls.matched_panel(dataset, genes, output, terms, size, progress))
 
     def api_train_start(self, query: Query, body: Any, ds: str) -> Any:
         config, summary = self._train_config(self.dataset(ds), body)

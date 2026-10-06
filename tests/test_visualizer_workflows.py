@@ -588,3 +588,41 @@ def test_saturation_scan_scores_each_window_and_skips_unchanged(lab_dataset, tmp
     cancelled.cancelled = True
     with pytest.raises(JobCancelled):
         service.scan(spec, cancelled)
+
+
+def test_negative_control_adds_label_permutation_to_the_config(lab_dataset, tmp_path):
+    """The training form's negative controls: a global shuffle, a shuffle within a field, and off."""
+    from genomics.visualizer import launch
+
+    dataset = DatasetCatalog().add(lab_dataset.path)
+    dataset.set_field("pop", {"S1": "YRI"})
+    dataset.set_field("region", {"S1": "AFR"})
+    body = {
+        "target_field": "pop", "class_map": {"YRI": "dark", "CEU": "light"}, "genes": ["G1"], "output": "rna_seq",
+        "window_center_size": 64, "model_type": "CNN2", "num_epochs": 1,
+        "train_split": 0.6, "val_split": 0.2, "test_split": 0.2,
+    }
+    plain, _ = launch.build_train_config(dataset, body, {}, tmp_path / "runs", tmp_path / "cache")
+    assert "label_permutation" not in plain
+
+    shuffled, summary = launch.build_train_config(dataset, {**body, "negative_control": {"labels": "permute", "seed": 5}}, {}, tmp_path / "runs", tmp_path / "cache")
+    assert shuffled["label_permutation"] == {"enabled": True, "random_seed": 5}
+    assert "chance level" in summary["negative_control"]["description"]
+    launch.validate_config(shuffled, tmp_path / "scratch")
+
+    within, summary = launch.build_train_config(
+        dataset, {**body, "negative_control": {"labels": "permute_within", "stratify_field": "region", "seed": 5}},
+        {}, tmp_path / "runs", tmp_path / "cache")
+    assert within["label_permutation"] == {"enabled": True, "random_seed": 5, "stratify_field": "region"}
+    assert "within region" in summary["negative_control"]["description"]
+    assert "Negative control" in within["metadata"]["note"]
+    launch.validate_config(within, tmp_path / "scratch")
+
+    # A control panel is just a different gene set, but the run records that it is one.
+    _, summary = launch.build_train_config(dataset, {**body, "control_panel": True}, {}, tmp_path / "runs", tmp_path / "cache")
+    assert "matched control windows" in summary["negative_control"]["description"]
+
+    for bad in ({"labels": "sideways"}, {"labels": "permute_within", "stratify_field": "nope"},
+                {"labels": "permute_within", "stratify_field": "pop"}):  # within the target itself is a no-op
+        with pytest.raises(launch.LaunchError):
+            launch.build_train_config(dataset, {**body, "negative_control": bad}, {}, tmp_path, tmp_path)

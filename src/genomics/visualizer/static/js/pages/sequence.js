@@ -5,6 +5,7 @@ import { navigate, updateRouteParams } from '../app.js';
 import { state, ds, geneInfo, setLocus, togglePinned } from '../state.js';
 import { h, clear, icon, iconButton, segmented, select, field, fmtInt, fmtBp, fmtPct, showTooltip, hideTooltip, toast, jobOverlay, debounce, escapeHtml, errorBox } from '../ui.js';
 import { Viewport, setupCanvas, theme, ticks, withAlpha, onResize, css } from '../plot.js';
+import { LOCUS_HINT, resolveLocus } from '../locus.js';
 import { loadGeneAnnotations, packGenes, drawGeneLanes, geneLanesHeight, geneAt, geneTooltip } from '../gene_lanes.js';
 import { labelGeneOptions, openGeneCard } from '../cards.js';
 import { exportMenu, slug } from '../figure.js';
@@ -68,7 +69,7 @@ class SequencePage {
     ], this.cfg.coords, (v) => this.setCoords(v));
     this.hapSeg = segmented([{ value: 'H1', label: 'H1' }, { value: 'H2', label: 'H2' }, { value: 'H1+H2', label: 'Both' }], this.cfg.hap, (v) => { this.cfg.hap = v; this.persist(); this.fetch(true); });
     this.matchSeg = segmented([{ value: 'dots', label: 'Matches as ·' }, { value: 'bases', label: 'All bases' }], this.cfg.matches, (v) => { this.cfg.matches = v; this.persist(); this.render(); });
-    this.locusInput = h('input', { class: 'input locus-input', 'aria-label': 'Locus', spellcheck: 'false' });
+    this.locusInput = h('input', { class: 'input locus-input', 'aria-label': 'Locus', spellcheck: 'false', title: LOCUS_HINT });
     this.locusInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.gotoLocus(this.locusInput.value); });
     this.spanEl = h('span', { class: 'locus-span' });
     const toolbar = h('div', { class: 'ws-toolbar' },
@@ -185,13 +186,35 @@ class SequencePage {
     this.spanEl.textContent = `${fmtBp(v.span)} of ${fmtBp(v.length)}`;
   }
 
-  gotoLocus(text) {
+  async gotoLocus(text) {
     const m = /^(?:([\w.]+):)?\s*(\d+)(?:\s*[-–]\s*(\d+))?$/.exec(text.replace(/,/g, '').trim());
-    if (!m) { toast('Use chr:start-end, start-end or a position', 'error'); return; }
+    if (!m) { await this.gotoNamed(text.trim()); return; }
     const genomic = this.info.start && !['hap', 'axis'].includes(m[1]) && Number(m[2]) >= this.info.start;
     const conv = (x) => (genomic ? this.fromGenomic(x - this.info.start) : x - 1);
     if (!m[3]) { this.viewport.center(conv(Number(m[2])), Math.min(this.viewport.span, 400)); return; }
     this.viewport.set(conv(Number(m[2])), conv(Number(m[3])) + 1);
+  }
+
+  /** A gene name or rsID in the locus box (see locus.js). */
+  async gotoNamed(text) {
+    try {
+      const target = await resolveLocus(text, {
+        gene: this.cfg.gene,
+        window: this.info ? { chromosome: this.info.chromosome, start: this.info.start, end: this.info.start + this.info.length - 1 } : {},
+        annotations: (this.annotations && this.annotations.genes) || [],
+        genes: (state.summary && state.summary.genes || []).map((g) => g.gene),
+        windows: (state.summary && state.summary.genes) || [],
+      });
+      if (target.kind === 'window') {
+        toast(`${target.label}: switched to the ${target.gene} window`);
+        await this.setGene(target.gene);
+        if (target.position && this.info) this.viewport.center(this.fromGenomic(target.position - this.info.start), Math.min(this.viewport.span, 400));
+        return;
+      }
+      if (target.kind === 'position') { this.viewport.center(this.fromGenomic(target.pos - this.info.start), Math.min(this.viewport.span, 400)); return; }
+      const lo = Math.max(0, this.fromGenomic(target.start));
+      this.viewport.set(lo, Math.max(lo + 1, this.fromGenomic(target.end)));
+    } catch (err) { toast(err.message, 'error', 8000); }
   }
 
   rows() {

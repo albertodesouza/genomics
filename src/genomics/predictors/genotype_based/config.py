@@ -506,10 +506,20 @@ class LabelPermutationConfig(BaseModel):
     preserve_class_distribution: bool = True
     """Mantido para documentação do ablation; apenas True é suportado."""
 
+    stratify_field: Optional[str] = None
+    """Campo da pedigree (ex: 'superpopulation') dentro do qual permutar.
+
+    Sem o campo, a permutação é global e mede o acerto ao acaso. Com o campo, os labels
+    são embaralhados dentro de cada grupo, preservando a associação entre o grupo e a
+    classe: o acerto resultante é o que a estrutura populacional sozinha explica.
+    """
+
     @model_validator(mode="after")
     def validate_supported_mode(self) -> "LabelPermutationConfig":
         if self.enabled and not self.preserve_class_distribution:
             raise ValueError("label_permutation.preserve_class_distribution=false não é suportado")
+        if self.stratify_field is not None and not str(self.stratify_field).strip():
+            raise ValueError("label_permutation.stratify_field não pode ser vazio")
         return self
 
 
@@ -949,7 +959,8 @@ def generate_experiment_name(config: PipelineConfig) -> str:
     act = m.activation
     dr = m.dropout_rate
     opt = config.training.optimizer
-    ablation = "_yrand" if config.label_permutation.enabled else ""
+    lp = config.label_permutation
+    ablation = ("_yrand" + (f"_within_{lp.stratify_field}" if lp.stratify_field else "")) if lp.enabled else ""
     train_seed = config.training.random_seed
     split_seed = config.data_split.random_seed
     seed_tag = "" if train_seed is None or train_seed == split_seed else f"_tseed{train_seed}"

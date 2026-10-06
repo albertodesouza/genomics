@@ -15,6 +15,7 @@ import { Viewport, setupCanvas, theme, ticks, withAlpha, onResize, css } from '.
 import { loadGeneAnnotations, packGenes, drawGeneLanes, geneLanesHeight, geneAt, geneTooltip } from '../gene_lanes.js';
 import { labelGeneOptions, openGeneCard } from '../cards.js';
 import { exportMenu, slug } from '../figure.js';
+import { LOCUS_HINT, resolveLocus } from '../locus.js';
 
 const GUTTER_L = 92;
 const GUTTER_R = 14;
@@ -98,7 +99,7 @@ class PerturbPage {
       h('div', { class: 'divider' }),
       field('Individual', h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, this.sampleInput, this.sampleList, this.labelEl)),
       field('Gene', h('div', { style: { display: 'flex', gap: '4px', alignItems: 'center' } }, this.geneSelect, iconButton('info', 'Gene card: HGNC names, database links and Gene Ontology', () => this.geneSelect.value && openGeneCard(this.geneSelect.value), 'icon-btn bordered'))), field('Track output', this.outputSelect), field('Show', this.hapSeg));
-    this.locusInput = h('input', { class: 'input locus-input', 'aria-label': 'Locus', spellcheck: 'false' });
+    this.locusInput = h('input', { class: 'input locus-input', 'aria-label': 'Locus', spellcheck: 'false', title: LOCUS_HINT });
     this.locusInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.gotoLocus(this.locusInput.value); });
     this.spanEl = h('span', { class: 'locus-span' });
     this.statusEl = h('span', { class: 'muted', style: { fontSize: '12px' } });
@@ -268,13 +269,30 @@ class PerturbPage {
     this.spanEl.textContent = `${fmtBp(v.span)} of ${fmtBp(v.length)}`;
   }
 
-  gotoLocus(text) {
+  async gotoLocus(text) {
     const m = /^(?:[\w.]+:)?\s*(\d+)(?:\s*[-–]\s*(\d+))?$/.exec(text.replace(/,/g, '').trim());
+    if (!m && this.info) { await this.gotoNamed(text.trim()); return; }
     if (!m || !this.info) { toast('Use chr:start-end or a position', 'error'); this.renderLocus(); return; }
     const conv = (x) => (Number(x) > this.info.start ? Number(x) - this.info.start : Number(x) - 1);
     if (!m[2]) this.viewport.center(conv(m[1]));
     else this.viewport.set(conv(m[1]), conv(m[2]) + 1);
     this.locusInput.blur();
+  }
+
+  /** A gene name in the locus box; the Lab only edits the loaded model's own windows. */
+  async gotoNamed(text) {
+    try {
+      const target = await resolveLocus(text, {
+        gene: this.cfg.gene,
+        window: { chromosome: this.info.chromosome, start: this.info.start, end: this.info.start + this.info.length - 1 },
+        annotations: (this.annotations && this.annotations.genes) || [],
+        genes: this.model ? this.model.genes : [],
+        windows: [],
+      });
+      if (target.kind === 'window') { toast(`${target.label}: switched to the ${target.gene} window`); await this.setGene(target.gene); return; }
+      if (target.kind === 'position') { this.viewport.center(target.pos - this.info.start); return; }
+      this.viewport.set(Math.max(0, target.start), target.end);
+    } catch (err) { toast(err.message, 'error', 8000); }
   }
 
   status(text) { this.statusEl.textContent = text || ''; }

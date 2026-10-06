@@ -528,10 +528,32 @@ def build_train_config(dataset: Dataset, body: Dict[str, Any], runs: Dict[str, P
     split.setdefault("family_split_mode", "family_aware")
     if not has_families:
         split["family_split_mode"] = "ignore"
+    # Negative controls: permuted labels and/or a matched control panel (see controls.py).
+    control = dict(body.get("negative_control") or {})
+    mode = str(control.get("labels") or "none")
+    if mode not in ("none", "permute", "permute_within"):
+        raise LaunchError("negative_control.labels must be none, permute or permute_within")
+    if mode == "none":
+        config.pop("label_permutation", None)
+    else:
+        permutation: Dict[str, Any] = {"enabled": True, "random_seed": int(control.get("seed") or 13)}
+        if mode == "permute_within":
+            stratify = str(control.get("stratify_field") or "")
+            if stratify not in {f["name"] for f in dataset.fields}:
+                raise LaunchError("Choose the field to permute the labels within")
+            if stratify == out["prediction_target"] or stratify == field:
+                raise LaunchError(f"Permuting within '{stratify}' would keep every label where it is")
+            permutation["stratify_field"] = stratify
+        config["label_permutation"] = permutation
+
     config.setdefault("wandb", {})["use_wandb"] = False
     config.setdefault("checkpointing", {})["load_checkpoint"] = None
     config["mode"] = "train"
-    config.setdefault("metadata", {})["note"] = f"Started from the visualizer ({base_label}) on {dataset.name}"
+    note = f"Started from the visualizer ({base_label}) on {dataset.name}"
+    control_note = _control_summary(config.get("label_permutation"), body)
+    if control_note:
+        note += f". Negative control: {control_note['description']}"
+    config.setdefault("metadata", {})["note"] = note
     summary = {
         "dataset_id": dataset.id,
         "dataset_path": str(dataset.path),
@@ -547,8 +569,24 @@ def build_train_config(dataset: Dataset, body: Dict[str, Any], runs: Dict[str, P
         "results_dir": di["results_dir"],
         "samples": len(cohort) if di["sample_ids"] else len(dataset.samples),
         "epochs": training.get("num_epochs"),
+        "negative_control": _control_summary(config.get("label_permutation"), body),
     }
     return config, summary
+
+
+def _control_summary(permutation: Optional[Dict[str, Any]], body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """What the run is a negative control for, if anything (shown in the preview and the config note)."""
+    parts = []
+    if permutation and permutation.get("enabled"):
+        within = permutation.get("stratify_field")
+        parts.append(
+            f"labels permuted within {within} (seed {permutation['random_seed']}): what {within} alone explains"
+            if within else
+            f"labels permuted (seed {permutation['random_seed']}): chance level"
+        )
+    if body.get("control_panel"):
+        parts.append("matched control windows instead of the chosen panel")
+    return {"description": "; ".join(parts), "label_permutation": permutation} if parts else None
 
 
 def validate_config(config: Dict[str, Any], scratch: Path) -> None:
