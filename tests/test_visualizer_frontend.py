@@ -16,8 +16,11 @@ from test_visualizer_variants import GTEX_ANSWERS, INS, FakeRemote
 sync_api = pytest.importorskip("playwright.sync_api")
 
 PAGES = ["overview", "samples", "tracks", "sequence", "variant", "perturb", "experiments", "jobs", "alphagenome", "system", "import"]
-# Resource loads the app does not control (the browser asks for a favicon).
-IGNORED_CONSOLE = ("favicon",)
+# Console noise the app does not control: the browser asks for a favicon, and it logs a line for
+# every failed response. A 503 is the server saying this machine cannot provide a feature (no
+# AlphaGenome backend on a CI runner); the pages handle it, which
+# test_import_page_without_an_alphagenome_backend checks. Any other status still fails a test.
+IGNORED_CONSOLE = ("favicon", "status of 503")
 APPS = {}
 
 
@@ -509,3 +512,30 @@ def test_tracks_copy_as_python_runs_and_returns_the_view(page, server_url):
     assert data["series"][0]["mean"].shape[0] == 2  # both chosen tracks
     assert namespace["reference"]["series"][0]["label"] == "Reference genome"
     assert page.errors == []
+
+
+def test_import_page_without_an_alphagenome_backend(page, server_url):
+    """No AlphaGenome backend (a CI runner, a fresh install): the Import page still works.
+
+    The page prefetches the track catalog to fill the tissue picker; when the server has no backend
+    it answers 503, which must stay a missing feature rather than a broken page.
+    """
+    import json
+    import re
+
+    seen = []
+
+    def handle(route):
+        seen.append(route.request.url)
+        route.fulfill(status=503, content_type="application/json",
+                      body=json.dumps({"error": "AlphaGenome backend not ready: no API key"}))
+
+    page.route(re.compile(r".*/api/alphagenome/catalog.*"), handle)
+    _open(page, f"{server_url}/#/import")
+    assert seen, "the page did not ask for the catalog"
+    assert page.locator("#page").inner_text().strip()
+    boxes = [t for t in page.locator(".error-box").all_inner_texts() if not t.startswith(EXPECTED_BOXES)]
+    assert boxes == [], boxes  # a machine without bcftools may still show that notice
+    assert page.locator(".toast.error").count() == 0
+    # Only the browser's own line for the refused request, which IGNORED_CONSOLE covers.
+    assert [e for e in page.errors if "status of 503" not in e] == []
