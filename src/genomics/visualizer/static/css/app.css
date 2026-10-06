@@ -362,6 +362,8 @@ details.collapsible > summary { cursor: pointer; font-weight: 600; padding: 4px 
 .delta.down { color: var(--critical); }
 .edit-list { display: grid; gap: 4px; }
 .edit-item { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; font-size: 12px; }
+.scan-lane { border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--surface-2) 45%, transparent); }
+.scan-summary { display: grid; gap: 4px; }
 
 @media (max-width: 1100px) {
   .workspace { grid-template-columns: minmax(0, 1fr); height: auto; }

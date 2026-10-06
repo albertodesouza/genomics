@@ -223,3 +223,66 @@ def test_ancestry_pca_scatter_pc_fields_and_matching(page, server_url):
     _wait_state(page, "m.cohortSize() === 2")
     page.evaluate("async () => { const m = await import('/static/js/state.js'); m.setFilters({}); }")
     assert page.errors == []
+
+
+def test_perturbation_saturation_scan_lane(page, server_url):
+    """The scan section posts the scan, polls it, draws the lane and turns a window into an edit (the
+    model and AlphaGenome are stubbed; the scan itself is tested in test_visualizer_workflows)."""
+    import json
+    import re
+
+    from test_visualizer import L
+
+    dataset = APPS[server_url].catalog.all()[0]
+    mw_start = L // 2 - 20  # window_center_size 40, centred like the page's modelWindow()
+    model = {"run": "run1", "checkpoint": "best.pt", "model": "CNN2", "target": "superpopulation", "label_field": "superpopulation",
+             "classes": ["AFR", "EUR"], "class_counts": {"AFR": 2, "EUR": 1}, "genes": ["GENE1"], "outputs": ["rna_seq"], "ontology_terms": [],
+             "window_center_size": 40, "dataset_id": dataset.id, "dataset_path": str(dataset.path), "device": "cpu",
+             "samples": [{"id": "S1", "label": "AFR", "split": "test"}, {"id": "S2", "label": "EUR", "split": "train"}]}
+    rows = [{"start": mw_start + 10 * k, "end": mw_start + 10 * k + 10, "changed": 0 if k == 3 else 10,
+             "edited": [0.6 + d, 0.4 - d], "delta": [d, -d]} for k, d in enumerate([-0.2, 0.05, 0.1, 0.0])]
+    posted = []
+
+    def handle(route):
+        path = re.sub(r"\?.*$", "", route.request.url).split("/api/perturb/")[1]
+        if path == "models":
+            body = {"runs": [{"id": "run1", "name": "run1", "compatible": True, "checkpoints": ["best.pt"], "default_checkpoint": "best.pt"}],
+                    "loaded": {"run": "run1", "checkpoint": "best.pt"}, "default": "run1", "training": [], "backend": {"label": "stub", "reasons": []}}
+        elif path == "model":
+            body = model
+        elif path == "score":
+            body = {"sample": "S1", "label": "AFR", "split": "test", "classes": ["AFR", "EUR"], "probabilities": [0.6, 0.4]}
+        elif path == "sequence":
+            body = {"gene": "GENE1", "sample": "S1", "start": 0, "end": L, "domain": L, "mode": "density", "edges": [0, L], "rows": []}
+        elif path == "scan":
+            posted.append(json.loads(route.request.post_data))
+            spec = posted[-1]
+            body = {"pending": True, "job": {"id": "j1", "progress": 0.5, "message": "Window 2/4", "elapsed": 1}} if len(posted) == 1 else {
+                **spec, "key": "k", "classes": ["AFR", "EUR"], "baseline": [0.6, 0.4], "label": "AFR", "model_window": {}, "rows": rows, "calls": 6, "elapsed": 2.5}
+        else:
+            return route.continue_()
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(body))
+
+    page.route(re.compile(r".*/api/perturb/.*"), handle)
+    _open(page, f"{server_url}/#/perturb?run=run1&sample=S1&gene=GENE1")
+    section = page.locator(".side-section", has_text="Saturation scan")
+    section.wait_for()
+    assert "0 windows" in section.inner_text()  # 1,024 bp windows do not fit the 40 bp model window
+    section.locator("label.field", has_text="Window (bp)").locator("input").fill("10")
+    assert "4 windows, up to 8 AlphaGenome calls" in section.inner_text()  # the step followed the window
+    section.get_by_role("button", name="Run scan").click()
+    page.locator(".side-section .scan-row").first.wait_for()
+    assert len(posted) >= 2 and posted[0] == posted[-1]  # polled by re-posting the same body
+    assert {k: posted[0][k] for k in ("op", "start", "end", "size", "step", "haplotypes")} == {
+        "op": "scramble", "start": mw_start, "end": mw_start + 40, "size": 10, "step": 10, "haplotypes": ["H1", "H2"]}
+    section = page.locator(".side-section", has_text="Saturation scan")
+    ranked = section.locator(".scan-row").all_inner_texts()
+    assert len(ranked) == 3 and ranked[0].startswith("-20.0 pp")  # unchanged window left out; largest |delta| first for the true class
+    assert "1 window unchanged" in section.inner_text()
+    assert page.evaluate("!document.querySelector('.scan-lane').hidden && document.querySelector('.scan-lane canvas').height > 1")
+    section.locator("label.field", has_text="Show class").locator("select").select_option("EUR")
+    assert page.locator(".side-section .scan-row").first.inner_text().startswith("+20.0 pp")
+    page.locator(".side-section .scan-row").first.get_by_role("button", name="Add as an edit").click()
+    edits = page.locator(".side-section", has_text="Edits").locator(".edit-item").all_inner_texts()
+    assert len(edits) == 1 and "Scramble" in edits[0] and "H1+H2" in edits[0]
+    assert page.errors == []

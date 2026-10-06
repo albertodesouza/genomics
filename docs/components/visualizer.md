@@ -34,11 +34,11 @@ GitHub workflow.
 | Page | What it does |
 |---|---|
 | Overview | Dataset summary, cohort composition by any sample field, gene windows, outputs/tracks, open other datasets |
-| Samples | Faceted cohort builder (counts update across facets), virtualized table, sample details, pin individuals, CSV export, save the cohort as a training `.view.json` (former View Builder) |
-| Tracks | Canvas genome browser: overview strip, ruler, gene models, a sequence lane and one panel per AlphaGenome track. Tracks of several outputs (RNA-seq, CAGE, DNase, ChIP, …) can be shown together, up to 16 at once; drag a panel's grip (⋮⋮, or focus it and press ↑ / ↓) to reorder them (the order is remembered, new tracks are added at the bottom). Shows pinned **individuals**, cohort **group means** ± SD (or each group's difference from the cohort mean) by any facet, or a **population heatmap** with every cohort sample as a row. *Compare with* adds AlphaGenome's prediction of the **reference genome** (dashed line) and the **observed** ENCODE / FANTOM5 signal behind each track (a lane under it); see [Reference and observed data](#reference-and-observed-data). Track names open a track card, gene models and the gene button a gene card (see [Links to databases](#links-to-ontologies-and-databases)). The sequence lane shows the letter frequency per base over the pinned haplotypes (or the reference genome): letters scaled by frequency when zoomed in, stacked base composition per bin when zoomed out |
+| Samples | Faceted cohort builder (counts update across facets), virtualized table, sample details, pin individuals, CSV export, save the cohort as a training `.view.json` (former View Builder). *Region scalars* turn a track's signal over a region into a sample field; the *Ancestry PCA* view shows genotype PCs and matches two groups on them; see [Region scalars](#region-scalars) and [Ancestry PCA and matching](#ancestry-pca-and-matching) |
+| Tracks | Canvas genome browser: overview strip, ruler, gene models, a sequence lane and one panel per AlphaGenome track. Tracks of several outputs (RNA-seq, CAGE, DNase, ChIP, …) can be shown together, up to 16 at once; drag a panel's grip (⋮⋮, or focus it and press ↑ / ↓) to reorder them (the order is remembered, new tracks are added at the bottom). Shows pinned **individuals**, cohort **group means** ± SD (or each group's difference from the cohort mean) by any facet, or a **population heatmap** with every cohort sample as a row. *Compare with* adds AlphaGenome's prediction of the **reference genome** (dashed line) and the **observed** ENCODE / FANTOM5 signal behind each track (a lane under it, with an agreement badge); see [Reference and observed data](#reference-and-observed-data). *Region scalar…* defines a per-sample scalar from the view. Track names open a track card, gene models and the gene button a gene card (see [Links to databases](#links-to-ontologies-and-databases)). The sequence lane shows the letter frequency per base over the pinned haplotypes (or the reference genome): letters scaled by frequency when zoomed in, stacked base composition per bin when zoomed out |
 | Sequence | Pinned haplotypes against the reference: gene models, bases when zoomed in (mismatches coloured, matches as dots, deletions and insertions marked), mismatch/indel density when zoomed out, variant lane and genotype table |
 | Variant | One site across the cohort: genotype counts and ALT frequency by any sample field, AlphaGenome's predicted signal by genotype over a region (an in-silico eQTL) and GTEx's measured eQTL of the same variant, with whether the directions agree; see [Variant page](#variant-page) |
-| Perturbation Lab | Edit an individual's haplotypes (scramble, overwrite, revert to reference, custom sequence), re-predict them with AlphaGenome and re-score them with any trained model; gene models, original vs edited tracks, class means and class probabilities |
+| Perturbation Lab | Edit an individual's haplotypes (scramble, overwrite, revert to reference, custom sequence), re-predict them with AlphaGenome and re-score them with any trained model; gene models, original vs edited tracks, class means and class probabilities. A *saturation scan* slides one edit across a range and shows how much each window moves a class probability |
 | Experiments | Runs table with any numeric metric (`weighted_*` included), training curves, run comparison, confusion matrix, per-class metrics, config, plots. Start a training run, evaluate a checkpoint on a split, or open a run in the Perturbation Lab |
 | Jobs | Background jobs (imports, AlphaGenome predictions, training, evaluation): progress, live log, cancel. They keep running when the tab closes or the visualizer stops |
 | AlphaGenome | Chooses the AlphaGenome backend (hosted API, remote server, or a server started on this machine) used by the lab and by prediction jobs |
@@ -88,6 +88,64 @@ has its own scale). Coverage of the AlphaGenome catalog: 524 of 546 CAGE tracks 
 libraries. On TYRP1 the observed FANTOM5 melanocyte TSS peaks (+0, +67, +70 bp from the MANE TSS)
 are exactly where AlphaGenome predicts them. Hovering a lane shows its value; clicking its name
 lists the experiments with links.
+
+**Agreement badge.** Each observed lane carries a badge comparing it with the predicted track over the
+bins in view: Pearson r of the values and of log(1 + x), the share of the observed peak bins (top
+decile) that are also predicted peak bins, and the ratio of the means (predicted / observed). Units
+differ between sources, so the ratio is only meaningful, and only flagged, for FANTOM5 CAGE in TPM
+(beyond 4× either way); the badge is also flagged when log r < 0.3. Hover it for the details. On
+TYRP1, melanocyte RNA-seq agrees well (r 0.84, 96% of the observed peak bins shared), while melanocyte
+CAGE is predicted about 4.5× higher than FANTOM5 measures. The statistics depend on the view: zoom to
+a gene or exon to judge it locally.
+
+## Region scalars
+
+A region scalar is one number per sample: the mean of one AlphaGenome track over a region, averaged
+over H1 and H2, optionally summed over the region's length and log2(x + 1) transformed. Define one
+with *Region scalar…* on the Tracks page (prefilled with the view's window, output, first track and
+locus) or *New…* under *Region scalars* in the Samples sidebar. The region is a gene's TSS ± a
+flank (500 bp by default), a gene body, or a custom genomic range. The scalar becomes a numeric sample field (a
+Samples column, exported with the CSV) and, with bins, a categorical field `<name>_bin` with quantile
+bins `Q1` (lowest) … `Qk`, so it can filter the cohort and split group means on Tracks. The Samples
+sidebar shows each scalar's histogram and bin edges.
+
+Values come from the per-haplotype region means of the Variant page (computed for all tracks of an
+output at once and cached under `<cache>/region_means`); for melanocyte RNA-seq over the TYRP1 gene
+body that takes about 20 s for the 3,202 samples of the 1000 Genomes dataset, and other tracks of the
+same output and region are then instant. Definitions are kept per dataset path in
+`~/.config/genomics/visualizer_scalars.json` and re-applied from the cache whenever the samples are
+listed. A scalar needs every sample's prediction of that output: per-sample CAGE predictions, for
+example, must be made before CAGE scalars are useful.
+
+## Ancestry PCA and matching
+
+*Ancestry PCA* on the Samples page (the *Table / Ancestry PCA* switch) shows a principal component
+analysis of the cohort's genotypes, as a scatter of any two PCs coloured by any sample field (the
+current cohort in front, the other samples dimmed; click a point to pin or unpin the sample).
+
+**How it is computed** (`genomics.visualizer.ancestry`). Sites are biallelic SNVs with minor allele
+frequency ≥ 5% over all samples, thinned to one per 2,000 bp (a crude stand-in for LD pruning), from
+the cohort genotype matrices of the chosen windows (see [Variant page](#variant-page)). Dosages are
+standardised per site and the scores come from the eigendecomposition of the samples' genetic
+relationship matrix, as in EIGENSOFT; 10 components by default (up to 20). Only samples genotyped in
+every chosen window get PCs. By default the windows covering the most samples are used, preferring
+control windows (windows not listed in the dataset metadata's genes). *Windows & filters…* changes
+the windows, MAF, spacing and number of components. Results are cached under `<cache>/ancestry_pca`.
+*Add PC fields* adds `pc1` … `pcK` as numeric sample fields.
+
+**Matching.** *Match two groups* pairs each sample of group A with its nearest unused sample of group
+B on the first k PCs (greedy 1:1 nearest neighbour, among the samples of the current cohort, within a
+caliper in pooled SDs of the PC space; 0 = no limit). The table shows the standardised mean difference
+of each PC before and after matching. The matched samples become a categorical sample field (named by
+you; group A's and B's labels, empty for unmatched samples) for *Use as cohort* or *Group means in
+Tracks →*, so a comparison of the groups is not driven by ancestry differences between them.
+
+In the 1000 Genomes dataset the 33 control windows have VCFs for only 1,072 of the 3,202 samples (AFR
+and EUR), so the default PCA uses the 11 pigmentation windows, which cover every sample. On it, the
+pigmentation labels' *weak* (EUR) and *strong* (AFR) groups differ by 10.4 pooled SDs on PC1 and no
+pair falls within the default caliper: the label is population membership, and no ancestry-matched
+comparison exists within this cohort. AMR vs EUR, by contrast, gives 79 pairs with every PC balanced
+(|SMD| < 0.12).
 
 ## Links to ontologies and databases
 
@@ -272,9 +330,10 @@ the region on the target gene's strand. *Tracks by genotype →* opens the Track
 by genotype at the site (group field `variant:<pos>:<ref>:<alt>`).
 
 **How it is computed.** Genotypes of every sample at every site of a window come from the samples'
-phased window VCFs (a sample without a record at a site is homozygous REF; multi-allelic records are
-split per ALT allele). They are read once per window as a background job (about 80 s for the 3,202
-samples of the 1000 Genomes dataset) and cached on disk (`<cache>/cohort_genotypes`). The mean
+phased window VCFs (a sample with a VCF but no record at a site is homozygous REF; a sample without a
+VCF for the window is not genotyped and left out of the counts; multi-allelic records are split per ALT
+allele). They are read once per window as a background job, in parallel worker processes (3–8 s per
+window for the 3,202 samples of the 1000 Genomes dataset), and cached on disk (`<cache>/cohort_genotypes`). The mean
 signal of every haplotype over a region is computed for all tracks of an output at once (about 80 s
 for 6,404 haplotypes) and cached (`<cache>/region_means`), so switching track, cohort filters or site
 afterwards is instant. The AlphaGenome slope is an association across the cohort, like an eQTL: it
@@ -309,6 +368,18 @@ rebuilds the model input and shows every class probability before and after. Tra
 and edited signal (or their difference), optionally with each class's mean over the cohort; the
 sequence lane shows reference, original and edited bases. AlphaGenome results are cached by
 sequence (`<cache>/perturb`). Re-predicting an unedited haplotype reproduces its stored tracks.
+
+**Saturation scan.** The *Saturation scan* section slides one edit (scramble, overwrite or revert to
+the reference) across a range (the model window, the view or the selection) in windows of a chosen
+size every *step* bp (step = window: tiled; smaller: overlapping), on H1, H2 or both, and re-scores
+the model after each window. It is a background job (`POST /api/perturb/scan`, at most 256 windows);
+each window costs one AlphaGenome call per edited haplotype, and windows where the edit changes no
+base (reverting a stretch without variants) are scored as unchanged without a call. The result is a
+lane above the tracks with the change in one class probability per window (the individual's true
+class by default; green up, red down, grey ticks for unchanged windows; hover for every class) and a
+list of the windows with the largest changes: *Show* zooms to one, *+* adds it as an edit so *Run*
+shows its effect on the tracks. *Download TSV* saves every window's genomic range, changed bases,
+probabilities and changes.
 
 ## AlphaGenome backend
 

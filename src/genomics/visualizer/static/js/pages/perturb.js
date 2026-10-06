@@ -4,10 +4,13 @@
 // Edits are made on the genomic axis (drag on the sequence lane) and applied to each chosen
 // haplotype through its own indels; overwrite / scramble / revert-to-reference / custom sequence
 // all keep the haplotype length, so edited predictions line up with the originals.
+//
+// The saturation scan slides one edit over a range window by window and re-scores the model after
+// each, drawing the change in one class probability per window as a lane above the tracks.
 import { api, apiJob, isAbort, Latest } from '../api.js';
 import { navigate, updateRouteParams, watchJobs } from '../app.js';
 import { state, setDataset, emit, loadStatus } from '../state.js';
-import { h, clear, icon, iconButton, segmented, select, setOptions, field, checkbox, fmtInt, fmtBp, fmtNum, fmtPct, toast, jobOverlay, debounce, errorBox, showTooltip, hideTooltip, escapeHtml } from '../ui.js';
+import { h, clear, icon, iconButton, segmented, select, setOptions, field, checkbox, fmtInt, fmtBp, fmtNum, fmtPct, toast, jobOverlay, debounce, downloadText, errorBox, showTooltip, hideTooltip, escapeHtml } from '../ui.js';
 import { Viewport, setupCanvas, theme, ticks, withAlpha, onResize, css } from '../plot.js';
 import { loadGeneAnnotations, packGenes, drawGeneLanes, geneLanesHeight, geneAt, geneTooltip } from '../gene_lanes.js';
 import { labelGeneOptions, openGeneCard } from '../cards.js';
@@ -18,12 +21,15 @@ const GUTTER_R = 14;
 const PANEL_H = 120;
 const ROW_H = 18;
 const LETTER_SPAN = 4000;
+const SCAN_H = 78;
+const MAX_SCAN_WINDOWS = 256; // perturb.MAX_SCAN_POSITIONS
 const OPS = [
   { value: 'scramble', label: 'Scramble', title: 'Shuffle the bases of the region (keeps composition)' },
   { value: 'overwrite', label: 'Overwrite', title: 'Replace every base of the region with one base' },
   { value: 'reference', label: 'Revert', title: 'Revert the haplotype to the reference in the region (removes SNVs; indels stay)' },
   { value: 'sequence', label: 'Sequence', title: 'Replace the region with your own sequence (same length)' },
 ];
+const SCAN_OPS = OPS.filter((o) => o.value !== 'sequence');
 
 export async function mount(root, params) {
   const page = new PerturbPage(root);
@@ -46,9 +52,11 @@ class PerturbPage {
     this.means = null;
     this.seq = null;
     this.selection = null; // [start, end) reference offsets
+    this.scan = null; // last saturation scan result for this sample and gene
     this.annotations = null;
     this.geneRows = [];
-    this.cfg = { sample: null, gene: null, output: null, tracks: null, haps: 'both', editHaps: ['H1', 'H2'], op: 'scramble', base: 'A', seed: 1, sequence: '', means: false, delta: false, log: false };
+    this.cfg = { sample: null, gene: null, output: null, tracks: null, haps: 'both', editHaps: ['H1', 'H2'], op: 'scramble', base: 'A', seed: 1, sequence: '', means: false, delta: false, log: false,
+      scanOp: 'scramble', scanBase: 'N', scanRange: 'model', scanSize: 1024, scanStep: 1024, scanHaps: ['H1', 'H2'], scanClass: null };
   }
 
   // ------------------------------------------------------------------ setup
@@ -108,15 +116,16 @@ class PerturbPage {
       iconButton('panel', 'Toggle side panel', () => { this.page.classList.toggle('side-collapsed'); this.render(); }, 'icon-btn bordered'));
     this.rulerHost = h('div', { class: 'canvas-host', style: { borderBottom: '1px solid var(--line)' } }, h('canvas'));
     this.panelsHost = h('div', { class: 'canvas-host' });
+    this.scanHost = h('div', { class: 'canvas-host scan-lane', hidden: true }, h('canvas'));
     this.seqHost = h('div', { class: 'canvas-host seq-lane', style: { borderTop: '1px solid var(--line)' } }, h('canvas'));
     this.legend = h('div', { class: 'legend' });
     this.loadingLine = h('div', { class: 'loading-line', hidden: true });
     this.crosshair = h('div', { class: 'crosshair', hidden: true });
-    this.scroll = h('div', { class: 'ws-scroll' }, this.loadingLine, this.rulerHost, this.legend, h('div', { style: { position: 'relative' } }, this.panelsHost, this.seqHost, this.crosshair));
+    this.scroll = h('div', { class: 'ws-scroll' }, this.loadingLine, this.rulerHost, this.legend, h('div', { style: { position: 'relative' } }, this.scanHost, this.panelsHost, this.seqHost, this.crosshair));
     this.side = h('aside', { class: 'side', 'aria-label': 'Perturbation' });
     this.page.append(h('div', { class: 'ws-main' }, toolbar, locus, this.scroll), this.side);
     this.viewport = new Viewport({ length: 1, start: 0, end: 1, minSpan: 20, onChange: () => this.onViewChange() });
-    for (const el of [this.rulerHost, this.panelsHost]) {
+    for (const el of [this.rulerHost, this.scanHost, this.panelsHost]) {
       this.viewport.attach(el, () => this.geom(), { onHover: (e, f) => this.onHover(e, f), onLeave: () => this.clearHover() });
     }
     this.attachSequenceLane();
@@ -179,7 +188,7 @@ class PerturbPage {
   async setSample(sample, quiet = false) {
     if (!this.model) return;
     if (!this.byId.has(sample)) { if (!quiet) toast(`${sample} is not in the model's dataset`, 'error'); return; }
-    if (sample !== this.cfg.sample) { this.edits = []; this.result = null; }
+    if (sample !== this.cfg.sample) { this.edits = []; this.result = null; this.scan = null; this.cfg.scanClass = null; }
     this.cfg.sample = sample;
     this.sampleInput.value = sample;
     const s = this.byId.get(sample);
@@ -200,6 +209,7 @@ class PerturbPage {
     this.geneSelect.value = gene;
     this.edits = []; // edits are positions in one gene's window
     this.result = null;
+    this.scan = null;
     this.selection = null;
     this.means = null;
     this.annotations = null;
@@ -271,6 +281,7 @@ class PerturbPage {
 
   onViewChange() {
     this.renderLocus();
+    if (this.cfg.scanRange === 'view') this.updateScanCount();
     this.render();
     this.request();
     this.requestSequence();
@@ -469,11 +480,217 @@ class PerturbPage {
     this.invalidate();
   }
 
+  // ------------------------------------------------------------------ saturation scan
+  /** [start, end) reference offsets the scan covers, from the chosen range. */
+  scanBounds() {
+    if (this.cfg.scanRange === 'selection' && this.selection) return [Math.floor(this.selection[0]), Math.ceil(this.selection[1])];
+    if (this.cfg.scanRange === 'view') return [Math.floor(this.viewport.start), Math.ceil(this.viewport.end)];
+    const mw = this.modelWindow();
+    return mw ? [mw.start, mw.end] : [0, this.info ? this.info.length : 0];
+  }
+
+  scanWindows() {
+    const [start, end] = this.scanBounds();
+    const size = Math.max(1, Math.round(Number(this.cfg.scanSize) || 0));
+    const step = Math.max(1, Math.round(Number(this.cfg.scanStep) || size));
+    return end - start < size ? 0 : Math.floor((end - start - size) / step) + 1;
+  }
+
+  scanBody() {
+    const [start, end] = this.scanBounds();
+    const size = Math.max(1, Math.round(Number(this.cfg.scanSize) || 0));
+    const body = { sample: this.cfg.sample, gene: this.cfg.gene, op: this.cfg.scanOp, haplotypes: [...this.cfg.scanHaps], start, end, size, step: Math.max(1, Math.round(Number(this.cfg.scanStep) || size)) };
+    if (body.op === 'overwrite') body.base = this.cfg.scanBase;
+    if (body.op === 'scramble') body.seed = Number(this.cfg.seed) || 0;
+    return body;
+  }
+
+  /** Index of the class whose probability the scan lane shows (default: the individual's true class). */
+  scanClassIndex() {
+    const classes = this.model ? this.model.classes : [];
+    const sample = this.byId && this.byId.get(this.cfg.sample);
+    const name = this.cfg.scanClass || (sample && sample.label) || classes[0];
+    return Math.max(0, classes.indexOf(name));
+  }
+
+  currentScan() {
+    const s = this.scan;
+    return s && s.sample === this.cfg.sample && s.gene === this.cfg.gene ? s : null;
+  }
+
+  async runScan() {
+    const body = this.scanBody();
+    const n = this.scanWindows();
+    if (!n) { toast('The range is shorter than one window', 'error'); return; }
+    if (n > MAX_SCAN_WINDOWS) { toast(`${n} windows; at most ${MAX_SCAN_WINDOWS}. Use a larger step or a shorter range.`, 'error'); return; }
+    this.scanning = true;
+    this.renderSide();
+    const overlay = jobOverlay(this.scroll, `Saturation scan (${n} windows)`, (jobId) => api(`/api/jobs/${jobId}/cancel`, { method: 'POST', body: {} }).catch(() => {}));
+    try {
+      this.scan = await apiJob('/api/perturb/scan', { method: 'POST', body, onProgress: (job) => { overlay.update(job); watchJobs(); } });
+      toast(`Scan done: ${fmtInt(this.scan.rows.length)} windows, ${fmtInt(this.scan.calls)} AlphaGenome calls in ${fmtNum(this.scan.elapsed, 3)} s`);
+    } catch (err) {
+      if (!isAbort(err)) toast(err.message === 'Cancelled' ? 'Scan cancelled' : err.message, err.message === 'Cancelled' ? 'info' : 'error', 10000);
+    } finally {
+      overlay.remove();
+      this.scanning = false;
+    }
+    this.renderSide();
+    this.render();
+  }
+
+  /** The scan windows as edits of the main edit list (to re-predict the tracks for one of them). */
+  scanRowAsEdit(row) {
+    const s = this.currentScan();
+    const edit = { op: s.op, start: row.start, end: row.end, haplotypes: [...s.haplotypes] };
+    if (s.op === 'overwrite') edit.base = s.base;
+    if (s.op === 'scramble') edit.seed = s.seed;
+    this.edits = [...this.edits, edit];
+    this.selection = [row.start, row.end];
+    this.renderSide();
+    this.requestSequence();
+    this.render();
+  }
+
+  exportScan() {
+    const s = this.currentScan();
+    if (!s) return;
+    const off = this.info ? this.info.start : 0;
+    const head = ['chromosome', 'start', 'end', 'changed_bases', ...s.classes.map((c) => `p_${c}`), ...s.classes.map((c) => `delta_${c}`)];
+    const lines = [head.join('\t'), ...s.rows.map((r) => [this.info ? this.info.chromosome : '', off + r.start, off + r.end - 1, r.changed, ...r.edited.map((v) => v.toFixed(6)), ...r.delta.map((v) => v.toFixed(6))].join('\t'))];
+    downloadText(`${slug(`${s.sample}_${s.gene}_scan_${s.op}_${s.size}bp`)}.tsv`, `${lines.join('\n')}\n`, 'text/tab-separated-values');
+  }
+
+  /** Window count and call estimate under the scan controls (updated in place while typing). */
+  updateScanCount() {
+    if (!this.scanCountEl) return;
+    const n = this.info ? this.scanWindows() : 0;
+    const haps = this.cfg.scanHaps.length;
+    const tooMany = n > MAX_SCAN_WINDOWS;
+    const [b0, b1] = this.info ? this.scanBounds() : [0, 0];
+    this.scanCountEl.className = tooMany ? 'error-box' : 'notice';
+    this.scanCountEl.textContent = (this.info ? `${fmtBp(b1 - b0)} → ${fmtInt(n)} window${n === 1 ? '' : 's'}, up to ${fmtInt(n * haps)} AlphaGenome calls` : '–')
+      + (tooMany ? ` (at most ${MAX_SCAN_WINDOWS} windows)` : '') + (this.cfg.scanOp === 'reference' ? ' · windows without variants are skipped' : '');
+    this.scanRunBtn.disabled = !n || tooMany || this.scanning || this.models.backend.reasons.length > 0;
+  }
+
+  scanSection() {
+    const opSeg = segmented(SCAN_OPS, this.cfg.scanOp, (v) => { this.cfg.scanOp = v; this.renderSide(); });
+    const ranges = [{ value: 'model', label: 'Model window' }, { value: 'view', label: 'View' }, { value: 'selection', label: 'Selection', disabled: !this.selection }];
+    if (this.cfg.scanRange === 'selection' && !this.selection) this.cfg.scanRange = 'model';
+    const rangeSeg = segmented(ranges, this.cfg.scanRange, (v) => { this.cfg.scanRange = v; this.updateScanCount(); });
+    const inputs = {};
+    const num = (key, label, title) => {
+      const input = h('input', { class: 'input', type: 'number', min: 1, value: this.cfg[key], style: { width: '84px' }, title });
+      input.addEventListener('input', () => {
+        const value = Math.max(1, Math.round(Number(input.value) || 1));
+        // Tiled windows stay tiled when the window size changes.
+        if (key === 'scanSize' && this.cfg.scanStep === this.cfg.scanSize) { this.cfg.scanStep = value; inputs.scanStep.value = value; }
+        this.cfg[key] = value;
+        this.updateScanCount();
+      });
+      inputs[key] = input;
+      return field(label, input);
+    };
+    const hapSeg = segmented([{ value: 'H1', label: 'H1' }, { value: 'H2', label: 'H2' }, { value: 'both', label: 'Both' }], this.cfg.scanHaps.length === 2 ? 'both' : this.cfg.scanHaps[0], (v) => { this.cfg.scanHaps = v === 'both' ? ['H1', 'H2'] : [v]; this.updateScanCount(); });
+    this.scanCountEl = h('div', { style: { fontSize: '12px' } });
+    this.scanRunBtn = h('button', { class: 'btn primary', onclick: () => this.runScan() }, icon('play', 14), this.scanning ? 'Scanning…' : 'Run scan');
+    const s = this.currentScan();
+    const out = [
+      h('h3', null, 'Saturation scan', s ? h('button', { class: 'btn small ghost', onclick: () => { this.scan = null; this.renderSide(); this.render(); } }, 'Clear') : null),
+      h('p', { class: 'help', style: { margin: 0 } }, 'Edit one window at a time across the range and re-score the model after each: the lane above the tracks shows how much each window moves the chosen class probability.'),
+      field('Operation', opSeg),
+      this.cfg.scanOp === 'overwrite' ? field('Base', segmented(['A', 'C', 'G', 'T', 'N'].map((b) => ({ value: b, label: b })), this.cfg.scanBase, (v) => { this.cfg.scanBase = v; })) : null,
+      field('Range', rangeSeg),
+      h('div', { style: { display: 'flex', gap: '8px' } }, num('scanSize', 'Window (bp)', 'Length of each edited window'), num('scanStep', 'Step (bp)', 'Distance between window starts (equal to the window: tiled; smaller: overlapping)')),
+      field('Haplotypes', hapSeg),
+      this.scanCountEl,
+      this.scanRunBtn,
+    ];
+    this.updateScanCount();
+    if (s) {
+      const ci = this.scanClassIndex();
+      const classSel = select(this.model.classes, this.model.classes[ci], (v) => { this.cfg.scanClass = v; this.renderSide(); this.render(); }, { 'aria-label': 'Scan class' });
+      const ranked = s.rows.filter((r) => r.changed).sort((a, b) => Math.abs(b.delta[ci]) - Math.abs(a.delta[ci])).slice(0, 8);
+      const unchanged = s.rows.filter((r) => !r.changed).length;
+      const top = ranked.map((r) => h('div', { class: 'edit-item scan-row' },
+        h('div', null,
+          h('b', { class: r.delta[ci] >= 0 ? 'delta up' : 'delta down', style: { fontSize: '12px' } }, `${r.delta[ci] >= 0 ? '+' : ''}${(r.delta[ci] * 100).toFixed(1)} pp`),
+          h('div', { class: 'muted mono', style: { fontSize: '11px' } }, `${this.info.chromosome}:${this.formatPos(r.start)}-${this.formatPos(r.end - 1)} · ${fmtInt(r.changed)} bases changed`)),
+        h('div', { style: { display: 'flex', gap: '2px' } },
+          iconButton('target', 'Show', () => this.viewport.center((r.start + r.end) / 2, Math.max(60, (r.end - r.start) * 6))),
+          iconButton('plus', 'Add as an edit (then run to see the edited tracks)', () => this.scanRowAsEdit(r)))));
+      out.push(
+        h('div', { class: 'scan-summary' },
+          field('Show class', classSel),
+          h('div', { class: 'help', style: { margin: 0 } }, `${s.op === 'overwrite' ? `Overwrite ${s.base}` : SCAN_OPS.find((o) => o.value === s.op).label} · ${fmtBp(s.size)} windows every ${fmtBp(s.step)} · ${s.haplotypes.join('+')} · baseline P(${s.classes[ci]}) ${fmtPct(s.baseline[ci])}${unchanged ? ` · ${fmtInt(unchanged)} window${unchanged === 1 ? '' : 's'} unchanged` : ''}`)),
+        ranked.length ? h('div', { class: 'edit-list' }, top) : h('div', { class: 'muted', style: { fontSize: '12px' } }, 'No window changed any base.'),
+        h('div', { style: { display: 'flex', gap: '6px' } },
+          h('button', { class: 'btn small', onclick: () => this.viewport.set(Math.max(0, s.start - (s.end - s.start) * 0.05), Math.min(this.viewport.length, s.end + (s.end - s.start) * 0.05)) }, icon('expand', 14), 'Show range'),
+          h('button', { class: 'btn small', onclick: () => this.exportScan() }, 'Download TSV')));
+    }
+    return h('div', { class: 'side-section' }, out);
+  }
+
+  scanRowAt(pos) {
+    const s = this.currentScan();
+    if (!s) return null;
+    // With overlapping windows several cover pos: report the one whose centre is nearest.
+    let best = null;
+    for (const r of s.rows) if (r.start <= pos && pos < r.end && (!best || Math.abs((r.start + r.end) / 2 - pos) < Math.abs((best.start + best.end) / 2 - pos))) best = r;
+    return best;
+  }
+
+  drawScan() {
+    const s = this.currentScan();
+    this.scanHost.hidden = !s;
+    if (!s) return;
+    const g = this.geom();
+    const t = theme();
+    const ctx = setupCanvas(this.scanHost.querySelector('canvas'), g.total, SCAN_H);
+    const ci = this.scanClassIndex();
+    const top = 20; const bottom = SCAN_H - 8;
+    let lo = 0; let hi = 0;
+    for (const r of s.rows) { lo = Math.min(lo, r.delta[ci]); hi = Math.max(hi, r.delta[ci]); }
+    if (hi - lo < 0.002) { hi = Math.max(hi, 0.001); lo = Math.min(lo, -0.001); }
+    const pad = (hi - lo) * 0.08; hi += pad; lo -= pad;
+    const sy = (val) => bottom - ((val - lo) / (hi - lo)) * (bottom - top);
+    this.drawBands(ctx, t, g, top - 4, bottom - top + 4);
+    ctx.font = `11px ${t.font}`; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillStyle = t.ink2;
+    ctx.fillText(`Saturation scan: Δ P(${s.classes[ci]}) per ${fmtBp(s.size)} window (${s.op}${s.op === 'overwrite' ? ` ${s.base}` : ''}, ${s.haplotypes.join('+')})`, g.left + 4, 4);
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (const val of ticks(lo, hi, 3)) {
+      const y = Math.round(sy(val)) + 0.5;
+      if (y < top - 1 || y > bottom + 1) continue;
+      ctx.strokeStyle = t.line; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(g.left, y); ctx.lineTo(g.left + g.width, y); ctx.stroke();
+      ctx.fillStyle = t.ink3; ctx.fillText(`${val > 0 ? '+' : ''}${fmtNum(val * 100, 2)} pp`, g.left - 6, y);
+    }
+    ctx.save();
+    ctx.beginPath(); ctx.rect(g.left, top - 4, g.width, bottom - top + 8); ctx.clip();
+    const y0 = sy(0);
+    const up = css('--good'); const down = css('--critical');
+    // Overlapping windows: draw at the step width centred on each window so bars do not cover each other.
+    const width = Math.min(s.size, s.step);
+    for (const r of s.rows) {
+      const mid = (r.start + r.end) / 2;
+      const x0 = this.xOf(mid - width / 2); const x1 = this.xOf(mid + width / 2);
+      if (x1 < g.left || x0 > g.left + g.width) continue;
+      const w = Math.max(1, x1 - x0 - (x1 - x0 > 4 ? 1 : 0));
+      if (!r.changed) { ctx.fillStyle = withAlpha(t.ink3, 0.35); ctx.fillRect(x0, y0 - 1, w, 2); continue; }
+      const d = r.delta[ci];
+      const y = sy(d);
+      ctx.fillStyle = withAlpha(d >= 0 ? up : down, 0.8);
+      ctx.fillRect(x0, Math.min(y, y0), w, Math.max(1, Math.abs(y - y0)));
+    }
+    ctx.strokeStyle = t.lineStrong; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(g.left, Math.round(y0) + 0.5); ctx.lineTo(g.left + g.width, Math.round(y0) + 0.5); ctx.stroke();
+    ctx.restore();
+  }
+
   // ------------------------------------------------------------------ side panel
   renderSide() {
     if (!this.model) { this.renderIdle(); return; }
     clear(this.side);
-    this.side.append(this.predictionSection(), this.editSection(), this.displaySection());
+    this.side.append(this.predictionSection(), this.editSection(), this.scanSection(), this.displaySection());
   }
 
   predictionSection() {
@@ -568,6 +785,7 @@ class PerturbPage {
       title: `${this.cfg.gene} · ${this.cfg.sample}${sample.label ? ` (${sample.label}${sample.split ? `, ${sample.split}` : ''})` : ''} · ${this.locusInput.value}`,
       caption: [
         `Model ${this.model.run} (${this.model.checkpoint}). ${edits.length ? `Edits: ${edits.join('; ')}${this.result ? '' : ' (not yet re-predicted)'}` : 'No edits'}.`,
+        ...(this.currentScan() ? [`Saturation scan: ${this.scan.op}${this.scan.base ? ` ${this.scan.base}` : ''}, ${fmtInt(this.scan.size)} bp windows every ${fmtInt(this.scan.step)} bp over ${fmtInt(this.info.start + this.scan.start)}-${fmtInt(this.info.start + this.scan.end - 1)} (${this.scan.haplotypes.join('+')}); bars: change in P(${this.scan.classes[this.scanClassIndex()]}).`] : []),
         `Dataset ${state.datasetId} · ${this.spanEl.textContent} · exported ${today} from genomics visualize`,
       ],
       filename: slug(`${this.cfg.sample}_${this.cfg.gene}_${this.locusInput.value.replace(/,/g, '')}_perturbation`),
@@ -578,6 +796,7 @@ class PerturbPage {
     if (!this.info) { this.drawEmpty(); return; }
     this.renderLocus();
     this.drawRuler();
+    this.drawScan();
     this.drawPanels();
     this.drawSequence();
     this.renderLegend();
@@ -821,6 +1040,13 @@ class PerturbPage {
       if (gene) { showTooltip(e.clientX, e.clientY, geneTooltip(gene, escapeHtml)); return; }
     }
     const lines = [`<div class="tt-title">${escapeHtml(this.info.chromosome)}:${fmtInt(this.info.start + pos)}</div>`];
+    const row = this.scanHost.contains(e.target) ? this.scanRowAt(pos) : null;
+    if (row) {
+      const s = this.currentScan();
+      lines.push(`<div class="tt-row"><span class="tt-key">window</span><span class="tt-val mono">${fmtInt(this.info.start + row.start)}-${fmtInt(this.info.start + row.end - 1)}</span></div>`);
+      lines.push(`<div class="tt-row"><span class="tt-key">bases changed</span><span class="tt-val">${fmtInt(row.changed)}</span></div>`);
+      s.classes.forEach((c, k) => lines.push(`<div class="tt-row"><span class="tt-key">P(${escapeHtml(c)})</span><span class="tt-val">${fmtPct(s.baseline[k])} → ${fmtPct(row.edited[k])} (${row.delta[k] >= 0 ? '+' : ''}${(row.delta[k] * 100).toFixed(2)} pp)</span></div>`));
+    }
     const d = this.data;
     const panel = e.target.closest ? e.target.closest('.panel') : null;
     if (d && panel) {
