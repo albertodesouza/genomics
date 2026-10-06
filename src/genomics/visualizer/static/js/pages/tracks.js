@@ -14,11 +14,12 @@ import { api, apiJob, isAbort, Latest } from '../api.js';
 import { navigate, updateRouteParams, watchJobs } from '../app.js';
 import { state, ds, geneInfo, setLocus, setPinned, togglePinned, categoricalFields, filterRows, cohortDescription } from '../state.js';
 import { exportMenu, slug } from '../figure.js';
-import { h, clear, icon, iconButton, segmented, select, field, fmtInt, fmtBp, fmtNum, showTooltip, hideTooltip, toast, jobOverlay, debounce, escapeHtml, errorBox } from '../ui.js';
+import { h, clear, icon, iconButton, segmented, select, field, fmtInt, fmtBp, fmtNum, fmtPct, showTooltip, hideTooltip, toast, jobOverlay, debounce, escapeHtml, errorBox } from '../ui.js';
 import { Viewport, ColorSlots, setupCanvas, theme, ticks, withAlpha, seqColor, onResize, css } from '../plot.js';
 import { loadGeneAnnotations, packGenes, drawGeneLanes, geneLanesHeight, geneAt, geneTooltip } from '../gene_lanes.js';
 import { labelGeneOptions, openGeneCard, openTrackCard } from '../cards.js';
 import { openPredictForm } from '../forms.js';
+import { openScalarForm } from '../scalars.js';
 
 const GUTTER_L = 64;
 const GUTTER_R = 14;
@@ -87,7 +88,7 @@ class TracksPage {
       hap: saved.hap || 'H1+H2',
       tracks: Array.isArray(saved.tracks) ? saved.tracks.map(migrate).filter(Boolean) : null,
       // "variant:<pos>:<ref>:<alt>" groups the cohort by genotype at a site (from the Variant page).
-      groupField: isVariantField(params.groupField) ? params.groupField
+      groupField: isVariantField(params.groupField) || cats.some((f) => f.name === params.groupField) ? params.groupField
         : saved.groupField && (cats.some((f) => f.name === saved.groupField) || (isVariantField(saved.groupField) && saved.gene === gene)) ? saved.groupField
           : defaultGroupField(cats),
       groups: saved.groups || null,
@@ -178,6 +179,7 @@ class TracksPage {
       h('button', { class: 'btn small', title: 'Jump to the CNN training window', onclick: () => this.gotoModelWindow() }, icon('target', 14), 'Model window'),
       h('button', { class: 'btn small', title: 'Show the whole prediction window', onclick: () => this.viewport.set(0, this.viewport.length) }, icon('expand', 14), 'Whole window'),
       h('button', { class: 'btn small ghost', title: 'Open this locus on the Sequence page', onclick: () => navigate('sequence', { gene: this.cfg.gene }) }, 'Sequence →'),
+      h('button', { class: 'btn small ghost', title: 'Define one number per sample from the first track over the visible range (a sample field for filters and group means)', onclick: () => this.openScalar() }, 'Region scalar…'),
       exportMenu(() => this.figureOptions()),
       this.statusEl,
       h('span', { class: 'hint' }, 'Drag to pan · ⌘/Ctrl+scroll zoom · Shift+drag region'),
@@ -890,12 +892,13 @@ class TracksPage {
       for (let i = 0; i < n; i++) {
         const label = h('div', { class: 'lane-label clickable', style: { top: '6px' }, title: 'Track card: ontology terms, assay, experiments', onpointerdown: (e) => e.stopPropagation(), onclick: (e) => { e.stopPropagation(); this.openTrack(label.dataset.key); } });
         const obsLabel = h('div', { class: 'lane-label clickable obs-label', style: { top: `${height + 4}px` }, title: 'The observed experiments behind this track', onpointerdown: (e) => e.stopPropagation(), onclick: (e) => { e.stopPropagation(); this.openTrack(label.dataset.key); } });
-        const panel = h('div', { class: 'panel has-grip' }, label, h('canvas', { class: 'pred' }), this.cfg.showObserved ? [obsLabel, h('canvas', { class: 'obs' })] : null);
+        const obsStats = h('div', { class: 'obs-stats', style: { top: `${height + 4}px` } });
+        const panel = h('div', { class: 'panel has-grip' }, label, h('canvas', { class: 'pred' }), this.cfg.showObserved ? [obsLabel, obsStats, h('canvas', { class: 'obs' })] : null);
         panel.prepend(this.panelGrip(panel));
         host.appendChild(panel);
       }
     }
-    return [...host.children].map((p) => ({ el: p, label: p.querySelector('.lane-label'), canvas: p.querySelector('canvas.pred'), obsLabel: p.querySelector('.obs-label'), obsCanvas: p.querySelector('canvas.obs'), height }));
+    return [...host.children].map((p) => ({ el: p, label: p.querySelector('.lane-label'), canvas: p.querySelector('canvas.pred'), obsLabel: p.querySelector('.obs-label'), obsStats: p.querySelector('.obs-stats'), obsCanvas: p.querySelector('canvas.obs'), height }));
   }
 
   /**
@@ -1077,6 +1080,7 @@ class TracksPage {
     const ctx = setupCanvas(p.obsCanvas, g.total, H);
     const obs = this.data.observed ? this.data.observed.get(panel.trackKey) : null;
     const color = css('--observed') || t.ink2;
+    this.renderAgreement(p, null);
     if (!obs) {
       p.obsLabel.textContent = 'Observed · loading…';
       return;
@@ -1094,6 +1098,7 @@ class TracksPage {
     let i0 = 0; let i1 = e.length - 1;
     while (i0 < e.length - 1 && e[i0 + 1] <= v.start) i0++;
     while (i1 > i0 && e[i1 - 1] >= v.end) i1--;
+    this.renderAgreement(p, this.agreement(panel, obs, i0, i1));
     let hi = 0;
     const top = this.cfg.envelope && obs.max ? obs.max : obs.mean;
     for (let i = i0; i < i1; i++) { const a = top[i]; if (a > hi) hi = a; }
@@ -1117,6 +1122,72 @@ class TracksPage {
       ctx.fillRect(xa, y, Math.max(pxPerBin > 2 ? xb - xa - 0.5 : 1, 1), y1 - y);
     }
     ctx.restore();
+  }
+
+  /**
+   * Agreement of a prediction with the observed lane over the bins in view: Pearson r (linear and of
+   * log1p values), the share of the observed peak bins (top decile) that are also predicted peak bins,
+   * and the ratio of means (predicted / observed). The ratio is only flagged for FANTOM5 CAGE in TPM, the
+   * units AlphaGenome's CAGE tracks are trained on (a large ratio there is a magnitude bias, like the
+   * exon/promoter CAGE bias on TYRP1); ENCODE signal tracks use other units. Compared against the
+   * reference-genome prediction when shown, else the first series.
+   */
+  agreement(panel, obs, i0, i1) {
+    const pred = panel.items.find((it) => it.reference && it.mean) || panel.items.find((it) => it.mean);
+    if (!pred || !obs.mean || pred.mean.length !== obs.mean.length) return null;
+    const xs = []; const ys = []; const at = [];
+    for (let i = i0; i < i1; i++) {
+      const x = pred.mean[i]; const y = obs.mean[i];
+      if (Number.isFinite(x) && Number.isFinite(y)) { xs.push(x); ys.push(y); at.push(i); }
+    }
+    if (xs.length < 3) return null;
+    const pearson = (a, b) => {
+      const n = a.length; let ma = 0; let mb = 0;
+      for (let i = 0; i < n; i++) { ma += a[i]; mb += b[i]; }
+      ma /= n; mb /= n;
+      let sab = 0; let saa = 0; let sbb = 0;
+      for (let i = 0; i < n; i++) { const da = a[i] - ma; const db = b[i] - mb; sab += da * db; saa += da * da; sbb += db * db; }
+      return saa > 0 && sbb > 0 ? sab / Math.sqrt(saa * sbb) : NaN;
+    };
+    const log = (a) => a.map((v) => Math.log1p(Math.max(0, v)));
+    // Top-decile bins (with signal) of each; ties at the threshold are included.
+    const top = (a) => {
+      const k = Math.max(1, Math.round(a.length * 0.1));
+      const threshold = [...a].sort((u, v) => v - u)[k - 1];
+      return new Set(a.map((v, i) => (v >= threshold && v > 0 ? i : -1)).filter((i) => i >= 0));
+    };
+    const tp = top(xs); const to = top(ys);
+    const shared = to.size ? [...to].filter((i) => tp.has(i)).length / to.size : NaN;
+    const argmax = (a) => a.reduce((best, v, i) => (v > a[best] ? i : best), 0);
+    const centre = (i) => (obs.edges[at[i]] + obs.edges[at[i] + 1]) / 2;
+    const meanOf = (a) => a.reduce((acc, v) => acc + v, 0) / a.length;
+    const mo = meanOf(ys);
+    return {
+      against: pred.reference ? 'reference genome' : pred.label, n: xs.length,
+      r: pearson(xs, ys), rlog: pearson(log(xs), log(ys)), shared,
+      peak: Math.abs(centre(argmax(xs)) - centre(argmax(ys))),
+      ratio: mo > 0 ? meanOf(xs) / mo : NaN,
+      sameUnits: obs.provider === 'FANTOM5' && this.cfg.obsScale === 'tpm',
+    };
+  }
+
+  renderAgreement(p, a) {
+    if (!p.obsStats) return;
+    clear(p.obsStats);
+    p.obsStats.hidden = !a;
+    if (!a) return;
+    const weak = !(a.rlog >= 0.3);
+    const biased = a.sameUnits && Number.isFinite(a.ratio) && Math.abs(Math.log2(a.ratio)) > 2;
+    p.obsStats.classList.toggle('warn', weak || biased);
+    p.obsStats.append(
+      h('span', { class: weak ? 'bad' : '' }, `r ${fmtNum(a.r, 2)} · log r ${fmtNum(a.rlog, 2)}`),
+      h('span', null, `peaks ${fmtPct(a.shared, 0)} shared`),
+      h('span', { class: biased ? 'bad' : a.sameUnits ? '' : 'muted' }, `pred/obs ×${fmtNum(a.ratio, 2)}`));
+    p.obsStats.title = `Observed vs AlphaGenome (${a.against}) over the ${fmtInt(a.n)} bins in view:\n`
+      + `Pearson r ${fmtNum(a.r, 3)} (of log1p values: ${fmtNum(a.rlog, 3)})\n`
+      + `${fmtPct(a.shared, 0)} of the observed top-decile bins are also predicted top-decile bins; the two maxima are ${fmtBp(a.peak)} apart\n`
+      + `mean predicted / mean observed ${fmtNum(a.ratio, 3)}${a.sameUnits ? '' : ' (different units: not flagged)'}\n`
+      + 'Flagged when log r < 0.3, or for FANTOM5 TPM when the ratio is beyond 4× either way. Zoom to a gene or exon to judge it locally.';
   }
 
   /** The ±SD band is within-group spread; it is hidden when showing differences between groups. */
@@ -1339,6 +1410,19 @@ class TracksPage {
   }
 
   /** Figure export: the plot area (without the overview strip) with the view described as caption. */
+  /** Region scalar form prefilled with the first data track and the visible range (reference offsets). */
+  openScalar() {
+    const [output, track] = parseTrackKey((this.cfg.tracks || [])[0] || '');
+    const prefill = { gene: this.cfg.gene, output: output || undefined, track: Number.isInteger(track) ? track : undefined };
+    if (this.cfg.coords !== 'haplotype') {
+      prefill.start = Math.round(this.toGenomicOffset(this.viewport.start));
+      prefill.end = Math.round(this.toGenomicOffset(this.viewport.end));
+    }
+    openScalarForm(prefill, { onSaved: (sc) => {
+      if (sc.bin_field && this.cfg.mode === 'groups') toast(`Pick ${sc.bin_field} in Group by to split the cohort by it`);
+    } });
+  }
+
   figureOptions() {
     if (!this.info) return null;
     const c = this.cfg;
@@ -1636,6 +1720,14 @@ class TracksPage {
       else if (this.cfg.seqSource === 'pinned') this.requestSequenceNow();
     }
     if (topic === 'cohort' && this.cfg.mode !== 'individuals') { this.renderSide(); this.invalidate(); }
+    if (topic === 'samples') {
+      const cats = categoricalFields();
+      if (!isVariantField(this.cfg.groupField) && !cats.some((f) => f.name === this.cfg.groupField)) {
+        this.cfg.groupField = defaultGroupField(cats); this.cfg.groups = null;
+        if (this.cfg.mode !== 'individuals') this.invalidate();
+      }
+      this.renderSide();
+    }
   }
 
   update(params) {

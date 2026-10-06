@@ -56,6 +56,13 @@ function renderNav(active) {
   navEl.appendChild(h('div', { class: 'nav-foot' }, state.status ? `v${state.status.version}` : ''));
 }
 
+/** Mount the current page again (e.g. after the sample fields changed). */
+export function remount() {
+  if (current && current.instance.unmount) current.instance.unmount();
+  current = null;
+  route();
+}
+
 async function route() {
   const token = ++routeToken;
   const { page, params } = parseRoute();

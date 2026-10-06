@@ -34,6 +34,8 @@ from genomics.visualizer.alignment import AlignmentService
 from genomics.visualizer.alphagenome import AlphaGenomeBackend, create_backend
 from genomics.visualizer.gene_index import GeneIndex, find_table
 from genomics.visualizer.genotypes import GENOTYPE_LABELS, GenotypeService
+from genomics.visualizer.scalars import ScalarError, ScalarService, ScalarStore
+from genomics.visualizer.ancestry import AncestryService, default_windows, match_groups, window_coverage
 from genomics.visualizer.gtex import DEFAULT_TISSUES, GtexClient, GtexError
 from genomics.visualizer.annotations import AnnotationService
 from genomics.visualizer.cli_args import build_arg_parser
@@ -160,6 +162,7 @@ class VisualizerApp:
         dataset_memory: Optional[DatasetMemory] = None,
         perturb_default_config: Optional[Path] = None,
         remote: bool = True,
+        scalar_store: Optional[ScalarStore] = None,
     ):
         self.catalog = catalog
         self.cache_dir = cache_dir
@@ -174,6 +177,8 @@ class VisualizerApp:
         self.observed = ObservedService(self.remote, DiskArrayCache(cache_dir), cache_bytes=max(memory_bytes // 8, 64 << 20))
         self.genotypes = GenotypeService(self.signals, DiskArrayCache(cache_dir), cache_bytes=max(memory_bytes // 8, 64 << 20))
         self.gtex = GtexClient(self.remote)
+        self.ancestry = AncestryService(self.genotypes, DiskArrayCache(cache_dir))
+        self.scalars = ScalarService(self.genotypes, scalar_store, ancestry=self.ancestry)
         self._ag_catalog: Optional[Dict[str, Any]] = None
         self._ag_catalog_lock = threading.Lock()
         self.experiments = ExperimentService(runs_roots)
@@ -217,6 +222,13 @@ class VisualizerApp:
         r("GET", r"/api/d/(?P<ds>[^/]+)/variant/sites", self.api_variant_sites)
         r("GET", r"/api/d/(?P<ds>[^/]+)/variant/site", self.api_variant_site)
         r("GET", r"/api/d/(?P<ds>[^/]+)/variant/effect", self.api_variant_effect)
+        r("GET", r"/api/d/(?P<ds>[^/]+)/scalars", self.api_scalars)
+        r("POST", r"/api/d/(?P<ds>[^/]+)/scalars", self.api_scalar_save)
+        r("POST", r"/api/d/(?P<ds>[^/]+)/scalars/delete", self.api_scalar_delete)
+        r("GET", r"/api/d/(?P<ds>[^/]+)/ancestry/windows", self.api_ancestry_windows)
+        r("GET", r"/api/d/(?P<ds>[^/]+)/ancestry/pca", self.api_ancestry_pca)
+        r("POST", r"/api/d/(?P<ds>[^/]+)/ancestry/fields", self.api_ancestry_fields)
+        r("POST", r"/api/d/(?P<ds>[^/]+)/ancestry/match", self.api_ancestry_match)
         r("GET", r"/api/gtex/variant", self.api_gtex_variant)
         r("GET", r"/api/gtex/resolve", self.api_gtex_resolve)
         r("GET", r"/api/gtex/tissues", self.api_gtex_tissues)
@@ -251,6 +263,7 @@ class VisualizerApp:
         r("POST", r"/api/perturb/sequence", self.api_perturb_sequence)
         r("POST", r"/api/perturb/apply", self.api_perturb_apply)
         r("GET", r"/api/perturb/result", self.api_perturb_result)
+        r("POST", r"/api/perturb/scan", self.api_perturb_scan)
         r("GET", r"/api/perturb/signal", self.api_perturb_signal)
         r("GET", r"/api/system", self.api_system)
         r("GET", r"/api/alphagenome", self.api_alphagenome)
@@ -409,6 +422,7 @@ class VisualizerApp:
 
     def api_samples(self, query: Query, body: Any, ds: str) -> Any:
         dataset = self.dataset(ds)
+        self.scalars.sync(dataset)
         columns = [f["name"] for f in dataset.fields]
         return {
             "fields": dataset.fields,
@@ -593,6 +607,172 @@ class VisualizerApp:
         payload = self.signals.group_payload({k: v for k, v in cached.items() if v is not None}, {k: len(v) for k, v in groups.items()}, tracks, domain, start, end, bins)
         payload.update({"gene": gene, "output": output, "coords": coords, "field": field, "haplotypes": haps})
         return payload
+
+    # -- region scalars ---------------------------------------------------------------
+    def api_scalars(self, query: Query, body: Any, ds: str) -> Any:
+        dataset = self.dataset(ds)
+        self.scalars.sync(dataset)
+        return {"scalars": [self.scalars.describe(dataset, spec) for spec in self.scalars.specs(dataset)]}
+
+    def api_scalar_save(self, query: Query, body: Any, ds: str) -> Any:
+        """Define (or with ``replace``, redefine) a region scalar and compute it; pending while the
+        per-haplotype region means are computed. The sample fields appear on the next samples listing."""
+        dataset = self.dataset(ds)
+        body = body or {}
+        gene = self._gene(dataset, str(body.get("gene") or ""))
+        try:
+            spec = self.scalars.validate(dataset, body, self._gene_info(dataset, gene), replace=bool(body.get("replace")))
+        except ScalarError as exc:
+            raise HttpError(HTTPStatus.BAD_REQUEST, str(exc))
+        if not self.scalars.is_cached(dataset, spec):
+            key = "region:" + self.scalars.region_key(dataset, spec)
+            title = f"{gene} {spec['output']} per haplotype over the region"
+            result = self._job_response(key, title, lambda progress: self.genotypes.region_means(dataset, gene, spec["output"], spec["start"], spec["end"], progress))
+            if isinstance(result, dict) and result.get("pending"):
+                return result
+        try:
+            self.scalars.save(dataset, spec)
+        except ScalarError as exc:
+            raise HttpError(HTTPStatus.BAD_REQUEST, str(exc))
+        return {"scalar": self.scalars.describe(dataset, spec)}
+
+    def api_scalar_delete(self, query: Query, body: Any, ds: str) -> Any:
+        dataset = self.dataset(ds)
+        name = str((body or {}).get("name") or "")
+        if not self.scalars.store.delete(dataset, name):
+            raise HttpError(HTTPStatus.NOT_FOUND, f"No region scalar named {name!r}")
+        self.scalars.unapply(dataset, name)
+        return {"deleted": name}
+
+    # -- ancestry PCA and matching ----------------------------------------------------
+    def api_ancestry_windows(self, query: Query, body: Any, ds: str) -> Any:
+        dataset = self.dataset(ds)
+        coverage = window_coverage(dataset)
+        listed = {str(g) for g in dataset.metadata.get("genes") or []}
+        return {
+            "samples": len(dataset.samples),
+            "windows": [{"gene": g, "coverage": round(coverage.get(g, 0.0), 3), "listed": g in listed,
+                         "cached": self.genotypes.cached(dataset, g) is not None} for g in dataset.genes],
+            "default": default_windows(dataset, coverage),
+            "derived": [self.scalars.describe(dataset, sp) for sp in self.scalars.specs(dataset) if sp.get("kind") in ("pca", "match")],
+        }
+
+    def _pca_params(self, dataset, source: Dict[str, Any]) -> Dict[str, Any]:
+        genes = source.get("genes")
+        if isinstance(genes, str):
+            genes = [g for g in genes.split(",") if g]
+        try:
+            return self.ancestry.params(dataset, genes or None, float(source.get("min_maf") or 0.05),
+                                        int(source.get("spacing") if source.get("spacing") not in (None, "") else 2000),
+                                        int(source.get("components") or 10))
+        except KeyError as exc:
+            raise HttpError(HTTPStatus.NOT_FOUND, str(exc.args[0]))
+        except (TypeError, ValueError) as exc:
+            raise HttpError(HTTPStatus.BAD_REQUEST, str(exc))
+
+    def _pca_or_pending(self, dataset, params: Dict[str, Any]):
+        result = self.ancestry.cached(dataset, params)
+        if result is not None:
+            return result, None
+        key = "pca:" + self.ancestry.key(dataset, params)
+        title = f"Genotype PCA over {len(params['genes'])} window{'s' if len(params['genes']) != 1 else ''}"
+        result = self._job_response(key, title, lambda progress: self.ancestry.compute(dataset, params, progress))
+        if isinstance(result, dict) and result.get("pending"):
+            return None, result
+        return result, None
+
+    def api_ancestry_pca(self, query: Query, body: Any, ds: str) -> Any:
+        dataset = self.dataset(ds)
+        params = self._pca_params(dataset, {k: query.str(k, "") for k in ("genes", "min_maf", "spacing", "components")})
+        if query.str("cached_only", "") in ("1", "true") and self.ancestry.cached(dataset, params) is None:
+            return {"cached": False}
+        result, pending = self._pca_or_pending(dataset, params)
+        if pending is not None:
+            return pending
+        payload = self.ancestry.payload(result, params)
+        payload["sample_count"] = len(dataset.samples)
+        return payload
+
+    def api_ancestry_fields(self, query: Query, body: Any, ds: str) -> Any:
+        """Store the PCs of a computed PCA as numeric sample fields pc1..pcK (``count``); count 0 removes them."""
+        dataset = self.dataset(ds)
+        body = body or {}
+        params = self._pca_params(dataset, body.get("params") or {})
+        count = int(body.get("count") or 0)
+        if count <= 0:
+            self.scalars.store.delete(dataset, "pcs")
+            self.scalars.unapply(dataset, "pcs")
+            return {"fields": []}
+        if self.ancestry.cached(dataset, params) is None:
+            raise HttpError(HTTPStatus.CONFLICT, "Compute the PCA first")
+        spec = {"kind": "pca", "name": "pcs", "params": params, "count": max(1, min(count, params["components"]))}
+        try:
+            self.scalars.check_name(dataset, "pcs", ScalarService.spec_fields(spec), replace=True, what="PC set")
+            self.scalars.save(dataset, spec)
+        except ScalarError as exc:
+            raise HttpError(HTTPStatus.BAD_REQUEST, str(exc))
+        return {"fields": ScalarService.spec_fields(spec), "derived": self.scalars.describe(dataset, spec)}
+
+    def api_ancestry_match(self, query: Query, body: Any, ds: str) -> Any:
+        """Pair group A with group B (values of one sample field, within the cohort) on the first k PCs and
+        store the matched samples as a categorical field (``name``) with the two group labels."""
+        dataset = self.dataset(ds)
+        body = body or {}
+        params = self._pca_params(dataset, body.get("params") or {})
+        result = self.ancestry.cached(dataset, params)
+        if result is None:
+            raise HttpError(HTTPStatus.CONFLICT, "Compute the PCA first")
+        field_name = str(body.get("field") or "")
+        a_values = [str(v) for v in body.get("group_a") or []]
+        b_values = [str(v) for v in body.get("group_b") or []]
+        if not field_name or not a_values or not b_values:
+            raise HttpError(HTTPStatus.BAD_REQUEST, "field, group_a and group_b are required")
+        if set(a_values) & set(b_values):
+            raise HttpError(HTTPStatus.BAD_REQUEST, "The two groups overlap")
+        name = str(body.get("name") or "").strip().lower()
+        label_a = str(body.get("label_a") or "+".join(a_values))[:40]
+        label_b = str(body.get("label_b") or "+".join(b_values))[:40]
+        if label_a == label_b:
+            raise HttpError(HTTPStatus.BAD_REQUEST, "The two groups need different labels")
+        filters = body.get("filters") or {}
+        if not isinstance(filters, dict):
+            raise HttpError(HTTPStatus.BAD_REQUEST, "filters must be a JSON object")
+        cohort = set(dataset.filter_samples({str(k): [str(x) for x in (v or [])] for k, v in filters.items()}))
+        samples = result["samples"].tolist()
+
+        def members(values):
+            wanted = set(values)
+            return [i for i, s in enumerate(samples) if s in cohort and str(dataset.samples[dataset.sample_index[s]].get(field_name, "")) in wanted]
+
+        group_a, group_b = members(a_values), members(b_values)
+        if not group_a or not group_b:
+            raise HttpError(HTTPStatus.BAD_REQUEST, f"No samples with PCs in {'group A' if not group_a else 'group B'} (samples need genotypes in every PCA window)")
+        try:
+            k = int(body.get("k") or 4)
+            caliper = float(body.get("caliper") if body.get("caliper") not in (None, "") else 0.2)
+            matched = match_groups(result["scores"], group_a, group_b, k, caliper)
+        except (TypeError, ValueError) as exc:
+            raise HttpError(HTTPStatus.BAD_REQUEST, str(exc))
+        values = {}
+        for ia, ib, _ in matched["pairs"]:
+            values[samples[ia]] = label_a
+            values[samples[ib]] = label_b
+        spec = {"kind": "match", "name": name, "params": params, "field": field_name, "group_a": a_values, "group_b": b_values,
+                "label_a": label_a, "label_b": label_b, "k": matched["k"], "caliper": caliper, "filters": filters, "values": values}
+        try:
+            self.scalars.check_name(dataset, name, [name], replace=bool(body.get("replace")), what="matched set")
+            if not values:
+                raise ScalarError("No pairs within the caliper; widen it or use fewer PCs")
+            self.scalars.save(dataset, spec)
+        except ScalarError as exc:
+            raise HttpError(HTTPStatus.BAD_REQUEST, str(exc))
+        distances = [d for _, _, d in matched["pairs"]]
+        return {
+            "name": name, "label_a": label_a, "label_b": label_b, "pairs": len(matched["pairs"]),
+            "group_a": len(group_a), "group_b": len(group_b), "k": matched["k"], "caliper_distance": matched["caliper_distance"],
+            "median_distance": float(np.median(distances)) if distances else None,
+            "balance_before": matched["balance_before"], "balance_after": matched["balance_after"],
+        }
 
     # -- variants (Variant page) -------------------------------------------------------
     def _genotypes_or_pending(self, dataset, gene: str):
@@ -1158,6 +1338,13 @@ class VisualizerApp:
         job = self.jobs.run(f"perturb:{key}", f"Perturbation: {sample} {gene}", lambda progress: self.perturb.apply(sample, gene, edits, outputs, progress))
         return {"pending": True, "key": key, "job": job.as_dict()}
 
+    def api_perturb_scan(self, query: Query, body: Any) -> Any:
+        """Saturation scan of the loaded model (a background job; poll by posting the same body)."""
+        spec = self._perturb(lambda: self.perturb.scan_spec(body or {}))
+        key = self.perturb.scan_key(spec)
+        positions = (spec["end"] - spec["start"] - spec["size"]) // spec["step"] + 1
+        return self._perturb(lambda: self._job_response(f"scan:{key}", f"Saturation scan: {spec['sample']} {spec['gene']} ({positions} windows)", lambda progress: self.perturb.scan(spec, progress)))
+
     def api_perturb_result(self, query: Query, body: Any) -> Any:
         key = query.str("key", required=True)
         cached = self.perturb.result(key)
@@ -1558,6 +1745,7 @@ def create_app(args: argparse.Namespace) -> VisualizerApp:
         allow_tasks=not args.no_jobs,
         dataset_memory=memory,
         perturb_default_config=Path(default_config),
+        scalar_store=ScalarStore.default(),
         remote=not getattr(args, "no_remote", False),
     )
 

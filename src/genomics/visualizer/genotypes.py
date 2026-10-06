@@ -4,7 +4,8 @@
 the haplotypes carrying its ALT allele (sparse: CSR over sites). It is built once per window from the
 per-sample window VCFs and cached on disk, so the genotype of any site across the whole cohort is a
 lookup. A sample whose VCF has no record at a site is homozygous reference there (the window VCFs list
-non-reference calls only); multi-allelic records are split into one site per ALT allele.
+non-reference calls only); a sample without a VCF for the window is left out (not called). Multi-allelic
+records are split into one site per ALT allele.
 
 ``VariantEffect`` relates a site's genotypes to an AlphaGenome track summarised over a region (mean
 signal per haplotype over ``[start, end)`` in reference coordinates), like an in-silico eQTL:
@@ -19,8 +20,10 @@ from __future__ import annotations
 
 import math
 import os
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -36,7 +39,7 @@ GENOTYPE_LABELS = ("0/0", "0/1", "1/1")
 
 @dataclass
 class CohortGenotypes:
-    samples: List[str]          # columns: haplotype index = 2 * sample index + (0 for H1, 1 for H2)
+    samples: List[str]          # samples with a VCF for the window; haplotype index = 2 * sample index + (0 H1, 1 H2)
     positions: np.ndarray       # int64, 1-based genomic POS per site (sorted)
     refs: List[str]
     alts: List[str]
@@ -92,37 +95,71 @@ class CohortGenotypes:
         )
 
 
+def _window_calls(path: Optional[str], window_start: int) -> Optional[List[Tuple[int, str, str, int, str]]]:
+    """(pos, ref, alt, haplotype, id) of every ALT allele carried in one sample's window VCF.
+    Module level so a process pool can run it."""
+    if path is None:
+        return None
+    parsed = parse_window_vcf(Path(path), window_start)
+    out = []
+    for i in range(parsed.positions.size):
+        pos, ref = int(parsed.positions[i]), parsed.refs[i]
+        for h in (0, 1):
+            allele = int(parsed.carried[i, h])
+            if 0 < allele <= len(parsed.alt_alleles[i]):
+                out.append((pos, ref, parsed.alt_alleles[i][allele - 1], h, parsed.ids[i]))
+    return out
+
+
+def _parse_pool(workers: int):
+    """Processes for VCF parsing (pure Python, so threads serialise on the GIL); threads as a fallback."""
+    if workers > 1:
+        try:
+            import multiprocessing
+
+            return ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn")), 16
+        except (OSError, ValueError, ImportError):
+            pass
+    return ThreadPoolExecutor(max_workers=max(1, workers)), 1
+
+
 def build_cohort_genotypes(dataset: Dataset, gene: str, samples: Sequence[str], progress=None, workers: int = 8) -> CohortGenotypes:
     window = dataset.window(gene)
     if window.start is None:
         raise ValueError(f"{gene}: the window has no genomic coordinates")
-    samples = list(samples)
     calls: Dict[Tuple[int, str, str], List[int]] = {}
     ids: Dict[Tuple[int, str, str], str] = {}
+    # Only samples with a VCF for this window are genotyped: a missing VCF means "not called", not
+    # homozygous reference (some datasets build control windows for a subset of the cohort).
+    called = [(sample, dataset.sample_vcf_path(sample, gene)) for sample in samples]
+    samples = [sample for sample, path in called if path is not None]
+    paths = [str(path) for _, path in called if path is not None]
 
-    def parse(index: int):
-        path = dataset.sample_vcf_path(samples[index], gene)
-        if path is None or is_cancelled(progress):
-            return index, None
-        return index, parse_window_vcf(path, window.start)
-
-    done = 0
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        for index, parsed in pool.map(parse, range(len(samples))):
-            done += 1
-            if progress is not None and (done % 64 == 0 or done == len(samples)):
-                progress(0.95 * done / max(len(samples), 1), f"Reading genotypes {done}/{len(samples)}")
-            if parsed is None:
-                continue
-            for i in range(parsed.positions.size):
-                pos, ref = int(parsed.positions[i]), parsed.refs[i]
-                for h in (0, 1):
-                    allele = int(parsed.carried[i, h])
-                    if allele <= 0 or allele > len(parsed.alt_alleles[i]):
-                        continue
-                    key = (pos, ref, parsed.alt_alleles[i][allele - 1])
+    def run(pool, chunksize) -> None:
+        done = 0
+        with pool:
+            results = pool.map(_window_calls, paths, [window.start] * len(paths), chunksize=chunksize)
+            for index, parsed in enumerate(results):
+                done += 1
+                if progress is not None and (done % 64 == 0 or done == len(samples)):
+                    progress(0.95 * done / max(len(samples), 1), f"Reading genotypes {done}/{len(samples)}")
+                if is_cancelled(progress):
+                    try:
+                        pool.shutdown(wait=False, cancel_futures=True)
+                    except TypeError:  # Python 3.8
+                        pool.shutdown(wait=False)
+                    return
+                for pos, ref, alt, h, ident in parsed or ():
+                    key = (pos, ref, alt)
                     calls.setdefault(key, []).append(2 * index + h)
-                    ids.setdefault(key, parsed.ids[i])
+                    ids.setdefault(key, ident)
+
+    try:
+        run(*_parse_pool(workers if len(samples) >= 64 else 1))
+    except BrokenProcessPool:  # e.g. a __main__ the workers cannot re-import; parse in threads instead
+        calls.clear()
+        ids.clear()
+        run(ThreadPoolExecutor(max_workers=max(1, workers)), 1)
     if is_cancelled(progress):
         raise JobCancelled()
     keys = sorted(calls)
@@ -231,7 +268,7 @@ class GenotypeService:
         self.memory = LRUCache(cache_bytes)
 
     def key(self, dataset: Dataset, gene: str) -> str:
-        return stable_key({"v": 1, "dataset": dataset.fingerprint, "path": str(dataset.path), "gene": gene})
+        return stable_key({"v": 2, "dataset": dataset.fingerprint, "path": str(dataset.path), "gene": gene})
 
     def cached(self, dataset: Dataset, gene: str) -> Optional[CohortGenotypes]:
         key = self.key(dataset, gene)

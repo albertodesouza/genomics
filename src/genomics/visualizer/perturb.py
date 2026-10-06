@@ -33,12 +33,15 @@ import numpy as np
 
 from genomics.visualizer.cache import stable_key
 from genomics.visualizer.datasets import Dataset, load_json
+from genomics.visualizer.jobs import JobCancelled, is_cancelled
 from genomics.visualizer.sequences import MAX_LETTER_SPAN
 from genomics.visualizer.signals import _clamp_range, bin_matrix
 
 OPS = ("overwrite", "scramble", "reference", "sequence")
+SCAN_OPS = ("scramble", "reference", "overwrite")
 HAPLOTYPES = ("H1", "H2")
 MAX_EDITS = 64
+MAX_SCAN_POSITIONS = 256
 PREDICT_TIMEOUT = 900.0
 ProgressFn = Callable[[float, str], None]
 
@@ -486,6 +489,99 @@ class PerturbService:
             while len(self._results) > 64:
                 self._results.popitem(last=False)
         return result
+
+    # -- saturation scan -------------------------------------------------------------------------
+    def scan_spec(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Validated scan request: one edit of ``op`` slid over [start, end) in windows of ``size`` bp
+        every ``step`` bp (reference offsets; default range: the model's input window)."""
+        context = self._require()
+        dataset = self.dataset()
+        sample, gene = str(body.get("sample") or ""), str(body.get("gene") or "")
+        if sample not in self._labels:
+            raise PerturbError(f"Unknown sample for this model's dataset: {sample}")
+        if gene not in context.genes:
+            raise PerturbError(f"{gene} is not one of the model's genes")
+        op = str(body.get("op") or "scramble")
+        if op not in SCAN_OPS:
+            raise PerturbError(f"op must be one of {', '.join(SCAN_OPS)}")
+        haps = [h for h in (body.get("haplotypes") or list(HAPLOTYPES)) if h in HAPLOTYPES]
+        if not haps:
+            raise PerturbError("haplotypes must include H1 and/or H2")
+        window = dataset.model_window(gene, context.window_center_size) or {}
+        length = self.app.signals.reference_length(dataset, gene)
+        start = int(body["start"]) if body.get("start") not in (None, "") else int(window.get("start", 0))
+        end = int(body["end"]) if body.get("end") not in (None, "") else int(window.get("end", length))
+        start, end = max(0, start), min(length, end)
+        size = int(body.get("size") or 1024)
+        step = int(body.get("step") or size)
+        if size < 1 or step < 1 or end - start < size:
+            raise PerturbError("The range must hold at least one window (size, step >= 1)")
+        positions = (end - start - size) // step + 1
+        if positions > MAX_SCAN_POSITIONS:
+            raise PerturbError(f"{positions} positions; at most {MAX_SCAN_POSITIONS} (use a larger step or a shorter range)")
+        spec = {"sample": sample, "gene": gene, "op": op, "haplotypes": haps, "start": start, "end": end, "size": size, "step": step}
+        if op == "scramble":
+            spec["seed"] = int(body.get("seed") or 0)
+        if op == "overwrite":
+            spec["base"] = str(body.get("base") or "N").upper()
+            if spec["base"] not in ("A", "C", "G", "T", "N"):
+                raise PerturbError("overwrite needs base A, C, G, T or N")
+        return spec
+
+    def scan_key(self, spec: Dict[str, Any]) -> str:
+        return stable_key({"v": 1, "run": self.context_id, "dataset": self.dataset().fingerprint, **spec})
+
+    def scan(self, spec: Dict[str, Any], progress: ProgressFn) -> Dict[str, Any]:
+        """Class probabilities after editing each window in turn (one AlphaGenome call per edited
+        haplotype and window, cached by sequence). Windows where the edit changes no base (e.g. reverting
+        a stretch without variants) are scored as unchanged without calling AlphaGenome."""
+        context = self._require()
+        dataset = self.dataset()
+        sample, gene, haps = spec["sample"], spec["gene"], spec["haplotypes"]
+        started = time.time()
+        outputs = list(context.outputs)
+        canonical = {hap: {o: self._canonical(dataset, sample, gene, hap, o) for o in outputs} for hap in haps}
+        terms = {hap: sorted({str(r.get("ontology_curie")) for records in canonical[hap].values() for r in records if r.get("ontology_curie")}) for hap in haps}
+        with self._lock:
+            baseline = context.baseline(sample)
+        starts = list(range(spec["start"], spec["end"] - spec["size"] + 1, spec["step"]))
+        rows: List[Dict[str, Any]] = []
+        calls = 0
+        for k, pos in enumerate(starts):
+            if is_cancelled(progress):
+                raise JobCancelled()
+            progress(0.02 + 0.96 * k / len(starts), f"Window {k + 1}/{len(starts)} ({calls} AlphaGenome calls)")
+            raw = {"op": spec["op"], "start": pos, "end": pos + spec["size"], "haplotypes": haps}
+            raw.update({key: spec[key] for key in ("seed", "base") if key in spec})
+            edits = self.normalize_edits([raw])
+            overrides: Dict[Tuple[str, str], Dict[str, Tuple[np.ndarray, Optional[list]]]] = {}
+            changed = 0
+            for hap in haps:
+                try:
+                    seq, resolved = self.edited_haplotype(dataset, sample, gene, hap, edits)
+                except PerturbError:  # the window is deleted on this haplotype: nothing to edit
+                    continue
+                n = sum(item["changed"] for item in resolved)
+                if not n:
+                    continue
+                changed += n
+                predicted = self._predict(seq.tobytes(), outputs, terms[hap])
+                calls += 1
+                for output in outputs:
+                    values, records = predicted[output]
+                    overrides.setdefault((gene, hap), {})[output] = (reorder_columns(values, records, canonical[hap][output]), canonical[hap][output])
+            if overrides:
+                with self._lock:
+                    edited = context.score(sample, overrides)
+            else:
+                edited = baseline
+            rows.append({"start": pos, "end": pos + spec["size"], "changed": changed,
+                         "edited": [float(v) for v in edited], "delta": [float(v) for v in edited - baseline]})
+        return {
+            **spec, "key": self.scan_key(spec), "classes": context.class_names, "baseline": [float(v) for v in baseline],
+            "label": self._labels.get(sample), "model_window": dataset.model_window(gene, context.window_center_size) or {},
+            "rows": rows, "calls": calls, "elapsed": round(time.time() - started, 2),
+        }
 
     def result(self, key: str) -> Optional[Dict[str, Any]]:
         return self._results.get(key)

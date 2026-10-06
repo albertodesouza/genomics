@@ -534,3 +534,57 @@ def test_vcf_import_builds_canonical_layout(tmp_path):
     assert json.loads((out / "window_extensions.json").read_text())[0]["regions"][0]["name"] == "R2"
     assert [r["name"] for r in json.loads((out / "import_spec.json").read_text())["regions"]] == ["R1", "R2"]
     assert Dataset(out).genes == ["R1", "R2"]
+
+
+def test_saturation_scan_scores_each_window_and_skips_unchanged(lab_dataset, tmp_path, monkeypatch):
+    from genomics.visualizer.jobs import JobCancelled
+
+    service = _service(tmp_path)
+    service.app.catalog = SimpleNamespace(add=lambda path: lab_dataset)
+    calls = []
+
+    def score(sample, overrides):
+        # P(b) grows with the edited haplotypes' signal in column 0 (the fake AlphaGenome counts A bases).
+        total = sum(float(o["rna_seq"][0][:, 0].sum()) for o in overrides.values())
+        p = min(0.99, 0.5 + total / 1000.0)
+        return np.array([1 - p, p])
+
+    service.context = SimpleNamespace(outputs=["rna_seq"], genes=["G1"], class_names=["a", "b"], window_center_size=40, dataset_dir=str(lab_dataset.path),
+                                      baseline=lambda sample: np.array([0.5, 0.5]), score=score)
+    service.context_id = ("run", "best.pt")
+    service._labels = {"S1": "a"}
+
+    def fake_predict(sequence, outputs, terms):
+        calls.append(sequence)
+        values = np.zeros((len(sequence), 2), np.float32)
+        values[:, 0] = np.frombuffer(sequence, np.uint8) == ord("A")
+        return {"rna_seq": (values, [{"ontology_curie": "CL:1", "strand": "+"}, {"ontology_curie": "CL:1", "strand": "-"}])}
+
+    service._predict = fake_predict
+    spec = service.scan_spec({"sample": "S1", "gene": "G1", "op": "overwrite", "base": "A", "haplotypes": ["H1"], "start": 0, "end": 40, "size": 10})
+    assert (spec["start"], spec["end"], spec["step"]) == (0, 40, 10)
+    result = service.scan(spec, lambda *a: None)
+    assert [r["start"] for r in result["rows"]] == [0, 10, 20, 30] and result["classes"] == ["a", "b"]
+    assert all(r["delta"][1] > 0 and r["delta"][0] == pytest.approx(-r["delta"][1]) for r in result["rows"])
+    assert result["calls"] == 4 and len(calls) == 4
+
+    # Reverting to the reference only changes windows that hold a variant of H1 (the SNV at offset 10).
+    calls.clear()
+    revert = service.scan(service.scan_spec({"sample": "S1", "gene": "G1", "op": "reference", "haplotypes": ["H1"], "start": 0, "end": 40, "size": 10}), lambda *a: None)
+    assert [r["changed"] for r in revert["rows"]] == [0, 1, 0, 0] and revert["calls"] == 1 and len(calls) == 1
+    assert revert["rows"][0]["delta"] == [0.0, 0.0]
+
+    with pytest.raises(PerturbError):
+        service.scan_spec({"sample": "S1", "gene": "G1", "op": "delete"})
+    with pytest.raises(PerturbError):
+        service.scan_spec({"sample": "S2", "gene": "G1"})
+    monkeypatch.setattr("genomics.visualizer.perturb.MAX_SCAN_POSITIONS", 10)
+    with pytest.raises(PerturbError):  # more windows than allowed
+        service.scan_spec({"sample": "S1", "gene": "G1", "start": 0, "end": 40, "size": 1, "step": 1})
+
+    def cancelled(*args):
+        return None
+
+    cancelled.cancelled = True
+    with pytest.raises(JobCancelled):
+        service.scan(spec, cancelled)

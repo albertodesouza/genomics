@@ -49,17 +49,31 @@ export async function setDataset(id) {
   state.genes = new Map();
   const [summary, samples] = await Promise.all([api(`${ds()}/summary`), api(`${ds()}/samples`)]);
   state.summary = summary;
+  installSamples(samples);
+  state.filters = sanitizeFilters(load('filters', {}));
+  state.search = '';
+  state.pinned = (load('pinned', []) || []).filter((id) => state.samples.index.has(id)).slice(0, MAX_PINNED);
+  if (!state.pinned.length) state.pinned = samples.rows.slice(0, 3).map((r) => r[state.samples.col.sample_id]);
+  state.locus = load('locus', {}) || {};
+  emit('dataset');
+}
+
+function installSamples(samples) {
   const col = {};
   samples.columns.forEach((name, i) => { col[name] = i; });
   const index = new Map();
   samples.rows.forEach((row) => index.set(row[col.sample_id], row));
   state.samples = { ...samples, col, index };
-  state.filters = sanitizeFilters(load('filters', {}));
-  state.search = '';
-  state.pinned = (load('pinned', []) || []).filter((id) => index.has(id)).slice(0, MAX_PINNED);
-  if (!state.pinned.length) state.pinned = samples.rows.slice(0, 3).map((r) => r[col.sample_id]);
-  state.locus = load('locus', {}) || {};
-  emit('dataset');
+}
+
+/** Re-read sample rows and fields (after region scalars were added or removed); emits 'samples'. */
+export async function reloadSamples() {
+  installSamples(await api(`${ds()}/samples`));
+  const before = JSON.stringify(state.filters);
+  state.filters = sanitizeFilters(state.filters);
+  if (JSON.stringify(state.filters) !== before) save('filters', state.filters);
+  emit('samples');
+  if (JSON.stringify(state.filters) !== before) emit('cohort');
 }
 
 function sanitizeFilters(filters) {

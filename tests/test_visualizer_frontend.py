@@ -18,6 +18,7 @@ sync_api = pytest.importorskip("playwright.sync_api")
 PAGES = ["overview", "samples", "tracks", "sequence", "variant", "perturb", "experiments", "jobs", "alphagenome", "system", "import"]
 # Resource loads the app does not control (the browser asks for a favicon).
 IGNORED_CONSOLE = ("favicon",)
+APPS = {}
 
 
 @pytest.fixture(scope="module")
@@ -40,6 +41,7 @@ def server_url(dataset_dir, tmp_path_factory):  # noqa: F811 (fixture imported a
     port = _free_port()
     server = Server(("127.0.0.1", port), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    APPS[f"http://127.0.0.1:{port}"] = app  # for tests that seed caches
     try:
         yield f"http://127.0.0.1:{port}"
     finally:
@@ -70,6 +72,18 @@ def page(browser):
     context.close()
 
 
+def _wait_state(page, expression, timeout=15.0):
+    """Poll ``expression`` (JS over ``m``, the app's state module) until it is truthy."""
+    import time
+
+    deadline = time.time() + timeout
+    script = f"async () => {{ const m = await import('/static/js/state.js'); return !!({expression}); }}"
+    while not page.evaluate(script):
+        if time.time() > deadline:
+            raise AssertionError(f"timed out waiting for {expression}")
+        page.wait_for_timeout(100)
+
+
 def _open(page, url):
     page.goto(url)
     page.wait_for_load_state("networkidle")
@@ -81,6 +95,9 @@ def test_page_renders_without_errors(page, server_url, name):
     _open(page, f"{server_url}/#/{name}")
     assert page.locator("#page").inner_text().strip(), f"{name} rendered nothing"
     assert page.locator(".error-box").count() == 0, f"{name}: {page.locator('.error-box').all_inner_texts()}"
+    # Error toasts are app failures, except missing data in the fixture (EXTRA has no haplotype FASTA).
+    toasts = [t for t in page.locator(".toast.error").all_inner_texts() if "No such file or directory" not in t]
+    assert toasts == [], f"{name}: {toasts}"
     assert page.errors == [], f"{name}: {page.errors}"
 
 
@@ -144,4 +161,65 @@ def test_variant_page_lists_sites_and_opens_one(page, server_url):
     page.locator("table tbody tr").first.click()
     page.wait_for_selector(".variant-title")
     assert "pos=" in page.url
+    assert page.errors == []
+
+
+def test_region_scalar_from_tracks_becomes_a_sample_facet(page, server_url):
+    _open(page, f"{server_url}/#/samples")
+    page.evaluate("async () => { const m = await import('/static/js/state.js'); m.setPinned(['S1']); }")
+    _open(page, f"{server_url}/#/tracks?gene=GENE1")
+    page.wait_for_function("document.querySelectorAll('.panel canvas').length >= 1")
+    page.get_by_role("button", name="Region scalar…").click()
+    dialog = page.locator(".modal")
+    dialog.locator("label.field", has_text="Track").locator("select").select_option("1")  # per-sample constant
+    assert dialog.locator("label.field", has_text="Genomic range").locator("input").input_value().startswith("chr1:")
+    assert dialog.locator("label.field", has_text="Field name").locator("input").input_value() == "rna_seq_region"
+    dialog.get_by_role("button", name="Compute").click()
+    page.wait_for_selector(".modal", state="detached", timeout=20000)
+
+    _open(page, f"{server_url}/#/samples")
+    facet = page.locator('[data-facet="region-scalars"]')
+    facet.locator(".scalar-name", has_text="rna_seq_region").wait_for()
+    assert facet.locator("canvas").count() == 1
+    bins = page.locator('[data-facet="rna_seq_region_bin"]')
+    assert sorted(bins.locator(".fv-name").all_inner_texts()) == ["Q1", "Q2", "Q3"]
+    cols = page.evaluate("async () => { const m = await import('/static/js/state.js'); const c = m.state.samples.col; return m.state.samples.rows.map((r) => [r[c.sample_id], r[c.rna_seq_region]]); }")
+    assert sorted(cols) == [["S1", 1.0], ["S2", 2.0], ["S3", 3.0]]
+    page.once("dialog", lambda d: d.accept())
+    facet.get_by_role("button", name="Delete").click()
+    page.wait_for_function("!document.querySelector('[data-facet=\"rna_seq_region_bin\"]')")
+    assert page.errors == []
+
+
+def test_ancestry_pca_scatter_pc_fields_and_matching(page, server_url):
+    import numpy as np
+
+    app = APPS[server_url]
+    dataset = app.catalog.all()[0]
+    params = app.ancestry.params(dataset, ["GENE1"], 0.05, 2000, 10)  # the panel's defaults
+    app.ancestry.memory.put(app.ancestry.key(dataset, params), {
+        "samples": np.array(["S1", "S2", "S3"]), "scores": np.array([[1.0, 0.2], [-1.0, 0.5], [0.8, -0.5]], np.float32),
+        "explained": np.array([0.5, 0.2], np.float32), "n_sites": np.int64(12), "sites_per_window": np.array([12]),
+    })
+    _open(page, f"{server_url}/#/samples?view=ancestry")
+    page.locator(".ancestry canvas").wait_for()  # a cached PCA is shown without asking
+    assert "PC1 (50.0%)" in page.locator(".ancestry").inner_text()
+    assert page.locator(".ancestry .legend-item").count() == 2  # AFR, EUR
+    page.get_by_role("button", name="Add PC fields").click()
+    _wait_state(page, "'pc1' in m.state.samples.col")
+    page.get_by_role("button", name="Update PC fields").wait_for()  # the panel came back after the page remount
+
+    match = page.locator("section.card", has_text="Match two groups")
+    match.locator("label.field", has_text="Field").first.locator("select").select_option("superpopulation")
+    match.locator("label.field", has_text="Group A").locator("label.check", has_text="EUR").locator("input").check()
+    match.locator("label.field", has_text="Group B").locator("label.check", has_text="AFR").locator("input").check()
+    match.locator("label.field", has_text="Caliper").locator("input").fill("0")
+    match.get_by_role("button", name="Match").click()
+    page.locator(".ancestry", has_text="1 pairs").wait_for()
+    _wait_state(page, "'matched' in m.state.samples.col")
+    values = page.evaluate("async () => { const m = await import('/static/js/state.js'); const c = m.state.samples.col; return m.state.samples.rows.map((r) => [r[c.sample_id], r[c.matched] ?? null]); }")
+    assert sorted(values) == [["S1", "AFR"], ["S2", "EUR"], ["S3", None]]  # on PC1-PC2, S1 is nearer S2
+    page.get_by_role("button", name="Use as cohort").first.click()
+    _wait_state(page, "m.cohortSize() === 2")
+    page.evaluate("async () => { const m = await import('/static/js/state.js'); m.setFilters({}); }")
     assert page.errors == []

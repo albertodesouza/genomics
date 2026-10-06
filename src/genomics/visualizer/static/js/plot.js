@@ -66,7 +66,7 @@ export function ticks(min, max, target = 6) {
   if (!(max > min)) return [min];
   const step = niceStep(max - min, target);
   const out = [];
-  for (let v = Math.ceil(min / step) * step; v <= max + step * 1e-9; v += step) out.push(Number(v.toPrecision(12)));
+  for (let v = Math.ceil(min / step) * step; v <= max + step * 1e-9; v += step) out.push(Math.abs(v) < step * 1e-9 ? 0 : Number(v.toPrecision(12)));
   return out;
 }
 
@@ -399,4 +399,55 @@ export function genotypePlot(canvas, { groups, width, height = 240, yLabel = '',
   ctx.strokeStyle = t.lineStrong; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(L + 0.5, T); ctx.lineTo(L + 0.5, height - B); ctx.lineTo(width - R, height - B + 0.5); ctx.stroke();
   return { cx, slot, y, groups };
+}
+
+/**
+ * Scatter plot. ``points``: [{x, y, color, r, back}] (``back`` points are drawn first, e.g. samples outside
+ * the cohort). Returns {nearest(px, py)} giving the index of the closest point within 8 px, or -1.
+ */
+export function scatterPlot(canvas, { points, width, height = 420, xLabel = '', yLabel = '' }) {
+  const t = theme();
+  const ctx = setupCanvas(canvas, width, height);
+  const L = 58; const R = 14; const T = 12; const B = 42;
+  const xs = points.map((p) => p.x).filter(Number.isFinite);
+  const ys = points.map((p) => p.y).filter(Number.isFinite);
+  if (!xs.length) return { nearest: () => -1 };
+  const pad = (lo, hi) => { const s = (hi - lo) || Math.abs(hi) || 1; return [lo - s * 0.05, hi + s * 0.05]; };
+  const [x0, x1] = pad(Math.min(...xs), Math.max(...xs));
+  const [y0, y1] = pad(Math.min(...ys), Math.max(...ys));
+  const xOf = (v) => L + ((v - x0) / (x1 - x0)) * (width - L - R);
+  const yOf = (v) => T + (1 - (v - y0) / (y1 - y0)) * (height - T - B);
+  ctx.strokeStyle = t.line; ctx.fillStyle = t.ink3; ctx.lineWidth = 1;
+  ctx.font = `11px ${t.font}`;
+  const xt = ticks(x0, x1, 6); const yt = ticks(y0, y1, 5);
+  const xStep = xt.length > 1 ? xt[1] - xt[0] : 1; const yStep = yt.length > 1 ? yt[1] - yt[0] : 1;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for (const v of xt) { const x = xOf(v); ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, height - B); ctx.stroke(); ctx.fillText(tickLabel(v, xStep), x, height - B + 5); }
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (const v of yt) { const y = yOf(v); ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(width - R, y); ctx.stroke(); ctx.fillText(tickLabel(v, yStep), L - 6, y); }
+  ctx.strokeStyle = t.lineStrong; ctx.strokeRect(L, T, width - L - R, height - T - B);
+  ctx.fillStyle = t.ink2; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.fillText(xLabel, L + (width - L - R) / 2, height - 4);
+  ctx.save(); ctx.translate(14, T + (height - T - B) / 2); ctx.rotate(-Math.PI / 2); ctx.textBaseline = 'middle'; ctx.fillText(yLabel, 0, 0); ctx.restore();
+  const order = points.map((p, i) => i).sort((a, b) => (points[b].back ? 1 : 0) - (points[a].back ? 1 : 0));
+  const px = new Float32Array(points.length); const py = new Float32Array(points.length);
+  for (const i of order) {
+    const p = points[i];
+    px[i] = xOf(p.x); py[i] = yOf(p.y);
+    if (!Number.isFinite(px[i]) || !Number.isFinite(py[i])) continue;
+    ctx.globalAlpha = p.back ? 0.35 : 0.8;
+    ctx.fillStyle = p.color || t.accent;
+    ctx.beginPath(); ctx.arc(px[i], py[i], p.r || 2.5, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  return {
+    nearest(x, y) {
+      let best = -1; let bd = 64;
+      for (let i = 0; i < points.length; i++) {
+        const d = (px[i] - x) ** 2 + (py[i] - y) ** 2;
+        if (d < bd) { bd = d; best = i; }
+      }
+      return best;
+    },
+  };
 }

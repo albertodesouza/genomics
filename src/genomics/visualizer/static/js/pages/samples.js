@@ -1,14 +1,16 @@
 // Samples: faceted cohort builder, virtualized table, sample details, pinning and view export.
-import { api } from '../api.js';
-import { navigate } from '../app.js';
-import { state, ds, filterRows, setFilters, setPinned, togglePinned, categoricalFields } from '../state.js';
-import { h, clear, icon, fmtInt, drawer, modal, toast, downloadText, debounce, field, select, errorBox, escapeHtml } from '../ui.js';
+import { api, apiJob } from '../api.js';
+import { navigate, remount, updateRouteParams } from '../app.js';
+import { state, ds, filterRows, setFilters, setPinned, togglePinned, categoricalFields, reloadSamples } from '../state.js';
+import { h, clear, icon, fmtInt, fmtNum, segmented, drawer, modal, toast, downloadText, debounce, field, select, errorBox, escapeHtml, jobOverlay } from '../ui.js';
 import { igsrPopulationUrl, igsrSampleUrl, isIgsrPopulation, isIgsrSample, xref } from '../links.js';
 import { geneChip } from '../cards.js';
+import { loadScalars, openScalarForm, deleteScalar, drawScalarHistogram, scalarText } from '../scalars.js';
+import { mountAncestry } from '../ancestry.js';
 
 const ROW_H = 30;
 
-export async function mount(root) {
+export async function mount(root, params = {}) {
   const layout = h('div', { class: 'samples-layout' });
   root.appendChild(layout);
   const facetsEl = h('aside', { class: 'facets', 'aria-label': 'Filters' });
@@ -22,13 +24,30 @@ export async function mount(root) {
   let rows = [];
   let active = null;
 
+  // ----- table / ancestry view -----
+  let view = params.view === 'ancestry' ? 'ancestry' : 'table';
+  let ancestry = null;
+  const ancestryHost = h('div', { style: { flex: '1', minHeight: '0', display: 'flex', flexDirection: 'column' }, hidden: true });
+  const viewSeg = segmented([
+    { value: 'table', label: 'Table' },
+    { value: 'ancestry', label: 'Ancestry PCA', title: 'Genotype PCA coloured by any field, PCs as sample fields, and matching two groups on the PCs' },
+  ], view, (v) => setView(v));
+  function setView(v) {
+    view = v;
+    updateRouteParams({ view: v === 'ancestry' ? 'ancestry' : null });
+    vtable.hidden = v !== 'table';
+    ancestryHost.hidden = v !== 'ancestry';
+    if (v === 'ancestry' && !ancestry) ancestry = mountAncestry(ancestryHost);
+    if (v === 'table') renderRows();
+  }
+
   // ----- header & actions -----
   const countEl = h('div', null);
   const search = h('input', { class: 'input', type: 'search', placeholder: 'Search samples or any field…', value: state.search, style: { width: '280px' } });
   search.addEventListener('input', debounce(() => { state.search = search.value; refresh(); }, 120));
   const head = h('div', { style: { padding: '14px 16px', display: 'grid', gap: '10px', borderBottom: '1px solid var(--line)', background: 'var(--surface)' } },
     h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' } },
-      h('h1', null, 'Samples'), countEl, h('div', { style: { flex: '1' } }), search),
+      h('h1', null, 'Samples'), countEl, viewSeg, h('div', { style: { flex: '1' } }), search),
     h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
       h('button', { class: 'btn', title: 'Pin the first 5 matching samples', onclick: () => pinFirst(5) }, icon('pin', 14), 'Pin first 5'),
       h('button', { class: 'btn', title: 'Pin one sample from each value of a field', onclick: pinPerGroup }, icon('pin', 14), 'Pin one per group…'),
@@ -49,7 +68,7 @@ export async function mount(root) {
   const body = h('div', { class: 'vtable-body' });
   const vtable = h('div', { class: 'vtable', tabindex: '0' }, headRow, body);
   vtable.addEventListener('scroll', () => renderRows());
-  main.append(head, vtable);
+  main.append(head, vtable, ancestryHost);
 
   function renderRows() {
     const top = vtable.scrollTop;
@@ -80,6 +99,46 @@ export async function mount(root) {
     for (const id of state.pinned) pinnedChips.appendChild(h('span', { class: 'pill removable' }, id, h('button', { title: `Unpin ${id}`, onclick: () => togglePinned(id) }, '×')));
   }
 
+  // ----- region scalars -----
+  let scalars = [];
+  async function loadScalarList() {
+    try { scalars = (await loadScalars()).filter((sc) => sc.kind === 'region'); } catch (err) { scalars = []; }
+    renderFacets();
+  }
+
+  function scalarFacet() {
+    const facet = h('div', { class: 'facet', dataset: { facet: 'region-scalars' } },
+      h('div', { class: 'facet-head' }, h('h3', null, 'Region scalars'),
+        h('button', { class: 'btn small', title: 'One number per sample from a track over a region, as a sample field', onclick: () => openScalarForm({}, { onSaved: loadScalarList }) }, icon('plus', 13), 'New…')));
+    if (!scalars.length) facet.appendChild(h('p', { class: 'muted', style: { margin: 0, fontSize: '12px' } }, 'e.g. CAGE summed over a TSS ± 500 bp per sample. Defined here or from the Tracks view; each becomes a column and, binned, a filter and Group-by field.'));
+    const width = Math.max(160, (facetsEl.clientWidth || 260) - 30);
+    for (const sc of scalars) {
+      const canvas = h('canvas');
+      const actions = h('div', { style: { display: 'flex', gap: '4px', flexWrap: 'wrap' } });
+      if (sc.ready && sc.bin_field) actions.appendChild(h('button', { class: 'btn small', title: `Group means on Tracks split by ${sc.bin_field}`, onclick: () => navigate('tracks', { gene: sc.gene, mode: 'groups', groupField: sc.bin_field }) }, 'Group in Tracks'));
+      if (!sc.ready) actions.appendChild(h('button', { class: 'btn small', title: 'The cached region means are gone; compute them again', onclick: () => recompute(sc, facet) }, 'Compute'));
+      actions.appendChild(h('button', { class: 'btn small ghost', onclick: async () => {
+        if (!confirm(`Delete the region scalar ${sc.name}?`)) return;
+        try { await deleteScalar(sc); toast(`Deleted ${sc.name}`); } catch (err) { toast(err.message, 'error'); }
+      } }, 'Delete'));
+      const h_ = sc.histogram || {};
+      facet.appendChild(h('div', { class: 'scalar-item' },
+        h('div', { class: 'scalar-name' }, h('b', { class: 'mono' }, sc.name), sc.ready ? h('span', { class: 'muted' }, `n ${fmtInt(h_.n)} · median ${fmtNum(h_.median)}`) : h('span', { class: 'muted' }, 'not computed')),
+        h('div', { class: 'muted scalar-desc', title: sc.description || '' }, `${sc.gene} · ${scalarText(sc)}`),
+        sc.ready ? canvas : null, actions));
+      if (sc.ready) requestAnimationFrame(() => drawScalarHistogram(canvas, sc, { width, height: 56 }));
+    }
+    return facet;
+  }
+
+  async function recompute(sc, host) {
+    const overlay = jobOverlay(host, `${sc.gene}: region means for ${sc.name}`);
+    try {
+      await apiJob(`${ds()}/scalars`, { method: 'POST', body: { ...sc, replace: true }, onProgress: (job) => overlay.update(job) });
+      await reloadSamples();
+    } catch (err) { toast(err.message, 'error'); } finally { overlay.remove(); }
+  }
+
   // ----- facets -----
   const facetSearch = {};
   function renderFacets() {
@@ -88,6 +147,7 @@ export async function mount(root) {
     facetsEl.appendChild(h('div', { class: 'facet' },
       h('div', { class: 'facet-head' }, h('h3', null, 'Cohort filters'), Object.keys(state.filters).length ? h('button', { class: 'btn small ghost', onclick: () => setFilters({}) }, 'Reset') : null),
       h('p', { class: 'muted', style: { margin: 0, fontSize: '12px' } }, 'The cohort drives group means and population heatmaps on the Tracks page.')));
+    facetsEl.appendChild(scalarFacet());
     for (const f of cats) {
       const selected = new Set(state.filters[f.name] || []);
       const base = filterRows(state.filters, state.search, f.name);
@@ -200,14 +260,17 @@ export async function mount(root) {
 
   renderPinned();
   refresh();
+  loadScalarList();
+  if (view === 'ancestry') setView('ancestry');
   const onResize = () => renderRows();
   window.addEventListener('resize', onResize);
   return {
     onEvent(topic) {
-      if (topic === 'cohort') refresh();
+      if (topic === 'cohort') { refresh(); if (ancestry) ancestry.refresh(); }
+      if (topic === 'samples') remount(); // columns and facets changed (region scalars)
       if (topic === 'pinned') { renderPinned(); renderRows(); }
     },
-    unmount() { window.removeEventListener('resize', onResize); },
+    unmount() { window.removeEventListener('resize', onResize); if (ancestry) ancestry.unmount(); },
   };
 }
 
