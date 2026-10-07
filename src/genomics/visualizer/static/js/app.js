@@ -10,6 +10,7 @@ const PAGES = [
   { key: 'tracks', label: 'Tracks', icon: 'tracks', load: () => import('./pages/tracks.js') },
   { key: 'sequence', label: 'Sequence', icon: 'sequence', load: () => import('./pages/sequence.js') },
   { key: 'variant', label: 'Variant', icon: 'target', load: () => import('./pages/variant.js') },
+  { key: 'products', label: 'Gene products', icon: 'products', load: () => import('./pages/products.js') },
   { key: 'perturb', label: 'Perturbation Lab', icon: 'perturb', load: () => import('./pages/perturb.js') },
   { sep: true },
   { key: 'experiments', label: 'Experiments', icon: 'experiments', load: () => import('./pages/experiments.js') },

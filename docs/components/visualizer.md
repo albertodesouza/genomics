@@ -38,6 +38,7 @@ GitHub workflow.
 | Tracks | Canvas genome browser: overview strip, ruler, gene models, a sequence lane and one panel per AlphaGenome track. Tracks of several outputs (RNA-seq, CAGE, DNase, ChIP, …) can be shown together, up to 16 at once; drag a panel's grip (⋮⋮, or focus it and press ↑ / ↓) to reorder them (the order is remembered, new tracks are added at the bottom). Shows pinned **individuals**, cohort **group means** ± SD (or each group's difference from the cohort mean) by any facet, or a **population heatmap** with every cohort sample as a row. *Compare with* adds AlphaGenome's prediction of the **reference genome** (dashed line) and the **observed** ENCODE / FANTOM5 signal behind each track (a lane under it, with an agreement badge); see [Reference and observed data](#reference-and-observed-data). *Region scalar…* defines a per-sample scalar from the view. The y-axis can be linear or log(1+x), shared by every track of an output, and **locked**: with *Lock y-scale while panning* on, the range the panels had when it was switched on is kept, so moving the view cannot rescale them and a quiet region reads as genuinely quiet rather than being stretched to fill the panel (also what a figure series of several loci needs). Track names open a track card, gene models and the gene button a gene card (see [Links to databases](#links-to-ontologies-and-databases)). The sequence lane shows the letter frequency per base over the pinned haplotypes (or the reference genome): letters scaled by frequency when zoomed in, stacked base composition per bin when zoomed out |
 | Sequence | Pinned haplotypes against the reference: gene models, bases when zoomed in (mismatches coloured, matches as dots, deletions and insertions marked), mismatch/indel density when zoomed out, variant lane and genotype table |
 | Variant | One site across the cohort: genotype counts and ALT frequency by any sample field, AlphaGenome's predicted signal by genotype over a region (an in-silico eQTL) and GTEx's measured eQTL of the same variant, with whether the directions agree; see [Variant page](#variant-page) |
+| Gene products | One individual's mature transcripts and proteins per haplotype: every annotated transcript spliced on each phased haplotype and translated, the protein change against the reference (HGVS), NMD, AlphaGenome's splice-junction usage per tissue and the candidate isoforms it implies; how much mRNA and protein the individual makes against the reference genome (relative folds and absolute estimates, per tissue); the protein in 3D and the mRNA's secondary structure; FASTA/JSON export. See [Gene products page](#gene-products-page) |
 | Perturbation Lab | Edit an individual's haplotypes (scramble, overwrite, revert to reference, custom sequence), re-predict them with AlphaGenome and re-score them with any trained model; gene models, original vs edited tracks, class means and class probabilities. A *saturation scan* slides one edit across a range and shows how much each window moves a class probability |
 | Experiments | Runs table with any numeric metric (`weighted_*` included), training curves, run comparison, confusion matrix, per-class metrics, config, plots. Start a training run, evaluate a checkpoint on a split, or open a run in the Perturbation Lab |
 | Jobs | Background jobs (imports, AlphaGenome predictions, training, evaluation): progress, live log, cancel. They keep running when the tab closes or the visualizer stops |
@@ -391,6 +392,157 @@ On rs12913832 (HERC2 intron, the OCA2 enhancer; G is the blue-eye allele) GTEx s
 with G (NES −0.13 sun-exposed, −0.17 not sun-exposed), while AlphaGenome's melanocyte RNA-seq over
 the OCA2 gene body shows no association (slope p = 0.89 over 3,202 samples).
 
+## Gene products page
+
+Pick a window, a sample, a gene (when the window holds several) and a tissue. The tissue picker lists
+every ontology term AlphaGenome has RNA-seq for (285: tissues, primary cells, cell lines,
+differentiated cells; searchable by name, type or CURIE). Melanocyte of skin, foreskin melanocyte,
+lymphoblastoid cells (GTEx) and GM12878 are the defaults with curated baselines; for any other term:
+
+| Where the numbers come from | |
+|---|---|
+| AlphaGenome RNA-seq and splice junctions | stored in the dataset when it has them for the term; otherwise predicted on demand for the reference window and both haplotypes (one call per sequence, RNA-seq and junctions together; cached under `<cache>/expression`) |
+| Gene level (absolute) | **GTEx** v8 median TPM when the term is a GTEx tissue (its AlphaGenome tracks come from GTEx, GTEx lists the same ontology term, or a tissue has a single-site GTEx tissue's name, e.g. ENCODE "liver" = GTEx "Liver"); else the **Human Protein Atlas** single-cell type (primary and differentiated cells: "T-cell" = *t-cells*) or cell line ("HepG2" = *Hep-G2*) of the same normalised name — the HPA tables are 16 MB and 206 MB downloads, scanned once per name and cached; else none (relative changes only) |
+| Transcript shares | GTEx median transcript TPM of the matching GTEx tissue; otherwise the mean over all GTEx tissues, marked as a stand-in |
+
+The report says which source each number came from (and when a match was made by name). The pipeline
+is shown in three steps:
+
+1. **Reference genome: what the gene makes in the tissue** (observed). The gene's level (Human
+   Protein Atlas single-cell nCPM for melanocytes; GTEx v8 median TPM for lymphoblastoid cells) split
+   over its transcripts by GTEx v8's median transcript TPMs, as a share bar and a table (share, level,
+   protein length). GTEx has no melanocyte samples, so sun-exposed skin's transcript shares stand in
+   for them. GTEx v8 uses GENCODE v26: a transcript annotated later (often the MANE Select one) takes
+   the TPM of the v26 transcript with the identical intron chain, shown as *as ENST…*.
+2. **The individual's two copies**, side by side. For each copy, at the top, the verdicts:
+   * mRNA level against a reference copy (AlphaGenome RNA-seq of the haplotype vs the reference window),
+     with the absolute estimate;
+   * **unstable mRNA**: transcripts that gain a stop codon triggering nonsense-mediated decay;
+   * **premature stop codon**: transcripts whose protein ends early (nonsense, frameshift);
+   * **different amino acid(s)** in the base transcript, each with its **AlphaMissense**
+     pathogenicity (from the AlphaFold Database's per-protein table) — or *same amino acids* with the
+     number of synonymous variants;
+   * **protein similarity** to the reference protein: the BLOSUM62 score of the global alignment
+     divided by the reference's score against itself (1 = identical; a substitution between similar
+     residues costs less than between dissimilar ones), with the identity.
+
+   Then the copy's variants counted by consequence (synonymous, missense, nonsense, frameshift,
+   in-frame, splice, UTR, intronic, …), a table of every transcript (share, level, fold against the
+   reference, mRNA stable or unstable, protein change, similarity) and the variant list. A
+   transcript's level on a copy = reference level / 2 × the gene's predicted fold × the change in
+   AlphaGenome usage of its weakest junction (pseudocount 0.05, renormalised over the gene) ×
+   0.2 if the copy's mRNA gains NMD (a typical steady-state residue). Protein changes combine every
+   variant of the copy (phase-aware); each listed variant is applied alone to the reference genome and
+   classified on every coding transcript, its consequence being the most severe.
+3. **Protein shape** of the clicked transcript on the chosen copy (below).
+
+**Known variants.** Each variant the page lists is looked up in Ensembl (VEP, batched; only positions
+and alleles are sent): its dbSNP rsID, ClinVar significance, the articles that cite it, its OMIM /
+UniProt / ClinPGx records and gnomAD and 1000 Genomes frequencies, and, for variants with a phenotype,
+the ClinVar conditions and GWAS Catalog traits. A known variant gets an rsID link and a *known* mark in
+the variant table and next to its amino-acid change, and a panel under the copy's verdicts with its
+conditions, traits and links to dbSNP (the reference record), ClinVar, OMIM, the GWAS Catalog, LitVar
+(every article mentioning it), PubMed, UniProt, ClinPGx, gnomAD and Ensembl. MC1R R151C (rs1805007) on
+HG00096's H2, for example, shows ClinVar's *red hair / fair skin*, *increased analgesia from a
+kappa-opioid receptor agonist, female-specific* and *melanoma susceptibility* and its GWAS hair-colour
+and skin-cancer associations. Coding, splice and UTR variants are looked up when the report loads;
+intronic ones when *Show intronic and flanking variants* is on. Answers are cached under
+`<cache>/variants`; `--no-remote` disables the lookup.
+
+Everything else — mRNA and protein in every tissue, all transcripts with the protein alignment,
+mRNA folding, AlphaGenome splicing and every variant — is under **More evidence**.
+
+| Card | Shows |
+|---|---|
+| Header | Base transcript (MANE Select, else Ensembl canonical), the H1 and H2 protein change against the reference, and the tissue tracks in which AlphaGenome predicts the gene to be spliced |
+| Annotated transcripts | Every GENCODE transcript of the gene that fits in the window: exons, mRNA and protein length, the H1 / H2 consequence (identical, UTR only, synonymous, missense, in-frame indel, frameshift, stop gained / lost, start lost, NMD) with its HGVS `p.` description, and its *junction support* (the usage of its weakest junction) on the chosen tissue track |
+| Transcript detail | mRNA, UTR and protein lengths, NMD verdict and notes per haplotype, and the protein alignment of the reference, H1 and H2 (blocks with a difference; changed residues highlighted) |
+| Splicing | A sashimi-style plot (the base transcript's introns above, candidate junctions below; arc weight = usage), the usage of each intron on the reference, H1 and H2, and the candidate isoforms with their proteins |
+| Variants | The variants each haplotype carries in the base transcript, by region (coding, UTR, splice donor / acceptor / region, intron, flanks) |
+
+**How much: relative vs absolute.** The *How much?* card answers whether the individual makes more
+or less of each product than the reference genome, per tissue (melanocyte of skin, foreskin
+melanocyte, lymphoblastoid cells from GTEx, GM12878), and keeps two kinds of number apart:
+
+| Badge | Quantity | Rests on |
+|---|---|---|
+| RELATIVE · mRNA | fold change against the reference genome: H1, H2 and the individual `(H1 + H2) / (2 × reference)` | AlphaGenome RNA-seq of the reference window and of each haplotype, same model and track, mean coverage over the gene's exons. The ratio cancels most of the model's calibration error, so it is the number the model is trusted with |
+| ABSOLUTE · mRNA | estimated level in TPM (GTEx) or nCPM (HPA) | relative fold × the tissue's observed level of the gene in a reference population: HPA single-cell melanocytes, GTEx v8 EBV-transformed lymphocytes (GM12878 uses the GTEx LCL level as a proxy). The reference genome is assumed to sit at that level; per-haplotype values are each copy's contribution (the reference has two copies of half the level). An estimate for this genome, not a measurement of this person |
+| RELATIVE · protein | mRNA fold × the change in the share of transcripts that make a protein | NMD-targeted and start-lost products make none, candidate isoforms weighted by their junction usage; assumes unchanged translation efficiency and protein stability. A missense change alters *which* protein is made (noted under the fold), not how much |
+| ABSOLUTE · protein | not shown | there is no tissue-matched quantitative proteomics reference, and protein per mRNA varies by orders of magnitude between genes |
+
+Diverging bars (log scale, 0.5×–2×, reference = 1×; orange = more, blue = less, the shaded band =
+within ±10%) show each haplotype and the individual. A tissue whose observed level is below
+1 TPM / nCPM is marked *not expressed* and greyed: its folds are noise. RNA-seq for melanocyte of skin
+comes from the dataset's stored predictions; the other tissues are predicted on demand (three
+AlphaGenome calls, cached under `<cache>/expression`). The HPA single-cell table (16 MB) is
+downloaded once. On HG00096, TYR is predicted at 0.80× the reference in melanocytes (H1 0.79×,
+H2 0.80×; about 1,000 instead of 1,260 nCPM), and is not expressed in LCLs.
+
+**Structures.** For the selected transcript or candidate and haplotype:
+
+* **Similarity to the reference protein**: the sequence score above; for each substituted residue
+  its model confidence (pLDDT), its burial in the fold (CA neighbours within 10 Å: buried residues in
+  confident regions matter more) and AlphaMissense; after ESMFold, the **TM-score** between the two
+  predicted structures (computed here over the aligned residues, normalised by the reference window:
+  1 = same fold, > 0.5 = same fold family, < 0.3 = unrelated) and the RMSD.
+* **Protein, 3D** (3Dmol.js, loaded from cdnjs): the reference protein's AlphaFold DB model, found
+  through UniProt's Ensembl cross-reference and used when its sequence is the transcript's protein,
+  coloured by pLDDT, next to the haplotype's product with rotation linked. Substitutions are marked
+  on the model (a predicted fold does not show a point mutation's effect on stability); a truncated
+  product shows the residues it lacks as a grey trace. A product that changes after some residue
+  (frameshift, in-frame indel, another isoform), or a transcript with no AlphaFold DB model, can be
+  folded with **ESMFold**: the same window (≤ 400 residues, 150 before the first change) of the
+  reference and the product, on `api.esmatlas.com` — the sequences are sent there, so it runs only on
+  request and never with `--no-remote`; results are cached under `<cache>/structures`.
+* **mRNA, secondary structure** (ViennaRNA, minimum free energy): a window (120–600 nt) of the mature
+  transcript around the start codon, the stop codon or a variant the haplotype carries in that
+  transcript's exons, for the reference and the haplotype, with changed bases ringed and ΔΔG. Not
+  3D: full-length mRNA has no reliable 3D prediction (3D RNA methods handle short isolated RNAs, and
+  mRNA in cells is protein-bound), and the secondary structure around the start codon is what
+  affects translation.
+
+*Proteins FASTA*, *mRNA FASTA* and *JSON* download every product (annotated transcripts and
+candidates, per haplotype) for downstream tools (pathway, structure or variant-effect predictors).
+
+**How products are built.** Exons are reference-window offsets; each is mapped onto a haplotype
+through its indel map (the same map Tracks uses), so deletions shorten it and insertions inside it
+are kept (an insertion exactly at an exon edge counts as intronic). The spliced sequence is
+translated from the annotated start codon to the first in-frame stop, so every variant of the
+haplotype acts together: two SNVs in one codon give one amino-acid change, and an indel's frameshift
+runs to wherever the new frame stops. If the start codon is destroyed or spliced out, translation is
+assumed to start at the next AUG (and reported as `p.Met1?`). Transcripts GENCODE marks incomplete
+(`cds_start_NF`, `mRNA_end_NF`, …) are translated from their annotated frame and flagged *partial*.
+NMD follows the 50-nt rule (a stop more than 50 nt upstream of the last exon junction), with the
+start-proximal (< 150 nt) and long-exon (> 407 nt) escapes. Frameshift vs in-frame is decided by the
+reading frame at the reference stop codon.
+
+**Splicing evidence.** It needs `SPLICE_JUNCTIONS` predictions of the sample's haplotypes and of the
+reference window (*AlphaGenome → Predict* with that output and the tissues of interest, or
+`genomics alphagenome predict-dataset DIR --outputs SPLICE_JUNCTIONS --samples S --haplotypes H1,H2,ref
+--ontology …`). For every junction and track: PSI5 (its share of its donor's signal) and PSI3 (of its
+acceptor's), with denominators floored at 10% of the gene's strongest junction so weak sites cannot
+claim a large share by chance; *usage* is the smaller of the two (exon skipping lowers PSI5 of the
+intron before the skipped exon and PSI3 of the one after it). A track *splices* the gene when its
+strongest annotated junction reaches 0.1. **Candidates**: junctions on the gene's strand that are not
+introns of the base transcript, carry at least 5% of the gene's strongest junction, and are used ≥ 0.2
+or change by ≥ 0.1 between the reference and a haplotype on such a track, each spliced into the base
+transcript (exon skipping, alternative donor or acceptor, a junction with two new sites); and base
+introns whose junction keeps ≤ half its signal on a haplotype relative to the gene's other introns
+(an *intron retention* candidate, inferred: AlphaGenome does not predict retention itself). They are
+ranked by the largest change, up to 12.
+
+**What it is not.** Candidate isoforms are hypotheses from a sequence model, not measured
+transcripts, and the usage values are relative, not abundances. TSS and polyadenylation choice are
+taken from the annotation. Expression level is not modelled (use Tracks for RNA-seq / CAGE).
+
+**Checked against independent tools** with `scripts/diagnostics/validate_gene_products.py` on
+HG00096 (44 windows, GENCODE v46): all 166 complete reference proteins are identical to Ensembl
+112's peptides, and all 454 transcript × haplotype protein consequences agree with `bcftools csq -p a`
+(phase-aware) run on the same window VCFs with the Ensembl 112 GFF3. Among them: MC1R p.Arg151Cys
+(rs1805007) on H2, EGF p.[Met708Ile;Glu920Val] on H2 (both variants on one haplotype), and a TPM2-208
+frameshift (p.Trp114LeufsTer6) on H1.
+
 ## Perturbation Lab
 
 Pick a trained run (NN, CNN or CNN2; any target, layout and feature mode) and load it; the lab
@@ -505,6 +657,9 @@ v.samples()                                  # a pandas DataFrame when pandas is
 | `variant_sites`, `variant_effect`, `genotypes` | cohort sites, the in-silico eQTL at one site, and genotype counts |
 | `scalars`, `pca` | region-scalar definitions and the genotype PCA |
 | `sessions`, `session` | saved views, to reproduce a figure's exact view |
+| `products`, `products_fasta` | a sample's transcripts and proteins per haplotype with splicing evidence (the Gene products page), and their FASTA |
+| `report` | the gene report for a tissue: reference baseline per transcript, each copy's transcript levels, flags, variants and protein similarity |
+| `expression` | a sample's mRNA and protein against the reference genome per tissue: relative folds and absolute estimates |
 
 *Export → Copy as Python* on the Tracks page writes the call for the view on screen, with its gene,
 tracks, range, binning, haplotypes or groups and cohort filters already filled in.

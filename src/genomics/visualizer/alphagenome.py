@@ -339,3 +339,73 @@ def create_backend(args: Any, log_dir: Optional[Path]) -> AlphaGenomeBackend:
         address=getattr(args, "alphagenome_address", None),
         ca_cert=str(args.alphagenome_ca_cert) if getattr(args, "alphagenome_ca_cert", None) else None,
     )
+
+
+class AlphaGenomeUnavailable(RuntimeError):
+    """No backend is configured, or the selected one is not ready."""
+
+
+PREDICT_TIMEOUT = 900.0
+JUNCTION_OUTPUTS = ("splice_junctions",)
+JUNCTION_KEYS = ("starts", "ends", "strands", "values")
+
+
+def predict_cached(backend: Optional["AlphaGenomeBackend"], cache_dir: Optional[Path], sequence: bytes, outputs: List[str],
+                   terms: List[str], timeout: float = PREDICT_TIMEOUT) -> Dict[str, Any]:
+    """AlphaGenome prediction of one sequence, disk-cached by content, outputs and ontology terms.
+
+    Returns ``{output: (values (positions, tracks) float32, track metadata records)}``. ``outputs``
+    are ``dna_output.Output`` attribute names (``rna_seq``, ``cage``, ...); ``splice_junctions``
+    comes back as ``({"starts", "ends", "strands", "values"}, records)`` (haplotype offsets).
+    """
+    import hashlib
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+
+    import numpy as np
+
+    key = hashlib.sha1(sequence + json.dumps([sorted(outputs), sorted(terms)]).encode()).hexdigest()
+    cache_dir = Path(cache_dir) if cache_dir else None
+    if cache_dir is not None and (cache_dir / f"{key}.npz").exists():
+        try:
+            with np.load(cache_dir / f"{key}.npz") as data:
+                meta = json.loads((cache_dir / f"{key}.json").read_text(encoding="utf-8"))
+                return {o: ({k: np.asarray(data[f"{o}__{k}"]) for k in JUNCTION_KEYS} if o in JUNCTION_OUTPUTS else np.asarray(data[o]), meta[o]) for o in outputs}
+        except Exception:
+            pass
+    if backend is None:
+        raise AlphaGenomeUnavailable("No AlphaGenome backend configured")
+    reasons = backend.reasons()
+    if reasons:
+        raise AlphaGenomeUnavailable(f"AlphaGenome backend not ready: {'; '.join(reasons)}")
+    from alphagenome.models import dna_client
+
+    from genomics.workflows.alphagenome.predict_dataset import junction_arrays, metadata_records
+
+    client = backend.create_client()
+    requested = [getattr(dna_client.OutputType, o.upper()) for o in outputs]
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(client.predict_sequence, sequence.decode("ascii"), requested_outputs=requested, ontology_terms=terms or None)
+        try:
+            prediction = future.result(timeout=timeout)
+        except FutureTimeout:
+            raise RuntimeError(f"AlphaGenome did not answer within {timeout:.0f}s")
+    result = {}
+    for output in outputs:
+        track = getattr(prediction, output, None)
+        if track is None:
+            raise RuntimeError(f"AlphaGenome returned no {output}")
+        values = junction_arrays(track) if output in JUNCTION_OUTPUTS else np.asarray(track.values, dtype=np.float32)
+        result[output] = (values, metadata_records(track))
+    if cache_dir is not None:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        tmp = cache_dir / f".{key}.tmp.npz"
+        arrays = {}
+        for o, (v, _m) in result.items():
+            if o in JUNCTION_OUTPUTS:
+                arrays.update({f"{o}__{k}": v[k] for k in JUNCTION_KEYS})
+            else:
+                arrays[o] = v
+        np.savez_compressed(tmp, **arrays)
+        tmp.replace(cache_dir / f"{key}.npz")
+        (cache_dir / f"{key}.json").write_text(json.dumps({o: m for o, (_v, m) in result.items()}), encoding="utf-8")
+    return result

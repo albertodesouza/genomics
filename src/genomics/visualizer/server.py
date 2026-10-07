@@ -48,6 +48,12 @@ from genomics.visualizer.jobs import JobManager
 from genomics.visualizer.knowledge import KnowledgeBase, public_record
 from genomics.visualizer.observed import SCALES as OBSERVED_SCALES, ObservedService
 from genomics.visualizer.perturb import PerturbError, PerturbService
+from genomics.visualizer.expression import DEFAULT_ONTOLOGIES, TISSUES as EXPRESSION_TISSUES, ExpressionService, tissue_spec
+from genomics.visualizer.report import ReportService
+from genomics.visualizer.variant_knowledge import VariantKnowledge
+from genomics.visualizer.products import ProductService, coding_start_stop, fasta as products_fasta
+from genomics.visualizer.structures import (ESMFOLD_MAX, StructureError, StructureService, compare_proteins, protein_similarity, residue_context,
+                                            rna_available, rna_comparison)
 from genomics.visualizer.sequences import SequenceService
 from genomics.visualizer import startup
 from genomics.visualizer.startup import APP_NAME, DEFAULT_PORT, PORT_ATTEMPTS, StartupError
@@ -173,6 +179,7 @@ class VisualizerApp:
         self.signals = SignalService(memory_bytes, DiskArrayCache(cache_dir), alignment=self.alignment, workers=workers)
         self.sequences = SequenceService(self.signals)
         self.annotations = AnnotationService(cache_dir, gtf=gtf)
+        self.products = ProductService(self.signals, self.annotations)
         self.gtf = gtf
         self.gene_index = GeneIndex()
         self.remote = RemoteCache(cache_dir, offline=not remote)
@@ -195,6 +202,10 @@ class VisualizerApp:
         self.tasks = TaskManager(tasks_dir) if tasks_dir is not None else None
         self.dataset_memory = dataset_memory
         self.perturb = PerturbService(self, default_config=perturb_default_config)
+        self.structures = StructureService(self.remote, cache_dir)
+        self.expression = ExpressionService(self)
+        self.report = ReportService(self)
+        self.variant_knowledge = VariantKnowledge(self.remote, cache_dir)
         if self.tasks is not None:
             self.tasks.on_finished("import", self._on_import_finished)
             self.tasks.on_finished("predict", self._on_predict_finished)
@@ -238,6 +249,15 @@ class VisualizerApp:
         r("GET", r"/api/gtex/resolve", self.api_gtex_resolve)
         r("GET", r"/api/gtex/tissues", self.api_gtex_tissues)
         r("GET", r"/api/d/(?P<ds>[^/]+)/composition", self.api_composition)
+        r("GET", r"/api/d/(?P<ds>[^/]+)/products", self.api_products)
+        r("GET", r"/api/d/(?P<ds>[^/]+)/products/fasta", self.api_products_fasta)
+        r("GET", r"/api/d/(?P<ds>[^/]+)/products/expression", self.api_products_expression)
+        r("GET", r"/api/d/(?P<ds>[^/]+)/products/report", self.api_products_report)
+        r("GET", r"/api/products/tissues", self.api_products_tissues)
+        r("GET", r"/api/d/(?P<ds>[^/]+)/products/known", self.api_products_known)
+        r("GET", r"/api/d/(?P<ds>[^/]+)/products/structure", self.api_products_structure)
+        r("POST", r"/api/d/(?P<ds>[^/]+)/products/fold", self.api_products_fold)
+        r("GET", r"/api/d/(?P<ds>[^/]+)/products/rna", self.api_products_rna)
         r("POST", r"/api/d/(?P<ds>[^/]+)/views/preview", self.api_view_preview)
         r("POST", r"/api/d/(?P<ds>[^/]+)/views/save", self.api_view_save)
         r("GET", r"/api/runs", self.api_runs)
@@ -1044,6 +1064,294 @@ class VisualizerApp:
             return self.sequences.window(dataset, gene, rows, coords, start, end, bins)
         except FileNotFoundError as exc:
             raise HttpError(HTTPStatus.NOT_FOUND, str(exc))
+
+    def _products_context(self, query: Query, ds: str) -> Any:
+        """(dataset, gene, sample, gene models, target) of a products request, or a response to return as is."""
+        dataset = self.dataset(ds)
+        gene = self._gene(dataset, query.str("gene", required=True))
+        sample = query.str("sample", required=True)
+        if not re.match(r"^[A-Za-z0-9._-]+$", sample):
+            raise HttpError(HTTPStatus.BAD_REQUEST, f"Invalid sample id: {sample}")
+
+        def empty(message: str) -> Dict[str, Any]:  # data the dataset lacks: an answer, not an error
+            return {"gene": gene, "sample": sample, "genes": [], "target": None, "transcripts": [], "message": message}
+
+        if not dataset.gene_dir(sample, gene).is_dir():
+            return empty(f"{sample} has no {gene} window in this dataset")
+        cached = self.annotations.cached(dataset)
+        if cached is None:
+            result = self._job_response(f"annotations:{dataset.id}", "Loading gene annotations", lambda progress: self.annotations.build(dataset, progress))
+            if isinstance(result, dict) and result.get("pending"):
+                return result
+            cached = result
+        if not cached.get("source"):
+            return empty("No gene annotations for this dataset: add gtf_cache.feather to it or start with --gtf")
+        return dataset, gene, sample, cached.get("genes", {}).get(gene, []), query.str("target", "") or None
+
+    def _products(self, query: Query, ds: str, with_sequence: bool) -> Any:
+        ctx = self._products_context(query, ds)
+        if isinstance(ctx, dict):
+            return ctx
+        dataset, gene, sample, models, target = ctx
+        try:
+            return self.products.products(dataset, sample, gene, models, target=target, with_sequence=with_sequence)
+        except FileNotFoundError as exc:
+            return {"gene": gene, "sample": sample, "genes": [], "target": None, "transcripts": [], "message": str(exc)}
+
+    @staticmethod
+    def _product_item(payload: Dict[str, Any], tx: str) -> Dict[str, Any]:
+        """An annotated transcript (``tx`` = its id) or a candidate isoform (``cand:<i>``) of a products payload."""
+        base = next((t for t in payload["transcripts"] if t["id"] == payload.get("base")), None)
+        if tx.startswith("cand:"):
+            cands = (payload.get("splicing") or {}).get("candidates") or []
+            try:
+                cand = cands[int(tx[5:])]
+            except (ValueError, IndexError):
+                raise HttpError(HTTPStatus.NOT_FOUND, f"No candidate {tx}")
+            return {"exons": cand["exons"], "products": cand["products"], "transcript": base, "reference_protein": base["products"]["ref"].get("protein") or "",
+                    "title": f"{payload.get('base_name')} with {cand.get('kind')}"}
+        t = next((t for t in payload["transcripts"] if t["id"] == tx), None)
+        if t is None:
+            raise HttpError(HTTPStatus.NOT_FOUND, f"No transcript {tx}")
+        return {"exons": t["exons"], "products": t["products"], "transcript": t, "reference_protein": t["products"]["ref"].get("protein") or "", "title": t["name"]}
+
+    def api_products_expression(self, query: Query, body: Any, ds: str) -> Any:
+        """mRNA and protein of one sample relative to the reference genome, and absolute estimates, per tissue."""
+        ctx = self._products_context(query, ds)
+        if isinstance(ctx, dict):
+            return {"available": False, "message": ctx.get("message")} if not ctx.get("pending") else ctx
+        dataset, gene, sample, models, target = ctx
+        extra = [c for c in query.list("tissues") if c and c not in DEFAULT_ONTOLOGIES] if query.str("tissues", "") else []
+        stub = [{"ontology": c} for c in DEFAULT_ONTOLOGIES + extra]
+        hit = self.expression.cached(dataset, sample, gene, target, stub)
+        if hit is not None:
+            return hit
+
+        def build(progress):
+            specs = [self._tissue_spec(c) for c in DEFAULT_ONTOLOGIES + extra]
+            return self.expression.compute(dataset, sample, gene, models, target, progress, tissues=specs)
+
+        return self._job_response(self.expression.key(dataset, sample, gene, target, stub), f"Expression of {target or gene} in {sample}", build)
+
+    def api_products_report(self, query: Query, body: Any, ds: str) -> Any:
+        """The gene report: reference baseline per transcript, and each haplotype's levels, flags, variants and similarity."""
+        ctx = self._products_context(query, ds)
+        if isinstance(ctx, dict):
+            return {"available": False, "message": ctx.get("message")} if not ctx.get("pending") else ctx
+        dataset, gene, sample, models, target = ctx
+        tissue = query.str("tissue", DEFAULT_ONTOLOGIES[0])
+        if not re.match(r"^[A-Za-z]+:\d+$", tissue):
+            raise HttpError(HTTPStatus.BAD_REQUEST, f"Not an ontology term: {tissue}")
+        hit = self.report.cached(dataset, sample, gene, target, tissue)
+        if hit is not None:
+            return hit
+
+        def build(progress):
+            progress(0.01, "Resolving the tissue (AlphaGenome catalog, GTEx, Human Protein Atlas)")
+            return self.report.compute(dataset, sample, gene, models, target, self._tissue_spec(tissue), progress)
+
+        return self._job_response(self.report.key(dataset, sample, gene, target, tissue), f"Gene report of {target or gene} in {sample} ({tissue})", build)
+
+    def api_products_known(self, query: Query, body: Any, ds: str) -> Any:
+        """What is known about the sample's variants in the gene (rsID, ClinVar, traits, literature)."""
+        payload = self._products(query, ds, with_sequence=False)
+        if not payload.get("transcripts"):
+            return {"available": False, "message": payload.get("message") or "No transcripts"} if not payload.get("pending") else payload
+        scope = query.str("scope", "coding")
+        quiet = {"intron", "upstream", "downstream"}
+        alleles = sorted({(v["pos"], v["ref"], v[h]) for v in payload["variants"] for h in ("H1", "H2")
+                          if v.get(h) and (scope == "all" or v["region"] not in quiet)})
+        key = f"known:{ds}:{query.str('sample')}:{query.str('gene')}:{payload.get('target')}:{scope}"
+        return self._job_response(key, f"Known variants in {payload.get('target')}",
+                                  lambda progress: {**self.variant_knowledge.annotate(payload["chromosome"], alleles), "scope": scope, "queried": len(alleles)})
+
+    # -- tissues for the products pipeline -------------------------------------------------------
+    def _full_catalog(self) -> Optional[Dict[str, Any]]:
+        """The AlphaGenome track catalog with per-track rows (cached file or memory; fetched when a backend is ready)."""
+        from genomics.workflows.alphagenome import catalog as ag_catalog
+
+        path = Path(self.cache_dir) / "alphagenome_catalog.json" if self.cache_dir else None
+        with self._ag_catalog_lock:
+            if self._ag_catalog is None and path is not None:
+                self._ag_catalog = ag_catalog.load_catalog(path)
+            if self._ag_catalog is not None:
+                return self._ag_catalog
+            if self._backend_summary()["reasons"]:
+                return None
+            try:
+                client = self.alphagenome.create_client(timeout=30.0) if self.alphagenome is not None else None
+                if client is None:
+                    return None
+                self._ag_catalog = ag_catalog.fetch_catalog(client, source=self._backend_summary()["label"])
+            except Exception:
+                return None
+            if path is not None:
+                ag_catalog.save_catalog(self._ag_catalog, path)
+            return self._ag_catalog
+
+    def _tissue_terms(self) -> Dict[str, Dict[str, Any]]:
+        """{ontology: {name, type, rna_seq, junctions, gtex_tissue}} for every term with AlphaGenome RNA-seq."""
+        catalog = self._full_catalog()
+        if catalog is None:
+            return {}
+        if getattr(self, "_tissue_terms_cache", None) is not None and self._tissue_terms_cache[0] is catalog:
+            return self._tissue_terms_cache[1]
+        terms: Dict[str, Dict[str, Any]] = {}
+        for row in (catalog.get("tracks") or {}).get("RNA_SEQ", []):
+            curie = row.get("ontology_curie")
+            if not curie:
+                continue
+            t = terms.setdefault(curie, {"curie": curie, "name": row.get("biosample_name") or curie, "type": row.get("biosample_type") or "",
+                                         "rna_seq": 0, "junctions": 0, "gtex_tissue": None})
+            t["rna_seq"] += 1
+            if row.get("gtex_tissue"):
+                t["gtex_tissue"] = row["gtex_tissue"]
+        for row in (catalog.get("tracks") or {}).get("SPLICE_JUNCTIONS", []):
+            if row.get("ontology_curie") in terms:
+                terms[row["ontology_curie"]]["junctions"] += 1
+        self._tissue_terms_cache = (catalog, terms)
+        return terms
+
+    def _gtex_ontologies(self) -> Dict[str, str]:
+        try:
+            return self.gtex.ontology_tissues()
+        except Exception:  # offline: GTEx tissues only through AlphaGenome's own GTEx tracks
+            return {}
+
+    def _gtex_names(self) -> Dict[str, str]:
+        try:
+            return self.gtex.name_tissues()
+        except Exception:
+            return {}
+
+    def _tissue_spec(self, curie: str) -> Dict[str, Any]:
+        return tissue_spec(curie, self._tissue_terms().get(curie), self.expression.references, self._gtex_ontologies(), self._gtex_names())
+
+    def api_products_tissues(self, query: Query, body: Any) -> Any:
+        """Every ontology term with AlphaGenome RNA-seq, with where its observed baseline would come from."""
+        from genomics.visualizer.gtex import tissue_name_key
+
+        terms = self._tissue_terms()
+        gtex = self._gtex_ontologies()
+        names = self._gtex_names()
+        rows = []
+        for curie, t in terms.items():
+            tissue = t["gtex_tissue"] or gtex.get(curie) or (names.get(tissue_name_key(t["name"])) if t["type"] == "tissue" else None)
+            rows.append({**t, "gtex_tissue": tissue, "default": curie in DEFAULT_ONTOLOGIES,
+                         "baseline": "gtex" if tissue else ("hpa_cell_line" if t["type"] == "cell_line" else "hpa_single_cell"
+                                                            if t["type"] in ("primary_cell", "in_vitro_differentiated_cells") else "none")})
+        for spec in EXPRESSION_TISSUES:
+            if spec["ontology"] not in terms:
+                rows.append({"curie": spec["ontology"], "name": spec["label"], "type": "", "rna_seq": None, "junctions": None,
+                             "gtex_tissue": None, "default": True, "baseline": "curated"})
+        rows.sort(key=lambda r: (not r["default"], (r["name"] or "").lower()))
+        return {"catalog": bool(terms), "tissues": rows}
+
+    def api_products_structure(self, query: Query, body: Any, ds: str) -> Any:
+        """The reference protein's AlphaFold DB model and how each haplotype's product maps onto it."""
+        payload = self._products(query, ds, with_sequence=False)
+        if not payload.get("transcripts"):
+            return {"available": False, "message": payload.get("message") or "No transcripts"} if not payload.get("pending") else payload
+        item = self._product_item(payload, query.str("tx", required=True))
+        ref_protein = item["reference_protein"]
+        if not ref_protein:
+            return {"available": False, "message": "Non-coding transcript: no protein"}
+        tid = item["transcript"]["id"]
+
+        def build(progress):
+            progress(0.1, "UniProt and AlphaFold DB")
+            try:
+                model = self.structures.reference_model(tid, ref_protein)
+            except StructureError as exc:
+                model = {"error": str(exc)}
+            am = self.report.alphamissense(tid, ref_protein)
+            products = {}
+            for hap, product in item["products"].items():
+                info = compare_proteins(ref_protein, product.get("protein") or "")
+                info.update(length=len(product.get("protein") or ""), change=product.get("change"), nmd=product.get("nmd"),
+                            similarity=protein_similarity(ref_protein, product.get("protein") or ""))
+                subs = info.get("substitutions") or []
+                if subs and model.get("pdb") and model.get("match") != "different":
+                    context = residue_context(model["pdb"], [x["pos"] for x in subs], model.get("offset") or 0)
+                    for x in subs:
+                        x.update(context.get(x["pos"], {}))
+                        score = am["scores"].get(f"{x['ref']}{x['pos']}{x['alt']}")
+                        x["alphamissense"] = {"score": score[0], "class": score[1]} if score else None
+                products[hap] = info
+            return {"available": True, "title": item["title"], "transcript": tid, "reference_length": len(ref_protein), "model": model,
+                    "products": products, "esmfold": {"max": ESMFOLD_MAX, "remote": not self.remote.offline}}
+
+        return self._job_response(f"structure:{ds}:{query.str('sample')}:{query.str('gene')}:{payload.get('target')}:{query.str('tx')}", "Protein structure", build)
+
+    def api_products_fold(self, query: Query, body: Any, ds: str) -> Any:
+        """ESMFold of a haplotype's product and of the reference protein (same window; sends both to api.esmatlas.com)."""
+        payload = self._products(query, ds, with_sequence=False)
+        if not payload.get("transcripts"):
+            return payload
+        item = self._product_item(payload, query.str("tx", required=True))
+        hap = query.str("hap", "H1")
+        product = item["products"].get(hap)
+        if product is None or not product.get("protein") or not item["reference_protein"]:
+            raise HttpError(HTTPStatus.BAD_REQUEST, "Nothing to fold: no protein")
+        ref_protein, alt = item["reference_protein"], product["protein"]
+
+        def build(progress):
+            progress(0.1, "ESMFold (api.esmatlas.com), about 10-30 s per protein")
+            try:
+                return self.structures.fold_pair(ref_protein, alt, allow_remote=not self.remote.offline)
+            except StructureError as exc:
+                raise RuntimeError(str(exc))
+
+        key = f"fold:{ds}:{query.str('sample')}:{query.str('gene')}:{payload.get('target')}:{query.str('tx')}:{hap}"
+        return self._job_response(key, f"ESMFold of {item['title']} ({hap})", build)
+
+    def api_products_rna(self, query: Query, body: Any, ds: str) -> Any:
+        """Secondary structure (ViennaRNA) of a window of the reference and a haplotype's mature transcript."""
+        ctx = self._products_context(query, ds)
+        if isinstance(ctx, dict):
+            return {"available": False, "message": ctx.get("message")} if not ctx.get("pending") else ctx
+        dataset, gene, sample, models, target = ctx
+        if not rna_available():
+            return {"available": False, "message": "RNA folding needs ViennaRNA: pip install ViennaRNA (part of pip install -e '.[visualizer]')"}
+        payload = self.products.products(dataset, sample, gene, models, target=target)
+        item = self._product_item(payload, query.str("tx", required=True))
+        hap = query.str("hap", "H1")
+        if hap not in ("H1", "H2"):
+            raise HttpError(HTTPStatus.BAD_REQUEST, "hap must be H1 or H2")
+        views = self.products.views(dataset, sample, gene)
+        center = query.str("center", "start")
+        tx = item["transcript"]
+        if center in ("start", "stop"):
+            start, stop = coding_start_stop({**tx, "strand": payload["strand"]})
+            if start is None:  # non-coding: the transcript's 5' end
+                exons = sorted(item["exons"])
+                start = exons[0][0] if payload["strand"] == "+" else exons[-1][1] - 1
+                stop = start
+            offset = start if center == "start" else stop
+        else:
+            try:
+                offset = int(center)
+            except ValueError:
+                raise HttpError(HTTPStatus.BAD_REQUEST, "center must be start, stop or a window offset")
+        try:
+            result = rna_comparison(views["ref"], views[hap], item["exons"], payload["strand"], offset, query.int("width", 240, lo=40, hi=600))
+        except StructureError as exc:
+            return {"available": False, "message": str(exc)}
+        result.update(available=True, title=item["title"], hap=hap, center=center, offset=offset, window_start=payload.get("window_start"))
+        return result
+
+    def api_products(self, query: Query, body: Any, ds: str) -> Any:
+        """Mature transcripts and proteins of one sample's haplotypes, with AlphaGenome splicing evidence."""
+        return self._products(query, ds, with_sequence=query.str("sequences", "") in ("1", "true", "mrna"))
+
+    def api_products_fasta(self, query: Query, body: Any, ds: str) -> Any:
+        kind = query.str("kind", "protein")
+        if kind not in ("protein", "mrna"):
+            raise HttpError(HTTPStatus.BAD_REQUEST, "kind must be protein or mrna")
+        payload = self._products(query, ds, with_sequence=kind == "mrna")
+        if isinstance(payload, dict) and payload.get("pending"):
+            return payload
+        return RawResponse(products_fasta(payload, kind).encode("utf-8"), "text/plain; charset=utf-8")
 
     def api_composition(self, query: Query, body: Any, ds: str) -> Any:
         """Per-base letter frequencies over the given haplotypes (the reference without ``rows``)."""

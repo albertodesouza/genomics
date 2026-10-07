@@ -446,7 +446,7 @@ def test_doctor_reports_every_feature(capsys):
     args = genomics_cli.build_parser().parse_args(["doctor", "--json", "--no-local-server"])
     assert args.func(args) == 0
     data = json.loads(capsys.readouterr().out)
-    assert [f["key"] for f in data["features"]] == ["core", "import", "alphagenome", "training"]
+    assert [f["key"] for f in data["features"]] == ["core", "import", "structures", "alphagenome", "training"]
     assert data["features"][0]["status"] == "ok"
     assert all({"name", "status", "detail", "fix"} <= set(c) for f in data["features"] for c in f["checks"])
     assert "data root (GENOMICS_DATA_ROOT)" in data["storage"]["locations"]

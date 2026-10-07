@@ -152,7 +152,7 @@ def core_feature() -> Feature:
 
 
 def import_feature() -> Feature:
-    feature = Feature("import", "Gene models and dataset import", "gene models on Tracks/Sequence, gene search, importing a dataset from a VCF")
+    feature = Feature("import", "Gene models and dataset import", "gene models on Tracks/Sequence, gene search, the Gene products page, importing a dataset from a VCF")
     feature.checks.append(package_check("pandas", fix="pip install -e '.[visualizer]'", why="gene models, sample tables"))
     feature.checks.append(package_check("pyarrow", fix="pip install -e '.[visualizer]'", why="reads gtf_cache.feather"))
     feature.checks.append(package_check("pydantic", fix="pip install -e '.[visualizer]'", why="validates a training config before a run starts"))
@@ -160,6 +160,15 @@ def import_feature() -> Feature:
         found = tool_version(tool)
         feature.checks.append(Check(tool, OK if found else MISSING, found or "not on PATH (VCF import, new prediction windows, training-axis alignment)",
                                     "conda install -c conda-forge -c bioconda bcftools samtools   (or apt install bcftools samtools)"))
+    return feature
+
+
+def structures_feature() -> Feature:
+    feature = Feature("structures", "Gene products: structures and expression levels",
+                      "3D protein (AlphaFold DB, ESMFold), mRNA secondary structure, absolute expression anchors (GTEx, HPA)")
+    feature.checks.append(package_check("RNA", "ViennaRNA", fix="pip install -e '.[visualizer]'", why="mRNA secondary structure"))
+    feature.checks.append(Check("web services", INFO, "UniProt, AlphaFold DB, GTEx and the Human Protein Atlas are queried on first use and cached; "
+                                "ESMFold runs on api.esmatlas.com only when asked (the sequence is sent there). None with --no-remote"))
     return feature
 
 
@@ -265,7 +274,7 @@ def storage_section() -> Dict[str, Any]:
 
 
 def report(include_local: bool = True, backend: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    features = [core_feature(), import_feature(), alphagenome_feature(include_local, backend), training_feature()]
+    features = [core_feature(), import_feature(), structures_feature(), alphagenome_feature(include_local, backend), training_feature()]
     return {
         "genomics": dist_version("genomics"),
         "features": [{**asdict(f), "status": f.status} for f in features],

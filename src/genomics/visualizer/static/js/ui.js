@@ -62,6 +62,7 @@ const ICONS = {
   folder: '<path d="M3 6a1 1 0 0 1 1-1h4l2 2h6a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>',
   doc: '<path d="M6 3h6l3 3v11H6zM12 3v3h3"/>',
   info: '<circle cx="10" cy="10" r="7"/><path d="M10 9v5M10 6.2v.1"/>',
+  products: '<circle cx="4.5" cy="13" r="1.8"/><circle cx="10" cy="7" r="1.8"/><circle cx="15.5" cy="13" r="1.8"/><path d="M5.8 11.6l3-3.2M11.2 8.4l3 3.2M3 3.5h14"/>',
 };
 
 export function icon(name, size = 18) {
