@@ -21,6 +21,11 @@ DEFAULT_TISSUES = ("Skin_Sun_Exposed_Lower_leg", "Skin_Not_Sun_Exposed_Suprapubi
 TTL = 90 * DAY  # GTEx v8 is a frozen release
 
 
+def tissue_name_key(name: str) -> str:
+    """'Thyroid gland' / 'Thyroid' -> 'thyroid'; 'Adrenal Gland' -> 'adrenal'."""
+    return " ".join(w for w in str(name).lower().replace("_", " ").split() if w != "gland")
+
+
 class GtexError(RuntimeError):
     pass
 
@@ -69,6 +74,50 @@ class GtexClient:
             raise
         exact = [r for r in rows if str(r.get("geneSymbol", "")).upper() == symbol.upper()]
         return (exact or rows or [None])[0]
+
+    def median_expression(self, gencode_id: str, tissue: str) -> Optional[float]:
+        """GTEx v8 median TPM of a gene in a tissue."""
+        rows = self._get("expression/medianGeneExpression", gencodeId=gencode_id, tissueSiteDetailId=tissue).get("data") or []
+        return float(rows[0]["median"]) if rows else None
+
+    def median_transcripts(self, gencode_id: str, tissue: Optional[str]) -> Dict[str, float]:
+        """GTEx v8 median TPM of each transcript of a gene in a tissue (``None``: mean over every tissue),
+        by versionless Ensembl id (GENCODE v26)."""
+        params = {"gencodeId": gencode_id, "itemsPerPage": 10000}
+        if tissue:
+            params["tissueSiteDetailId"] = tissue
+        rows = self._get("expression/medianTranscriptExpression", **params).get("data") or []
+        sums: Dict[str, List[float]] = {}
+        for r in rows:
+            if r.get("transcriptId"):
+                sums.setdefault(str(r["transcriptId"]).split(".")[0], []).append(float(r.get("median") or 0.0))
+        return {t: sum(v) / len(v) for t, v in sums.items()}
+
+    def name_tissues(self) -> Dict[str, str]:
+        """{lower-case name without "gland": GTEx tissue id} for single-site GTEx tissues ("Liver", "Adrenal Gland")."""
+        out: Dict[str, List[str]] = {}
+        for t in self.tissues():
+            name = str(t.get("name") or "")
+            if " - " in name or "(" in name:
+                continue
+            out.setdefault(tissue_name_key(name), []).append(t["id"])
+        return {k: v[0] for k, v in out.items() if len(v) == 1}
+
+    def ontology_tissues(self) -> Dict[str, str]:
+        """{ontology term: GTEx tissue id} for GTEx tissues whose term is unique to them."""
+        counts: Dict[str, List[str]] = {}
+        for t in self.tissues():
+            if t.get("ontology"):
+                counts.setdefault(t["ontology"], []).append(t["id"])
+        return {k: v[0] for k, v in counts.items() if len(v) == 1}
+
+    def transcript_introns(self, gencode_id: str) -> Dict[str, List[tuple]]:
+        """{versionless transcript id: intron chain [(last base of exon, first base of next exon)]} in GTEx v8's GENCODE v26."""
+        rows = self._get("reference/exon", gencodeId=gencode_id).get("data") or []
+        exons: Dict[str, List[tuple]] = {}
+        for r in rows:
+            exons.setdefault(str(r["transcriptId"]).split(".")[0], []).append((int(r["start"]), int(r["end"])))
+        return {t: [(a[1], b[0]) for a, b in zip(sorted(e), sorted(e)[1:])] for t, e in exons.items()}
 
     def significant(self, variant_id: str) -> List[Dict[str, Any]]:
         try:

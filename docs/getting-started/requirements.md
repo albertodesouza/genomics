@@ -16,7 +16,11 @@ report on its **System** page.
 | Feature | Python packages | Other software | Hardware | Network |
 |---|---|---|---|---|
 | **Browse** datasets, tracks, sequences, experiments, jobs (`genomics visualize`) | base install (`numpy`, `PyYAML`) | – | any machine; 4 GB RAM for the default cache (`--memory-mb`) | none (gene and ontology cards look up public databases when online; `--no-remote` turns that off) |
-| **Gene models** on Tracks/Sequence, gene search | `[visualizer]` (`pandas`, `pyarrow`) | – | – | – |
+| **Gene models** on Tracks/Sequence, gene search, **Gene products** page | `[visualizer]` (`pandas`, `pyarrow`) | – | – | – |
+| Gene products: mRNA secondary structure | `[visualizer]` (`ViennaRNA`) | – | – | – |
+| Gene products: 3D protein, absolute expression levels | – | – | – | UniProt, AlphaFold DB, GTEx, Human Protein Atlas (cached after first use); ESMFold on `api.esmatlas.com` only when asked; the 3D viewer loads 3Dmol.js from cdnjs |
+| Gene products: expression in tissues without stored RNA-seq | – | an AlphaGenome backend | – | hosted API or the server's address |
+| Splicing evidence on the Gene products page | as above, plus `SPLICE_JUNCTIONS` predictions for the sample's haplotypes and the reference window (an AlphaGenome prediction job) | – | – | only to predict |
 | **Start a training run** from the visualizer (building and validating its config) | `[visualizer]` (`pydantic`) | – | – | – |
 | **Import a dataset** from a phased VCF | `[visualizer]` | `bcftools`, `samtools` (htslib) | – | only when the VCF/FASTA are URLs (regions are streamed) |
 | **AlphaGenome predictions** (prediction jobs, reference tracks, Perturbation Lab, track catalog) | `[visualizer]` (AlphaGenome client, Python ≥ 3.10) | one backend: hosted API key, a remote server, or a [local server](#alphagenome-on-your-own-gpu) | none for the hosted API; an NVIDIA GPU for a local server | hosted API or the server's address |

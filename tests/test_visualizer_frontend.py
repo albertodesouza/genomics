@@ -15,7 +15,7 @@ from test_visualizer_variants import GTEX_ANSWERS, INS, FakeRemote
 
 sync_api = pytest.importorskip("playwright.sync_api")
 
-PAGES = ["overview", "samples", "tracks", "sequence", "variant", "perturb", "experiments", "jobs", "alphagenome", "system", "import"]
+PAGES = ["overview", "samples", "tracks", "sequence", "variant", "products", "perturb", "experiments", "jobs", "alphagenome", "system", "import"]
 # Console noise the app does not control: the browser asks for a favicon, and it logs a line for
 # every failed response. A 503 is the server saying this machine cannot provide a feature (no
 # AlphaGenome backend on a CI runner); the pages handle it, which
@@ -108,6 +108,29 @@ def test_page_renders_without_errors(page, server_url, name):
     toasts = [t for t in page.locator(".toast.error").all_inner_texts() if "No such file or directory" not in t]
     assert toasts == [], f"{name}: {toasts}"
     assert page.errors == [], f"{name}: {page.errors}"
+
+
+def test_products_page_renders_transcripts_and_proteins(page, server_url, dataset_dir):  # noqa: F811
+    from test_visualizer_products import _write_gtf_cache
+
+    _write_gtf_cache(dataset_dir)
+    try:
+        _open(page, f"{server_url}/#/products?gene=GENE1&sample=S1")
+        # (1) baseline, (2) the two copies, (3) protein shape; remote lookups are off in tests
+        page.wait_for_selector(".report-host .card", timeout=30000)
+        page.wait_for_selector(".hap-grid .hap-col, .report-host .empty", timeout=30000)
+        page.wait_for_selector(".structure-protein .structure-info, .structure-protein .empty", timeout=30000)
+        # the rest is under "More evidence"
+        page.click("details.evidence > summary")
+        page.wait_for_selector(".evidence-body .products-content .table tbody tr, .evidence-body .table tbody tr", timeout=15000)
+        assert "GENE1-201" in page.locator(".products-content").inner_text()
+        page.wait_for_selector(".expr-card .expr-legend", timeout=30000)
+        assert page.locator(".kind-badge.rel").count() >= 1 and page.locator(".kind-badge.abs").count() >= 1
+        page.wait_for_selector(".structure-rna .rna-svg, .structure-rna .empty", timeout=30000)
+        assert page.locator(".error-box").count() == 0
+        assert page.errors == [], page.errors
+    finally:
+        (dataset_dir / "gtf_cache.feather").unlink()
 
 
 def test_tracks_draws_canvases_for_pinned_sample(page, server_url):

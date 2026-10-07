@@ -20,17 +20,15 @@ on disk by sequence hash.
 """
 from __future__ import annotations
 
-import hashlib
-import json
 import threading
 import time
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from genomics.visualizer.alphagenome import AlphaGenomeUnavailable, predict_cached
 from genomics.visualizer.cache import stable_key
 from genomics.visualizer.datasets import Dataset, load_json
 from genomics.visualizer.jobs import JobCancelled, is_cancelled
@@ -377,46 +375,11 @@ class PerturbService:
 
     def _predict(self, sequence: bytes, outputs: List[str], terms: List[str]) -> Dict[str, Tuple[np.ndarray, List[Dict[str, Any]]]]:
         """AlphaGenome prediction for one sequence (disk-cached by content)."""
-        key = hashlib.sha1(sequence + json.dumps([sorted(outputs), sorted(terms)]).encode()).hexdigest()
         cache_dir = Path(self.app.cache_dir) / "perturb" if self.app.cache_dir else None
-        if cache_dir is not None and (cache_dir / f"{key}.npz").exists():
-            try:
-                with np.load(cache_dir / f"{key}.npz") as data:
-                    meta = json.loads((cache_dir / f"{key}.json").read_text(encoding="utf-8"))
-                    return {o: (np.asarray(data[o]), meta[o]) for o in outputs}
-            except Exception:
-                pass
-        backend = getattr(self.app, "alphagenome", None)
-        if backend is None:
-            raise PerturbError("No AlphaGenome backend configured")
-        reasons = backend.reasons()
-        if reasons:
-            raise PerturbError(f"AlphaGenome backend not ready: {'; '.join(reasons)}")
-        from alphagenome.models import dna_client
-
-        client = backend.create_client()
-        requested = [getattr(dna_client.OutputType, o.upper()) for o in outputs]
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(client.predict_sequence, sequence.decode("ascii"), requested_outputs=requested, ontology_terms=terms or None)
-            try:
-                prediction = future.result(timeout=PREDICT_TIMEOUT)
-            except FutureTimeout:
-                raise RuntimeError(f"AlphaGenome did not answer within {PREDICT_TIMEOUT:.0f}s")
-        from genomics.workflows.alphagenome.predict_dataset import metadata_records
-
-        result = {}
-        for output in outputs:
-            track = getattr(prediction, output, None)
-            if track is None:
-                raise RuntimeError(f"AlphaGenome returned no {output}")
-            result[output] = (np.asarray(track.values, dtype=np.float32), metadata_records(track))
-        if cache_dir is not None:
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            tmp = cache_dir / f".{key}.tmp.npz"
-            np.savez_compressed(tmp, **{o: v for o, (v, _m) in result.items()})
-            tmp.replace(cache_dir / f"{key}.npz")
-            (cache_dir / f"{key}.json").write_text(json.dumps({o: m for o, (_v, m) in result.items()}), encoding="utf-8")
-        return result
+        try:
+            return predict_cached(getattr(self.app, "alphagenome", None), cache_dir, sequence, outputs, terms, timeout=PREDICT_TIMEOUT)
+        except AlphaGenomeUnavailable as exc:
+            raise PerturbError(str(exc)) from None
 
     def apply_key(self, sample: str, gene: str, edits: List[Dict[str, Any]], outputs: List[str]) -> str:
         dataset = self.dataset()

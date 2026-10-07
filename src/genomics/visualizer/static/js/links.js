@@ -105,6 +105,20 @@ export function geneLinks(gene) {
 export const hgncGroupUrl = (id) => `https://www.genenames.org/data/genegroup/#!/group/${id}`;
 
 /** ChIP-seq target (histone mark or TF): ENCODE target page; TFs also link to their gene. */
+/**
+ * A transcript's GENCODE/Ensembl name (e.g. DDB1-225: gene symbol + the number Ensembl/HAVANA gave
+ * the transcript) linked to its Ensembl transcript page. Clicks do not reach the enclosing row.
+ */
+export function transcriptLink(id, name, { bold = true } = {}) {
+  const stable = String(id || '').split('.')[0];
+  const label = bold ? h('b', null, name || stable) : (name || stable);
+  if (!stable.startsWith('ENST')) return h('span', null, label);
+  return h('a', {
+    class: 'tx-link', href: `https://www.ensembl.org/Homo_sapiens/Transcript/Summary?t=${stable}`, target: '_blank', rel: 'noopener',
+    title: `${name ? `${name} = ` : ''}${id} · GENCODE / Ensembl transcript: open it on Ensembl`, onclick: (e) => e.stopPropagation(),
+  }, label);
+}
+
 export function targetLinks(target) {
   if (!target) return [];
   const links = [{ label: 'ENCODE target', url: `https://www.encodeproject.org/targets/${enc(target)}-human/`, title: 'ENCODE target page (experiments, antibodies)' }];

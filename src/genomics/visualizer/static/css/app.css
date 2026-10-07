@@ -473,3 +473,171 @@ a.curie::after { content: " ↗"; font-size: 10px; opacity: .7; }
 .session-open:hover { background: var(--surface-2); }
 .session-name { font-weight: 600; font-size: 13px; }
 .session-meta { color: var(--ink-3); font-size: 11.5px; }
+
+/* Gene products */
+.products-content { display: flex; flex-direction: column; gap: 16px; }
+.products-page .toolbar-group { display: flex; gap: 6px; align-items: flex-end; }
+.product-cell { display: flex; gap: 6px; align-items: center; }
+.product-cell.wrap { flex-wrap: wrap; }
+.product-hgvs { font-size: 11px; color: var(--ink-2); margin-top: 2px; overflow-wrap: anywhere; max-width: 260px; }
+.pill.product-class.warn { background: color-mix(in srgb, var(--warning) 18%, var(--surface)); border-color: color-mix(in srgb, var(--warning) 55%, var(--line)); color: var(--ink); }
+.pill.product-class.bad { background: color-mix(in srgb, var(--critical) 14%, var(--surface)); border-color: color-mix(in srgb, var(--critical) 50%, var(--line)); color: var(--ink); }
+.pill.muted { color: var(--ink-3); }
+.products-page .section-title { margin: 16px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-3); }
+.products-page .warn-text { color: var(--ink-2); background: color-mix(in srgb, var(--warning) 14%, var(--surface)); border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--line)); border-radius: 6px; padding: 6px 10px; margin: 0 0 10px; }
+.delta-strong { font-weight: 600; color: var(--critical); }
+.aln { font-family: var(--mono); font-size: 12px; display: flex; flex-direction: column; gap: 10px; margin-top: 8px; overflow-x: auto; }
+.aln-row { display: flex; gap: 10px; white-space: pre; line-height: 1.5; }
+.aln-name { width: 56px; color: var(--ink-3); flex: none; }
+.aln-pos { width: 48px; text-align: right; color: var(--ink-3); flex: none; }
+.aln-seq mark { background: color-mix(in srgb, var(--critical) 25%, transparent); color: var(--ink); border-radius: 2px; }
+.aln-stop { color: var(--critical); font-weight: 700; }
+.sashimi-wrap { overflow-x: auto; }
+.sashimi { width: 100%; min-width: 640px; height: auto; display: block; }
+.sashimi-axis { stroke: var(--line-strong); stroke-width: 1; }
+.sashimi-exon { fill: var(--ink-2); }
+.sashimi-arc { fill: none; stroke: var(--ink-3); opacity: .8; }
+.sashimi-arc.cand { stroke: var(--series-2); }
+.sashimi-label { font-size: 11px; fill: var(--ink-3); font-family: var(--font); }
+
+/* Gene products: expression (relative vs absolute) */
+.muted.small, .small { font-size: 11.5px; }
+.expr-legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.expr-def { display: flex; gap: 10px; align-items: flex-start; font-size: 12.5px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.kind-badge { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .06em; padding: 2px 6px; border-radius: 4px; border: 1px solid; white-space: nowrap; flex: none; }
+.kind-badge.rel { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-wash); }
+.kind-badge.abs { color: var(--ink); border-color: var(--ink-3); background: var(--surface-3); }
+.kind-badge.prot { color: var(--ink-2); border-color: var(--line-strong); background: var(--surface); }
+.expr-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(440px, 100%), 1fr)); gap: 12px; }
+.expr-tissue { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--surface); min-width: 0; }
+.expr-tissue-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.expr-tissue-head h3 { font-size: 13.5px; }
+.expr-headline { margin: 8px 0 4px; font-size: 13px; }
+.dir-up { color: var(--series-2); }
+.dir-down { color: var(--series-1); }
+.dir-same { color: var(--ink-2); }
+.fold-bars { width: 100%; max-width: 560px; height: auto; display: block; margin: 4px 0 6px; }
+.fold-bars.muted { opacity: .45; }
+.fold-band { fill: var(--surface-2); }
+.fold-axis { stroke: var(--ink-2); stroke-width: 1.2; }
+.fold-tick { stroke: var(--line-strong); }
+.fold-tick-label, .fold-clip { font-size: 10.5px; fill: var(--ink-3); font-family: var(--font); }
+.fold-label { font-size: 11.5px; fill: var(--ink-2); font-family: var(--font); }
+.fold-label.strong, .fold-value.strong { font-weight: 700; fill: var(--ink); }
+.fold-value { font-size: 11.5px; fill: var(--ink-2); font-family: var(--mono); }
+.fold-bar.up { fill: var(--series-2); }
+.fold-bar.down { fill: var(--series-1); }
+.fold-bar.same { fill: var(--ink-3); }
+.fold-bar { opacity: .55; }
+.fold-bar.strong { opacity: 1; }
+.expr-table td .small { font-weight: 400; }
+.expr-meta { margin: 6px 0 0; padding-left: 16px; font-size: 11.5px; }
+.expr-isoforms { margin-top: 6px; font-size: 12px; }
+.expr-isoforms summary { cursor: pointer; color: var(--ink-2); }
+
+/* Gene products: structures */
+.structure-info p { margin: 0 0 6px; font-size: 12.5px; }
+.structure-fold { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 6px 0 10px; }
+.structure-sub { margin: 14px 0 6px; font-size: 12.5px; }
+.mol-grid, .rna-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 12px; }
+.mol-cell { position: relative; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.mol-title { font-size: 12px; font-weight: 600; color: var(--ink-2); padding: 6px 8px; }
+.mol-view { position: relative; width: 100%; height: 360px; }
+.mol-overlay { position: absolute; left: 8px; bottom: 8px; font-size: 11.5px; background: var(--surface); padding: 2px 6px; border-radius: 4px; }
+.mol-legend { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; font-size: 11.5px; color: var(--ink-3); margin: 6px 0; }
+.mol-swatch { display: inline-flex; align-items: center; gap: 4px; }
+.mol-swatch i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+.rna-grid > div { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.rna-svg { width: 100%; height: 380px; display: block; background: var(--surface); }
+.rna-backbone { fill: none; stroke: var(--line-strong); }
+.rna-pair { stroke: var(--ink-3); }
+.rna-base-A { fill: var(--base-a); background: var(--base-a); }
+.rna-base-C { fill: var(--base-c); background: var(--base-c); }
+.rna-base-G { fill: var(--base-g); background: var(--base-g); }
+.rna-base-U { fill: var(--base-t); background: var(--base-t); }
+.rna-base-N { fill: var(--base-n); }
+.rna-changed { stroke: var(--ink); stroke-width: 1.4; }
+.rna-changed-swatch { background: transparent; border: 2px solid var(--ink); border-radius: 50% !important; }
+.rna-end { font-size: 10px; fill: var(--ink-2); font-family: var(--font); text-anchor: middle; }
+.expr-tissue.not-expressed .expr-table, .expr-tissue.not-expressed .expr-meta { opacity: .5; }
+
+/* Gene products: report (baseline, haplotypes, verdicts) */
+.step { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; margin-right: 4px; vertical-align: 1px; }
+.baseline-level { font-size: 13.5px; margin: 0 0 10px; }
+.share-bar { display: flex; height: 26px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); margin-bottom: 10px; background: var(--surface-2); }
+.share-seg { color: #fff; font-size: 11px; font-weight: 600; display: flex; align-items: center; padding: 0 6px; white-space: nowrap; overflow: hidden; }
+.share-seg.noncoding { background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.25) 0 4px, transparent 4px 8px); }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
+.hap-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(520px, 100%), 1fr)); gap: 16px; }
+.hap-col { min-width: 0; }
+.hap-title { font-size: 15px; margin-bottom: 8px; }
+.verdicts { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.verdict { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-left-width: 4px; border-radius: 6px; padding: 7px 10px; background: var(--surface); }
+.verdict-icon { width: 18px; text-align: center; font-weight: 700; flex: none; }
+.verdict-title { font-size: 13px; font-weight: 600; }
+.verdict-detail { font-size: 12px; color: var(--ink-2); margin-top: 2px; }
+.verdict-list { display: flex; flex-direction: column; gap: 3px; margin-top: 3px; }
+.verdict.ok { border-left-color: var(--good); }
+.verdict.ok .verdict-icon { color: var(--good); }
+.verdict.bad { border-left-color: var(--critical); background: color-mix(in srgb, var(--critical) 6%, var(--surface)); }
+.verdict.bad .verdict-icon { color: var(--critical); }
+.verdict.warn { border-left-color: var(--warning); background: color-mix(in srgb, var(--warning) 8%, var(--surface)); }
+.verdict.warn .verdict-icon { color: var(--warning); }
+.verdict.up { border-left-color: var(--series-2); }
+.verdict.up .verdict-icon { color: var(--series-2); }
+.verdict.down { border-left-color: var(--series-1); }
+.verdict.down .verdict-icon { color: var(--series-1); }
+.verdict.quiet { opacity: .6; }
+.verdict.similarity { align-items: center; }
+.similarity-score { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 112px; flex: none; }
+.verdict.similarity.ok .similarity-score { color: var(--good); }
+.verdict.similarity.warn .similarity-score { color: var(--warning); }
+.verdict.similarity.bad .similarity-score { color: var(--critical); }
+.cat-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0 10px; }
+.cat-chip.bad { background: color-mix(in srgb, var(--critical) 14%, var(--surface)); border-color: color-mix(in srgb, var(--critical) 50%, var(--line)); color: var(--ink); }
+.cat-chip.warn { background: color-mix(in srgb, var(--warning) 18%, var(--surface)); border-color: color-mix(in srgb, var(--warning) 55%, var(--line)); color: var(--ink); }
+.cat-chip.quiet { color: var(--ink-3); }
+.pill.product-class.good { background: color-mix(in srgb, var(--good) 12%, var(--surface)); border-color: color-mix(in srgb, var(--good) 45%, var(--line)); color: var(--ink); }
+.hap-variants { margin-top: 8px; font-size: 12.5px; }
+.hap-variants summary { cursor: pointer; color: var(--ink-2); margin-bottom: 4px; }
+details.evidence > summary { cursor: pointer; list-style: none; }
+details.evidence > summary::-webkit-details-marker { display: none; }
+details.evidence > summary h2::before { content: '▸ '; color: var(--ink-3); }
+details.evidence[open] > summary h2::before { content: '▾ '; }
+.evidence-body { display: flex; flex-direction: column; gap: 16px; padding: 14px; }
+.report-host { display: flex; flex-direction: column; gap: 16px; }
+.tx-link { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--ink-3); }
+.tx-link:hover { color: var(--accent-ink); border-bottom-color: var(--accent); }
+
+/* Gene products: tissue picker */
+.tissue-picker { position: relative; }
+.tissue-button { display: inline-flex; gap: 8px; align-items: center; max-width: 360px; }
+.tissue-current { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tissue-panel { position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; width: min(640px, 92vw); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: var(--shadow); padding: 8px; }
+.tissue-panel-head { display: flex; gap: 6px; margin-bottom: 6px; }
+.tissue-panel-head .input { flex: 1; }
+.tissue-list { max-height: 360px; overflow: auto; display: flex; flex-direction: column; }
+.tissue-section { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-3); padding: 6px 6px 2px; }
+.tissue-row { display: flex; gap: 8px; align-items: center; text-align: left; border: 0; background: none; padding: 5px 6px; border-radius: 6px; cursor: pointer; color: var(--ink); font: inherit; font-size: 12.5px; }
+.tissue-row:hover { background: var(--surface-2); }
+.tissue-row.on { background: var(--accent-wash); }
+.tissue-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tissue-curie { min-width: 96px; text-align: right; }
+.tissue-note { padding: 6px 4px 0; }
+.tissue-sources { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; }
+.tissue-sources .pill { white-space: normal; }
+
+/* Gene products: known variants */
+.known-chip { display: inline-flex; gap: 4px; align-items: center; }
+.known-chip a { color: var(--accent-ink); }
+.known-section { margin: 4px 0 10px; font-size: 12.5px; }
+.known-section > summary { cursor: pointer; color: var(--ink-2); font-weight: 600; margin-bottom: 6px; }
+.known-panel { border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; background: var(--surface); display: flex; flex-direction: column; gap: 5px; }
+.known-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.known-rsid { font-weight: 700; font-size: 13.5px; color: var(--accent-ink); }
+.known-row { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 8px; align-items: baseline; }
+.known-label { color: var(--ink-3); font-size: 11.5px; }
+.known-links { display: flex; flex-wrap: wrap; gap: 6px; }
+.known-links a { font-size: 12px; padding: 1px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink); text-decoration: none; background: var(--surface-2); }
+.known-links a:hover { border-color: var(--accent); color: var(--accent-ink); }
+.known-links a.primary { border-color: var(--accent); background: var(--accent-wash); color: var(--accent-ink); font-weight: 600; }

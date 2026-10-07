@@ -15,6 +15,8 @@ from genomics.visualizer.cache import stable_key
 from genomics.visualizer.datasets import Dataset
 
 FEATURES = ("gene", "transcript", "exon", "CDS", "UTR", "start_codon", "stop_codon")
+# Tags the gene-products view needs (incomplete transcript ends, curation level).
+KEPT_TAGS = {"basic", "CCDS", "MANE_Select", "MANE_Plus_Clinical", "Ensembl_canonical", "cds_start_NF", "cds_end_NF", "mRNA_start_NF", "mRNA_end_NF"}
 
 
 def find_gtf_table(dataset: Dataset, explicit: Optional[Path] = None) -> Optional[Path]:
@@ -38,7 +40,7 @@ class AnnotationService:
         if self.cache_dir is None:
             return None
         stat = table.stat()
-        key = stable_key({"v": 2, "dataset": dataset.fingerprint, "table": str(table), "mtime": stat.st_mtime_ns, "genes": dataset.genes})
+        key = stable_key({"v": 4, "dataset": dataset.fingerprint, "table": str(table), "mtime": stat.st_mtime_ns, "genes": dataset.genes})
         return self.cache_dir / "annotations" / f"{key}.json"
 
     def status(self, dataset: Dataset) -> Dict[str, Any]:
@@ -77,13 +79,24 @@ class AnnotationService:
                 raise RuntimeError("pandas is required to read GTF annotations") from exc
             progress(0.05, f"Reading {table.name}")
             columns = ["Chromosome", "Feature", "Start", "End", "Strand", "gene_name", "gene_type", "transcript_id", "transcript_name", "transcript_type", "tag", "exon_number"]
+            optional = ["Frame", "gene_id"]  # read when the table has them (CDS phase, Ensembl gene id)
             if table.suffix == ".feather":
-                df = pd.read_feather(table, columns=columns)
+                import pyarrow.feather as feather
+
+                present = set(feather.read_table(table, columns=[]).schema.names)
+                df = pd.read_feather(table, columns=columns + [c for c in optional if c in present])
             elif table.suffix == ".parquet":
-                df = pd.read_parquet(table, columns=columns)
+                import pyarrow.parquet as pq
+
+                present = set(pq.read_schema(table).names)
+                df = pd.read_parquet(table, columns=columns + [c for c in optional if c in present])
             else:
-                df = pd.read_csv(table, usecols=columns, sep=None, engine="python")
+                df = pd.read_csv(table, usecols=lambda c: c in columns or c in optional, sep=None, engine="python")
             df = df[df["Feature"].isin(FEATURES)]
+            if "Frame" not in df.columns:
+                df = df.assign(Frame=".")
+            if "gene_id" not in df.columns:
+                df = df.assign(gene_id=None)
             progress(0.6, "Selecting features in gene windows")
             by_gene: Dict[str, List[Dict[str, Any]]] = {}
             for gene in dataset.genes:
@@ -118,7 +131,8 @@ def _features_to_models(df, window_start: int) -> List[Dict[str, Any]]:
         start = int(row.Start) - window_start + 1
         end = int(row.End) - window_start + 1
         if feature == "gene":
-            genes[str(row.gene_name)] = {"name": str(row.gene_name), "type": str(row.gene_type), "strand": str(row.Strand), "start": start, "end": end, "transcripts": []}
+            genes[str(row.gene_name)] = {"name": str(row.gene_name), "id": str(getattr(row, "gene_id", None)) if getattr(row, "gene_id", None) else None, "type": str(row.gene_type),
+                                         "strand": str(row.Strand), "start": start, "end": end, "transcripts": []}
             continue
         tid = str(row.transcript_id) if row.transcript_id is not None else None
         if not tid or tid == "None":
@@ -134,6 +148,7 @@ def _features_to_models(df, window_start: int) -> List[Dict[str, Any]]:
                 "strand": str(row.Strand),
                 "canonical": "Ensembl_canonical" in tags,
                 "mane": "MANE_Select" in tags,
+                "tags": sorted(t for t in tags.split(",") if t in KEPT_TAGS),
                 "start": start,
                 "end": end,
                 "exons": [],
@@ -145,10 +160,16 @@ def _features_to_models(df, window_start: int) -> List[Dict[str, Any]]:
             tx["exons"].append([start, end])
         elif feature == "CDS":
             tx["cds"].append([start, end])
+            tx.setdefault("_frames", []).append((start, end, str(getattr(row, "Frame", "."))))
     for tx in transcripts.values():
         gene = genes.setdefault(tx["gene"], {"name": tx["gene"], "type": tx["type"], "strand": tx["strand"], "start": tx["start"], "end": tx["end"], "transcripts": []})
         tx["exons"].sort()
         tx["cds"].sort()
+        frames = tx.pop("_frames", [])
+        if frames:
+            # Phase of the 5'-most CDS block: bases to skip before the first whole codon (incomplete starts).
+            first = min(frames) if tx["strand"] == "+" else max(frames, key=lambda f: f[1])
+            tx["cds_phase"] = int(first[2]) if first[2] in ("0", "1", "2") else 0
         gene["transcripts"].append(tx)
     out = []
     for gene in genes.values():

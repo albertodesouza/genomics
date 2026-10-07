@@ -238,6 +238,44 @@ class Visualizer:
         params = {"gene": gene, "pos": pos, "ref": ref, "alt": alt, "field": field}
         return self._get(self._ds("/variant/site"), params)
 
+    # -- gene products ---------------------------------------------------------------------
+    def products(self, sample: str, gene: str, target: Optional[str] = None, sequences: bool = False) -> Dict[str, Any]:
+        """One sample's mature transcripts and proteins per haplotype (the Gene products page).
+
+        ``transcripts[i]["products"][hap]`` holds ``protein``, ``mrna_length``, ``nmd`` and
+        ``change`` (class and HGVS ``p.`` against the reference) for ``ref``, ``H1`` and ``H2``;
+        ``splicing`` holds AlphaGenome's junction usage per tissue track and the candidate isoforms.
+        ``target`` picks another gene in the window; ``sequences`` adds each mRNA.
+        """
+        params = {"gene": gene, "sample": sample, "target": target, "sequences": "mrna" if sequences else None}
+        return self._get(self._ds("/products"), params)
+
+    def products_fasta(self, sample: str, gene: str, kind: str = "protein", target: Optional[str] = None) -> str:
+        """FASTA of every product (``kind``: protein or mrna), headers ``gene|transcript|sample.H|change``."""
+        from genomics.visualizer.products import fasta
+
+        return fasta(self.products(sample, gene, target=target, sequences=kind == "mrna"), kind)
+
+    def report(self, sample: str, gene: str, tissue: str = "CL:1000458", target: Optional[str] = None) -> Dict[str, Any]:
+        """The gene report of the Gene products page for one tissue (any AlphaGenome ontology term with RNA-seq).
+
+        ``baseline``: each transcript's share and absolute level for the reference genome (GTEx /
+        HPA). ``haplotypes[H]``: the copy's level per transcript (``share``, ``level``, ``fold``),
+        ``flags`` (``unstable``, ``premature_stop``, ``missense`` with AlphaMissense,
+        ``base_similarity``), and every variant with its consequence (``variants``, ``counts``).
+        """
+        return self._get(self._ds("/products/report"), {"gene": gene, "sample": sample, "tissue": tissue, "target": target})
+
+    def expression(self, sample: str, gene: str, target: Optional[str] = None) -> Dict[str, Any]:
+        """mRNA and protein of a sample against the reference genome, per tissue (the Gene products page).
+
+        ``tissues[i]["mrna"]["fold"]`` holds the relative change (``H1``, ``H2``, ``individual``),
+        ``["mrna"]["absolute"]`` the estimated level in the anchor's unit (``anchor``), and
+        ``["protein"]["fold"]`` the relative protein change; ``notes`` says what each one rests on.
+        May run AlphaGenome for tissues the dataset has no stored RNA-seq of.
+        """
+        return self._get(self._ds("/products/expression"), {"gene": gene, "sample": sample, "target": target})
+
     # -- derived sample values ---------------------------------------------------------------
     def scalars(self) -> List[Dict[str, Any]]:
         """Region scalars defined on this dataset (their values are columns of ``samples()``)."""
