@@ -1,10 +1,15 @@
-# Visualizer
+# Visualizer Reference
+
+Every page, control, data source and computation of `genomics visualize`, for looking things up.
+To learn the app, start with the [tutorial](index.md). It goes through the same pages with
+screenshots, on one running example.
 
 `genomics visualize` starts a single local web app for exploring any canonical-layout dataset:
-cohort metadata, AlphaGenome prediction tracks, haplotype sequences against the reference, and
-experiment runs. It also imports new datasets from a VCF, runs AlphaGenome predictions, trains and
-evaluates models as background jobs, and hosts the Perturbation Lab. It replaces the former multi-process workbench (six servers behind a proxy, shown
-in iframes); `genomics genotype workbench` now opens the same app.
+cohort metadata, AlphaGenome prediction tracks, haplotype sequences against the reference, variant
+effects, gene products and experiment runs. It also imports new datasets from a VCF, runs AlphaGenome
+predictions, trains and evaluates models as background jobs, and hosts the Perturbation Lab. It
+replaces the former multi-process workbench (six servers behind a proxy, shown in iframes);
+`genomics genotype workbench` now opens the same app.
 
 ```bash
 genomics visualize                                   # default dataset (1kg_high_coverage) and runs root
@@ -27,7 +32,8 @@ Code: `src/genomics/visualizer/` (Python stdlib HTTP server + JSON API, static s
 `tests/test_visualizer_frontend.py` opens every page in headless Chromium against a synthetic dataset
 and fails on any JavaScript error; it also round-trips the figure export. It needs the `test-ui` extra
 and `python3 -m playwright install chromium` (skipped otherwise), and runs in the *Visualizer tests*
-GitHub workflow.
+GitHub workflow. The documentation's screenshots are taken from a running visualizer by
+`scripts/dev/capture_docs_screenshots.py` (`--list` shows the shots, `--only` retakes some).
 
 ## Pages
 

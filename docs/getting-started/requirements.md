@@ -70,7 +70,7 @@ genomics alphagenome server check --predict
 
 Or click **Start server** on the visualizer's AlphaGenome page (*This machine*). The server listens on
 127.0.0.1 only; `--host 0.0.0.0` (or `ALPHAGENOME_SERVER_HOST=0.0.0.0` for the visualizer) shares it with
-other machines, without authentication. See [Visualizer → AlphaGenome backend](../components/visualizer.md#alphagenome-backend).
+other machines, without authentication. See [Visualizer → AlphaGenome backend](../visualizer/reference.md#alphagenome-backend).
 
 ## Storage
 

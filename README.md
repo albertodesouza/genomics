@@ -69,7 +69,7 @@ genomics visualize --dataset /path/to/dataset --open
   [docs/getting-started/requirements.md](docs/getting-started/requirements.md). The app's **System**
   page shows the same report as `genomics doctor`.
 - **All options:** `genomics visualize --help`. Full guide (pages, controls, data sources):
-  [docs/components/visualizer.md](docs/components/visualizer.md).
+  [docs/visualizer/index.md](docs/visualizer/index.md).
 
 ## Quick Start
 
@@ -103,7 +103,7 @@ The activation script loads Bash completion automatically when `genomics` is ins
 Public documentation is built from `mkdocs.yml` and the Markdown sources in `docs/` with
 Material for MkDocs. The published site is available with GitHub Pages at:
 
-https://albertodesouza.github.io/genomics/
+https://lcad-ufes.github.io/genomics/
 
 Serve the same MkDocs site locally with:
 
@@ -125,7 +125,7 @@ Start with:
 
 | Component | Documentation |
 |---|---|
-| **Visualizer** (`genomics visualize`) | [docs/components/visualizer.md](docs/components/visualizer.md) |
+| **Visualizer** (`genomics visualize`) | [docs/visualizer/index.md](docs/visualizer/index.md) |
 | Genomes Analyzer workflow | [docs/components/genomes-analyzer.md](docs/components/genomes-analyzer.md) |
 | Genotype-based predictor | [docs/components/genotype-predictor.md](docs/components/genotype-predictor.md) |
 | Variant transformer predictor | [docs/components/variant-transformer.md](docs/components/variant-transformer.md) |

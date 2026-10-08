@@ -1,16 +1,18 @@
 site_name: Genomics Workspace
-site_description: Multi-pipeline genomics workspace documentation
-repo_url: https://github.com/albertodesouza/genomics
+site_description: Personal genomes, AlphaGenome predictions and the evidence to judge them, in one local app
+repo_url: https://github.com/LCAD-UFES/genomics
+site_url: https://lcad-ufes.github.io/genomics/
 docs_dir: docs
 site_dir: site
 theme:
   name: material
   language: en
   features:
+    - navigation.tabs
     - navigation.sections
-    - navigation.expand
     - navigation.top
     - navigation.indexes
+    - navigation.footer
     - toc.follow
     - search.suggest
     - search.highlight
@@ -30,21 +32,39 @@ theme:
         name: Switch to light mode
   icon:
     repo: fontawesome/brands/github
+plugins:
+  - search
+  - glightbox:
+      zoomable: true
+      skip_classes:
+        - no-lightbox
 markdown_extensions:
   - admonition
+  - attr_list
+  - md_in_html
   - tables
   - toc:
       permalink: true
   - pymdownx.details
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.keys
   - pymdownx.arithmatex:
       generic: true
   - pymdownx.snippets
   - pymdownx.tabbed:
       alternate_style: true
+extra_css:
+  - stylesheets/extra.css
 extra_javascript:
   - javascripts/mathjax.js
   - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
@@ -52,40 +72,54 @@ nav:
   - Home: index.md
   - Getting Started:
       - Installation: getting-started/installation.md
+      - Your First Session: getting-started/first-session.md
       - Requirements: getting-started/requirements.md
       - Environment: getting-started/environment.md
-      - Building 1000 Genomes Dataset: getting-started/building-1000-genomes-dataset.md
-      - Training And Running Predictions: getting-started/training-and-running-predictions.md
-  - Concepts:
+  - Our Approach:
+      - From Genome To Function: approach/index.md
       - Data And Results: concepts/data-and-results.md
-      - Configuration: concepts/configuration.md
-      - Experiments: concepts/experiments.md
       - Dynamic Indel Tensor Alignment: concepts/dynamic-indel-tensor-alignment.md
       - Preprocessing And Leakage: concepts/preprocessing-and-leakage.md
-  - Components:
+      - Configuration: concepts/configuration.md
+      - Experiments: concepts/experiments.md
+  - Visualizer Tutorial:
+      - visualizer/index.md
+      - 1. Open A Dataset: visualizer/overview.md
+      - 2. Build A Cohort: visualizer/samples.md
+      - 3. Read Predicted Tracks: visualizer/tracks.md
+      - 4. Compare Haplotypes: visualizer/sequence.md
+      - 5. Test A Variant: visualizer/variant.md
+      - 6. From DNA To Protein: visualizer/gene-products.md
+      - 7. Train And Evaluate Models: visualizer/experiments.md
+      - 8. Ask The Model Why: visualizer/perturbation-lab.md
+      - 9. Jobs, AlphaGenome, System: visualizer/running-work.md
+      - 10. Bring Your Own Cohort: visualizer/import.md
+      - 11. From A Notebook: visualizer/notebook.md
+      - Visualizer Reference: visualizer/reference.md
+  - Pipelines:
       - Overview: components/index.md
-      - Visualizer: components/visualizer.md
-      - Genomes Analyzer: components/genomes-analyzer.md
+      - Building 1000 Genomes Dataset: guides/building-1000-genomes-dataset.md
+      - Training And Running Predictions: guides/training-and-running-predictions.md
+      - AlphaGenome: components/alphagenome.md
+      - Dataset Builders: components/dataset-builders.md
       - Genotype Predictor: components/genotype-predictor.md
       - Variant Transformer: components/variant-transformer.md
       - SNP Ancestry: components/snp-ancestry.md
+      - Genomes Analyzer: components/genomes-analyzer.md
       - VCF To 23andMe: components/vcf-to-23andme.md
-      - AlphaGenome: components/alphagenome.md
-      - Dataset Builders: components/dataset-builders.md
       - Native And Third-Party: components/native-and-third-party.md
       - Legacy: components/legacy.md
-  - Operations:
-      - Scripts: operations/scripts.md
-      - Monster Install: operations/monster.md
   - Guides:
       - AlphaGenome Sequences And Outputs: guides/alphagenome-sequences.md
       - Migrating top3 To v1: guides/migrating-top3-to-v1.md
+      - Scripts: operations/scripts.md
+      - Monster Install: operations/monster.md
   - Reference:
       - CLI: reference/cli.md
       - Config Schemas: reference/configs.md
       - Data Registry: reference/data-registry.md
       - Repository Layout: reference/repository-layout.md
-  - Historical Notes:
+  - History:
       - Architecture Migration Notes: historical/ARCHITECTURE.md
       - Research Pipelines: historical/RESEARCH_PIPELINES.md
       - Important Experiments: historical/IMPORTANT_EXPERIMENTS.md
@@ -94,6 +128,5 @@ nav:
       - Legacy Download Sequences: historical/alphagenome/DOWNLOAD_SEQUENCES.md
       - Legacy AlphaGenome Outputs: historical/alphagenome/AVAILABLE_OUTPUTS.md
       - Legacy Supported Sequence Sizes: historical/alphagenome/SUPPORTED_SIZES.md
-  - Historical References:
       - 1000 Genomes High Coverage README: historical/1000-genomes/20190405_1000G_2504_high_cov_README.md
       - 1000 Genomes Data Reuse README: historical/1000-genomes/20190405_1000G_2504_high_cov_data_reuse_README.md

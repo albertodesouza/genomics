@@ -22,7 +22,7 @@ Without `--port` the visualizer uses 8780, or the next free port if 8780 is take
 
 | Command | Purpose |
 |---|---|
-| `visualize` | Interactive visualizer for datasets, AlphaGenome tracks, sequences and experiments (see [Visualizer](../components/visualizer.md)) |
+| `visualize` | Interactive visualizer for datasets, AlphaGenome tracks, sequences and experiments (see [Visualizer](../visualizer/reference.md)) |
 | `doctor` | Which features this machine can run (Python packages, `bcftools`/`samtools`, AlphaGenome backend and local server, PyTorch, GPU, free disk) and the command that enables each missing piece; `--json` for scripts. See [Requirements](../getting-started/requirements.md) |
 | `audit-configs` | Check configs for legacy paths and active/inactive status |
 | `audit-data` | Validate registered dataset paths and expected artifacts |
@@ -95,7 +95,7 @@ genomics genotype single-gene-screen configs/predictors/genotype_based/neural_le
 
 `genomics genotype compare-aligned-signals` reads the processed aligned tensor cache and compares AlphaGenome signal channels between pairs of individuals using only positions where both individuals have `valid_mask=1`. By default it analyzes the `train` split only; pass `--splits train val test` to include other splits deliberately. It writes global pairwise similarity, top absolute differences, per-position superpopulation effects (`eta_squared`, group mean delta, standardized delta), a sparse top-effect pairwise summary, and `summary.json`. Use `--max-samples` and `--max-pairs` for a fast pilot run; add `--permutations 1000` to test the global between-vs-within superpopulation MAD difference.
 
-`genomics genotype workbench` opens the unified visualizer (same as `genomics visualize --dataset <dataset-dir> --runs-root <runs-root>`); see [Visualizer](../components/visualizer.md). The Perturbation Lab (in-silico overwrite/scramble/revert edits of a haplotype, re-predicted by AlphaGenome and re-scored by any trained model) now runs inside the visualizer; `--pigmentation-config` only chooses the run it selects first, and `--pigmentation-lab-port` is ignored. `--legacy` starts the previous multi-process workbench instead.
+`genomics genotype workbench` opens the unified visualizer (same as `genomics visualize --dataset <dataset-dir> --runs-root <runs-root>`); see [Visualizer](../visualizer/reference.md). The Perturbation Lab (in-silico overwrite/scramble/revert edits of a haplotype, re-predicted by AlphaGenome and re-scored by any trained model) now runs inside the visualizer; `--pigmentation-config` only chooses the run it selects first, and `--pigmentation-lab-port` is ignored. `--legacy` starts the previous multi-process workbench instead.
 
 `genomics genotype sync-bcftools-artifacts` previews or applies hardlink/symlink/copy operations for consensus and chain artifacts required by the aligned `haplotype_channels` layout. Add `--apply` only after reviewing the preview.
 

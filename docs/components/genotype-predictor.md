@@ -2,7 +2,7 @@
 
 The genotype predictor trains dense/aligned models from processed genotype and AlphaGenome-derived tensors.
 
-For the reproduction commands, read [Training And Running Predictions](../getting-started/training-and-running-predictions.md). DITA background is covered in [Dynamic Indel Tensor Alignment](../concepts/dynamic-indel-tensor-alignment.md).
+For the reproduction commands, read [Training And Running Predictions](../guides/training-and-running-predictions.md). DITA background is covered in [Dynamic Indel Tensor Alignment](../concepts/dynamic-indel-tensor-alignment.md).
 
 ## CLI
 

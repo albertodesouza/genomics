@@ -562,7 +562,7 @@ a.curie::after { content: " ↗"; font-size: 10px; opacity: .7; }
 .expr-tissue.not-expressed .expr-table, .expr-tissue.not-expressed .expr-meta { opacity: .5; }
 
 /* Gene products: report (baseline, haplotypes, verdicts) */
-.step { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; margin-right: 4px; vertical-align: 1px; }
+span.step { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; margin-right: 4px; vertical-align: 1px; }
 .baseline-level { font-size: 13.5px; margin: 0 0 10px; }
 .share-bar { display: flex; height: 26px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); margin-bottom: 10px; background: var(--surface-2); }
 .share-seg { color: #fff; font-size: 11px; font-weight: 600; display: flex; align-items: center; padding: 0 6px; white-space: nowrap; overflow: hidden; }

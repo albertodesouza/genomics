@@ -22,7 +22,7 @@ export ALPHAGENOME_ADDRESS=grpc://127.0.0.1:50051
 ```
 
 See [Requirements](../getting-started/requirements.md#alphagenome-on-your-own-gpu) and
-[Visualizer → AlphaGenome backend](visualizer.md#alphagenome-backend).
+[Visualizer → AlphaGenome backend](../visualizer/reference.md#alphagenome-backend).
 
 ## Code And Configs
 

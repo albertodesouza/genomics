@@ -2,7 +2,7 @@
 
 The SNP ancestry predictor implements an allele-frequency ancestry model over a configured SNP or variant panel. It first normalizes multi-sample VCF genotypes into per-individual 23andMe-like files, then estimates class-specific reference allele frequencies, and finally predicts each individual's ancestry either as a single maximum-likelihood class or as a vector of admixture proportions.
 
-For the reproduction branch that uses classical VCF/SNP classification instead of AlphaGenome neural tensors, start with [Training And Running Predictions](../getting-started/training-and-running-predictions.md#classical-snp-superpopulation-path).
+For the reproduction branch that uses classical VCF/SNP classification instead of AlphaGenome neural tensors, start with [Training And Running Predictions](../guides/training-and-running-predictions.md#classical-snp-superpopulation-path).
 
 ## CLI
 
