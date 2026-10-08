@@ -71,7 +71,7 @@ Nada nesta lista é usado pela conversão.
 
 | Diretório | Tamanho | Por quê |
 |---|---|---|
-| `non_longevous_results_genes_1000` | 136G | Mesmos 11 genes de pigmentação, para os mesmos 1300 indivíduos dos datasets aleatórios. Tudo isso já está em `non_longevous_results_genes_1000_all`, com FASTAs e predições idênticas byte a byte (conferido por amostragem). **Antes de apagar, salve os resultados de SNP ancestry que estão na raiz dele** (comando abaixo). |
+| `non_longevous_results_genes_1000` | 136G | Mesmos 11 genes de pigmentação, para os mesmos 1300 indivíduos dos datasets aleatórios. Tudo isso já está em `non_longevous_results_genes_1000_all`, com FASTAs e predições idênticas byte a byte (conferido por amostragem numa cópia do `top3`; confira na sua com o comando abaixo). |
 | `non_longevous_results_genes` | 8G | 78 indivíduos com os mesmos 11 genes, também idênticos ao `genes_1000_all` |
 | `non_longevous_results_dataset_cache` | 17M | Cache |
 | `raw` | 33G | Arquivos `.sra` do `prefetch` do genomes-analyzer (trio NA12878), já extraídos para `fastq/` |
@@ -80,17 +80,33 @@ Nada nesta lista é usado pela conversão.
 | `refs/_bwa/*.tar.gz` | — | Tarball do índice BWA do genomes-analyzer. Só se o índice já estiver extraído (`refs/reference.fa.{amb,ann,bwt,pac,sa}` existem); com o índice presente, o pipeline não usa mais o tarball. |
 | `caco_incompleto.tar.gz` | 1,3G | Só se o `caco.tar.gz` for a versão completa |
 
-Os resultados de SNP ancestry do `genes_1000` ocupam ~200 MB. Guarde-os antes de apagar o diretório:
+Antes de apagar, confira que os dois datasets são mesmo cópias do `genes_1000_all`. Faça isso **antes da conversão**, porque ela tira os arquivos do `genes_1000_all`. O comando compara 20 indivíduos sorteados em 4 genes e não deve imprimir nenhuma linha `DIFERENTE`:
 
 ```bash
-mkdir -p "$V1/1kG_high_coverage_runs/legacy_genes_1000_snp_ancestry"
-mv "$OLD/non_longevous_results_genes_1000/ancestry_results" \
-   "$OLD"/non_longevous_results_genes_1000/snp_ancestry_statistics*.json \
-   "$OLD/non_longevous_results_genes_1000/selected_samples.csv" \
-   "$V1/1kG_high_coverage_runs/legacy_genes_1000_snp_ancestry/"
+for d in non_longevous_results_genes_1000 non_longevous_results_genes; do
+  for i in $(ls "$OLD/$d/individuals" | shuf -n 20); do
+    for g in TYR HERC2 MC1R OCA2; do
+      for f in "$i.H1.window.fixed.fa" "$i.H2.window.fixed.fa" predictions_H1/rna_seq.npz; do
+        cmp -s "$OLD/$d/individuals/$i/windows/$g/$f" "$OLD/non_longevous_results_genes_1000_all/individuals/$i/windows/$g/$f" \
+          || echo "DIFERENTE: $d $i $g $f"
+      done
+    done
+  done
+done
 ```
 
-Depois, apague:
+Na raiz de um dataset (fora de `individuals/`) costumam ficar resultados de outras análises, como os de SNP ancestry. O conteúdo varia de máquina para máquina, então guarde **tudo o que estiver na raiz**, exceto `individuals/`, antes de apagar. É pouco espaço: metadados, JSONs e diretórios de resultados.
+
+```bash
+KEEP="$V1/1kG_high_coverage_runs/legacy_top3"
+for d in non_longevous_results_genes_1000 non_longevous_results_genes; do
+  mkdir -p "$KEEP/$d"
+  find "$OLD/$d" -mindepth 1 -maxdepth 1 ! -name individuals -exec mv -t "$KEEP/$d/" {} +
+  ls "$KEEP/$d"
+done
+```
+
+Confira as listagens. Depois, apague:
 
 ```bash
 rm -rf "$OLD/non_longevous_results_genes_1000" \
@@ -168,7 +184,19 @@ for d in non_longevous_results_genes_1000_all non_longevous_results_genes_1000_r
 done
 ```
 
-Na raiz de cada origem sobram só `dataset_metadata.json`, `non_longevous_dataset_genes_checkpoint.json` e `processing_summary.txt`, que são logs do build antigo. Se o `find` não listou nada, pode apagar:
+Na raiz de cada origem ainda podem estar resultados de outras análises, como os de SNP ancestry (`ancestry_results_*`, `snp_ancestry_statistics_*.json`) que os configs `configs/predictors/snp_ancestry/pigmentation_binary*.yaml` gravam dentro do dataset. A conversão leva para o v1 só os arquivos do próprio dataset (`gtf_cache.feather`, `selected_samples.csv`, `metadata_statistics.json`, `vcf_validation_report.json`). Por isso, **guarde o resto da raiz** antes de apagar:
+
+```bash
+KEEP="$V1/1kG_high_coverage_runs/legacy_top3"
+for d in non_longevous_results_genes_1000_all non_longevous_results_genes_1000_random \
+         non_longevous_results_genes_1000_random_11_1 non_longevous_results_genes_1000_random_11_2; do
+  mkdir -p "$KEEP/$d"
+  find "$OLD/$d" -mindepth 1 -maxdepth 1 ! -name individuals -exec mv -t "$KEEP/$d/" {} +
+  ls "$KEEP/$d"
+done
+```
+
+Se o `find` anterior não listou nada e as listagens acima estão certas, pode apagar:
 
 ```bash
 rm -rf "$OLD/non_longevous_results_genes_1000_all" \
