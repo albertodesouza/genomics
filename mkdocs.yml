@@ -79,6 +79,7 @@ nav:
       - Monster Install: operations/monster.md
   - Guides:
       - AlphaGenome Sequences And Outputs: guides/alphagenome-sequences.md
+      - Migrating top3 To v1: guides/migrating-top3-to-v1.md
   - Reference:
       - CLI: reference/cli.md
       - Config Schemas: reference/configs.md

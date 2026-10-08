@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import errno
+import filecmp
 import json
 import os
 import shutil
+from collections import Counter
 from pathlib import Path
 from typing import Dict, Iterable, Optional, Sequence
 
@@ -40,10 +43,56 @@ def _write_json(path: Path, payload: Dict) -> None:
         json.dump(payload, f, indent=2)
 
 
-def _copy_file(src: Path, dst: Path) -> None:
+def _same_content(a: Path, b: Path) -> bool:
+    return filecmp.cmp(a, b, shallow=False)
+
+
+def _move_file(src: Path, dst: Path) -> None:
+    """Moves ``src`` to ``dst`` so that ``dst`` only ever appears complete.
+
+    On the same filesystem this is a rename (no extra space). Across
+    filesystems the file is copied to a temporary name, renamed into place and
+    only then removed from the source, so the extra space is one file at a time
+    and an interrupted run never leaves a truncated ``dst``.
+    """
+    try:
+        os.replace(src, dst)
+        return
+    except OSError as exc:
+        if exc.errno != errno.EXDEV:
+            raise
+    tmp = dst.with_name(dst.name + ".partial")
+    shutil.copy2(src, tmp)
+    os.replace(tmp, dst)
+    src.unlink()
+
+
+def _transfer_file(src: Path, dst: Path, *, move: bool, stats: Counter) -> None:
+    """Copies (default) or moves ``src`` to ``dst``; an existing ``dst`` is kept.
+
+    When moving and ``dst`` already exists, an identical ``src`` (e.g. the
+    per-individual copies of a window's ``ref.window.fa``) is deleted so the
+    source shrinks as the target grows; a differing ``src`` is left in place
+    and counted as a conflict.
+    """
+    if dst.exists():
+        if move:
+            if _same_content(src, dst):
+                src.unlink()
+                stats["duplicates_removed"] += 1
+            else:
+                stats["conflicts"] += 1
+                console.print(f"[yellow]Conflito, origem mantida:[/yellow] {src} difere de {dst}")
+        else:
+            stats["already_present"] += 1
+        return
     dst.parent.mkdir(parents=True, exist_ok=True)
-    if not dst.exists():
+    if move:
+        _move_file(src, dst)
+        stats["moved"] += 1
+    else:
         shutil.copy2(src, dst)
+        stats["copied"] += 1
 
 
 def _materialize_file(src: Path, dst: Path, *, link_mode: str, dry_run: bool) -> str:
@@ -156,8 +205,25 @@ def _iter_individual_dirs(dataset_dir: Path) -> Iterable[Path]:
     return sorted([p for p in individuals_dir.iterdir() if p.is_dir()])
 
 
-def materialize_dataset(source_dir: Path, target_dir: Path) -> Path:
-    """Creates the normalized dataset view consumed by this package."""
+# Dataset-level files carried over when present in the source.
+_DATASET_LEVEL_FILES = (
+    "gtf_cache.feather",
+    "metadata_statistics.json",
+    "selected_samples.csv",
+    "vcf_validation_report.json",
+)
+
+
+def materialize_dataset(source_dir: Path, target_dir: Path, *, move: bool = False) -> Path:
+    """Creates the normalized dataset view consumed by this package.
+
+    With ``move=True`` the data files are moved out of ``source_dir`` instead
+    of copied, so the conversion needs almost no extra disk space when source
+    and target share a filesystem. The source's metadata JSONs are only read,
+    never moved, so an interrupted run can simply be started again; what is
+    left in the source afterwards is metadata, ``prediction_H*.ok.txt``
+    markers and any conflicting files reported at the end.
+    """
     source_dir = Path(source_dir)
     target_dir = Path(target_dir)
 
@@ -168,6 +234,12 @@ def materialize_dataset(source_dir: Path, target_dir: Path) -> Path:
 
     dataset_meta = _load_json(source_dir / "dataset_metadata.json")
     target_dir.mkdir(parents=True, exist_ok=True)
+    stats: Counter = Counter()
+
+    for file_name in _DATASET_LEVEL_FILES:
+        src = source_dir / file_name
+        if src.exists():
+            _transfer_file(src, target_dir / file_name, move=move, stats=stats)
 
     ref_windows_dir = target_dir / "references" / "windows"
     individuals_out_dir = target_dir / "individuals"
@@ -225,13 +297,24 @@ def materialize_dataset(source_dir: Path, target_dir: Path) -> Path:
 
                 ref_src = src_window_dir / "ref.window.fa"
                 if ref_src.exists():
-                    _copy_file(ref_src, ref_windows_dir / window_name / "ref.window.fa")
+                    _transfer_file(ref_src, ref_windows_dir / window_name / "ref.window.fa", move=move, stats=stats)
 
                 dst_window_dir = individuals_out_dir / sample_id / "windows" / window_name
-                for file_name in (f"{sample_id}.H1.window.fixed.fa", f"{sample_id}.H2.window.fixed.fa"):
+                # Haplotype FASTAs plus the raw per-window VCF and bcftools
+                # chain artefacts (raw.fa, consensus_ready VCF) when available.
+                for file_name in (
+                    f"{sample_id}.H1.window.fixed.fa",
+                    f"{sample_id}.H2.window.fixed.fa",
+                    f"{sample_id}.H1.window.raw.fa",
+                    f"{sample_id}.H2.window.raw.fa",
+                    f"{sample_id}.window.vcf.gz",
+                    f"{sample_id}.window.vcf.gz.tbi",
+                    f"{sample_id}.window.consensus_ready.vcf.gz",
+                    f"{sample_id}.window.consensus_ready.vcf.gz.tbi",
+                ):
                     src = src_window_dir / file_name
                     if src.exists():
-                        _copy_file(src, dst_window_dir / file_name)
+                        _transfer_file(src, dst_window_dir / file_name, move=move, stats=stats)
 
                 for pred_dir_name in ("predictions_H1", "predictions_H2"):
                     src_pred_dir = src_window_dir / pred_dir_name
@@ -239,20 +322,9 @@ def materialize_dataset(source_dir: Path, target_dir: Path) -> Path:
                     if not src_pred_dir.exists():
                         continue
                     dst_pred_dir.mkdir(parents=True, exist_ok=True)
-                    for pred_file in src_pred_dir.iterdir():
+                    for pred_file in sorted(src_pred_dir.iterdir()):
                         if pred_file.is_file():
-                            _copy_file(pred_file, dst_pred_dir / pred_file.name)
-
-                # Preserve raw per-window VCF artefacts when available.
-                for suffix in (
-                    f"{sample_id}.window.vcf.gz",
-                    f"{sample_id}.window.vcf.gz.tbi",
-                    f"{sample_id}.window.consensus_ready.vcf.gz",
-                    f"{sample_id}.window.consensus_ready.vcf.gz.tbi",
-                ):
-                    src_variant = src_window_dir / suffix
-                    if src_variant.exists():
-                        _copy_file(src_variant, dst_window_dir / suffix)
+                            _transfer_file(pred_file, dst_pred_dir / pred_file.name, move=move, stats=stats)
 
             progress.update(task, advance=1)
 
@@ -289,7 +361,10 @@ def materialize_dataset(source_dir: Path, target_dir: Path) -> Path:
         "target_dataset_dir": str(target_dir.resolve()),
     })
 
-    console.print(f"[green]Dataset materializado em[/green] {target_dir}")
+    summary = ", ".join(f"{key}={stats[key]}" for key in sorted(stats)) or "nenhum arquivo transferido"
+    console.print(f"[green]Dataset materializado em[/green] {target_dir} ({summary})")
+    if stats["conflicts"]:
+        console.print(f"[yellow]{stats['conflicts']} arquivo(s) em conflito ficaram na origem:[/yellow] {source_dir}")
     return target_dir
 
 

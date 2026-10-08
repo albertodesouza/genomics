@@ -20,12 +20,21 @@ def main() -> int:
     parser.add_argument("--vcf-pattern", help="Padrao dos VCFs por cromossomo, com placeholder {chrom}")
     parser.add_argument("--vcf-root-dir", help="Diretorio com VCFs por cromossomo")
     parser.add_argument("--update-variant-sources", action="store_true", help="Atualiza apenas raw_variant_source nos metadados do dataset de destino")
+    parser.add_argument(
+        "--move",
+        action="store_true",
+        help=(
+            "Move os arquivos de dados da origem para o destino em vez de copiar. No mesmo filesystem "
+            "quase nao ocupa espaco extra; a origem fica so com metadados e deve ser apagada depois. "
+            "Pode ser reexecutado se for interrompido."
+        ),
+    )
     args = parser.parse_args()
 
     source_dir = Path(args.source_dataset_dir).resolve()
     target_dir = Path(args.target_dataset_dir).resolve()
     if not args.update_variant_sources:
-        materialize_dataset(source_dir, target_dir)
+        materialize_dataset(source_dir, target_dir, move=args.move)
     update_window_variant_sources(target_dir, vcf_pattern=args.vcf_pattern, vcf_root_dir=args.vcf_root_dir)
     console.print(f"[bold green]Concluido[/bold green]: {target_dir}")
     return 0

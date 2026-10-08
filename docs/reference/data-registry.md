@@ -61,6 +61,18 @@ The default `1kg_high_coverage` dataset is expected to follow this layout for pr
 
 `individuals/<sample>/individual_metadata.json` stores sample-level labels such as population, superpopulation, family, sex, and configured derived targets.
 
+## Converting A Legacy Dataset
+
+A dataset in the old `top3` layout (reference window repeated inside every individual, no `layout_metadata.json`) is converted with:
+
+```bash
+python3 -m genomics.predictors.genotype_based.tools.materialize_dataset \
+  --move --vcf-pattern "/path/to/vcf_chromosomes/1kGP_high_coverage_Illumina.{chrom}.filtered.SNV_INDEL_SV_phased_panel.vcf.gz" \
+  /dados/GENOMICS_DATA/top3/non_longevous_results_genes_1000_all /dados/GENOMICS_DATA/v1/1kG_high_coverage
+```
+
+It carries the haplotype FASTAs, per-window VCFs, bcftools chain artifacts (`*.raw.fa`, `consensus_ready` VCFs), predictions and dataset-level files (`gtf_cache.feather`, `selected_samples.csv`, ...), and writes one `ref.window.fa` per window. Without `--move` it copies; with `--move` it moves the files out of the source, so it needs almost no extra space on the same filesystem, deletes the source's duplicate `ref.window.fa` copies, and can be rerun after an interruption. See [Migrating top3 To v1](../guides/migrating-top3-to-v1.md) for the full migration, including what can be deleted.
+
 ## BCFtools Chain Artifacts
 
 The genotype predictor's `haplotype_channels` layout requires consensus and chain-derived artifacts for each selected sample/window when `alignment_mapping: bcftools_chain` is used.
